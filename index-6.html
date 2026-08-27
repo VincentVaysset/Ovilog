@@ -176,6 +176,7 @@
   <div style="flex:1;">
     <p class="brand-name">OVILOG</p>
     <h1 id="page-title">Mon troupeau</h1>
+    <p id="farm-banner" style="font-size:12px;opacity:0.85;margin:2px 0 0;"></p>
   </div>
 </header>
 
@@ -208,6 +209,8 @@ function loadData() {
     if (!d.journal) d.journal = [];
     if (!d.typesJournal) d.typesJournal = ['Lutte', 'Tonte', 'Vermifuge collectif', 'Visite vétérinaire'];
     if (!d.laitTank) d.laitTank = [];
+    if (!d.lots) d.lots = [];
+    if (!d.exploitation) d.exploitation = { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' };
     return d;
   }
   return {
@@ -218,6 +221,8 @@ function loadData() {
     journal: [],
     typesJournal: ['Lutte', 'Tonte', 'Vermifuge collectif', 'Visite vétérinaire'],
     laitTank: [],
+    lots: [],
+    exploitation: { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' },
     campagneDebut: null,
     casParticuliers: ['Pseudogestation', 'Avortée'],
     produits: {
@@ -259,20 +264,34 @@ function age(eid) {
 }
 
 /* ---------- Bip sonore de confirmation de scan ---------- */
-function playBeep() {
+function playBeep(freq, dur, type) {
+  freq = freq || 880;
+  dur = dur || 0.15;
+  type = type || 'sine';
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 880;
+    osc.type = type;
+    osc.frequency.value = freq;
     gain.gain.setValueAtTime(0.15, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start();
-    osc.stop(ctx.currentTime + 0.15);
+    osc.stop(ctx.currentTime + dur);
   } catch (e) { /* audio non disponible, on ignore silencieusement */ }
+}
+
+function playBeepTrouve() {
+  playBeep(1046, 0.1);
+  setTimeout(() => playBeep(1568, 0.15), 110);
+}
+function playBeepRate() {
+  playBeep(220, 0.35, 'square');
+}
+function playBeepDejaTrouve() {
+  playBeep(440, 0.2, 'triangle');
 }
 
 function attachEidBeep(inputEl) {
@@ -296,6 +315,7 @@ let previousDetailId = null;
 let editingAgnelleId = null;
 let currentBelierId = null;
 let editBelierContext = null; // { kind, idx }
+let currentLotId = null;
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -319,6 +339,11 @@ btnBack.onclick = () => {
   else if (currentView === 'add-agnelle') { editingAgnelleId = null; render('agnelles'); }
   else if (currentView === 'beliers') render('list');
   else if (currentView === 'journal') render('list');
+  else if (currentView === 'lots') render('list');
+  else if (currentView === 'add-lot') render('lots');
+  else if (currentView === 'lot-search') render('lots');
+  else if (currentView === 'mouvement-groupe') render('lots');
+  else if (currentView === 'traitement-collectif') render('lots');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render('beliers');
   else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
@@ -412,6 +437,17 @@ function render(view, sheepId) {
   app.innerHTML = '';
   btnBack.classList.toggle('hidden', view === 'list');
   fabAdd.classList.toggle('hidden', view !== 'list');
+  const farmBanner = document.getElementById('farm-banner');
+  if (farmBanner) {
+    if (view === 'list') {
+      const parts = [];
+      if (DB.exploitation && DB.exploitation.nom) parts.push(DB.exploitation.nom);
+      if (DB.campagneDebut) parts.push('Campagne ' + (DB.campagneDebut + 1));
+      farmBanner.textContent = parts.join(' · ');
+    } else {
+      farmBanner.textContent = '';
+    }
+  }
   const statsBtn = document.getElementById('btn-stats');
   if (statsBtn) statsBtn.classList.toggle('hidden', view !== 'list');
   const sortiesBtn = document.getElementById('btn-sorties');
@@ -422,6 +458,8 @@ function render(view, sheepId) {
   if (beliersBtn) beliersBtn.classList.toggle('hidden', view !== 'list');
   const journalBtn = document.getElementById('btn-journal');
   if (journalBtn) journalBtn.classList.toggle('hidden', view !== 'list');
+  const lotsBtn = document.getElementById('btn-lots');
+  if (lotsBtn) lotsBtn.classList.toggle('hidden', view !== 'list');
 
   if (view === 'list') renderList();
   else if (view === 'detail') renderDetail(currentSheepId);
@@ -441,6 +479,11 @@ function render(view, sheepId) {
   else if (view === 'add-sanitaire-belier') renderAddSanitaireBelier(currentBelierId);
   else if (view === 'add-mouvement-belier') renderAddMouvementBelier(currentBelierId);
   else if (view === 'journal') renderJournal();
+  else if (view === 'lots') renderLots();
+  else if (view === 'add-lot') renderAddLot();
+  else if (view === 'lot-search') renderLotSearch(currentLotId);
+  else if (view === 'mouvement-groupe') renderMouvementGroupe();
+  else if (view === 'traitement-collectif') renderTraitementCollectif();
 }
 
 /* ---------- Liste des brebis ---------- */
@@ -486,15 +529,48 @@ function renderList() {
     journalBtn.onclick = () => render('journal');
     document.querySelector('header').appendChild(journalBtn);
   }
+  if (!document.getElementById('btn-lots')) {
+    const lotsBtn = document.createElement('button');
+    lotsBtn.id = 'btn-lots';
+    lotsBtn.textContent = 'Lots';
+    lotsBtn.style.marginLeft = '6px';
+    lotsBtn.onclick = () => render('lots');
+    document.querySelector('header').appendChild(lotsBtn);
+  }
   document.getElementById('btn-stats').classList.remove('hidden');
   document.getElementById('btn-sorties').classList.remove('hidden');
   document.getElementById('btn-agnelles').classList.remove('hidden');
   document.getElementById('btn-beliers').classList.remove('hidden');
   document.getElementById('btn-journal').classList.remove('hidden');
+  document.getElementById('btn-lots').classList.remove('hidden');
   if (actives.length === 0) {
     app.innerHTML = '<div class="empty">Aucune brebis active pour l\'instant.<br>Appuie sur le bouton + pour en ajouter une.</div>';
-    return;
   }
+  app.insertAdjacentHTML('afterbegin', `
+    <div style="margin-bottom:14px;">
+      <input type="text" id="scan-open" placeholder="Scanner une brebis pour ouvrir sa fiche" autofocus>
+      <div id="scan-open-err" class="error-box hidden"></div>
+    </div>
+  `);
+  const scanOpen = document.getElementById('scan-open');
+  scanOpen.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const val = cleanEid(scanOpen.value);
+    const err = document.getElementById('scan-open-err');
+    if (!val) return;
+    const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
+    if (!sheep) {
+      playBeepRate();
+      err.textContent = "Aucune brebis trouvée avec cet EID.";
+      err.classList.remove('hidden');
+      return;
+    }
+    playBeepTrouve();
+    detailOrigin = 'list';
+    previousDetailId = null;
+    render('detail', sheep.id);
+  });
+  if (actives.length === 0) return;
   const sorted = [...actives].sort((a,b) => anneeNaissance(a.eid) - anneeNaissance(b.eid));
   sorted.forEach(sheep => {
     const lastEcho = sheep.echographies[sheep.echographies.length - 1];
@@ -505,7 +581,7 @@ function renderList() {
         <div class="num">Brebis n°${numeroVisuel(sheep.eid)}</div>
         <div class="sub">${age(sheep.eid) !== null ? age(sheep.eid) + ' an(s)' : 'âge inconnu'}</div>
       </div>
-      <span class="badge">${lastEcho ? lastEcho.stade || lastEcho.special : 'Aucune écho'}</span>
+      <span class="badge">${isAttendueTraite(sheep) ? 'Attendue à la traite' : (lastEcho ? lastEcho.stade || lastEcho.special : 'Aucune écho')}</span>
     `;
     div.onclick = () => { detailOrigin = 'list'; previousDetailId = null; render('detail', sheep.id); };
     app.appendChild(div);
@@ -600,6 +676,20 @@ function findLambByEid(eid) {
   return null;
 }
 
+function isLambResolved(l) {
+  if (l.sexe === 'Mort-né') return true;
+  if (l.sexe === 'Femelle' && l.triStatut === 'gardée') return true;
+  if (l.statutFinal === 'vendu' || l.statutFinal === 'mort') return true;
+  return false;
+}
+
+function isAttendueTraite(sheep) {
+  if (!sheep.agnelages || sheep.agnelages.length === 0) return false;
+  const allLambs = sheep.agnelages.flatMap(a => a.lambs);
+  if (allLambs.length === 0) return false;
+  return allLambs.every(l => isLambResolved(l));
+}
+
 function renderDetail(id) {
   const sheep = findSheep(id);
   if (!sheep) { render('list'); return; }
@@ -639,7 +729,7 @@ function renderDetail(id) {
       <div class="swipe-fg history-item">
         <div class="dot" style="background:var(--warning);"></div>
         <div class="content">
-          <div>${s.type}${s.sousType ? ' — ' + s.sousType : ''}${s.produit ? ' — ' + s.produit : ''}${s.dose ? ' (' + s.dose + ')' : ''}</div>
+          <div>${s.type}${s.sousType ? ' — ' + s.sousType : ''}${s.produit ? ' — ' + s.produit : ''}${s.dose ? ' (' + s.dose + ')' : ''}${s.collectif ? ' · collectif' : ''}</div>
           <div class="date">${s.date}${s.commentaire ? ' · ' + s.commentaire : ''}</div>
         </div>
       </div>
@@ -678,6 +768,39 @@ function renderDetail(id) {
     ? `<div style="background:#f0efe9;color:var(--text-muted);padding:8px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;">Statut actuel : <strong>${sheep.statut}</strong></div>`
     : '';
 
+  const attendueTraiteBadge = ((sheep.statut || 'active') === 'active' && isAttendueTraite(sheep))
+    ? `<div style="background:var(--bg-accent,#e8f0fb);color:var(--primary-light);padding:8px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">Attendue à la traite — tous ses agneaux sont partis</div>`
+    : '';
+
+  const allLiveLambs = [];
+  (sheep.agnelages || []).forEach(a => {
+    a.lambs.forEach(l => {
+      if (l.sexe !== 'Mort-né') allLiveLambs.push(l);
+    });
+  });
+  const devenirHtml = allLiveLambs.map((l, i) => {
+    const resolved = isLambResolved(l);
+    let badge = '';
+    if (l.sexe === 'Femelle' && l.triStatut === 'gardée') badge = 'Renouvelée';
+    else if (l.statutFinal === 'vendu') badge = 'Vendu';
+    else if (l.statutFinal === 'mort') badge = 'Mort';
+    const aEuSelepherol = (l.sanitaire || []).some(s => s.produit === 'Selepherol');
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+        <div>
+          <div style="font-size:14px;">n°${l.eid ? numeroVisuel(l.eid) : '?'} — ${l.sexe}</div>
+          ${aEuSelepherol ? '<div style="font-size:11px;color:var(--text-muted);">Sélépérol 2cc administré</div>' : ''}
+        </div>
+        ${resolved
+          ? `<span style="font-size:12px;color:var(--text-muted);">${badge}</span>`
+          : `<div style="display:flex;gap:6px;">
+               <button type="button" class="btn btn-secondary btn-lamb-vendu" data-i="${i}" style="width:auto;padding:4px 10px;font-size:12px;">Vendu</button>
+               <button type="button" class="btn btn-secondary btn-lamb-mort" data-i="${i}" style="width:auto;padding:4px 10px;font-size:12px;">Mort</button>
+             </div>`}
+      </div>
+    `;
+  }).join('');
+
   const mereBlock = sheep.mereEid
     ? `<button type="button" class="btn btn-secondary" id="btn-voir-mere-sheep" style="margin-bottom:16px;">Voir la fiche de la mère (n°${numeroVisuel(sheep.mereEid)})</button>`
     : '';
@@ -693,16 +816,27 @@ function renderDetail(id) {
       ${sheep.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${sheep.dateEntree}</strong></div>` : ''}
     </div>
     ${statutBadge}
+    ${attendueTraiteBadge}
     ${mereBlock}
     <div class="row" style="margin-bottom:10px;">
       <button class="btn btn-primary" id="btn-add-echo">+ Échographie</button>
-      <button class="btn btn-primary" id="btn-add-agnelage" style="background:var(--accent);">+ Agnelage</button>
+      ${(sheep.agnelages && sheep.agnelages.length > 0)
+        ? '<div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text-muted);text-align:center;padding:0 8px;">Mise bas déjà saisie — modifie-la par glissement ci-dessous</div>'
+        : '<button class="btn btn-primary" id="btn-add-agnelage" style="background:var(--accent);">+ Agnelage</button>'}
     </div>
     <div class="row" style="margin-bottom:16px;">
       <button class="btn btn-primary" id="btn-add-sanitaire" style="background:var(--warning);">+ Carnet sanitaire</button>
-      <button class="btn btn-primary" id="btn-add-mouvement" style="background:var(--danger);">+ Mouvement</button>
+      ${(sheep.mouvements && sheep.mouvements.length > 0)
+        ? '<div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text-muted);text-align:center;padding:0 8px;">Mouvement déjà saisi — modifie-le par glissement ci-dessous</div>'
+        : '<button class="btn btn-primary" id="btn-add-mouvement" style="background:var(--danger);">+ Mouvement</button>'}
     </div>
     <button class="btn btn-primary" id="btn-add-controle" style="background:var(--primary-light);margin-bottom:16px;">+ Contrôle laitier</button>
+    ${allLiveLambs.length > 0 ? `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Devenir des agneaux</div>
+      ${devenirHtml}
+    </div>
+    ` : ''}
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Historique échographies</div>
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
@@ -731,10 +865,24 @@ function renderDetail(id) {
     <button class="btn btn-secondary" id="btn-delete-sheep" style="color:var(--danger);border-color:var(--danger);">Supprimer cette brebis</button>
   `;
   document.getElementById('btn-add-echo').onclick = () => { editContext = null; render('add-echo', sheep.id); };
-  document.getElementById('btn-add-agnelage').onclick = () => { editContext = null; render('add-agnelage', sheep.id); };
+  if (document.getElementById('btn-add-agnelage')) document.getElementById('btn-add-agnelage').onclick = () => { editContext = null; render('add-agnelage', sheep.id); };
   document.getElementById('btn-add-sanitaire').onclick = () => { editContext = null; render('add-sanitaire', sheep.id); };
-  document.getElementById('btn-add-mouvement').onclick = () => { editContext = null; render('add-mouvement', sheep.id); };
+  if (document.getElementById('btn-add-mouvement')) document.getElementById('btn-add-mouvement').onclick = () => { editContext = null; render('add-mouvement', sheep.id); };
   document.getElementById('btn-add-controle').onclick = () => { editContext = null; render('add-controle', sheep.id); };
+  document.querySelectorAll('.btn-lamb-vendu').forEach(btn => {
+    btn.onclick = () => {
+      allLiveLambs[parseInt(btn.dataset.i, 10)].statutFinal = 'vendu';
+      saveData(DB);
+      render('detail', sheep.id);
+    };
+  });
+  document.querySelectorAll('.btn-lamb-mort').forEach(btn => {
+    btn.onclick = () => {
+      allLiveLambs[parseInt(btn.dataset.i, 10)].statutFinal = 'mort';
+      saveData(DB);
+      render('detail', sheep.id);
+    };
+  });
   if (document.getElementById('btn-voir-mere-sheep')) {
     document.getElementById('btn-voir-mere-sheep').onclick = () => {
       const mother = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(sheep.mereEid));
@@ -1089,6 +1237,15 @@ function renderAddAgnelage(sheepId) {
         if (lambs[id].adopte) {
           const adoptEidInput = document.querySelector(`.adopt-eid[data-id="${id}"]`);
           lambs[id].adoptiveEid = adoptEidInput.value.trim();
+        }
+        lambs[id].sanitaire = lambs[id].sanitaire || [];
+        const dejaSelepherol = lambs[id].sanitaire.some(s => s.produit === 'Selepherol');
+        if (!dejaSelepherol) {
+          lambs[id].sanitaire.push({
+            type: 'Traitement', sousType: null, produit: 'Selepherol', dose: '2 cc',
+            date: document.getElementById('f-date').value,
+            commentaire: 'Injection systématique à la naissance'
+          });
         }
       }
     }
@@ -1644,7 +1801,7 @@ function renderAgnelles() {
 
   function garderAgnelle(c) {
     c.lamb.triStatut = 'gardée';
-    DB.agnelles.push({ id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: c.lamb.eid, origine: 'née', motherEid: c.motherEid, dateEntree: new Date().toISOString().slice(0,10), sanitaire: [] });
+    DB.agnelles.push({ id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: c.lamb.eid, origine: 'née', motherEid: c.motherEid, dateEntree: new Date().toISOString().slice(0,10), sanitaire: (c.lamb.sanitaire || []).slice() });
     saveData(DB);
     render('agnelles');
   }
@@ -2331,6 +2488,500 @@ function renderJournal() {
 }
 
 
+/* ---------- Lots de recherche ---------- */
+function renderLots() {
+  DB.lots = DB.lots || [];
+  pageTitle.textContent = 'Lots (' + DB.lots.length + ')';
+
+  const listHtml = DB.lots.length === 0
+    ? '<div class="empty">Aucun lot pour l\'instant.<br>Crée un lot pour préparer une recherche en bergerie.</div>'
+    : [...DB.lots].reverse().map(lot => `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div>
+            <div style="font-weight:600;">${lot.nom}</div>
+            <div style="font-size:12px;color:var(--text-muted);">${lot.membres.length} brebis · créé le ${lot.dateCreation}</div>
+          </div>
+          <button type="button" class="btn btn-secondary btn-del-lot" data-id="${lot.id}" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
+        </div>
+        <button type="button" class="btn btn-primary btn-search-lot" data-id="${lot.id}">Chercher en bergerie</button>
+      </div>
+    `).join('');
+
+  app.innerHTML = listHtml + `
+    <button class="btn btn-primary" id="btn-new-lot" style="margin-top:10px;margin-bottom:10px;">+ Nouveau lot</button>
+    <button class="btn btn-secondary" id="btn-mouvement-groupe" style="border-color:var(--danger);color:var(--danger);margin-bottom:10px;">Mouvement groupé (vente / sortie multiple)</button>
+    <button class="btn btn-secondary" id="btn-traitement-collectif" style="border-color:var(--warning);color:var(--warning);">Traitement collectif (tout le troupeau)</button>
+  `;
+
+  document.getElementById('btn-traitement-collectif').onclick = () => render('traitement-collectif');
+  document.getElementById('btn-mouvement-groupe').onclick = () => render('mouvement-groupe');
+  document.getElementById('btn-new-lot').onclick = () => render('add-lot');
+  document.querySelectorAll('.btn-search-lot').forEach(btn => {
+    btn.onclick = () => { currentLotId = btn.dataset.id; render('lot-search'); };
+  });
+  document.querySelectorAll('.btn-del-lot').forEach(btn => {
+    btn.onclick = () => {
+      if (!confirm('Supprimer ce lot ?')) return;
+      DB.lots = DB.lots.filter(l => l.id !== btn.dataset.id);
+      saveData(DB);
+      render('lots');
+    };
+  });
+}
+
+function renderAddLot() {
+  pageTitle.textContent = 'Nouveau lot';
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+
+  app.innerHTML = `
+    <div class="card">
+      <label>Nom du lot</label>
+      <input type="text" id="f-lot-nom" placeholder="ex: Brebis vides à trier">
+
+      <label>Filtrer par dernier résultat d'échographie (facultatif)</label>
+      <div class="chip-list" id="critere-list">
+        <button type="button" class="chip" data-val="Début">Début</button>
+        <button type="button" class="chip" data-val="Milieu">Milieu</button>
+        <button type="button" class="chip" data-val="Fin">Fin</button>
+        <button type="button" class="chip" data-val="Vide">Vide</button>
+        <button type="button" class="chip" data-val="Pleine">Pleine (constat)</button>
+        <button type="button" class="chip" data-val="Aucune">Sans échographie</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Coche un ou plusieurs critères pour présélectionner des brebis ci-dessous — tu peux ensuite ajuster la sélection à la main.</div>
+
+      <label>Brebis du lot (${actives.length} actives)</label>
+      <div id="brebis-checklist" style="max-height:400px;overflow-y:auto;margin-bottom:14px;"></div>
+
+      <div id="err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-save-lot">Créer le lot</button>
+    </div>
+  `;
+
+  const selected = new Set();
+  const criteres = new Set();
+
+  function lastStadeOf(sheep) {
+    const last = sheep.echographies[sheep.echographies.length - 1];
+    if (!last) return 'Aucune';
+    return last.stade || 'Aucune';
+  }
+
+  function renderChecklist() {
+    const container = document.getElementById('brebis-checklist');
+    container.innerHTML = actives.map(s => `
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);">
+        <input type="checkbox" class="lot-check" data-id="${s.id}" ${selected.has(s.id) ? 'checked' : ''} style="width:18px;height:18px;margin:0;">
+        <span style="font-size:14px;">Brebis n°${numeroVisuel(s.eid)}</span>
+        <span style="font-size:12px;color:var(--text-muted);margin-left:auto;">${lastStadeOf(s)}</span>
+      </label>
+    `).join('');
+    document.querySelectorAll('.lot-check').forEach(cb => {
+      cb.onchange = () => {
+        if (cb.checked) selected.add(cb.dataset.id);
+        else selected.delete(cb.dataset.id);
+      };
+    });
+  }
+  renderChecklist();
+
+  document.querySelectorAll('#critere-list .chip').forEach(chip => {
+    chip.onclick = () => {
+      const val = chip.dataset.val;
+      if (criteres.has(val)) { criteres.delete(val); chip.classList.remove('selected'); }
+      else { criteres.add(val); chip.classList.add('selected'); }
+      actives.forEach(s => {
+        if (criteres.has(lastStadeOf(s))) selected.add(s.id);
+      });
+      renderChecklist();
+    };
+  });
+
+  document.getElementById('btn-save-lot').onclick = () => {
+    const err = document.getElementById('err');
+    const nom = document.getElementById('f-lot-nom').value.trim();
+    if (!nom) {
+      err.textContent = "Donne un nom au lot.";
+      err.classList.remove('hidden');
+      return;
+    }
+    if (selected.size === 0) {
+      err.textContent = "Sélectionne au moins une brebis.";
+      err.classList.remove('hidden');
+      return;
+    }
+    err.classList.add('hidden');
+    const membres = actives.filter(s => selected.has(s.id)).map(s => s.eid);
+    DB.lots = DB.lots || [];
+    DB.lots.push({ id: Date.now().toString(), nom, dateCreation: new Date().toISOString().slice(0,10), membres });
+    saveData(DB);
+    render('lots');
+  };
+}
+
+function renderLotSearch(lotId) {
+  const lot = DB.lots.find(l => l.id === lotId);
+  if (!lot) { render('lots'); return; }
+  pageTitle.textContent = lot.nom;
+
+  const trouveesKey = 'trouvees_' + lot.id;
+  if (!window.__lotSessions) window.__lotSessions = {};
+  if (!window.__lotSessions[trouveesKey]) window.__lotSessions[trouveesKey] = new Set();
+  const trouvees = window.__lotSessions[trouveesKey];
+
+  function render_() {
+    const restants = lot.membres.filter(eid => !trouvees.has(cleanEid(eid)));
+    app.innerHTML = `
+      <div class="card">
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px;">Recherche en bergerie</div>
+        <div style="font-size:22px;font-weight:600;margin-bottom:14px;">${trouvees.size} / ${lot.membres.length} trouvée(s)</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Scanne les brebis à la suite — en lecture continue ou brebis par brebis selon le réglage du bâton, chaque bip valide est pris en compte immédiatement.</div>
+        <label>Scanner une brebis</label>
+        <input type="text" id="scan-lot" placeholder="Scanner ou saisir l'EID" autofocus>
+        <div id="scan-feedback" style="margin-top:10px;font-size:14px;"></div>
+      </div>
+      <div style="font-size:13px;color:var(--text-secondary);margin:16px 0 8px;">Restantes (${restants.length})</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+        ${restants.map(eid => `<span style="background:var(--surface-1);border-radius:20px;padding:6px 12px;font-size:13px;">n°${numeroVisuel(eid)}</span>`).join('') || '<span style="font-size:13px;color:var(--text-muted);">Toutes trouvées !</span>'}
+      </div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:8px;">Trouvées (${trouvees.size})</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        ${[...trouvees].map(eid => `<span style="background:var(--bg-success,#eaf0ea);color:var(--success);border-radius:20px;padding:6px 12px;font-size:13px;">n°${numeroVisuel(eid)}</span>`).join('')}
+      </div>
+    `;
+    const scanInput = document.getElementById('scan-lot');
+    scanInput.focus();
+    scanInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const val = cleanEid(scanInput.value);
+      const feedback = document.getElementById('scan-feedback');
+      scanInput.value = '';
+      if (!val) return;
+      const isMember = lot.membres.some(m => cleanEid(m) === val);
+      if (!isMember) {
+        playBeepRate();
+        feedback.textContent = 'n°' + numeroVisuel(val) + " n'est pas dans ce lot.";
+        feedback.style.color = 'var(--danger)';
+        return;
+      }
+      if (trouvees.has(val)) {
+        playBeepDejaTrouve();
+        feedback.textContent = 'n°' + numeroVisuel(val) + ' déjà trouvée.';
+        feedback.style.color = 'var(--warning)';
+        return;
+      }
+      playBeepTrouve();
+      feedback.textContent = '';
+      trouvees.add(val);
+      render_();
+    });
+  }
+  render_();
+}
+
+/* ---------- Mouvement groupé (vente / sortie multiple) ---------- */
+function renderMouvementGroupe() {
+  pageTitle.textContent = 'Mouvement groupé';
+  const today = new Date().toISOString().slice(0,10);
+
+  if (!window.__panierGroupe) window.__panierGroupe = [];
+  const panier = window.__panierGroupe;
+
+  let type = null, cause = null, acheteur = null;
+
+  function render_() {
+    app.innerHTML = `
+      <div class="card">
+        <label>Type de mouvement</label>
+        <div class="grid2" style="margin-bottom:10px;">
+          <button type="button" class="opt-btn type-opt" data-val="Morte">Morte</button>
+          <button type="button" class="opt-btn type-opt" data-val="Vendue">Vendue</button>
+          <button type="button" class="opt-btn type-opt" data-val="Vendue reproduction" style="grid-column:span 2;">Vendue reproduction</button>
+        </div>
+        <div id="cause-block" class="hidden" style="margin-bottom:14px;">
+          <label>Cause</label>
+          <div class="chip-list" id="cause-list"></div>
+          <div class="row"><input type="text" id="new-cause" placeholder="Ajouter une nouvelle cause..."><button type="button" class="btn btn-secondary" id="add-cause" style="width:auto;padding:0 16px;">+</button></div>
+        </div>
+        <div id="acheteur-block" class="hidden" style="margin-bottom:14px;">
+          <label>Acheteur</label>
+          <div class="chip-list" id="acheteur-list"></div>
+          <div class="row"><input type="text" id="new-acheteur" placeholder="Ajouter un nouvel acheteur..."><button type="button" class="btn btn-secondary" id="add-acheteur" style="width:auto;padding:0 16px;">+</button></div>
+        </div>
+        <label>Date</label>
+        <input type="date" id="f-date" value="${today}">
+      </div>
+
+      <div class="card">
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">Scanne les brebis à la suite — en lecture continue ou brebis par brebis selon le réglage du bâton, chaque bip valide ajoute directement la brebis au panier.</div>
+        <label>Scanner une brebis</label>
+        <input type="text" id="scan-groupe" placeholder="Scanner ou saisir l'EID" autofocus>
+        <div id="scan-groupe-err" class="error-box hidden"></div>
+      </div>
+
+      <div style="font-size:14px;font-weight:600;margin:16px 0 10px;">Panier (${panier.length})</div>
+      <div>
+        ${panier.map((eid, i) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);font-size:14px;">
+            <span>n°${numeroVisuel(eid)}</span>
+            <button type="button" class="btn btn-secondary btn-remove-panier" data-i="${i}" style="width:auto;padding:4px 10px;font-size:12px;">Retirer</button>
+          </div>
+        `).join('') || '<div style="font-size:13px;color:var(--text-muted);">Aucune brebis scannée pour l\'instant.</div>'}
+      </div>
+
+      <div id="err" class="error-box hidden" style="margin-top:14px;"></div>
+      <button class="btn btn-primary" id="btn-valider-groupe" style="margin-top:10px;background:var(--danger);">Valider ${panier.length} mouvement(s)</button>
+    `;
+
+    function renderCauseChips() {
+      const list = document.getElementById('cause-list');
+      list.innerHTML = '';
+      DB.causesMortalite.forEach(val => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip' + (cause === val ? ' selected' : '');
+        chip.textContent = val;
+        chip.onclick = () => { cause = (cause === val) ? null : val; renderCauseChips(); };
+        list.appendChild(chip);
+      });
+    }
+    function renderAcheteurChips() {
+      const list = document.getElementById('acheteur-list');
+      list.innerHTML = '';
+      DB.acheteurs.forEach(val => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip' + (acheteur === val ? ' selected' : '');
+        chip.textContent = val;
+        chip.onclick = () => { acheteur = (acheteur === val) ? null : val; renderAcheteurChips(); };
+        list.appendChild(chip);
+      });
+    }
+    renderCauseChips();
+    renderAcheteurChips();
+
+    document.querySelectorAll('.type-opt').forEach(btn => {
+      if (btn.dataset.val === type) btn.classList.add('selected');
+      btn.onclick = () => {
+        type = btn.dataset.val;
+        document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        document.getElementById('cause-block').classList.toggle('hidden', type !== 'Morte');
+        document.getElementById('acheteur-block').classList.toggle('hidden', !(type === 'Vendue' || type === 'Vendue reproduction'));
+      };
+    });
+    if (type === 'Morte') document.getElementById('cause-block').classList.remove('hidden');
+    if (type === 'Vendue' || type === 'Vendue reproduction') document.getElementById('acheteur-block').classList.remove('hidden');
+
+    document.getElementById('add-cause').onclick = () => {
+      const input = document.getElementById('new-cause');
+      const val = input.value.trim();
+      if (!val) return;
+      if (!DB.causesMortalite.includes(val)) DB.causesMortalite.push(val);
+      saveData(DB); input.value = ''; cause = val; renderCauseChips();
+    };
+    document.getElementById('add-acheteur').onclick = () => {
+      const input = document.getElementById('new-acheteur');
+      const val = input.value.trim();
+      if (!val) return;
+      if (!DB.acheteurs.includes(val)) DB.acheteurs.push(val);
+      saveData(DB); input.value = ''; acheteur = val; renderAcheteurChips();
+    };
+
+    const scanInput = document.getElementById('scan-groupe');
+    scanInput.focus();
+    scanInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const val = cleanEid(scanInput.value);
+      const err = document.getElementById('scan-groupe-err');
+      scanInput.value = '';
+      if (!val) return;
+      const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
+      if (!sheep) {
+        playBeepRate();
+        err.textContent = "Aucune brebis trouvée avec cet EID.";
+        err.classList.remove('hidden');
+        return;
+      }
+      if (panier.includes(sheep.eid)) {
+        playBeepDejaTrouve();
+        err.textContent = "Déjà dans le panier.";
+        err.classList.remove('hidden');
+        return;
+      }
+      playBeepTrouve();
+      err.classList.add('hidden');
+      panier.push(sheep.eid);
+      render_();
+    });
+
+    document.querySelectorAll('.btn-remove-panier').forEach(btn => {
+      btn.onclick = () => { panier.splice(parseInt(btn.dataset.i, 10), 1); render_(); };
+    });
+
+    document.getElementById('btn-valider-groupe').onclick = () => {
+      const errBox = document.getElementById('err');
+      if (!type) { errBox.textContent = "Choisis un type de mouvement."; errBox.classList.remove('hidden'); return; }
+      if ((type === 'Vendue' || type === 'Vendue reproduction') && !acheteur) { errBox.textContent = "Sélectionne ou ajoute un acheteur."; errBox.classList.remove('hidden'); return; }
+      if (panier.length === 0) { errBox.textContent = "Scanne au moins une brebis."; errBox.classList.remove('hidden'); return; }
+      if (!confirm('Appliquer "' + type + '" à ' + panier.length + ' brebis ?')) return;
+      const date = document.getElementById('f-date').value;
+      panier.forEach(eid => {
+        const sheep = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eid));
+        if (!sheep) return;
+        sheep.mouvements = sheep.mouvements || [];
+        sheep.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date });
+        sheep.statut = type === 'Morte' ? 'morte' : type === 'Vendue' ? 'vendue' : 'vendue reproduction';
+      });
+      saveData(DB);
+      window.__panierGroupe = [];
+      alert(panier.length + ' mouvement(s) enregistré(s).');
+      render('lots');
+    };
+  }
+  render_();
+}
+
+/* ---------- Traitement collectif (tout le troupeau) ---------- */
+function renderTraitementCollectif() {
+  pageTitle.textContent = 'Traitement collectif';
+  const today = new Date().toISOString().slice(0,10);
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Sera appliqué aux ${actives.length} brebis actives du troupeau.</div>
+
+      <label>Type d'évènement</label>
+      <div class="grid4" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px;">
+        <button type="button" class="opt-btn type-opt" data-val="Vaccin">Vaccin</button>
+        <button type="button" class="opt-btn type-opt" data-val="Traitement">Traitement</button>
+        <button type="button" class="opt-btn type-opt" data-val="Autre">Autre</button>
+      </div>
+
+      <div id="sous-type-block" class="hidden" style="margin-bottom:10px;">
+        <label>Catégorie de traitement</label>
+        <div class="grid2" id="sous-type-group">
+          <button type="button" class="opt-btn sous-opt" data-val="Antibiotique">Antibiotique</button>
+          <button type="button" class="opt-btn sous-opt" data-val="Antiparasitaire">Antiparasitaire</button>
+        </div>
+        <div class="grid2">
+          <button type="button" class="opt-btn sous-opt" data-val="Anti-inflammatoire" style="grid-column:span 2;">Anti-inflammatoire</button>
+        </div>
+      </div>
+
+      <div id="autre-note" class="hidden" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;padding:10px;background:#f0efe9;border-radius:var(--radius);">Soin de plaie — pas de produit à sélectionner.</div>
+
+      <div id="produit-block" class="hidden" style="margin-bottom:14px;">
+        <label>Produit utilisé</label>
+        <div class="chip-list" id="produit-list"></div>
+        <div class="row">
+          <input type="text" id="new-produit" placeholder="Ajouter un nouveau produit...">
+          <button type="button" class="btn btn-secondary" id="add-produit" style="width:auto;padding:0 16px;">+</button>
+        </div>
+      </div>
+
+      <label>Date</label>
+      <input type="date" id="f-date" value="${today}">
+
+      <label>Dose (facultatif)</label>
+      <input type="text" id="f-dose" placeholder="ex: 2 ml">
+
+      <label>Commentaire (facultatif)</label>
+      <input type="text" id="f-comment" placeholder="ex: rappel dans 3 semaines">
+
+      <div id="err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-save-collectif" style="background:var(--warning);">Appliquer aux ${actives.length} brebis actives</button>
+    </div>
+  `;
+
+  let type = null, sousType = null, produit = null;
+
+  function categorieKey() {
+    if (type === 'Vaccin') return 'vaccins';
+    if (sousType === 'Antibiotique') return 'antibiotiques';
+    if (sousType === 'Antiparasitaire') return 'antiparasitaires';
+    if (sousType === 'Anti-inflammatoire') return 'antiinflammatoires';
+    return null;
+  }
+  function renderProduitChips() {
+    const key = categorieKey();
+    const list = document.getElementById('produit-list');
+    list.innerHTML = '';
+    if (!key) { document.getElementById('produit-block').classList.add('hidden'); return; }
+    document.getElementById('produit-block').classList.remove('hidden');
+    DB.produits[key].forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (produit === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { produit = (produit === val) ? null : val; renderProduitChips(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+  }
+
+  document.querySelectorAll('.type-opt').forEach(btn => {
+    btn.onclick = () => {
+      type = btn.dataset.val;
+      sousType = null; produit = null;
+      document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      document.querySelectorAll('.sous-opt').forEach(b => b.classList.remove('selected'));
+      document.getElementById('sous-type-block').classList.toggle('hidden', type !== 'Traitement');
+      document.getElementById('autre-note').classList.toggle('hidden', type !== 'Autre');
+      if (type === 'Vaccin') renderProduitChips();
+      else document.getElementById('produit-block').classList.add('hidden');
+      document.getElementById('err').classList.add('hidden');
+    };
+  });
+  document.querySelectorAll('.sous-opt').forEach(btn => {
+    btn.onclick = () => {
+      sousType = btn.dataset.val;
+      produit = null;
+      document.querySelectorAll('.sous-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      renderProduitChips();
+      document.getElementById('err').classList.add('hidden');
+    };
+  });
+  document.getElementById('add-produit').onclick = () => {
+    const key = categorieKey();
+    if (!key) return;
+    const input = document.getElementById('new-produit');
+    const val = input.value.trim();
+    if (!val) return;
+    if (!DB.produits[key].includes(val)) DB.produits[key].push(val);
+    saveData(DB);
+    input.value = '';
+    produit = val;
+    renderProduitChips();
+  };
+
+  document.getElementById('btn-save-collectif').onclick = () => {
+    const err = document.getElementById('err');
+    if (!type) { err.textContent = "Choisis un type d'évènement."; err.classList.remove('hidden'); return; }
+    if (type === 'Traitement' && !sousType) { err.textContent = "Choisis une catégorie de traitement."; err.classList.remove('hidden'); return; }
+    if (type !== 'Autre' && !produit) { err.textContent = "Sélectionne ou ajoute un produit."; err.classList.remove('hidden'); return; }
+    if (!confirm('Appliquer ce traitement collectif aux ' + actives.length + ' brebis actives ?')) return;
+    err.classList.add('hidden');
+    const soin = {
+      type: type, sousType: sousType, produit: type === 'Autre' ? 'Soin de plaie' : produit,
+      date: document.getElementById('f-date').value,
+      dose: document.getElementById('f-dose').value.trim(),
+      commentaire: document.getElementById('f-comment').value.trim(),
+      collectif: true
+    };
+    actives.forEach(s => {
+      s.sanitaire = s.sanitaire || [];
+      s.sanitaire.push(soin);
+    });
+    saveData(DB);
+    alert('Traitement appliqué à ' + actives.length + ' brebis.');
+    render('lots');
+  };
+}
+
+
 function renderStats() {
   pageTitle.textContent = 'Tableau de bord';
 
@@ -2363,6 +3014,47 @@ function renderStats() {
     });
   });
   const prolificite = totalMisesBas > 0 ? Math.round((totalAgneaux / totalMisesBas) * 100) / 100 : 0;
+
+  function isGestanteEcho(echo) {
+    if (!echo) return false;
+    if (echo.type === 'constat') return echo.stade === 'Pleine';
+    return echo.stade && echo.stade !== 'Vide';
+  }
+
+  const parAge = {};
+  active.forEach(s => {
+    const an = anneeNaissance(s.eid);
+    if (an === null) return;
+    if (!parAge[an]) parAge[an] = { effectif: 0, avecEcho: 0, gestantes: 0, misesBas: 0, agneaux: 0 };
+    parAge[an].effectif++;
+    const last = s.echographies[s.echographies.length - 1];
+    if (last) {
+      parAge[an].avecEcho++;
+      if (isGestanteEcho(last)) parAge[an].gestantes++;
+    }
+    (s.agnelages || []).forEach(a => {
+      parAge[an].misesBas++;
+      parAge[an].agneaux += a.lambs.length;
+    });
+  });
+  const ageRows = Object.keys(parAge).sort((a,b) => b - a).map(an => {
+    const d = parAge[an];
+    return {
+      annee: an,
+      age: new Date().getFullYear() - an,
+      effectif: d.effectif,
+      tauxReussite: d.avecEcho > 0 ? Math.round((d.gestantes / d.avecEcho) * 1000) / 10 : null,
+      prolificite: d.misesBas > 0 ? Math.round((d.agneaux / d.misesBas) * 100) / 100 : null
+    };
+  });
+
+  const misesBasRestantes = active.filter(s => {
+    const last = s.echographies[s.echographies.length - 1];
+    if (!isGestanteEcho(last)) return false;
+    return !(s.agnelages && s.agnelages.length > 0);
+  }).length;
+
+  const attendueTraiteCount = active.filter(s => isAttendueTraite(s)).length;
 
   const controlesParNumero = { 1: [], 2: [], 3: [] };
   DB.brebis.forEach(s => {
@@ -2462,6 +3154,38 @@ function renderStats() {
     </div>
 
     <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Mises bas restantes attendues</div>
+      <div style="font-size:28px;font-weight:600;color:var(--warning);">${misesBasRestantes}</div>
+      <div style="font-size:12px;color:var(--text-muted);">Brebis gestantes (dernière échographie) qui n'ont pas encore mis bas — fiable une fois toutes les vraies vides confirmées</div>
+    </div>
+
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Brebis attendues à la traite</div>
+      <div style="font-size:28px;font-weight:600;color:var(--primary-light);">${attendueTraiteCount}</div>
+      <div style="font-size:12px;color:var(--text-muted);">Tous les agneaux sont vendus, morts ou renouvelés</div>
+    </div>
+
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Taux de réussite et prolificité par âge</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr style="color:var(--text-muted);text-align:left;">
+          <th style="padding:4px 4px;font-weight:500;">Année</th>
+          <th style="padding:4px 4px;font-weight:500;">Effectif</th>
+          <th style="padding:4px 4px;font-weight:500;">Réussite</th>
+          <th style="padding:4px 4px;font-weight:500;">Prolificité</th>
+        </tr>
+        ${ageRows.map(r => `
+          <tr style="border-top:1px solid var(--border);">
+            <td style="padding:6px 4px;">${r.annee} (${r.age} an(s))</td>
+            <td style="padding:6px 4px;">${r.effectif}</td>
+            <td style="padding:6px 4px;">${r.tauxReussite !== null ? r.tauxReussite + '%' : '—'}</td>
+            <td style="padding:6px 4px;">${r.prolificite !== null ? r.prolificite : '—'}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+
+    <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Contrôle laitier — moyenne par contrôle</div>
       <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
         <div>
@@ -2542,9 +3266,31 @@ function renderStats() {
       </div>
     </div>
 
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Exploitation</div>
+      <label>Nom de l'exploitation</label>
+      <input type="text" id="f-exp-nom" value="${DB.exploitation.nom || ''}" placeholder="ex: GAEC des Brebis Heureuses">
+      <label>Numéro de cheptel</label>
+      <input type="text" id="f-exp-cheptel" value="${DB.exploitation.numeroCheptel || ''}">
+      <label>Indicatif de marquage</label>
+      <input type="text" id="f-exp-marquage" value="${DB.exploitation.indicatifMarquage || ''}">
+      <label>Adresse</label>
+      <input type="text" id="f-exp-adresse" value="${DB.exploitation.adresse || ''}">
+      <label>Numéro de téléphone</label>
+      <input type="text" id="f-exp-tel" value="${DB.exploitation.telephone || ''}">
+      <button class="btn btn-secondary" id="btn-save-exploitation" style="margin-top:8px;margin-bottom:16px;">Enregistrer</button>
+
+      <label>Campagne actuelle (année de fin — ex: 2026 pour la campagne du 1er octobre 2025 au 30 septembre 2026)</label>
+      <div class="row">
+        <input type="number" id="f-campagne-annee" value="${DB.campagneDebut ? DB.campagneDebut + 1 : ''}" placeholder="ex: 2026">
+        <button type="button" class="btn btn-secondary" id="btn-save-campagne-annee" style="width:auto;padding:0 16px;">OK</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Cette valeur sert juste à afficher la bonne campagne dans l'en-tête — elle ne supprime aucune donnée. Utilise le bouton ci-dessous pour le vrai changement de campagne avec bascule des agnelles.</div>
+    </div>
+
     <div class="card" style="border-color:var(--accent);">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Changement de campagne</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? (DB.campagneDebut + '-' + (DB.campagneDebut + 1)) : 'non définie'}. À déclencher au 1er octobre : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis, et les mises bas, agneaux et mouvements de la campagne écoulée sont supprimés des fiches des brebis actives.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? ('Campagne ' + (DB.campagneDebut + 1) + ' (1er octobre ' + DB.campagneDebut + ' au 30 septembre ' + (DB.campagneDebut + 1) + ')') : 'non définie'}. À déclencher au 1er octobre : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis, et les mises bas, agneaux et mouvements de la campagne écoulée sont supprimés des fiches des brebis actives.</div>
       <button class="btn btn-secondary" id="btn-nouvelle-campagne" style="color:var(--accent);border-color:var(--accent);">Démarrer une nouvelle campagne</button>
     </div>
 
@@ -2632,6 +3378,25 @@ function renderStats() {
 
     const now = new Date();
     DB.campagneDebut = now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1;
+    saveData(DB);
+    render('stats');
+  };
+
+  document.getElementById('btn-save-exploitation').onclick = () => {
+    DB.exploitation = {
+      nom: document.getElementById('f-exp-nom').value.trim(),
+      numeroCheptel: document.getElementById('f-exp-cheptel').value.trim(),
+      indicatifMarquage: document.getElementById('f-exp-marquage').value.trim(),
+      adresse: document.getElementById('f-exp-adresse').value.trim(),
+      telephone: document.getElementById('f-exp-tel').value.trim()
+    };
+    saveData(DB);
+    alert('Informations enregistrées.');
+  };
+  document.getElementById('btn-save-campagne-annee').onclick = () => {
+    const val = parseInt(document.getElementById('f-campagne-annee').value, 10);
+    if (isNaN(val)) { alert("Saisis une année valide."); return; }
+    DB.campagneDebut = val - 1;
     saveData(DB);
     render('stats');
   };
