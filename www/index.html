@@ -4392,6 +4392,23 @@ const sync = {
   lastSynced: { brebis: {}, beliers: {}, agnelles: {}, meta: undefined }
 };
 
+/* Copie profonde + remplace toute valeur undefined par null (Firestore
+   refuse undefined). Sert à la fois pour ce qu'on envoie réellement à
+   Firestore ET pour ce qu'on garde dans lastSynced : lastSynced doit être
+   un instantané figé, jamais une référence vers le même objet que DB —
+   sinon, comme l'appli modifie ses objets sur place avant d'appeler
+   saveData(DB), l'« ancien » et le « nouveau » finiraient par être
+   littéralement le même objet et plus aucun changement ne serait jamais
+   détecté après le tout premier envoi. */
+function deepClean(value) {
+  if (value === undefined) return null;
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(deepClean);
+  const out = {};
+  Object.keys(value).forEach(k => { out[k] = deepClean(value[k]); });
+  return out;
+}
+
 /* Calcule un payload de mise à jour Firestore entre un ancien et un nouvel
    enregistrement : arrayUnion pour un simple ajout en fin de tableau (les
    ajouts concurrents depuis 2 appareils se combinent alors sans s'écraser),
@@ -4418,8 +4435,9 @@ async function syncAnimalCollection(colName, records) {
   const colRef = collection(fbDb, 'users', sync.uid, colName);
   const lastMap = sync.lastSynced[colName];
   const seenIds = new Set();
-  for (const rec of (records || [])) {
-    if (!rec.id) continue;
+  for (const rawRec of (records || [])) {
+    if (!rawRec.id) continue;
+    const rec = deepClean(rawRec);
     seenIds.add(rec.id);
     const old = lastMap[rec.id];
     if (old === undefined) {
@@ -4440,7 +4458,7 @@ async function syncAnimalCollection(colName, records) {
 
 async function syncMeta(data) {
   const metaRecord = {};
-  META_FIELDS.forEach(k => { metaRecord[k] = data[k] !== undefined ? data[k] : null; });
+  META_FIELDS.forEach(k => { metaRecord[k] = deepClean(data[k]); });
   const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
   if (sync.lastSynced.meta === undefined) {
     await setDoc(metaRef, metaRecord);
@@ -4488,7 +4506,10 @@ function startListeners() {
       const arr = [];
       snap.forEach(d => arr.push(d.data()));
       sync.lastSynced[colName] = {};
-      arr.forEach(r => { sync.lastSynced[colName][r.id] = r; });
+      // Instantané indépendant de ce qui va dans DB (voir deepClean) : DB
+      // continue de contenir les objets « vivants » que l'appli modifie
+      // directement sur place.
+      arr.forEach(r => { sync.lastSynced[colName][r.id] = deepClean(r); });
       applyRemoteUpdate(() => { DB[colName] = arr; });
     }, err => console.error('Erreur d\'écoute Firestore (' + colName + ') :', err));
     sync.unsubscribers.push(unsub);
@@ -4497,7 +4518,7 @@ function startListeners() {
   const unsubMeta = onSnapshot(metaRef, snap => {
     if (!snap.exists()) return;
     const meta = snap.data();
-    sync.lastSynced.meta = meta;
+    sync.lastSynced.meta = deepClean(meta);
     applyRemoteUpdate(() => { Object.assign(DB, meta); });
   }, err => console.error('Erreur d\'écoute Firestore (meta) :', err));
   sync.unsubscribers.push(unsubMeta);
