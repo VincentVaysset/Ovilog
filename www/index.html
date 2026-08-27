@@ -3152,32 +3152,165 @@ function renderTraitementCollectif() {
 }
 
 /* ---------- Import CSV inventaire + échographies ---------- */
+function normalizeTexte(s) {
+  return String(s).normalize('NFD').replace(new RegExp('[̀-ͯ]', 'g'), '').toLowerCase().trim();
+}
+
 function parseEchoComment(comment) {
-  const c = comment.trim();
+  const c = String(comment).trim();
   if (!DB.casParticuliers) DB.casParticuliers = ['Pseudogestation', 'Avortée'];
-  if (DB.casParticuliers.includes(c)) {
-    return { special: c, stade: null, agneaux: null, parasitisme: false };
+  const cas = DB.casParticuliers.find(cp => normalizeTexte(cp) === normalizeTexte(c));
+  if (cas) {
+    return { special: cas, stade: null, agneaux: null, parasitisme: false };
   }
-  const words = c.split(/\s+/);
-  const stade = words[0];
-  const stadesValides = ['Début', 'Milieu', 'Fin', 'Vide'];
-  if (!stadesValides.includes(stade)) return null;
-  const parasitisme = words.includes('P');
+  const words = c.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  const stadesValides = { 'debut': 'Début', 'milieu': 'Milieu', 'fin': 'Fin', 'vide': 'Vide' };
+  const stade = stadesValides[normalizeTexte(words[0])];
+  if (!stade) return null;
+  const parasitisme = words.some(w => normalizeTexte(w) === 'p');
   const num = words.find(w => w === '1' || w === '2');
   const agneaux = num === '1' ? 'Simple' : num === '2' ? 'Double' : null;
   return { special: null, stade, agneaux, parasitisme };
 }
 
+/* Décode un CSV en devinant l'encodage (UTF-8 si valide, sinon Windows-1252)
+   et le séparateur (';', ',' ou tabulation — le plus fréquent sur les 1res lignes). */
+function decodeCsvBuffer(buffer) {
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch (e) {
+    text = new TextDecoder('windows-1252').decode(buffer);
+  }
+  text = text.replace(/^﻿/, '');
+  const sampleLines = text.split(/\r?\n/).slice(0, 5);
+  const counts = { ';': 0, ',': 0, '\t': 0 };
+  sampleLines.forEach(l => {
+    counts[';'] += (l.match(/;/g) || []).length;
+    counts[','] += (l.match(/,/g) || []).length;
+    counts['\t'] += (l.match(/\t/g) || []).length;
+  });
+  const delimiter = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || ';';
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const toRow = (line) => line.split(delimiter).map(p => p.trim().replace(/^"|"$/g, ''));
+  return lines.map(toRow);
+}
+
+/* ---------- Lecteur XLSX minimal (ZIP + OOXML), sans dépendance externe ---------- */
+async function readXlsxRows(buffer) {
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  let eocd = -1;
+  const minEocd = Math.max(0, bytes.length - 22 - 65557);
+  for (let i = bytes.length - 22; i >= minEocd; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd === -1) throw new Error("Fichier .xlsx invalide ou corrompu.");
+  const entryCount = view.getUint16(eocd + 10, true);
+  let cdOffset = view.getUint32(eocd + 16, true);
+  const files = {};
+  for (let i = 0; i < entryCount; i++) {
+    if (view.getUint32(cdOffset, true) !== 0x02014b50) break;
+    const compMethod = view.getUint16(cdOffset + 10, true);
+    const compSize = view.getUint32(cdOffset + 20, true);
+    const nameLen = view.getUint16(cdOffset + 28, true);
+    const extraLen = view.getUint16(cdOffset + 30, true);
+    const commentLen = view.getUint16(cdOffset + 32, true);
+    const localHeaderOffset = view.getUint32(cdOffset + 42, true);
+    const name = new TextDecoder('utf-8').decode(bytes.slice(cdOffset + 46, cdOffset + 46 + nameLen));
+    files[name] = { compMethod, compSize, localHeaderOffset };
+    cdOffset += 46 + nameLen + extraLen + commentLen;
+  }
+  async function getFileText(name) {
+    const f = files[name];
+    if (!f) return null;
+    const lh = f.localHeaderOffset;
+    if (view.getUint32(lh, true) !== 0x04034b50) throw new Error('Entrée ZIP invalide.');
+    const lNameLen = view.getUint16(lh + 26, true);
+    const lExtraLen = view.getUint16(lh + 28, true);
+    const dataStart = lh + 30 + lNameLen + lExtraLen;
+    const compData = bytes.slice(dataStart, dataStart + f.compSize);
+    let plain;
+    if (f.compMethod === 0) {
+      plain = compData;
+    } else if (f.compMethod === 8) {
+      if (!window.DecompressionStream) throw new Error('DECOMPRESSION_UNSUPPORTED');
+      const ds = new DecompressionStream('deflate-raw');
+      const stream = new Blob([compData]).stream().pipeThrough(ds);
+      plain = new Uint8Array(await new Response(stream).arrayBuffer());
+    } else {
+      throw new Error("Méthode de compression du fichier .xlsx non supportée.");
+    }
+    return new TextDecoder('utf-8').decode(plain);
+  }
+
+  const sharedStringsXml = await getFileText('xl/sharedStrings.xml');
+  let sharedStrings = [];
+  if (sharedStringsXml) {
+    const doc = new DOMParser().parseFromString(sharedStringsXml, 'application/xml');
+    const siNodes = doc.getElementsByTagName('si');
+    for (let i = 0; i < siNodes.length; i++) {
+      const tNodes = siNodes[i].getElementsByTagName('t');
+      let text = '';
+      for (let j = 0; j < tNodes.length; j++) text += tNodes[j].textContent;
+      sharedStrings.push(text);
+    }
+  }
+
+  let sheetName = 'xl/worksheets/sheet1.xml';
+  if (!files[sheetName]) {
+    sheetName = Object.keys(files)
+      .filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
+      .sort((a, b) => parseInt(a.match(/\d+/)[0], 10) - parseInt(b.match(/\d+/)[0], 10))[0];
+  }
+  const sheetXml = sheetName ? await getFileText(sheetName) : null;
+  if (!sheetXml) throw new Error("Aucune feuille trouvée dans le fichier .xlsx.");
+
+  const doc = new DOMParser().parseFromString(sheetXml, 'application/xml');
+  const rowNodes = doc.getElementsByTagName('row');
+  const rows = [];
+  for (let i = 0; i < rowNodes.length; i++) {
+    const cellNodes = rowNodes[i].getElementsByTagName('c');
+    const row = [];
+    for (let j = 0; j < cellNodes.length; j++) {
+      const cell = cellNodes[j];
+      const ref = cell.getAttribute('r') || '';
+      const colMatch = ref.match(/^([A-Z]+)/);
+      let colIdx = row.length;
+      if (colMatch) {
+        colIdx = 0;
+        for (const ch of colMatch[1]) colIdx = colIdx * 26 + (ch.charCodeAt(0) - 64);
+        colIdx -= 1;
+      }
+      const type = cell.getAttribute('t');
+      let value = '';
+      if (type === 'inlineStr') {
+        const isNode = cell.getElementsByTagName('is')[0];
+        value = isNode ? isNode.textContent : '';
+      } else {
+        const vNode = cell.getElementsByTagName('v')[0];
+        const raw = vNode ? vNode.textContent : '';
+        value = (type === 's') ? (sharedStrings[parseInt(raw, 10)] || '') : raw;
+      }
+      row[colIdx] = value;
+    }
+    for (let k = 0; k < row.length; k++) if (row[k] === undefined) row[k] = '';
+    rows.push(row);
+  }
+  return rows;
+}
+
 function renderImportEcho() {
-  pageTitle.textContent = 'Import CSV';
+  pageTitle.textContent = 'Import CSV / Excel';
   app.innerHTML = `
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
         ${iconCircle(ICON_ECHO, 'green', 'sm')}
-        <div style="font-size:13px;color:var(--text-muted);">Fichier au format "EID";"COMMENT" (ex: Début 1, Milieu 2, Vide P, Pseudogestation...).</div>
+        <div style="font-size:13px;color:var(--text-muted);">Fichier CSV ou Excel (.xlsx) avec 2 colonnes : EID et commentaire (ex: Début 1, Milieu 2, Vide P, Pseudogestation...). La 1re ligne peut être un en-tête ou déjà une donnée.</div>
       </div>
-      <label>Fichier CSV</label>
-      <input type="file" id="import-echo-file" accept=".csv">
+      <label>Fichier CSV ou Excel</label>
+      <input type="file" id="import-echo-file" accept=".csv,.xlsx">
       <label style="margin-top:12px;">Date à appliquer à ces échographies</label>
       <input type="date" id="import-echo-date" value="${new Date().toISOString().slice(0,10)}">
       <div id="import-echo-err" class="error-box hidden"></div>
@@ -3188,36 +3321,30 @@ function renderImportEcho() {
 
   let parsedRows = null;
 
-  document.getElementById('import-echo-file').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      let text;
-      try {
-        const decoder = new TextDecoder('windows-1252');
-        text = decoder.decode(reader.result);
-      } catch (err) {
-        text = new TextDecoder('utf-8').decode(reader.result);
-      }
-      const lines = text.split(/\r?\n/).filter(l => l.trim());
-      const rows = [];
-      const erreurs = [];
-      let nouvellesBrebis = 0;
-      lines.slice(1).forEach((line, i) => {
-        const parts = line.split(';').map(p => p.trim().replace(/^"|"$/g, ''));
-        if (parts.length < 2) { erreurs.push('Ligne ' + (i+2) + ' : format invalide'); return; }
-        const eid = parts[0];
-        const comment = parts[1];
-        if (cleanEid(eid).length < 11) { erreurs.push('Ligne ' + (i+2) + ' : EID invalide (' + eid + ')'); return; }
-        const parsed = parseEchoComment(comment);
-        if (!parsed) { erreurs.push('Ligne ' + (i+2) + ' : commentaire non reconnu (' + comment + ')'); return; }
-        const existe = DB.brebis.some(s => cleanEid(s.eid) === cleanEid(eid));
-        if (!existe) nouvellesBrebis++;
-        rows.push({ eid, ...parsed });
-      });
-      parsedRows = rows;
-      const preview = document.getElementById('import-echo-preview');
+  function processTableRows(tableRows) {
+    // Ignore la 1re ligne seulement si elle ressemble à un en-tête (1re colonne pas un EID valide)
+    let dataRows = tableRows;
+    if (tableRows.length > 0 && cleanEid(String(tableRows[0][0] || '')).length < 11) {
+      dataRows = tableRows.slice(1);
+    }
+    const rows = [];
+    const erreurs = [];
+    let nouvellesBrebis = 0;
+    dataRows.forEach((parts, i) => {
+      if (!parts || parts.length < 2 || (!parts[0] && !parts[1])) return;
+      const eid = String(parts[0] || '').trim();
+      const comment = String(parts[1] || '').trim();
+      if (cleanEid(eid).length < 11) { erreurs.push('Ligne ' + (i+2) + ' : EID invalide (' + eid + ')'); return; }
+      const parsed = parseEchoComment(comment);
+      if (!parsed) { erreurs.push('Ligne ' + (i+2) + ' : commentaire non reconnu (' + comment + ')'); return; }
+      const existe = DB.brebis.some(s => cleanEid(s.eid) === cleanEid(eid));
+      if (!existe) nouvellesBrebis++;
+      rows.push({ eid, ...parsed });
+    });
+    parsedRows = rows;
+    const err = document.getElementById('import-echo-err');
+    err.classList.add('hidden');
+    const preview = document.getElementById('import-echo-preview');
       preview.innerHTML = `
         <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
           <div class="stat-card sc-green">
@@ -3235,7 +3362,34 @@ function renderImportEcho() {
         </div>
         ${erreurs.length ? '<div style="font-size:12px;color:var(--coral-fg);margin-top:8px;">' + erreurs.slice(0,10).join('<br>') + (erreurs.length > 10 ? '<br>... (' + (erreurs.length-10) + ' de plus)' : '') + '</div>' : ''}
       `;
-      document.getElementById('btn-confirm-import').classList.toggle('hidden', rows.length === 0);
+    document.getElementById('btn-confirm-import').classList.toggle('hidden', rows.length === 0);
+  }
+
+  document.getElementById('import-echo-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-echo-err');
+    err.classList.add('hidden');
+    document.getElementById('import-echo-preview').innerHTML = '';
+    document.getElementById('btn-confirm-import').classList.add('hidden');
+    const isXlsx = /\.xlsx$/i.test(file.name);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const tableRows = isXlsx ? await readXlsxRows(reader.result) : decodeCsvBuffer(reader.result);
+        processTableRows(tableRows);
+      } catch (ex) {
+        if (ex && ex.message === 'DECOMPRESSION_UNSUPPORTED') {
+          err.textContent = "Ce téléphone/navigateur ne sait pas décompresser les fichiers .xlsx — exporte plutôt en .csv depuis ton tableur.";
+        } else {
+          err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        }
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
     };
     reader.readAsArrayBuffer(file);
   });
@@ -3570,10 +3724,10 @@ function renderStats() {
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
         ${iconCircle(ICON_ECHO, 'green', 'sm')}
-        <div style="font-size:14px;font-weight:600;">Import CSV — inventaire + échographies</div>
+        <div style="font-size:14px;font-weight:600;">Import CSV/Excel — inventaire + échographies</div>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Importe un fichier au format "EID";"COMMENT" (ex: export de contrôle de gestation). Les brebis inconnues sont créées automatiquement, les échographies ajoutées à leur historique.</div>
-      <button class="btn btn-secondary" id="btn-goto-import">Importer un fichier CSV</button>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Importe un fichier CSV ou Excel (.xlsx) avec les colonnes EID et commentaire (ex: export de contrôle de gestation). Les brebis inconnues sont créées automatiquement, les échographies ajoutées à leur historique.</div>
+      <button class="btn btn-secondary" id="btn-goto-import">Importer un fichier</button>
     </div>
 
     <div class="card">
