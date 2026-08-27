@@ -231,6 +231,12 @@
   .sheep-item-left { display: flex; align-items: center; gap: 12px; }
   .pill-tag { display: inline-block; border-radius: var(--radius-pill); padding: 6px 12px; font-size: 13px; }
 
+  /* ---------- Saisie rapide en boucle (échographies, mises bas) ---------- */
+  .session-counter { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: var(--radius-pill); font-weight: 700; font-size: 14px; }
+  .session-counter.sc-green { background: var(--green-bg); color: var(--green-fg); }
+  .session-counter.sc-amber { background: var(--amber-bg); color: var(--amber-fg); }
+  .found-badge { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: var(--radius-pill); background: var(--amber-bg); color: var(--amber-fg); }
+
   /* ---------- Tableau de bord : grille de cartes colorées ---------- */
   .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px; }
   .stat-card { border-radius: var(--radius); padding: 14px; }
@@ -689,6 +695,11 @@ const ICON_SYNC = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org
   <path d="M4.5 12a7.5 7.5 0 0 1 12.6-5.5M19.5 12a7.5 7.5 0 0 1-12.6 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
   <path d="M17.5 3.5v3.5H14M6.5 20.5V17H10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;
+const ICON_WARNING = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+  <path d="M12 7.5v6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="12" cy="16.7" r="1.15" fill="currentColor"/>
+</svg>`;
 function iconCircle(svg, color, size) {
   return `<span class="icon-circle ic-${color} ic-${size || 'md'}">${svg}</span>`;
 }
@@ -788,6 +799,7 @@ btnBack.onclick = () => {
   else if (currentView === 'belier-detail') render(belierDetailOrigin);
   else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
   else if (currentView === 'add-echo' || currentView === 'add-agnelage' || currentView === 'add-sanitaire' || currentView === 'add-mouvement' || currentView === 'add-controle') render('detail', currentSheepId);
+  else if (currentView === 'echo-rapide' || currentView === 'misebas-rapide') render('list');
 };
 fabAdd.onclick = () => render('add-sheep');
 
@@ -895,6 +907,8 @@ function render(view, sheepId) {
   else if (view === 'add-sheep') renderAddSheep();
   else if (view === 'add-echo') renderAddEcho(currentSheepId);
   else if (view === 'add-agnelage') renderAddAgnelage(currentSheepId);
+  else if (view === 'echo-rapide') renderEchoRapide();
+  else if (view === 'misebas-rapide') renderMiseBasRapide();
   else if (view === 'add-sanitaire') renderAddSanitaire(currentSheepId);
   else if (view === 'add-mouvement') renderAddMouvement(currentSheepId);
   else if (view === 'add-controle') renderAddControle(currentSheepId);
@@ -1173,6 +1187,17 @@ function renderList() {
     previousDetailId = null;
     render('detail', sheep.id);
   });
+
+  const rapideRow = document.createElement('div');
+  rapideRow.className = 'row';
+  rapideRow.style.marginBottom = '16px';
+  rapideRow.innerHTML = `
+    <button type="button" class="btn btn-secondary" id="btn-echo-rapide">Saisie rapide — Échographies</button>
+    <button type="button" class="btn btn-secondary" id="btn-misebas-rapide">Saisie rapide — Mises bas</button>
+  `;
+  app.appendChild(rapideRow);
+  rapideRow.querySelector('#btn-echo-rapide').onclick = () => render('echo-rapide');
+  rapideRow.querySelector('#btn-misebas-rapide').onclick = () => render('misebas-rapide');
 
   const dashboard = document.createElement('div');
   dashboard.innerHTML = dashboardKpiHtml();
@@ -2067,6 +2092,512 @@ function renderAddAgnelage(sheepId) {
     saveData(DB);
     render('detail', sheep.id);
   };
+}
+
+/* ---------- Saisie rapide d'échographies (boucle scan → résultat) ----------
+   1) On choisit le type d'échographie une seule fois pour toute la session.
+   2) Boucle : scan → résumé de la brebis + champs de résultat pour ce type
+      → Valider → tout se vide, prêt pour le scan suivant. Un compteur de
+      session s'incrémente à chaque validation.
+   3) EID inconnu → propose de créer la brebis à la volée puis continue dans
+      la même boucle sans interrompre la saisie.
+   Les champs de résultat reproduisent exactement ceux de renderAddEcho
+   (stade/constat, comptage d'agneaux, parasitisme, cas particulier) — seul
+   le sélecteur de type et la date disparaissent, fixés pour la session
+   (date = aujourd'hui pour chaque échographie saisie). */
+function renderEchoRapide() {
+  let typeEcho = null;
+  let count = 0;
+
+  function typeLabel() {
+    return typeEcho === 'constat' ? 'Constat' : typeEcho === 'stade' ? 'Stades' : 'Stades + comptage';
+  }
+
+  function screenChooseType() {
+    pageTitle.textContent = 'Nouvelle session — Échographies';
+    app.innerHTML = `
+      <div class="card">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Type d'échographie pour cette session</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Ce choix reste fixé pour toute la session — inutile de le ressélectionner à chaque brebis.</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button type="button" class="opt-btn type-echo-session-opt" data-val="constat">Constat (Pleine / Vide)</button>
+          <button type="button" class="opt-btn type-echo-session-opt" data-val="stade">Stades (Début / Milieu / Fin / Vide)</button>
+          <button type="button" class="opt-btn type-echo-session-opt" data-val="stade_comptage">Stades + comptage (+ 1 ou 2 agneaux)</button>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btn-start-echo-session" style="margin-top:14px;" disabled>Commencer la saisie</button>
+    `;
+    document.querySelectorAll('.type-echo-session-opt').forEach(btn => {
+      btn.onclick = () => {
+        typeEcho = btn.dataset.val;
+        document.querySelectorAll('.type-echo-session-opt').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        document.getElementById('btn-start-echo-session').disabled = false;
+      };
+    });
+    document.getElementById('btn-start-echo-session').onclick = () => {
+      if (!typeEcho) return;
+      screenLoop();
+    };
+  }
+
+  function screenLoop() {
+    let currentSheep = null;
+    let unknownEid = null;
+    let stade = null, agneaux = null, parasit = false, special = null;
+
+    function resetResult() {
+      currentSheep = null; unknownEid = null; stade = null; agneaux = null; parasit = false; special = null;
+    }
+
+    function clearGroup(sel) {
+      document.querySelectorAll(sel).forEach(b => b.classList.remove('selected'));
+    }
+
+    function renderStadeButtons() {
+      const group = document.getElementById('stade-group');
+      if (!group) return;
+      if (typeEcho === 'constat') {
+        group.style.gridTemplateColumns = 'repeat(2,1fr)';
+        group.innerHTML = `
+          <button type="button" class="opt-btn stade-opt" data-val="Pleine">Pleine</button>
+          <button type="button" class="opt-btn stade-opt" data-val="Vide">Vide</button>
+        `;
+      } else {
+        group.style.gridTemplateColumns = 'repeat(2,1fr)';
+        group.innerHTML = `
+          <button type="button" class="opt-btn stade-opt" data-val="Début">Début</button>
+          <button type="button" class="opt-btn stade-opt" data-val="Milieu">Milieu</button>
+          <button type="button" class="opt-btn stade-opt" data-val="Fin">Fin</button>
+          <button type="button" class="opt-btn stade-opt" data-val="Vide">Vide</button>
+        `;
+      }
+      document.querySelectorAll('.stade-opt').forEach(btn => {
+        if (btn.dataset.val === stade) btn.classList.add('selected');
+        btn.onclick = () => {
+          stade = btn.dataset.val;
+          special = null;
+          renderSpecialChips();
+          clearGroup('.stade-opt');
+          btn.classList.add('selected');
+          const showAgneaux = (typeEcho === 'stade_comptage') && stade !== 'Vide';
+          document.getElementById('agneaux-block').classList.toggle('hidden', !showAgneaux);
+          if (!showAgneaux) { agneaux = null; clearGroup('#agneaux-group .opt-btn'); }
+        };
+      });
+    }
+
+    function renderSpecialChips() {
+      const list = document.getElementById('special-list');
+      if (!list) return;
+      list.innerHTML = '';
+      DB.casParticuliers.forEach(val => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip' + (special === val ? ' selected' : '');
+        chip.textContent = val;
+        chip.onclick = () => {
+          if (special === val) { special = null; }
+          else {
+            special = val; stade = null; agneaux = null;
+            clearGroup('.stade-opt');
+            clearGroup('#agneaux-group .opt-btn');
+            document.getElementById('agneaux-block').classList.add('hidden');
+          }
+          renderSpecialChips();
+        };
+        list.appendChild(chip);
+      });
+    }
+
+    function resultFieldsHtml() {
+      return `
+        <div class="card">
+          <label>${typeEcho === 'constat' ? 'Résultat' : 'Stade'}</label>
+          <div class="grid4" id="stade-group" style="margin-bottom:14px;"></div>
+          <div id="agneaux-block" class="hidden">
+            <label>Nombre d'agneaux</label>
+            <div class="grid2" id="agneaux-group" style="margin-bottom:14px;">
+              <button type="button" class="opt-btn" data-val="Simple">1 agneau</button>
+              <button type="button" class="opt-btn" data-val="Double">2 et plus</button>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+            <input type="checkbox" id="f-parasit" style="width:18px;height:18px;margin:0;">
+            <span style="font-size:14px;color:var(--text);">Parasitisme observé</span>
+          </label>
+          <label>Cas particulier (facultatif)</label>
+          <div class="chip-list" id="special-list"></div>
+          <div id="err" class="error-box hidden"></div>
+          <button class="btn btn-primary" id="btn-valider-echo">Valider et scanner la suivante</button>
+        </div>
+      `;
+    }
+
+    function draw() {
+      pageTitle.textContent = 'Échographies — ' + typeLabel();
+      const unknownHtml = unknownEid ? `
+        <div style="background:var(--coral-bg);border-radius:var(--radius);padding:16px;margin-bottom:12px;">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+            <span style="width:44px;height:44px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--coral-fg);">${ICON_WARNING.replace('viewBox="0 0 24 24"', 'width="22" height="22" viewBox="0 0 24 24"')}</span>
+            <div>
+              <div style="font-weight:700;color:var(--coral-fg);">Brebis inconnue</div>
+              <div style="font-size:12px;color:var(--coral-fg);opacity:0.85;">Aucune fiche pour cet EID (n°${numeroVisuel(unknownEid)}).</div>
+            </div>
+          </div>
+          <button type="button" class="btn btn-primary" id="btn-create-unknown" style="margin-bottom:8px;">Créer cette brebis et continuer</button>
+          <button type="button" class="btn btn-secondary" id="btn-cancel-unknown">Annuler ce scan</button>
+        </div>
+      ` : '';
+      const foundHtml = currentSheep ? `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
+              <div>
+                <div style="font-weight:700;font-size:16px;">Brebis n°${numeroVisuel(currentSheep.eid)}</div>
+                <div style="font-size:12px;color:var(--text-muted);">${age(currentSheep.eid)} an(s) (${anneeNaissance(currentSheep.eid)})</div>
+              </div>
+            </div>
+            <span class="found-badge">Trouvée</span>
+          </div>
+        </div>
+      ` : '';
+
+      app.innerHTML = `
+        <div style="display:flex;justify-content:center;margin-bottom:16px;">
+          <div class="session-counter sc-green">${ICON_ECHO}${count} échographie${count > 1 ? 's' : ''} saisie${count > 1 ? 's' : ''}</div>
+        </div>
+        <div class="card">
+          <label>${currentSheep ? 'Scanner la prochaine brebis' : 'Scanner une brebis'}</label>
+          <input type="text" id="scan-echo" placeholder="Scanner ou saisir l'EID" autofocus>
+        </div>
+        ${unknownHtml}
+        ${foundHtml}
+        ${currentSheep ? resultFieldsHtml() : ''}
+      `;
+
+      const scanInput = document.getElementById('scan-echo');
+      scanInput.focus();
+      scanInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        const val = cleanEid(scanInput.value);
+        if (!val) return;
+        const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
+        if (!sheep) {
+          playBeepRate();
+          resetResult();
+          unknownEid = val;
+          draw();
+          return;
+        }
+        playBeepTrouve();
+        resetResult();
+        currentSheep = sheep;
+        draw();
+      });
+
+      if (unknownEid) {
+        document.getElementById('btn-create-unknown').onclick = () => {
+          const eidFormatted = unknownEid;
+          const newSheep = {
+            id: Date.now().toString() + Math.random().toString(36).slice(2,6),
+            eid: eidFormatted, createdAt: Date.now(), dateEntree: new Date().toISOString().slice(0,10),
+            echographies: [], agnelages: [], sanitaire: [], controleLaitier: [], statut: 'active',
+            mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: new Date().toISOString().slice(0,10) }]
+          };
+          DB.brebis.push(newSheep);
+          saveData(DB);
+          unknownEid = null;
+          currentSheep = newSheep;
+          draw();
+        };
+        document.getElementById('btn-cancel-unknown').onclick = () => {
+          unknownEid = null;
+          draw();
+        };
+      }
+
+      if (currentSheep) {
+        renderStadeButtons();
+        renderSpecialChips();
+        document.querySelectorAll('#agneaux-group .opt-btn').forEach(btn => {
+          if (btn.dataset.val === agneaux) btn.classList.add('selected');
+          btn.onclick = () => {
+            agneaux = btn.dataset.val;
+            clearGroup('#agneaux-group .opt-btn');
+            btn.classList.add('selected');
+          };
+        });
+        document.getElementById('f-parasit').checked = parasit;
+        document.getElementById('f-parasit').onchange = (e) => { parasit = e.target.checked; };
+
+        document.getElementById('btn-valider-echo').onclick = () => {
+          const err = document.getElementById('err');
+          if (!stade && !special) {
+            err.textContent = "Choisis un résultat (ou un cas particulier).";
+            err.classList.remove('hidden');
+            return;
+          }
+          const needAgneaux = typeEcho === 'stade_comptage' && (stade === 'Début' || stade === 'Milieu' || stade === 'Fin');
+          if (needAgneaux && !agneaux) {
+            err.textContent = "Précise si c'est 1 agneau ou 2 et plus.";
+            err.classList.remove('hidden');
+            return;
+          }
+          const echo = {
+            type: typeEcho,
+            date: new Date().toISOString().slice(0,10),
+            stade: stade, agneaux: agneaux, special: special, parasitisme: parasit
+          };
+          currentSheep.echographies = currentSheep.echographies || [];
+          currentSheep.echographies.push(echo);
+          saveData(DB);
+          count++;
+          resetResult();
+          draw();
+        };
+      }
+    }
+    draw();
+  }
+
+  screenChooseType();
+}
+
+/* ---------- Saisie rapide de mises bas (boucle scan → agnelage) ----------
+   Reprend exactement le formulaire d'agnelage existant (renderAddAgnelage :
+   sexe par agneau, EID, adoption, Sélépérol automatique) mais sans quitter
+   l'écran entre deux brebis : scan → formulaire → Valider et scanner la
+   suivante → tout se vide. Compteur de session. EID inconnu → création à la
+   volée, comme pour les échographies. */
+function renderMiseBasRapide() {
+  let count = 0;
+  let currentSheep = null;
+  let unknownEid = null;
+  let lambCount = 0;
+  const lambs = {};
+
+  function resetForm() {
+    currentSheep = null; unknownEid = null; lambCount = 0;
+    Object.keys(lambs).forEach(k => delete lambs[k]);
+  }
+
+  function lambCard(id) {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.style.marginBottom = '10px';
+    div.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <span style="font-size:14px;font-weight:600;">Agneau ${id}</span>
+        <button type="button" class="btn btn-secondary remove-lamb-rapide" data-id="${id}" style="width:auto;padding:4px 10px;font-size:13px;">Retirer</button>
+      </div>
+      <label>Sexe</label>
+      <div class="grid4" style="grid-template-columns:repeat(3,1fr);">
+        <button type="button" class="opt-btn sexe-opt-rapide warn" data-id="${id}" data-val="Mâle">Mâle</button>
+        <button type="button" class="opt-btn sexe-opt-rapide warn" data-id="${id}" data-val="Femelle">Femelle</button>
+        <button type="button" class="opt-btn sexe-opt-rapide warn" data-id="${id}" data-val="Mort-né">Mort-né</button>
+      </div>
+      <div class="eid-block-rapide" data-id="${id}">
+        <label>EID (bip agneau)</label>
+        <input type="text" class="eid-input-rapide" data-id="${id}" placeholder="Scanner ou saisir l'EID">
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <input type="checkbox" class="adopt-check-rapide" data-id="${id}" style="width:16px;height:16px;margin:0;">
+          <span style="font-size:14px;color:var(--text);">Adopté par une autre mère</span>
+        </label>
+        <div class="adopt-field-rapide hidden" data-id="${id}">
+          <label>EID mère adoptive</label>
+          <input type="text" class="adopt-eid-rapide" data-id="${id}" placeholder="Scanner ou saisir l'EID">
+        </div>
+        <div class="selepherol-note" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);background:#f0efe9;border-radius:var(--radius);padding:8px 12px;margin-top:10px;">Sélépérol 2 cc appliqué automatiquement</div>
+      </div>
+      <div class="mortne-note-rapide hidden" data-id="${id}" style="font-size:12px;color:var(--text-muted);margin-top:8px;">Pas de boucle sur un mort-né — aucun EID à saisir.</div>
+    `;
+    return div;
+  }
+
+  function bindLamb(id) {
+    document.querySelectorAll(`.sexe-opt-rapide[data-id="${id}"]`).forEach(btn => {
+      btn.onclick = () => {
+        lambs[id].sexe = btn.dataset.val;
+        document.querySelectorAll(`.sexe-opt-rapide[data-id="${id}"]`).forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        const isMortNe = btn.dataset.val === 'Mort-né';
+        document.querySelector(`.eid-block-rapide[data-id="${id}"]`).classList.toggle('hidden', isMortNe);
+        document.querySelector(`.mortne-note-rapide[data-id="${id}"]`).classList.toggle('hidden', !isMortNe);
+        document.getElementById('err').classList.add('hidden');
+      };
+    });
+    const check = document.querySelector(`.adopt-check-rapide[data-id="${id}"]`);
+    check.onchange = () => {
+      document.querySelector(`.adopt-field-rapide[data-id="${id}"]`).classList.toggle('hidden', !check.checked);
+      lambs[id].adopte = check.checked;
+    };
+    document.querySelector(`.remove-lamb-rapide[data-id="${id}"]`).onclick = () => {
+      delete lambs[id];
+      document.querySelector(`.remove-lamb-rapide[data-id="${id}"]`).closest('.card').remove();
+    };
+    const eidInput = document.querySelector(`.eid-input-rapide[data-id="${id}"]`);
+    if (eidInput) attachEidBeep(eidInput);
+    const adoptEidInput = document.querySelector(`.adopt-eid-rapide[data-id="${id}"]`);
+    if (adoptEidInput) attachEidBeep(adoptEidInput);
+  }
+
+  function addLamb() {
+    lambCount++;
+    const id = lambCount;
+    lambs[id] = { sexe: null, adopte: false };
+    document.getElementById('lamb-list-rapide').appendChild(lambCard(id));
+    bindLamb(id);
+  }
+
+  function draw() {
+    pageTitle.textContent = 'Saisie de mises bas';
+    const unknownHtml = unknownEid ? `
+      <div style="background:var(--coral-bg);border-radius:var(--radius);padding:16px;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+          <span style="width:44px;height:44px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--coral-fg);">${ICON_WARNING.replace('viewBox="0 0 24 24"', 'width="22" height="22" viewBox="0 0 24 24"')}</span>
+          <div>
+            <div style="font-weight:700;color:var(--coral-fg);">Brebis inconnue</div>
+            <div style="font-size:12px;color:var(--coral-fg);opacity:0.85;">Aucune fiche pour cet EID (n°${numeroVisuel(unknownEid)}).</div>
+          </div>
+        </div>
+        <button type="button" class="btn btn-primary" id="btn-create-unknown-mb" style="margin-bottom:8px;">Créer cette brebis et continuer</button>
+        <button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">Annuler ce scan</button>
+      </div>
+    ` : '';
+    const foundHtml = currentSheep ? `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
+            <div>
+              <div style="font-weight:700;font-size:16px;">Brebis n°${numeroVisuel(currentSheep.eid)}</div>
+              <div style="font-size:12px;color:var(--text-muted);">${age(currentSheep.eid)} an(s) (${anneeNaissance(currentSheep.eid)})</div>
+            </div>
+          </div>
+          <span class="found-badge">Trouvée</span>
+        </div>
+      </div>
+    ` : '';
+    const formHtml = currentSheep ? `
+      <div class="card">
+        <label>Date de naissance</label>
+        <input type="date" id="f-date-rapide" value="${new Date().toISOString().slice(0,10)}" style="margin-bottom:16px;">
+        <div id="lamb-list-rapide"></div>
+        <button type="button" class="btn btn-secondary" id="add-lamb-rapide" style="margin-bottom:14px;">+ Ajouter un agneau</button>
+        <div id="err" class="error-box hidden"></div>
+        <button class="btn btn-primary" id="btn-valider-misebas">Valider et scanner la suivante</button>
+      </div>
+    ` : '';
+
+    app.innerHTML = `
+      <div style="display:flex;justify-content:center;margin-bottom:16px;">
+        <div class="session-counter sc-amber">${ICON_SHEEP}${count} mise${count > 1 ? 's' : ''} bas saisie${count > 1 ? 's' : ''}</div>
+      </div>
+      <div class="card">
+        <label>Scanner la brebis qui vient de mettre bas</label>
+        <input type="text" id="scan-misebas" placeholder="Scanner ou saisir l'EID" autofocus>
+      </div>
+      ${unknownHtml}
+      ${foundHtml}
+      ${formHtml}
+    `;
+
+    const scanInput = document.getElementById('scan-misebas');
+    scanInput.focus();
+    scanInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const val = cleanEid(scanInput.value);
+      if (!val) return;
+      const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
+      if (!sheep) {
+        playBeepRate();
+        resetForm();
+        unknownEid = val;
+        draw();
+        return;
+      }
+      playBeepTrouve();
+      resetForm();
+      currentSheep = sheep;
+      draw();
+    });
+
+    if (unknownEid) {
+      document.getElementById('btn-create-unknown-mb').onclick = () => {
+        const newSheep = {
+          id: Date.now().toString() + Math.random().toString(36).slice(2,6),
+          eid: unknownEid, createdAt: Date.now(), dateEntree: new Date().toISOString().slice(0,10),
+          echographies: [], agnelages: [], sanitaire: [], controleLaitier: [], statut: 'active',
+          mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: new Date().toISOString().slice(0,10) }]
+        };
+        DB.brebis.push(newSheep);
+        saveData(DB);
+        unknownEid = null;
+        currentSheep = newSheep;
+        draw();
+        addLamb();
+      };
+      document.getElementById('btn-cancel-unknown-mb').onclick = () => {
+        unknownEid = null;
+        draw();
+      };
+    }
+
+    if (currentSheep) {
+      document.getElementById('add-lamb-rapide').onclick = addLamb;
+      if (Object.keys(lambs).length === 0) addLamb();
+
+      document.getElementById('btn-valider-misebas').onclick = () => {
+        const err = document.getElementById('err');
+        const ids = Object.keys(lambs);
+        if (ids.length === 0) {
+          err.textContent = "Ajoute au moins un agneau.";
+          err.classList.remove('hidden');
+          return;
+        }
+        for (const id of ids) {
+          if (!lambs[id].sexe) {
+            err.textContent = "Sélectionne le sexe de chaque agneau.";
+            err.classList.remove('hidden');
+            return;
+          }
+          if (lambs[id].sexe !== 'Mort-né') {
+            const eidInput = document.querySelector(`.eid-input-rapide[data-id="${id}"]`);
+            lambs[id].eid = eidInput.value.trim();
+            if (lambs[id].adopte) {
+              const adoptEidInput = document.querySelector(`.adopt-eid-rapide[data-id="${id}"]`);
+              lambs[id].adoptiveEid = adoptEidInput.value.trim();
+            }
+            lambs[id].sanitaire = lambs[id].sanitaire || [];
+            const dateNaissance = document.getElementById('f-date-rapide').value;
+            const dejaSelepherol = lambs[id].sanitaire.some(s => s.produit === 'Selepherol');
+            if (!dejaSelepherol) {
+              lambs[id].sanitaire.push({
+                type: 'Traitement', sousType: null, produit: 'Selepherol', dose: '2 cc',
+                date: dateNaissance,
+                commentaire: 'Injection systématique à la naissance'
+              });
+            }
+          }
+        }
+        err.classList.add('hidden');
+        const agnelage = {
+          date: document.getElementById('f-date-rapide').value,
+          lambs: ids.map(id => lambs[id])
+        };
+        currentSheep.agnelages = currentSheep.agnelages || [];
+        currentSheep.agnelages.push(agnelage);
+        saveData(DB);
+        count++;
+        resetForm();
+        draw();
+      };
+    }
+  }
+
+  draw();
 }
 
 /* ---------- Ajout carnet sanitaire ---------- */
