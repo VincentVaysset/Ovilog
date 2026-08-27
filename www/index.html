@@ -445,6 +445,7 @@ btnBack.onclick = () => {
   else if (currentView === 'lot-search') render('lots');
   else if (currentView === 'mouvement-groupe') render('lots');
   else if (currentView === 'traitement-collectif') render('lots');
+  else if (currentView === 'import-echo') render('stats');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render('beliers');
   else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
@@ -585,6 +586,7 @@ function render(view, sheepId) {
   else if (view === 'lot-search') renderLotSearch(currentLotId);
   else if (view === 'mouvement-groupe') renderMouvementGroupe();
   else if (view === 'traitement-collectif') renderTraitementCollectif();
+  else if (view === 'import-echo') renderImportEcho();
 }
 
 /* ---------- Liste des brebis ---------- */
@@ -3149,6 +3151,121 @@ function renderTraitementCollectif() {
   };
 }
 
+/* ---------- Import CSV inventaire + échographies ---------- */
+function parseEchoComment(comment) {
+  const c = comment.trim();
+  if (!DB.casParticuliers) DB.casParticuliers = ['Pseudogestation', 'Avortée'];
+  if (DB.casParticuliers.includes(c)) {
+    return { special: c, stade: null, agneaux: null, parasitisme: false };
+  }
+  const words = c.split(/\s+/);
+  const stade = words[0];
+  const stadesValides = ['Début', 'Milieu', 'Fin', 'Vide'];
+  if (!stadesValides.includes(stade)) return null;
+  const parasitisme = words.includes('P');
+  const num = words.find(w => w === '1' || w === '2');
+  const agneaux = num === '1' ? 'Simple' : num === '2' ? 'Double' : null;
+  return { special: null, stade, agneaux, parasitisme };
+}
+
+function renderImportEcho() {
+  pageTitle.textContent = 'Import CSV';
+  app.innerHTML = `
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+        ${iconCircle(ICON_ECHO, 'green', 'sm')}
+        <div style="font-size:13px;color:var(--text-muted);">Fichier au format "EID";"COMMENT" (ex: Début 1, Milieu 2, Vide P, Pseudogestation...).</div>
+      </div>
+      <label>Fichier CSV</label>
+      <input type="file" id="import-echo-file" accept=".csv">
+      <label style="margin-top:12px;">Date à appliquer à ces échographies</label>
+      <input type="date" id="import-echo-date" value="${new Date().toISOString().slice(0,10)}">
+      <div id="import-echo-err" class="error-box hidden"></div>
+      <div id="import-echo-preview" style="margin-top:14px;"></div>
+      <button class="btn btn-primary hidden" id="btn-confirm-import" style="margin-top:14px;">Confirmer l'import</button>
+    </div>
+  `;
+
+  let parsedRows = null;
+
+  document.getElementById('import-echo-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let text;
+      try {
+        const decoder = new TextDecoder('windows-1252');
+        text = decoder.decode(reader.result);
+      } catch (err) {
+        text = new TextDecoder('utf-8').decode(reader.result);
+      }
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      const rows = [];
+      const erreurs = [];
+      let nouvellesBrebis = 0;
+      lines.slice(1).forEach((line, i) => {
+        const parts = line.split(';').map(p => p.trim().replace(/^"|"$/g, ''));
+        if (parts.length < 2) { erreurs.push('Ligne ' + (i+2) + ' : format invalide'); return; }
+        const eid = parts[0];
+        const comment = parts[1];
+        if (cleanEid(eid).length < 11) { erreurs.push('Ligne ' + (i+2) + ' : EID invalide (' + eid + ')'); return; }
+        const parsed = parseEchoComment(comment);
+        if (!parsed) { erreurs.push('Ligne ' + (i+2) + ' : commentaire non reconnu (' + comment + ')'); return; }
+        const existe = DB.brebis.some(s => cleanEid(s.eid) === cleanEid(eid));
+        if (!existe) nouvellesBrebis++;
+        rows.push({ eid, ...parsed });
+      });
+      parsedRows = rows;
+      const preview = document.getElementById('import-echo-preview');
+      preview.innerHTML = `
+        <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
+          <div class="stat-card sc-green">
+            <div class="stat-card-label">Reconnues</div>
+            <div class="stat-card-value" style="font-size:20px;">${rows.length}</div>
+          </div>
+          <div class="stat-card sc-amber">
+            <div class="stat-card-label">Nouvelles brebis</div>
+            <div class="stat-card-value" style="font-size:20px;">${nouvellesBrebis}</div>
+          </div>
+          <div class="stat-card ${erreurs.length ? 'sc-coral' : ''}" style="${erreurs.length ? '' : 'background:#f0efe9;color:var(--text-muted);'}">
+            <div class="stat-card-label">Ignorées</div>
+            <div class="stat-card-value" style="font-size:20px;">${erreurs.length}</div>
+          </div>
+        </div>
+        ${erreurs.length ? '<div style="font-size:12px;color:var(--coral-fg);margin-top:8px;">' + erreurs.slice(0,10).join('<br>') + (erreurs.length > 10 ? '<br>... (' + (erreurs.length-10) + ' de plus)' : '') + '</div>' : ''}
+      `;
+      document.getElementById('btn-confirm-import').classList.toggle('hidden', rows.length === 0);
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import').onclick = () => {
+    if (!parsedRows || parsedRows.length === 0) return;
+    if (!confirm('Importer ' + parsedRows.length + ' échographie(s) ? Cette action ajoute des données, elle ne supprime rien.')) return;
+    const date = document.getElementById('import-echo-date').value;
+    parsedRows.forEach(row => {
+      let sheep = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(row.eid));
+      if (!sheep) {
+        sheep = { id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: row.eid, createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active' };
+        DB.brebis.push(sheep);
+      }
+      sheep.echographies = sheep.echographies || [];
+      sheep.echographies.push({
+        type: row.special ? 'stade_comptage' : (row.agneaux ? 'stade_comptage' : 'stade'),
+        date: date,
+        stade: row.stade,
+        agneaux: row.agneaux,
+        special: row.special,
+        parasitisme: row.parasitisme
+      });
+    });
+    saveData(DB);
+    alert(parsedRows.length + ' échographie(s) importée(s) avec succès.');
+    render('stats');
+  };
+}
+
 
 function renderStats() {
   pageTitle.textContent = 'Tableau de bord';
@@ -3451,6 +3568,15 @@ function renderStats() {
     </div>
 
     <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+        ${iconCircle(ICON_ECHO, 'green', 'sm')}
+        <div style="font-size:14px;font-weight:600;">Import CSV — inventaire + échographies</div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Importe un fichier au format "EID";"COMMENT" (ex: export de contrôle de gestation). Les brebis inconnues sont créées automatiquement, les échographies ajoutées à leur historique.</div>
+      <button class="btn btn-secondary" id="btn-goto-import">Importer un fichier CSV</button>
+    </div>
+
+    <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Sauvegarde des données</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Important : à chaque fois qu'une nouvelle version du fichier est installée, exporte d'abord tes données ici, puis réimporte-les une fois la nouvelle version ouverte — sinon tout repart à zéro.</div>
       <button class="btn btn-secondary" id="btn-export" style="margin-bottom:10px;">Exporter mes données (sauvegarde)</button>
@@ -3458,6 +3584,8 @@ function renderStats() {
       <button class="btn btn-secondary" id="btn-import">Importer une sauvegarde</button>
     </div>
   `;
+
+  document.getElementById('btn-goto-import').onclick = () => render('import-echo');
 
   document.getElementById('btn-save-lait').onclick = () => {
     const err = document.getElementById('lait-err');
