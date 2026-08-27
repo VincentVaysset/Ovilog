@@ -202,11 +202,6 @@
   .badge.badge-gray   { background: var(--gray-bg);   color: var(--gray-fg); }
   .badge.badge-muted  { background: #f0efe9; color: var(--text-muted); }
 
-  /* ---------- Registre d'élevage ---------- */
-  .registre-line { font-size: 13px; padding: 3px 0; border-bottom: 1px solid var(--border); }
-  .registre-line:last-child { border-bottom: none; }
-  .registre-line.muted { color: var(--text-muted); font-style: italic; }
-
   /* ---------- Menu hamburger (drawer) ---------- */
   .drawer-overlay { position: fixed; inset: 0; background: rgba(43,38,28,0.45); z-index: 1000; display: flex; }
   .drawer-overlay.hidden { display: none; }
@@ -4760,9 +4755,19 @@ function renderTraitementsCollectifsHistorique() {
    registre d'élevage (base de la conditionnalité PAC sur ce point) : contenu
    couvrant sanitaire/mises bas/mouvements, conservation 5 ans, édition papier
    possible à partir d'une tenue informatique. */
-let registreTab = 'brebis';
+let registreView = 'agnelage'; // 'agnelage' | 'mouvements' | 'sanitaire'
 let registreFiltre = '';
+const REGISTRE_CATEGORIES = [
+  { key: 'brebis', label: 'Brebis' },
+  { key: 'beliers', label: 'Bélier' },
+  { key: 'agneaux', label: 'Agnelle' }
+];
 
+/* Fusionne, pour une catégorie donnée, les animaux encore actifs et ceux
+   archivés dans DB.registre (fiches supprimées ou remises à zéro de
+   campagne) — voir archiverDansRegistre(). C'est la brique de base des 3
+   tableaux de synthèse ci-dessous : chacun y puise ses lignes sans jamais
+   ignorer un animal supprimé, tout l'intérêt du registre. */
 function registreEntriesFor(categorie) {
   const archive = (DB.registre && DB.registre[categorie]) || {};
   const map = {};
@@ -4778,129 +4783,251 @@ function registreEntriesFor(categorie) {
     map[a.eid].agnelages = map[a.eid].agnelages.concat(a.agnelages || []);
     map[a.eid].mouvements = map[a.eid].mouvements.concat(a.mouvements || []);
   });
-  return Object.values(map).sort((x, y) => (anneeNaissance(x.eid) || 0) - (anneeNaissance(y.eid) || 0));
+  return Object.values(map);
 }
 
-function registreAnimalLinesHtml(entry, categorie) {
-  const sanitaireHtml = entry.sanitaire.length
-    ? entry.sanitaire.map(s => `<div class="registre-line">${s.date || '?'} — ${s.type}${s.sousType ? ' · ' + s.sousType : ''}${s.produit ? ' · ' + s.produit : ''}${s.dose ? ' (' + s.dose + ')' : ''}</div>`).join('')
-    : '<div class="registre-line muted">Aucun soin.</div>';
-  const agnelagesHtml = entry.agnelages.length
-    ? entry.agnelages.map(a => `<div class="registre-line">${a.date || '?'} — mise bas (${(a.agneaux || []).length} agneau(x))</div>`).join('')
-    : '<div class="registre-line muted">Aucune mise bas.</div>';
-  const mouvementsHtml = entry.mouvements.length
-    ? entry.mouvements.map(m => `<div class="registre-line">${m.date || '?'} — ${m.type}${m.cause ? ' · ' + m.cause : ''}${m.acheteur ? ' · ' + m.acheteur : ''}</div>`).join('')
-    : '<div class="registre-line muted">Aucun mouvement.</div>';
-  return `
-    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:4px;">Carnet sanitaire</div>
-    ${sanitaireHtml}
-    ${categorie === 'brebis' ? `<div style="font-size:12px;font-weight:600;color:var(--text-muted);margin:10px 0 4px;">Carnet de mises bas</div>${agnelagesHtml}` : ''}
-    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin:10px 0 4px;">Mouvements</div>
-    ${mouvementsHtml}
-  `;
+/* ---------- Lignes des 3 tableaux de synthèse (toutes catégories confondues) ---------- */
+function registreAgnelageRows() {
+  const rows = [];
+  registreEntriesFor('brebis').forEach(entry => {
+    entry.agnelages.forEach(ag => {
+      (ag.lambs || []).forEach(l => {
+        rows.push({
+          mereEid: entry.eid,
+          agneauEid: (l.sexe === 'Mort-né' || !l.eid) ? null : l.eid,
+          sexe: l.sexe || '?',
+          date: ag.date || ''
+        });
+      });
+    });
+  });
+  rows.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return rows;
 }
 
-function registreAnimalCardHtml(entry, categorie) {
-  return `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div style="font-weight:700;">N°${numeroVisuel(entry.eid)}</div>
-        <span class="badge ${entry.actif ? 'badge-green' : 'badge-muted'}">${entry.actif ? 'Active' : 'Archivée'}</span>
-      </div>
-      ${registreAnimalLinesHtml(entry, categorie)}
-    </div>
-  `;
+function registreMouvementsRows() {
+  const rows = [];
+  REGISTRE_CATEGORIES.forEach(c => {
+    registreEntriesFor(c.key).forEach(entry => {
+      entry.mouvements.forEach(m => {
+        rows.push({ eid: entry.eid, categorie: c.label, type: m.type || '', detail: m.cause || m.acheteur || '', date: m.date || '' });
+      });
+    });
+  });
+  rows.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return rows;
 }
 
-/* Génère un fichier HTML autonome, mis en page pour impression (une page par
-   animal), à ouvrir dans n'importe quel navigateur pour imprimer ou
-   enregistrer en PDF — la WebView Android packagée de l'application ne sait
-   pas piloter d'imprimante elle-même. */
+function registreSanitaireRows() {
+  const rows = [];
+  REGISTRE_CATEGORIES.forEach(c => {
+    registreEntriesFor(c.key).forEach(entry => {
+      entry.sanitaire.forEach(s => {
+        rows.push({
+          eid: entry.eid, categorie: c.label,
+          type: (s.type || '') + (s.sousType ? ' · ' + s.sousType : ''),
+          produit: s.produit || '', date: s.date || '', dose: s.dose || ''
+        });
+      });
+    });
+  });
+  rows.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return rows;
+}
+
+const REGISTRE_TH = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);white-space:nowrap;font-size:12px;color:var(--text-muted);';
+const REGISTRE_TD = 'padding:7px 10px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:13px;';
+
+function registreAgnelageTableHtml(filtre) {
+  let rows = registreAgnelageRows();
+  if (filtre.trim()) {
+    const f = filtre.trim().toLowerCase();
+    rows = rows.filter(r => numeroVisuel(r.mereEid).toLowerCase().includes(f) || (r.agneauEid && numeroVisuel(r.agneauEid).toLowerCase().includes(f)));
+  }
+  if (rows.length === 0) return '<div class="empty">Aucune mise bas enregistrée.</div>';
+  const trs = rows.map(r => `
+    <tr>
+      <td style="${REGISTRE_TD}">n°${numeroVisuel(r.mereEid)}</td>
+      <td style="${REGISTRE_TD}">${r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : '<span style="color:var(--text-muted);">Mort-né</span>'}</td>
+      <td style="${REGISTRE_TD}">${r.sexe}</td>
+      <td style="${REGISTRE_TD}">${r.date}</td>
+    </tr>`).join('');
+  return `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+    <thead><tr><th style="${REGISTRE_TH}">N° mère</th><th style="${REGISTRE_TH}">N° agneau</th><th style="${REGISTRE_TH}">Sexe</th><th style="${REGISTRE_TH}">Date de naissance</th></tr></thead>
+    <tbody>${trs}</tbody>
+  </table></div>`;
+}
+
+function registreMouvementsTableHtml(filtre) {
+  let rows = registreMouvementsRows();
+  if (filtre.trim()) {
+    const f = filtre.trim().toLowerCase();
+    rows = rows.filter(r => numeroVisuel(r.eid).toLowerCase().includes(f));
+  }
+  if (rows.length === 0) return '<div class="empty">Aucun mouvement enregistré.</div>';
+  const trs = rows.map(r => `
+    <tr>
+      <td style="${REGISTRE_TD}">n°${numeroVisuel(r.eid)}</td>
+      <td style="${REGISTRE_TD}">${r.categorie}</td>
+      <td style="${REGISTRE_TD}">${r.type}</td>
+      <td style="${REGISTRE_TD}">${r.detail}</td>
+      <td style="${REGISTRE_TD}">${r.date}</td>
+    </tr>`).join('');
+  return `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type</th><th style="${REGISTRE_TH}">Cause / détail</th><th style="${REGISTRE_TH}">Date</th></tr></thead>
+    <tbody>${trs}</tbody>
+  </table></div>`;
+}
+
+function registreSanitaireTableHtml(filtre) {
+  let rows = registreSanitaireRows();
+  if (filtre.trim()) {
+    const f = filtre.trim().toLowerCase();
+    rows = rows.filter(r => numeroVisuel(r.eid).toLowerCase().includes(f));
+  }
+  if (rows.length === 0) return '<div class="empty">Aucun soin enregistré.</div>';
+  const trs = rows.map(r => `
+    <tr>
+      <td style="${REGISTRE_TD}">n°${numeroVisuel(r.eid)}</td>
+      <td style="${REGISTRE_TD}">${r.categorie}</td>
+      <td style="${REGISTRE_TD}">${r.type}</td>
+      <td style="${REGISTRE_TD}">${r.produit}</td>
+      <td style="${REGISTRE_TD}">${r.date}</td>
+      <td style="${REGISTRE_TD}">${r.dose}</td>
+    </tr>`).join('');
+  return `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type de soin</th><th style="${REGISTRE_TH}">Produit</th><th style="${REGISTRE_TH}">Date</th><th style="${REGISTRE_TH}">Dose</th></tr></thead>
+    <tbody>${trs}</tbody>
+  </table></div>`;
+}
+
+/* Génère le document HTML autonome (3 tableaux complets, toutes catégories),
+   à ouvrir dans n'importe quel navigateur pour imprimer ou enregistrer en
+   PDF — la WebView Android packagée de l'application ne pilote pas
+   d'imprimante elle-même. */
 function buildRegistrePrintableHtml() {
-  const cats = [
-    { key: 'brebis', label: 'Brebis' },
-    { key: 'beliers', label: 'Béliers' },
-    { key: 'agneaux', label: 'Agnelles / agneaux' }
-  ];
   const farmName = (DB.exploitation && DB.exploitation.nom) || '';
-  const sections = cats.map(c => {
-    const entries = registreEntriesFor(c.key);
-    const rows = entries.map(e => `
-      <section style="page-break-inside:avoid;border:1px solid #ccc;border-radius:8px;padding:12px;margin-bottom:14px;">
-        <h3 style="margin:0 0 8px;">N°${numeroVisuel(e.eid)} — ${e.actif ? 'Active' : 'Archivée'}</h3>
-        ${registreAnimalLinesHtml(e, c.key).replace(/class="registre-line muted"/g, 'style="color:#888;"').replace(/class="registre-line"/g, 'style="margin:2px 0;"')}
-      </section>
-    `).join('') || '<p>Aucune donnée.</p>';
-    return `<h2>${c.label}</h2>${rows}`;
-  }).join('');
+  const agnelageRows = registreAgnelageRows();
+  const mouvementsRows = registreMouvementsRows();
+  const sanitaireRows = registreSanitaireRows();
+  const td = 'padding:5px 8px;border-bottom:1px solid #ddd;';
+  const th = 'text-align:left;padding:6px 8px;border-bottom:2px solid #999;';
+
+  function table(headers, bodyHtml, colspan) {
+    return `<table style="width:100%;border-collapse:collapse;margin-bottom:28px;font-size:13px;">
+      <thead><tr>${headers.map(h => `<th style="${th}">${h}</th>`).join('')}</tr></thead>
+      <tbody>${bodyHtml || `<tr><td colspan="${colspan}" style="${td}">Aucune donnée.</td></tr>`}</tbody>
+    </table>`;
+  }
+
+  const agnelageHtml = table(['N° mère', 'N° agneau', 'Sexe', 'Date de naissance'],
+    agnelageRows.map(r => `<tr><td style="${td}">n°${numeroVisuel(r.mereEid)}</td><td style="${td}">${r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : 'Mort-né'}</td><td style="${td}">${r.sexe}</td><td style="${td}">${r.date}</td></tr>`).join(''), 4);
+
+  const mouvementsHtml = table(['N°', 'Catégorie', 'Type', 'Cause / détail', 'Date'],
+    mouvementsRows.map(r => `<tr><td style="${td}">n°${numeroVisuel(r.eid)}</td><td style="${td}">${r.categorie}</td><td style="${td}">${r.type}</td><td style="${td}">${r.detail}</td><td style="${td}">${r.date}</td></tr>`).join(''), 5);
+
+  const sanitaireHtml = table(['N°', 'Catégorie', 'Type de soin', 'Produit', 'Date', 'Dose'],
+    sanitaireRows.map(r => `<tr><td style="${td}">n°${numeroVisuel(r.eid)}</td><td style="${td}">${r.categorie}</td><td style="${td}">${r.type}</td><td style="${td}">${r.produit}</td><td style="${td}">${r.date}</td><td style="${td}">${r.dose}</td></tr>`).join(''), 6);
+
   return `<!doctype html><html><head><meta charset="utf-8"><title>Registre d'élevage${farmName ? ' — ' + farmName : ''}</title>
-    <style>body{font-family:Arial,sans-serif;color:#222;padding:20px;max-width:900px;margin:0 auto;} h1{margin-bottom:0;} .sub{color:#666;margin-top:4px;margin-bottom:24px;}</style>
+    <style>
+      body{font-family:Arial,sans-serif;color:#222;padding:20px;max-width:1000px;margin:0 auto;}
+      h1{margin-bottom:0;} .sub{color:#666;margin-top:4px;margin-bottom:24px;}
+      h2{margin-top:32px;border-bottom:2px solid #333;padding-bottom:4px;}
+      tr{page-break-inside:avoid;}
+    </style>
     </head><body>
     <h1>Registre d'élevage${farmName ? ' — ' + farmName : ''}</h1>
-    <div class="sub">Édité le ${new Date().toLocaleDateString('fr-FR')} — carnet sanitaire, carnet de mises bas et mouvements (conditionnalité PAC, arrêté du 5 juin 2000, conservation 5 ans).</div>
-    ${sections}
+    <div class="sub">Édité le ${new Date().toLocaleDateString('fr-FR')} — conditionnalité PAC, arrêté du 5 juin 2000, conservation 5 ans.</div>
+    <h2>Carnet d'agnelage (${agnelageRows.length})</h2>
+    ${agnelageHtml}
+    <h2>Mouvements (${mouvementsRows.length})</h2>
+    ${mouvementsHtml}
+    <h2>Carnet sanitaire (${sanitaireRows.length})</h2>
+    ${sanitaireHtml}
     </body></html>`;
 }
 
-function downloadRegistrePrintable() {
-  const html = buildRegistrePrintableHtml();
-  const blob = new Blob([html], { type: 'text/html' });
+/* Partage/téléchargement d'un fichier généré en mémoire. Préfère l'API Web
+   Share (avec fichier) quand elle est disponible : dans la WebView Android
+   packagée, un simple <a download> sur une blob: URL ne déclenche souvent
+   rien de visible (aucun DownloadListener natif configuré), alors que
+   navigator.share ouvre la feuille de partage native (Enregistrer dans
+   Fichiers, envoyer par mail...) — beaucoup plus fiable sur téléphone.
+   Se replie sur <a download> si l'API n'est pas disponible (navigateur
+   desktop classique par exemple). */
+async function shareOrDownloadFile(filename, mimeType, content) {
+  try {
+    if (typeof navigator.canShare === 'function' && typeof navigator.share === 'function') {
+      const file = new File([content], filename, { type: mimeType });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+        return;
+      }
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return; // partage annulé par l'utilisateur, ne pas retomber sur le téléchargement
+  }
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'registre-elevage-' + new Date().toISOString().slice(0,10) + '.html';
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
+function downloadRegistreJson() {
+  const data = {
+    genereLe: new Date().toISOString(),
+    agnelage: registreAgnelageRows(),
+    mouvements: registreMouvementsRows(),
+    sanitaire: registreSanitaireRows()
+  };
+  shareOrDownloadFile('registre-elevage-' + new Date().toISOString().slice(0,10) + '.json', 'application/json', JSON.stringify(data, null, 2));
+}
+
+function downloadRegistrePrintable() {
+  shareOrDownloadFile('registre-elevage-' + new Date().toISOString().slice(0,10) + '.html', 'text/html', buildRegistrePrintableHtml());
+}
+
 function renderRegistre() {
   pageTitle.textContent = "Registre d'élevage";
   const tabs = [
-    { key: 'brebis', label: 'Brebis' },
-    { key: 'beliers', label: 'Béliers' },
-    { key: 'agneaux', label: 'Agnelles' }
+    { key: 'agnelage', label: 'Agnelage' },
+    { key: 'mouvements', label: 'Mouvements' },
+    { key: 'sanitaire', label: 'Sanitaire' }
   ];
   const tabBarHtml = `<div class="tab-bar">${tabs.map(t =>
-    `<button type="button" class="tab-btn${registreTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
+    `<button type="button" class="tab-btn${registreView === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
   ).join('')}</div>`;
 
-  let entries = registreEntriesFor(registreTab);
-  if (registreFiltre.trim()) {
-    const f = registreFiltre.trim().toLowerCase();
-    entries = entries.filter(e => numeroVisuel(e.eid).toLowerCase().includes(f) || cleanEid(e.eid).toLowerCase().includes(f));
-  }
-  const listHtml = entries.length === 0
-    ? '<div class="empty">Aucun animal trouvé.</div>'
-    : entries.map(e => registreAnimalCardHtml(e, registreTab)).join('');
+  const bodyHtml = registreView === 'agnelage' ? registreAgnelageTableHtml(registreFiltre)
+    : registreView === 'mouvements' ? registreMouvementsTableHtml(registreFiltre)
+    : registreSanitaireTableHtml(registreFiltre);
 
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Conserve le carnet sanitaire, les mises bas et les mouvements de chaque animal — y compris après suppression de sa fiche, conformément à la conditionnalité PAC (registre d'élevage, conservation 5 ans).</div>
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Registre d'élevage réglementaire : agnelage, mouvements et carnet sanitaire de tous les animaux — actifs et archivés — conformément à la conditionnalité PAC (arrêté du 5 juin 2000, conservation 5 ans).</div>
     <div class="card" style="padding:12px;margin-bottom:14px;">
       <button type="button" class="btn btn-secondary" id="btn-export-registre" style="margin-bottom:8px;">Exporter le registre (JSON)</button>
       <button type="button" class="btn btn-secondary" id="btn-print-registre">Édition imprimable (HTML à ouvrir dans un navigateur)</button>
     </div>
     ${tabBarHtml}
     <input type="text" id="registre-filtre" placeholder="Rechercher un numéro..." value="${registreFiltre}" style="margin:12px 0;">
-    ${listHtml}
+    ${bodyHtml}
   `;
 
   document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
-    btn.onclick = () => { registreTab = btn.dataset.tab; render('registre'); };
+    btn.onclick = () => { registreView = btn.dataset.tab; render('registre'); };
   });
   document.getElementById('registre-filtre').addEventListener('input', (e) => {
     registreFiltre = e.target.value;
     render('registre');
   });
-  document.getElementById('btn-export-registre').onclick = () => {
-    exportBackupFile({
-      brebis: registreEntriesFor('brebis'),
-      beliers: registreEntriesFor('beliers'),
-      agneaux: registreEntriesFor('agneaux')
-    }, 'registre-elevage');
-  };
-  document.getElementById('btn-print-registre').onclick = downloadRegistrePrintable;
+  document.getElementById('btn-export-registre').onclick = () => downloadRegistreJson();
+  document.getElementById('btn-print-registre').onclick = () => downloadRegistrePrintable();
 }
 
 /* ---------- Import CSV inventaire + échographies ---------- */
