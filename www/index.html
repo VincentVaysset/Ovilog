@@ -202,6 +202,11 @@
   .badge.badge-gray   { background: var(--gray-bg);   color: var(--gray-fg); }
   .badge.badge-muted  { background: #f0efe9; color: var(--text-muted); }
 
+  /* ---------- Registre d'élevage ---------- */
+  .registre-line { font-size: 13px; padding: 3px 0; border-bottom: 1px solid var(--border); }
+  .registre-line:last-child { border-bottom: none; }
+  .registre-line.muted { color: var(--text-muted); font-style: italic; }
+
   /* ---------- Menu hamburger (drawer) ---------- */
   .drawer-overlay { position: fixed; inset: 0; background: rgba(43,38,28,0.45); z-index: 1000; display: flex; }
   .drawer-overlay.hidden { display: none; }
@@ -237,6 +242,8 @@
   .stat-card.sc-coral  { background: var(--coral-bg);  color: var(--coral-fg); }
   .stat-card.sc-blue   { background: var(--blue-bg);   color: var(--blue-fg); }
   .stat-card.sc-indigo { background: var(--indigo-bg); color: var(--indigo-fg); }
+  .stat-card.stat-card-clickable { cursor: pointer; }
+  .stat-card.stat-card-clickable:active { filter: brightness(0.95); }
 
   /* ---------- Modale (proposition de correspondance ANMV) ---------- */
   .modal-overlay { position: fixed; inset: 0; background: rgba(43,38,28,0.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 1000; }
@@ -319,6 +326,8 @@ function migrateData(d) {
   if (!d.lots) d.lots = [];
   if (!d.exploitation) d.exploitation = { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' };
   if (!d.brebis) d.brebis = [];
+  if (!d.traitementsCollectifs) d.traitementsCollectifs = [];
+  if (!d.registre) d.registre = { brebis: {}, beliers: {}, agneaux: {} };
   return d;
 }
 
@@ -347,7 +356,9 @@ function loadData() {
     },
     acheteurs: [],
     causesMortalite: [],
-    produitsInfo: {}
+    produitsInfo: {},
+    traitementsCollectifs: [],
+    registre: { brebis: {}, beliers: {}, agneaux: {} }
   };
 }
 /* Déclenche le téléchargement d'un fichier JSON de sauvegarde — utilisée à
@@ -372,13 +383,40 @@ function saveData(data) {
 }
 let DB = loadData();
 
-/* ---------- Base ANMV (délais d'attente lait/viande, ovins) ----------
+/* ---------- Registre d'élevage réglementaire (conditionnalité PAC) ----------
+   Conserve en permanence, par EID, le carnet sanitaire, le carnet de mises
+   bas et les mouvements de chaque brebis/bélier/agnelle — y compris après
+   suppression de la fiche active ou remise à zéro de campagne. Rien n'écrase
+   jamais une entrée déjà archivée : on ne fait qu'ajouter (concat), au cas où
+   un même EID serait archivé plusieurs fois au fil des années. */
+function ensureRegistreEntry(categorie, eid) {
+  DB.registre = DB.registre || { brebis: {}, beliers: {}, agneaux: {} };
+  DB.registre[categorie] = DB.registre[categorie] || {};
+  if (!DB.registre[categorie][eid]) {
+    DB.registre[categorie][eid] = { sanitaire: [], agnelages: [], mouvements: [] };
+  }
+  return DB.registre[categorie][eid];
+}
+function archiverDansRegistre(categorie, eid, data) {
+  if (!eid) return;
+  const entry = ensureRegistreEntry(categorie, eid);
+  if (data.sanitaire && data.sanitaire.length) entry.sanitaire = entry.sanitaire.concat(data.sanitaire);
+  if (data.agnelages && data.agnelages.length) entry.agnelages = entry.agnelages.concat(data.agnelages);
+  if (data.mouvements && data.mouvements.length) entry.mouvements = entry.mouvements.concat(data.mouvements);
+  entry.derniereMiseAJour = Date.now();
+}
+
+/* ---------- Base ANMV (délais d'attente + posologie, ovins) ----------
    Source : base de données publique des médicaments vétérinaires autorisés
    en France (data.gouv.fr / ANMV-ANSES), filtrée aux espèces ovines et
-   réduite à {nom, délai lait (jours), délai viande (jours)}. Générée par
+   réduite à {n: nom, l: délai lait (jours), v: délai viande (jours),
+   p: posologie et voie d'administration (texte RCP brut, facultatif —
+   absent si non trouvé dans le texte source)}. Générée par
    tools/build_anmv_data.py — voir ce script pour la méthodologie complète
    (règle de sécurité : délai le plus long retenu en cas de valeurs
-   multiples ; null = délai non trouvé dans le texte source, jamais deviné).
+   multiples ; null/absent = donnée non trouvée dans le texte source, jamais
+   devinée. Le champ "p" peut couvrir plusieurs espèces cibles à la fois, le
+   RCP vétérinaire ne les sépare pas dans le texte).
 */
 const ANMV_DB = [{"n":"ACETAL","l":0,"v":0},{"n":"ACTI COLI 2 MUI/ML","l":null,"v":1},{"n":"ACTI-METHOXINE","l":6,"v":12},{"n":"ACTI-TETRA B","l":null,"v":0},{"n":"ACTI-TETRA I","l":5,"v":14},{"n":"ACTISPIRINE 50","l":null,"v":7},{"n":"ADJUSOL TMP SULFA LIQUIDE 83,35 MG/ML +16,65 MG/ML SOLUTION POUR ADMINISTRATION DANS L’EAU DE BOISSON/LAIT","l":null,"v":12},{"n":"ALAMYCIN LA","l":5,"v":35},{"n":"ALUSPRAY SUSPENSION POUR PULVERISATION CUTANEE","l":0,"v":0},{"n":"ALVEBUTON 100 MG/ML SOLUTION INJECTABLE","l":0,"v":0},{"n":"AMPISOL POUDRE POUR SOLUTION BUVABLE","l":null,"v":8},{"n":"ANAESTAMINE 100 MG/ML SOLUTION INJECTABLE","l":0,"v":1},{"n":"ANIMEDAZON SPRAY SUSPENSION POUR PULVERISATION CUTANEE POUR BOVINS, OVINS ET PORCINS","l":0,"v":0},{"n":"ANTHELMINTICIDE 15 %","l":null,"v":3},{"n":"AQUPHARM CHLORURE DE SODIUM 9 MG/ML SOLUTION INJECTABLE / POUR PERFUSION","l":0,"v":0},{"n":"AQUPHARM RINGER LACTATE SOLUTION POUR PERFUSION","l":0,"v":0},{"n":"ASPIRINE 50 COOPHAVET POUDRE POUR SOLUTION BUVABLE","l":null,"v":7},{"n":"AVEMIX N° 150 POUDRE ORALE","l":null,"v":12},{"n":"AXENTYL 200 MG/ML SOLUTION INJECTABLE POUR BOVINS, OVINS, CAPRINS ET PORCINS","l":5,"v":42},{"n":"B. BRAUN VET CARE SOLUTION NACL HYPERTONIQUE (75 MG/ML) SOLUTION POUR PERFUSION POUR CHEVAUX, BOVINS, MOUTONS, CHEVRES, PORCINS, CHIENS ET CHATS","l":0,"v":0},{"n":"BAYCOX MULTI 50 MG/ML SUSPENSION BUVABLE POUR BOVINS OVINS ET PORCINS","l":null,"v":77},{"n":"BAYMEC SOLUTION BUVABLE OVINS","l":60,"v":10},{"n":"BAYTRIL 10 % SOLUTION INJECTABLE","l":4,"v":13},{"n":"BAYTRIL 5 % SOLUTION INJECTABLE","l":4,"v":13},{"n":"BIAMINTHIC 5 %","l":null,"v":3},{"n":"BILOVET 200 MG/ML SOLUTION INJECTABLE","l":5,"v":42},{"n":"BIMECTIN 10 MG/ML SOLUTION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":28,"v":49},{"n":"BIMOXYL LA 150 MG/ML SUSPENSION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":3,"v":21},{"n":"BIMPROCIL SUSPENSION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":5,"v":12},{"n":"BIOCAL","l":0,"v":0},{"n":"BIOCYTOCINE","l":0,"v":0},{"n":"BIOSORBIDEX","l":0,"v":0},{"n":"BIOVEINE GLUCO-METHIO-CHOLINE","l":0,"v":0},{"n":"BIOVEINE GLUCONATE DE CALCIUM","l":0,"v":0},{"n":"BORGAL 200 MG/ML + 40 MG/ML SOLUTION INJECTABLE","l":14,"v":14},{"n":"BUTOX 50 POUR MILLE SOLUTION A DILUER POUR APPLICATION CUTANEE POUR BOVINS ET OVINS","l":1,"v":28},{"n":"BUTOX 7,5 SUSPENSION POUR POUR-ON POUR BOVINS ET OVINS","l":5,"v":18},{"n":"CADOREX 300 MG/ML SOLUTION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":null,"v":44},{"n":"CALCITAT FORT SOLUTION INJECTABLE","l":0,"v":null},{"n":"CALMAFUSION SOLUTION POUR PERFUSION POUR BOVINS, OVINS ET PORCINS","l":0,"v":0},{"n":"CAPIZOL SOLUTION BUVABLE","l":null,"v":3},{"n":"CEFOVET HL SUSPENSION INTRAMAMMAIRE","l":14,"v":21},{"n":"CESTOCUR SUSPENSION 2,5 %","l":0,"v":0},{"n":"CEVAC CHLAMYDIA LYOPHILISAT ET SOLVANT POUR SUSPENSION INJECTABLE POUR OVINS","l":0,"v":7},{"n":"CEVAMECTIN INJECTABLE POUR BOVINS OVINS ET PORCINS","l":60,"v":49},{"n":"CHANOX MULTI 50 MG/ML SUSPENSION BUVABLE POUR PORCELETS VEAUX ET AGNEAUX","l":null,"v":77},{"n":"CHLORTETRACYCLINE 40 LAPIN-VOLAILLE-PORC ET AGNEAU-CHEVREAU SEVRES","l":14,"v":null},{"n":"CHLORURE DE SODIUM 7,2 % VETOFLEX","l":0,"v":0},{"n":"CHLORURE DE SODIUM HYPERTONIQUE OSALIA 72 MG/ML, SOLUTION POUR PERFUSION POUR BOVINS, CHEVAUX, PORCINS, OVINS, CAPRINS, CHIENS ET CHATS","l":0,"v":0},{"n":"CHLORURE DE SODIUM OSALIA 0,9 % SOLUTION INJECTABLE OU POUR PERFUSION POUR BOVINS, CHEVAUX, PORCS, OVINS, CAPRINS, CHIENS ET CHATS","l":0,"v":0},{"n":"CHORULON 1500 LYOPHILISAT ET SOLVANT POUR SOLUTION INJECTABLE","l":0,"v":0},{"n":"CHORULON 5000 LYOPHILISAT ET SOLVANT POUR SOLUTION INJECTABLE","l":0,"v":0},{"n":"CHRONO GEST PMSG 600 LYOPHILISAT ET SOLVANT POUR SOLUTION INJECTABLE","l":0,"v":0},{"n":"CHRONO GEST PMSG 6000 LYOPHILISAT POUR SOLUTION INJECTABLE","l":0,"v":0},{"n":"CHRONOGEST CR","l":0,"v":2},{"n":"CIDR OVIS 0,35 G SYSTEME DE DIFFUSION VAGINAL POUR OVINS","l":0,"v":0},{"n":"CK 2 - COLISTINE 2 000 000 UI/ML SOLUTION BUVABLE POUR VEAUX, AGNEAUX, PORCINS ET VOLAILLES","l":null,"v":1},{"n":"CK 5 - OXYTETRACYCLINE 500 MG/G","l":null,"v":7},{"n":"CK 7 - TRIMETHOPRIME 16,65 MG/ML SULFADIAZINE 83,35 MG/ML","l":null,"v":12},{"n":"CLAMOXYL LA SUSPENSION INJECTABLE POUR BOVINS PORCINS OVINS CAPRINS CHIENS ET CHATS","l":9,"v":93},{"n":"CLAMOXYL SUSPENSION 150 MG SUSPENSION INJECTABLE POUR BOVINS PORCINS OVINS CHIENS CHATS","l":5,"v":47},{"n":"CLIK","l":null,"v":40},{"n":"CLIKZIN 12,5 MG/ML SUSPENSION POUR POUR-ON POUR OVINS","l":null,"v":7},{"n":"CLOSAMECTIN 5 MG/ML/125 MG/ML SOLUTION INJECTABLE POUR  OVINS","l":null,"v":28},{"n":"COFACALCIUM SOLUTION INJECTABLE","l":0,"v":0},{"n":"COFACOLI SOLUTION","l":null,"v":1},{"n":"COFAFER SOLUTION INJECTABLE","l":null,"v":0},{"n":"COFAVIT 500 SOLUTION INJECTABLE","l":5,"v":308},{"n":"COFAVIT C POUDRE POUR SOLUTION BUVABLE","l":0,"v":0},{"n":"COLAMPI I","l":3,"v":21},{"n":"COLDOSTIN 4 800 000 UI/G POUDRE POUR ADMINISTRATION DANS L'EAU / LE LAIT","l":null,"v":1},{"n":"COLISTINE 200-CB LAPIN-VOLAILLE-PORC ET AGNEAU-CHEVREAU SEVRES","l":null,"v":7},{"n":"COLISTINE 400-F PORC ET AGNEAU-CHEVREAU SEVRES","l":null,"v":7},{"n":"COLISTINE SULFATE 2 000 000 UI/ML SOLUTION BUVABLE VIRBAC","l":null,"v":1},{"n":"COLIVET SOLUTION","l":null,"v":1},{"n":"COMPOMIX V NEOSTARTER","l":14,"v":null},{"n":"COMPOMIX V SULFAPRIM","l":14,"v":null},{"n":"COREBRAL SOLUTION INJECTABLE","l":0,"v":0},{"n":"CUBARMIX","l":null,"v":10},{"n":"CYCLOSOL 200 LA SOLUTION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":8,"v":35},{"n":"CYCLOSPRAY 2,45 % W/W SUSPENSION POUR PULVERISATION CUTANEE POUR BOVINS, OVINS ET PORCINS","l":0,"v":0},{"n":"CYDECTINE 0,1 % SOLUTION ORALE POUR OVINS","l":5,"v":14},{"n":"CYDECTINE 1 % SOLUTION INJECTABLE POUR OVINS","l":60,"v":82},{"n":"CYDECTINE LA 20 MG/ML SOLUTION INJECTABLE POUR OVINS","l":null,"v":104},{"n":"CYDECTINE TRICLAMOX 1 MG/ML + 50 MG/ML SOLUTION BUVABLE POUR OVINS","l":null,"v":31},{"n":"DECTOMAX 10 MG/ML SOLUTION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":70,"v":77},{"n":"DECTOSPOT 10 MG/ML SOLUTION POUR-ON POUR BOVINS ET OVINS","l":1,"v":35},{"n":"DELTANIL 10 MG/ML SOLUTION POUR POUR-ON POUR BOVINS ET OVINS","l":0,"v":35},{"n":"DEPOCILLINE SUSPENSION INJECTABLE","l":10,"v":17},{"n":"DHS 50 COOPHAVET POUDRE POUR SOLUTION BUVABLE","l":null,"v":14},{"n":"DIACOX 2,5 MG/ML SUSPENSION BUVABLE POUR OVINS ET BOVINS","l":null,"v":0},{"n":"DIAZIPRIM","l":null,"v":12},{"n":"DISTOCUR 34 MG/ML SUSPENSION BUVABLE POUR BOVINS ET OVINS","l":7,"v":14},{"n":"DOLISOVET INTRAMAMMAIRE POMMADE INTRAMAMMAIRE","l":null,"v":0},{"n":"DORAXX 100 MG/ML SOLUTION INJECTABLE POUR BOVINS, PORCINS ET OVINS","l":null,"v":22},{"n":"DORIMEC 10 MG/ML SOLUTION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":70,"v":77},{"n":"DOUVISTOME","l":7,"v":14},{"n":"DUOTECH","l":null,"v":42},{"n":"DUPHAMOX LA 150 MG/ML SUSPENSION INJECTABLE POUR BOVINS PORCINS OVINS CAPRINS ET CHATS","l":5,"v":44},{"n":"DYCOXAN 2,5 MG/ML SUSPENSION BUVABLE POUR OVINS ET BOVINS","l":null,"v":0},{"n":"ECTOFLY 12,5 MG/ML SOLUTION POUR-ON POUR OVINS","l":5,"v":8},{"n":"ENERGIDEX SOLUTION POUR PERFUSION","l":0,"v":0},{"n":"ENGEMYCINE 10 % SOLUTION INJECTABLE POUR BOVINS, OVINS, CAPRINS ET PORCINS","l":7,"v":39},{"n":"EPRECIS 20 MG/ML SOLUTION INJECTABLE POUR BOVINS, OVINS ET CAPRINS","l":0,"v":63},{"n":"EPRECIS 5 MG/ML SOLUTION POUR POUR-ON POUR BOVINS, OVINS ET CAPRINS","l":0,"v":15},{"n":"EPRINEX MULTI 5 MG/ML SOLUTION POUR-ON POUR BOVINS OVINS ET CAPRINS","l":0,"v":15},{"n":"FERCOBSANG SOLUTION INJECTABLE ET BUVABLE","l":0,"v":0},{"n":"FIXPLAN 200 UI/ML LYOPHILISAT ET SOLVANT POUR SOLUTION INJECTABLE","l":0,"v":0},{"n":"FLORFENIS 300 MG/ML SOLUTION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":null,"v":44},{"n":"FLUKIVER","l":null,"v":107},{"n":"FLUMIQUIL POUDRE A 3 %","l":2,"v":2},{"n":"FORESPIX 100 MG/ML, SOLUTION INJECTABLE POUR BOVINS, PORCINS ET OVINS","l":null,"v":22},{"n":"G. PROMYCINE","l":30,"v":null},{"n":"GENABILINE 100 MG/ML SOLUTION INJECTABLE","l":0,"v":0},{"n":"GLUCAN","l":0,"v":0},{"n":"GLUCOSE OSALIA 5% SOLUTION POUR PERFUSION POUR BOVINS, CHEVAUX, PORCS, OVINS, CAPRINS, CHIENS ET CHATS","l":0,"v":0},{"n":"GLUCOSE/CHLORURE DE SODIUM OSALIA 25 MG/ML + 4,5 MG/ML, SOLUTION INJECTABLE POUR BOVINS, CHEVAUX, PORCINS, OVINS, CAPRINS, CHIENS ET CHATS","l":0,"v":0},{"n":"HEMOCED SOLUTION INJECTABLE","l":0,"v":1},{"n":"HEMOSILATE 125 MG/ML SOLUTION INJECTABLE","l":0,"v":1},{"n":"HIBITANE IRRIGATION SOLUTION POUR APPLICATION CUTANEE","l":0,"v":0},{"n":"HIDROCOL 4 000 000 UI/ML SOLUTION POUR ADMINISTRATION DANS L'EAU DE BOISSON OU LE LAIT","l":null,"v":1},{"n":"HUVEXXIN 100 MG/ML SOLUTION INJECTABLE POUR  BOVINS PORCINS ET OVINS","l":null,"v":22},{"n":"INSECINOR 10 MG/ML SOLUTION POUR SPOT-ON POUR BOVINS ET OVINS","l":0,"v":35},{"n":"INTERFLOX-100, 100 MG/ML SOLUTION INJECTABLE POUR BOVINS OVINS CAPRINS ET PORCINS","l":4,"v":13},{"n":"INTRAMICINE","l":7,"v":30},{"n":"IODURE VETOQUINOL SOLUTION INJECTABLE","l":0,"v":0},{"n":"IVOMEC SOLUTION INJECTABLE POUR OVINS","l":21,"v":28},{"n":"K-VET OTC 500 MG/G POUDRE POUR ADMINISTRATION DANS L’EAU DE BOISSON LE LAIT","l":null,"v":7},{"n":"K-VET OXYTETRACYCLINE 50 % POUDRE","l":null,"v":7},{"n":"KAOPECTATE SUSPENSION BUVABLE POUR EQUINS BOVINS OVINS PORCINS CHIENS ET CHATS","l":0,"v":0},{"n":"KETABEL 100 MG/ML SOLUTION INJECTABLE","l":0,"v":1},{"n":"KETEXX 100 MG/ML SOLUTION INJECTABLE","l":0,"v":1},{"n":"KYNOSELEN SOLUTION INJECTABLE","l":null,"v":4},{"n":"LEVAMISOLE 3,75 % BUVABLE","l":null,"v":3},{"n":"LEVAMISOLE 5 % VIRBAC","l":null,"v":3},{"n":"LEVASOLE 20","l":null,"v":3},{"n":"LEVISOLE INJECTABLE","l":null,"v":3},{"n":"LINCO-SPECTIN SOLUTION INJECTABLE POUR BOVINS (VEAUX) OVINS CAPRINS PORCINS VOLAILLES CHATS ET CHIENS","l":null,"v":14},{"n":"LONGAMOX SUSPENSION INJECTABLE","l":5,"v":63},{"n":"LONGICINE SOLUTION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":7,"v":21},{"n":"MACROSYN 100 MG/ML SOLUTION INJECTABLE POUR BOVINS, PORCINS ET OVINS","l":null,"v":22},{"n":"MAGNESIO CALCIQUE SOLUTION INJECTABLE","l":0,"v":null},{"n":"MECTAJECT 10 MG/ML SOLUTION INJECTABLE POUR BOVINS ET OVINS","l":60,"v":49},{"n":"MELOVINE","l":0,"v":0},{"n":"MENBUTIL 100 MG/ML SOLUTION INJECTABLE POUR BOVINS, PORCINS, CHEVAUX, OVINS ET CAPRINS","l":0,"v":0},{"n":"METOXYL SOLUTION BUVABLE","l":null,"v":12},{"n":"MICOTIL 300 MG/ML SOLUTION INJECTABLE","l":36,"v":70},{"n":"MILICOLI 2 MUI/ML SOLUTION BUVABLE POUR VEAUX, AGNEAUX, PORCINS ET VOLAILLES.","l":null,"v":1},{"n":"MOXODEX 1 MG/ML SOLUTION BUVABLE POUR OVINS","l":5,"v":14},{"n":"NAFPENZAL T POMMADE INTRAMAMMAIRE POUR VACHES BREBIS ET CHEVRES","l":46,"v":28},{"n":"NEMISOL SOLUTION INJECTABLE","l":null,"v":3},{"n":"NEO-SOL 500 MG/G","l":null,"v":14},{"n":"NEOMYCINE 40 LAPIN-VOLAILLE-PORC ET AGNEAU-CHEVREAU SEVRES","l":null,"v":14},{"n":"NEOMYCINE 50 COOPHAVET POUDRE POUR SOLUTION BUVABLE","l":null,"v":14},{"n":"NEOSKILAB SOLUTION INJECTABLE POUR BOVINS, OVINS, CAPRINS ET CHEVAUX","l":0,"v":0},{"n":"NEOXYNE","l":null,"v":14},{"n":"NUFLOR 300 MG/ML SOLUTION INJECTABLE POUR BOVINS ET OVINS","l":null,"v":44},{"n":"NUTRA B SOLUTION INJECTABLE POUR BOVINS OVINS EQUINS PORCINS CHIENS CHATS","l":0,"v":0},{"n":"OCYTOVEM","l":0,"v":0},{"n":"ORAMEC SOLUTION BUVABLE POUR OVINS","l":28,"v":6},{"n":"ORNIPURAL SOLUTION INJECTABLE","l":0,"v":0},{"n":"OROSPRAY","l":null,"v":0},{"n":"OROTAR GRANULES","l":0,"v":0},{"n":"OSTEOCYNESINE VETERINAIRE COMPRIMES","l":0,"v":0},{"n":"OSTEOTRAUMYL POUDRE ORALE","l":null,"v":0},{"n":"OTC 50 HVP","l":null,"v":7},{"n":"OVILIS CHLAMYDIA LYOPHILISAT ET SOLVANT POUR SUSPENSION INJECTABLE POUR OVINS","l":0,"v":7},{"n":"OVILIS TOXOVAX SUSPENSION A DILUER ET SOLVANT POUR SUSPENSION INJECTABLE POUR OVINS","l":0,"v":42},{"n":"OXFENIL 22,65 MG/ML SUSPENSION BUVABLE","l":14,"v":28},{"n":"OXYTETRACYCLINE 10 % VETOQUINOL SOLUTION INJECTABLE","l":3,"v":14},{"n":"OXYTETRACYCLINE 100-CR PORC ET AGNEAU-CHEVREAU SEVRES","l":null,"v":14},{"n":"OXYTETRACYCLINE 40-CR LAPIN-VOLAILLE-PORC ET AGNEAU-CHEVREAU SEVRES","l":null,"v":14},{"n":"OXYTETRACYCLINE 5 % VETOQUINOL","l":3,"v":14},{"n":"OXYTETRIN P SUSPENSION POUR PULVERISATION CUTANEE POUR BOVINS OVINS CAPRINS EQUINS PORCINS ET LAPINS","l":0,"v":0},{"n":"OXYTOBEL 10 UI/ML SOLUTION INJECTABLE POUR CHEVAUX BOVINS PORCINS OVINS CAPRINS CHIENS ET CHATS","l":0,"v":0},{"n":"OXYVETO-50 S","l":null,"v":7},{"n":"PANACUR 2,5 % SUSPENSION BUVABLE POUR BOVINS OVINS ET CAPRINS","l":6,"v":16},{"n":"PANACUR 4 % POUDRE ORALE","l":6,"v":19},{"n":"PAXOLIP","l":0,"v":0},{"n":"PENI DHS COOPHAVET SUSPENSION INJECTABLE","l":7,"v":30},{"n":"PENIJECTYL SUSPENSION INJECTABLE","l":7,"v":30},{"n":"PHARMASIN 200 MG/ML SOLUTION INJECTABLE POUR BOVINS, OVINS, CAPRINS ET PORCINS","l":5,"v":42},{"n":"PHOSPHONORTONIC SOLUTION INJECTABLE","l":0,"v":0},{"n":"PHYTOLAC SOLUTION BUVABLE","l":null,"v":0},{"n":"PNEUMOSPECTIN 50/100 MG/ML SOLUTION INJECTABLE","l":null,"v":14},{"n":"PO 121 AMPICILLINE 10 VOLAILLE-PORC-VEAU-AGNEAU-CHEVREAU","l":null,"v":8},{"n":"POLYSTRONGLE POUDRE ORALE","l":null,"v":3},{"n":"PREMELANGE MEDICAMENTEUX Z 27","l":14,"v":14},{"n":"PREMELANGE MEDICAMENTEUX Z 29","l":12,"v":12},{"n":"PREMELANGE MEDICAMENTEUX Z 30","l":null,"v":12},{"n":"PRIMOX","l":null,"v":7},{"n":"PROCAMIDOR SOLUTION INJECTABLE","l":0,"v":0},{"n":"PROCIPEN SUSPENSION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":5,"v":12},{"n":"PRONESTESIC 34,65 MG/ML / 0,02 MG/ML SOLUTION INJECTABLE POUR CHEVAUX BOVINS PORCINS ET OVINS","l":0,"v":0},{"n":"PULMOXXIN 100 MG/ML SOLUTION INJECTABLE POUR BOVINS PORCINS ET OVINS","l":null,"v":22},{"n":"RABISIN MULTI SUSPENSION INJECTABLE","l":null,"v":0},{"n":"RABISIN SUSPENSION INJECTABLE","l":null,"v":0},{"n":"REHYDEX 2414 SOLUTION POUR PERFUSION","l":0,"v":0},{"n":"RIDAMEC 1 MG/ML SOLUTION BUVABLE POUR OVINS","l":5,"v":14},{"n":"SALICYLINE 50 % PO","l":null,"v":7},{"n":"SEBACIL 50 % SOLUTION","l":null,"v":40},{"n":"SELEPHEROL EMULSION INJECTABLE","l":null,"v":4},{"n":"SELEPHOS","l":null,"v":4},{"n":"SELVENIUM","l":null,"v":4},{"n":"SEPONVER","l":90,"v":55},{"n":"SEPTOTRYL SOLUTION INJECTABLE","l":6,"v":12},{"n":"SODICOLY INJECTABLE","l":null,"v":21},{"n":"SODIFEROL","l":null,"v":4},{"n":"SPASMIPUR SOLUTION INJECTABLE POUR CHEVAUX, BOVINS, OVINS ET PORCINS","l":1,"v":18},{"n":"SPECTAM SOLUTION INJECTABLE","l":3,"v":30},{"n":"SPOTINOR 10 MG/ML SOLUTION POUR SPOT-ON POUR BOVINS ET OVINS","l":0,"v":35},{"n":"SULFACYCLINE","l":6,"v":12},{"n":"SULFADIMERAZINE QALIAN","l":5,"v":12},{"n":"SULFADIMETHOXINE 100-CR LAPIN-VOLAILLE-PORC ET AGNEAU-CHEVREAU SEVRES","l":null,"v":12},{"n":"SULFADIMETHOXINE-TRIMETHOPRIME 62,5-12,5 PORC ET VEAU-AGNEAU-CHEVREAU SEVRES","l":null,"v":14},{"n":"SUPAVERM","l":null,"v":65},{"n":"SYNANTHIC SUSPENSION BUVABLE","l":14,"v":28},{"n":"SYNCRO-PART 30 MG","l":0,"v":5},{"n":"SYNCRO-PART PMSG 400 UI BOVINS-OVINS-CAPRINS","l":0,"v":0},{"n":"SYNCRO-PART PMSG 500 UI BOVINS-OVINS-CAPRINS","l":0,"v":0},{"n":"SYNCRO-PART PMSG 600 UI BOVINS-OVINS-CAPRINS","l":0,"v":0},{"n":"SYNCRO-PART PMSG 6000 UI BOVINS-OVINS-CAPRINS","l":0,"v":0},{"n":"TAF SPRAY 28,5 MG/G SOLUTION POUR PULVERISATION CUTANEE","l":0,"v":14},{"n":"TENALINE L.A.","l":21,"v":21},{"n":"TERRALON L.A. 200 MG/ML SOLUTION INJECTABLE","l":5,"v":28},{"n":"TERRAMYCINE LONGUE ACTION 200 MG/ML SOLUTION INJECTABLE POUR BOVINS  OVINS ET PORCINS","l":7,"v":37},{"n":"TETRASOLUB","l":null,"v":7},{"n":"TETRAVETO","l":null,"v":0},{"n":"TETROXY VET 200 MG/ML SOLUTION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":10,"v":31},{"n":"THERACALCIUM SOLUTION INJECTABLE","l":0,"v":0},{"n":"TILMOVET 300 MG/ML SOLUTION INJECTABLE POUR BOVINS ET OVINS","l":36,"v":70},{"n":"TOLRACOL 50 MG/ML SUSPENSION BUVABLE POUR PORCINS, BOVINS ET OVINS","l":null,"v":77},{"n":"TOLTRANIL 50 MG/ML SUSPENSION BUVABLE POUR PORCINS, BOVINS ET OVINS","l":null,"v":77},{"n":"TONIPHOS","l":0,"v":0},{"n":"TRIBEX 5 % SUSPENSION BUVABLE POUR OVINS","l":null,"v":56},{"n":"TRISULMIX POUDRE POUR SOLUTION BUVABLE","l":null,"v":12},{"n":"TRISULMIX SOLUTION INJECTABLE","l":6,"v":12},{"n":"TRIVITASE","l":5,"v":324},{"n":"TROXXAN 100 MG/ML SOLUTION INJECTABLE POUR BOVINS, PORCINS ET OVINS","l":null,"v":16},{"n":"TRYMOX LA 150 MG/ML SUSPENSION INJECTABLE POUR BOVINS OVINS PORCINS CHIENS ET CHATS","l":5,"v":42},{"n":"TULAJECT 100 MG/ML SOLUTION INJECTABLE POUR BOVINS PORCINS ET OVINS","l":null,"v":22},{"n":"TULAPRO 100 MG/ML SOLUTION INJECTABLE POUR BOVINS PORCINS ET OVINS","l":null,"v":16},{"n":"TULAXA 100 MG/ML SOLUTION INJECTABLE POUR BOVINS PORCINS ET OVINS","l":null,"v":22},{"n":"TULIEVE 100 MG/ML SOLUTION INJECTABLE POUR BOVINS PORCINS ET OVINS","l":null,"v":22},{"n":"TULLAVIS 100 MG/ML SOLUTION INJECTABLE POUR BOVINS, PORCINS ET OVINS","l":null,"v":22},{"n":"TULOXXIN 100 MG/ML SOLUTION INJECTABLE POUR BOVINS PORCINS ET OVINS","l":null,"v":22},{"n":"TYLAN 200 000 UI/ML SOLUTION INJECTABLE","l":5,"v":42},{"n":"UCAMIX V DECOQUINATE 6 VEAUX ET AGNEAUX SEVRES","l":null,"v":0},{"n":"ULTRA B","l":0,"v":0},{"n":"VALBAZEN MOUTONS ET CHEVRES 1,9 % SUSPENSION BUVABLE","l":6,"v":10},{"n":"VECOXAN 2,5 MG/ML SUSPENSION BUVABLE","l":null,"v":0},{"n":"VERMAX D","l":null,"v":28},{"n":"VERSATRINE SOLUTION POUR POUR-ON POUR BOVINS ET OVINS","l":1,"v":28},{"n":"VET-OXY 5 % INJECTABLE","l":5,"v":14},{"n":"VETBUTON 100 MG/ML SOLUTION INJECTABLE POUR BOVINS, PORCINS, CHEVAUX, OVINS ET CAPRINS","l":0,"v":0},{"n":"VETEDINE SAVON","l":0,"v":0},{"n":"VETEDINE SOLUTION POUR APPLICATION CUTANEE","l":0,"v":0},{"n":"VETOMECTIN 10 MG/ML SOLUTION INJECTABLE POUR BOVINS OVINS ET PORCINS","l":60,"v":49},{"n":"VIRGOCILLINE, SOLUTION INJECTABLE POUR BOVINS, OVINS, EQUINS, PORCINS, LAPINS ET VOLAILLES","l":2,"v":21},{"n":"VITA-C VETOQUINOL SOLUTION INJECTABLE ET BUVABLE","l":0,"v":0},{"n":"VITAMINE B12 VETOQUINOL","l":0,"v":0}];
 let ANMV_INDEX = null;
@@ -451,7 +489,9 @@ function showAnmvMatchModal(nomSaisi, match, callback) {
           <div><div style="font-size:11px;color:var(--text-muted);">Délai lait</div><div style="font-weight:600;">${formatDelaiAnmv(match.l)}</div></div>
           <div><div style="font-size:11px;color:var(--text-muted);">Délai viande</div><div style="font-weight:600;">${formatDelaiAnmv(match.v)}</div></div>
         </div>
+        ${match.p ? `<div style="margin-top:10px;"><div style="font-size:11px;color:var(--text-muted);">Posologie / voie d'administration (RCP)</div><div style="font-size:13px;">${match.p}</div></div>` : ''}
       </div>
+      ${match.p ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">Le RCP source couvre parfois plusieurs espèces à la fois — vérifie la ligne concernant les ovins.</div>` : ''}
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Si tu valides, ces délais seront calculés automatiquement à chaque soin avec ce produit, sur la fiche de la brebis.</div>
       <button type="button" class="btn btn-primary" id="anmv-accept" style="margin-bottom:8px;">Oui, associer ce produit</button>
       <button type="button" class="btn btn-secondary" id="anmv-decline">Non, produit différent</button>
@@ -474,11 +514,32 @@ function maybeAssociateAnmv(nom, onDone) {
   if (!match) { if (onDone) onDone(); return; }
   showAnmvMatchModal(nom, match, (accepted) => {
     DB.produitsInfo[nom] = accepted
-      ? { lait: match.l, viande: match.v, anmvNom: match.n }
+      ? { lait: match.l, viande: match.v, anmvNom: match.n, posologie: match.p || null }
       : { declined: true };
     saveData(DB);
     if (onDone) onDone();
   });
+}
+/* Affiche/actualise, juste après le bloc de sélection du produit (#produit-block),
+   un petit encart avec la posologie/voie d'administration ANMV connue pour ce
+   produit — si elle est présente dans les données ANMV et que le produit a
+   été associé (voir maybeAssociateAnmv). Réutilisé dans les 3 formulaires de
+   saisie sanitaire (brebis, bélier, traitement collectif) sans dupliquer de HTML. */
+function updatePosologieBox(produit) {
+  const anchor = document.getElementById('produit-block');
+  if (!anchor) return;
+  let box = document.getElementById('posologie-info');
+  const info = produit ? DB.produitsInfo[produit] : null;
+  const html = (info && !info.declined && info.posologie)
+    ? `<div style="font-size:12px;color:var(--text-muted);background:#f0efe9;border-radius:var(--radius);padding:10px 12px;margin-bottom:14px;"><strong>Posologie ANMV (RCP — toutes espèces cibles confondues) :</strong> ${info.posologie}</div>`
+    : '';
+  if (!html) { if (box) box.remove(); return; }
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'posologie-info';
+    anchor.insertAdjacentElement('afterend', box);
+  }
+  box.innerHTML = html;
 }
 /* Calcule, pour une brebis, les dates de fin de délai d'attente lait/viande
    encore actives (dans le futur) à partir de son carnet sanitaire. Quand
@@ -523,6 +584,12 @@ function age(eid) {
   const y = anneeNaissance(eid);
   if (y === null) return null;
   return new Date().getFullYear() - y;
+}
+/* Tri commun à toutes les listes d'animaux : du plus vieux au plus jeune,
+   par année de naissance croissante (déduite de l'EID). Ne mute pas le
+   tableau reçu. */
+function sortByAge(list) {
+  return [...list].sort((a, b) => anneeNaissance(a.eid) - anneeNaissance(b.eid));
 }
 
 /* ---------- Bip sonore de confirmation de scan ---------- */
@@ -640,7 +707,7 @@ let inventaireTab = 'brebis';
 
 // Vues racines, accessibles directement depuis le menu hamburger : elles
 // affichent le hamburger (pas de flèche retour) dans l'en-tête.
-const ROOT_VIEWS = new Set(['list', 'beliers', 'agneaux', 'inventaire', 'lots', 'agnelles', 'journal', 'parametres']);
+const ROOT_VIEWS = new Set(['list', 'beliers', 'agneaux', 'inventaire', 'lots', 'agnelles', 'journal', 'parametres', 'registre']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -658,6 +725,7 @@ const NAV_ITEMS = [
   { view: 'inventaire', label: 'Inventaire', icon: ICON_BOX, color: 'coral' },
   { view: 'lots', label: 'Chantier de tri', icon: ICON_SEARCH, color: 'green' },
   { view: 'journal', label: 'Agenda', icon: ICON_JOURNAL, color: 'green' },
+  { view: 'registre', label: "Registre d'élevage", icon: ICON_JOURNAL, color: 'coral' },
   { view: 'parametres', label: 'Paramètres', icon: ICON_SETTINGS, color: 'gray' }
 ];
 navDrawer.innerHTML = `
@@ -709,10 +777,11 @@ btnBack.onclick = () => {
   }
   else if (currentView === 'add-sheep') render('list');
   else if (currentView === 'add-agnelle') { editingAgnelleId = null; render('agnelles'); }
-  else if (currentView === 'add-lot') render('lots');
+  else if (currentView === 'add-lot' || currentView === 'add-lot-reforme') render('lots');
   else if (currentView === 'lot-search') render('lots');
   else if (currentView === 'mouvement-groupe') render('lots');
   else if (currentView === 'traitement-collectif') render('lots');
+  else if (currentView === 'traitements-collectifs') render('lots');
   else if (currentView === 'import-echo') render('parametres');
   else if (currentView === 'sync-login') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
@@ -841,11 +910,14 @@ function render(view, sheepId) {
   else if (view === 'journal') renderJournal();
   else if (view === 'lots') renderLots();
   else if (view === 'add-lot') renderAddLot();
+  else if (view === 'add-lot-reforme') renderAddLotReforme();
   else if (view === 'lot-search') renderLotSearch(currentLotId);
   else if (view === 'mouvement-groupe') renderMouvementGroupe();
   else if (view === 'traitement-collectif') renderTraitementCollectif();
+  else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
   else if (view === 'import-echo') renderImportEcho();
   else if (view === 'parametres') renderParametres();
+  else if (view === 'registre') renderRegistre();
   else if (view === 'sync-login') renderSyncLogin();
 
   requestAnimationFrame(() => window.scrollTo(0, isRoot ? (scrollPositions[view] || 0) : 0));
@@ -956,7 +1028,7 @@ function dashboardKpiHtml() {
         <div class="stat-card-value">${total}</div>
         <div class="stat-card-sub">${DB.brebis.length} enregistrée(s) au total</div>
       </div>
-      <div class="stat-card sc-amber">
+      <div class="stat-card sc-amber stat-card-clickable" id="kpi-agnelles" role="button" tabindex="0">
         ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
         <div class="stat-card-label" style="margin-top:8px;">Agnelles</div>
         <div class="stat-card-value">${(DB.agnelles||[]).length}</div>
@@ -991,7 +1063,7 @@ function dashboardKpiHtml() {
         <div class="stat-card-value">${misesBasRestantes}</div>
         <div class="stat-card-sub">Gestantes n'ayant pas encore mis bas</div>
       </div>
-      <div class="stat-card sc-blue">
+      <div class="stat-card sc-blue stat-card-clickable" id="kpi-attendues-traite" role="button" tabindex="0">
         ${iconCircle(ICON_LAIT, 'blue', 'sm')}
         <div class="stat-card-label" style="margin-top:8px;">Attendues à la traite</div>
         <div class="stat-card-value">${attendueTraiteCount}</div>
@@ -1105,6 +1177,12 @@ function renderList() {
   const dashboard = document.createElement('div');
   dashboard.innerHTML = dashboardKpiHtml();
   app.appendChild(dashboard);
+  const kpiAgnelles = document.getElementById('kpi-agnelles');
+  if (kpiAgnelles) kpiAgnelles.onclick = () => render('agnelles');
+  const kpiAttendues = document.getElementById('kpi-attendues-traite');
+  if (kpiAttendues) kpiAttendues.onclick = () => {
+    openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(isAttendueTraite).map(s => s.eid));
+  };
 
   if (actives.length === 0) {
     const empty = document.createElement('div');
@@ -1113,7 +1191,7 @@ function renderList() {
     app.appendChild(empty);
     return;
   }
-  const sorted = [...actives].sort((a,b) => anneeNaissance(a.eid) - anneeNaissance(b.eid));
+  const sorted = sortByAge(actives);
   sorted.forEach(sheep => {
     const lastAgnelage = (sheep.agnelages || [])[sheep.agnelages.length - 1];
     const badgeHtml = isAttendueTraite(sheep)
@@ -1142,7 +1220,7 @@ function renderList() {
 function inventaireBrebisHtml() {
   const sorties = DB.brebis.filter(s => (s.statut || 'active') !== 'active');
   if (sorties.length === 0) return '<div class="empty">Aucune brebis sortie du troupeau pour l\'instant.</div>';
-  const sorted = [...sorties].sort((a,b) => anneeNaissance(a.eid) - anneeNaissance(b.eid));
+  const sorted = sortByAge(sorties);
   return sorted.map(sheep => `
     <div class="sheep-item inventaire-brebis-item" data-id="${sheep.id}" style="opacity:0.7;">
       <div class="sheep-item-left">
@@ -1169,7 +1247,7 @@ function wireInventaireBrebis() {
 function inventaireBeliersHtml() {
   const sorties = (DB.beliers || []).filter(b => (b.statut || 'actif') !== 'actif');
   if (sorties.length === 0) return '<div class="empty">Aucun bélier sorti pour l\'instant.</div>';
-  const sorted = [...sorties].sort((a,b) => anneeNaissance(a.eid) - anneeNaissance(b.eid));
+  const sorted = sortByAge(sorties);
   return sorted.map(b => `
     <div class="sheep-item inventaire-belier-item" data-id="${b.id}" style="opacity:0.7;">
       <div class="sheep-item-left">
@@ -1206,7 +1284,7 @@ function inventaireAgneauxHtml() {
     });
   });
   if (items.length === 0) return '<div class="empty">Aucun agneau vendu ou mort pour l\'instant.</div>';
-  return items.map(it => `
+  return sortLambItemsByAge(items).map(it => `
     <div class="sheep-item inventaire-agneau-item" data-mere-eid="${it.mereEid}">
       <div class="sheep-item-left">
         ${iconCircle(ICON_SHEEP, 'coral')}
@@ -1300,6 +1378,7 @@ function renderAddSheep() {
     }
     const dateEntree = document.getElementById('input-date-entree').value || null;
     const sheep = { id: Date.now().toString(), eid, createdAt: Date.now(), dateEntree, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active' };
+    sheep.mouvements.push({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || new Date().toISOString().slice(0,10) });
     DB.brebis.push(sheep);
     saveData(DB);
     render('detail', sheep.id);
@@ -1335,6 +1414,13 @@ function isAttendueTraite(sheep) {
 }
 
 /* ---------- Agneaux (vue agrégée, en attente de devenir) ---------- */
+/* Tri commun aux listes d'agneaux/agnelles issues d'agnelages : du plus vieux
+   au plus jeune par date de naissance exacte (plus précise que l'année
+   déduite de l'EID pour des animaux nés la même campagne). */
+function sortLambItemsByAge(items) {
+  return [...items].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
 function getAgneauxEnAttente() {
   const items = [];
   DB.brebis.forEach(sheep => {
@@ -1345,7 +1431,7 @@ function getAgneauxEnAttente() {
       });
     });
   });
-  return items;
+  return sortLambItemsByAge(items);
 }
 
 function renderAgneaux() {
@@ -1612,7 +1698,8 @@ function renderDetail(id) {
     };
   }
   document.getElementById('btn-delete-sheep').onclick = () => {
-    if (!confirm('Supprimer définitivement la brebis n°' + numeroVisuel(sheep.eid) + ' et tout son historique ? Cette action est irréversible.')) return;
+    if (!confirm('Supprimer la brebis n°' + numeroVisuel(sheep.eid) + ' de la liste active ? Son carnet sanitaire, ses mises bas et ses mouvements resteront conservés dans le registre d\'élevage réglementaire.')) return;
+    archiverDansRegistre('brebis', sheep.eid, { sanitaire: sheep.sanitaire, agnelages: sheep.agnelages, mouvements: sheep.mouvements });
     DB.brebis = DB.brebis.filter(s => s.id !== sheep.id);
     saveData(DB);
     render('list');
@@ -2063,7 +2150,8 @@ function renderAddSanitaire(sheepId) {
         produit = wasSelected ? null : val;
         renderProduitChips();
         document.getElementById('err').classList.add('hidden');
-        if (!wasSelected) maybeAssociateAnmv(val, () => {});
+        updatePosologieBox(produit);
+        if (!wasSelected) maybeAssociateAnmv(val, () => updatePosologieBox(produit));
       };
       list.appendChild(chip);
     });
@@ -2112,7 +2200,7 @@ function renderAddSanitaire(sheepId) {
     input.value = '';
     produit = val;
     renderProduitChips();
-    maybeAssociateAnmv(val, () => {});
+    maybeAssociateAnmv(val, () => updatePosologieBox(produit));
   };
 
   document.getElementById('btn-save-sanitaire').onclick = () => {
@@ -2415,7 +2503,7 @@ function getCandidatesATrier() {
       });
     });
   });
-  return candidates;
+  return sortLambItemsByAge(candidates);
 }
 
 function getEcartees() {
@@ -2429,7 +2517,7 @@ function getEcartees() {
       });
     });
   });
-  return list;
+  return sortLambItemsByAge(list);
 }
 
 function renderAgnelles() {
@@ -2458,7 +2546,7 @@ function renderAgnelles() {
 
   const listHtml = DB.agnelles.length === 0
     ? '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucune agnelle triée ou achetée pour l\'instant.</div>'
-    : [...DB.agnelles].sort((a,b) => (b.dateEntree || '').localeCompare(a.dateEntree || '')).map(ag => `
+    : sortByAge(DB.agnelles).map(ag => `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div style="display:flex;align-items:center;gap:12px;">
@@ -2533,7 +2621,7 @@ function renderAgnelles() {
 
   function garderAgnelle(c) {
     c.lamb.triStatut = 'gardée';
-    DB.agnelles.push({ id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: c.lamb.eid, origine: 'née', motherEid: c.motherEid, dateEntree: new Date().toISOString().slice(0,10), sanitaire: (c.lamb.sanitaire || []).slice() });
+    DB.agnelles.push({ id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: c.lamb.eid, origine: 'née', motherEid: c.motherEid, dateEntree: new Date().toISOString().slice(0,10), sanitaire: (c.lamb.sanitaire || []).slice(), mouvements: [] });
     saveData(DB);
     render('agnelles');
   }
@@ -2560,7 +2648,9 @@ function renderAgnelles() {
   });
   document.querySelectorAll('.btn-remove-agnelle').forEach(btn => {
     btn.onclick = () => {
-      if (!confirm('Supprimer cette agnelle de l\'inventaire ? Cette action est irréversible.')) return;
+      if (!confirm('Supprimer cette agnelle de l\'inventaire ? Son carnet sanitaire et ses mouvements resteront conservés dans le registre d\'élevage réglementaire.')) return;
+      const ag = DB.agnelles.find(a => a.id === btn.dataset.id);
+      if (ag) archiverDansRegistre('agneaux', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
       DB.agnelles = DB.agnelles.filter(a => a.id !== btn.dataset.id);
       saveData(DB);
       render('agnelles');
@@ -2698,7 +2788,10 @@ function renderAddAgnelle() {
       existing.mere = mere;
       editingAgnelleId = null;
     } else {
-      DB.agnelles.push({ id: Date.now().toString(), eid, origine: origine, dateEntree: date, pere: pere, mere: mere, sanitaire: [] });
+      DB.agnelles.push({
+        id: Date.now().toString(), eid, origine: origine, dateEntree: date, pere: pere, mere: mere, sanitaire: [],
+        mouvements: origine === 'achetée' ? [{ type: 'Entrée', cause: 'Achat', date: date }] : []
+      });
     }
     saveData(DB);
     render('agnelles');
@@ -2713,7 +2806,7 @@ function renderBeliers() {
 
   const listHtml = DB.beliers.length === 0
     ? '<div class="empty">Aucun bélier pour l\'instant.<br>Appuie sur le bouton ci-dessous pour en ajouter un.</div>'
-    : [...DB.beliers].sort((a,b) => anneeNaissance(a.eid) - anneeNaissance(b.eid)).map(b => `
+    : sortByAge(DB.beliers).map(b => `
       <div class="sheep-item" data-id="${b.id}" style="${(b.statut && b.statut!=='actif') ? 'opacity:0.6;' : ''}">
         <div class="sheep-item-left">
           ${iconCircle(ICON_RAM, 'indigo')}
@@ -2763,6 +2856,7 @@ function renderAddBelier() {
     err.classList.add('hidden');
     const dateEntree = document.getElementById('input-date-entree').value || null;
     const belier = { id: Date.now().toString(), eid, createdAt: Date.now(), dateEntree, sanitaire: [], mouvements: [], statut: 'actif' };
+    belier.mouvements.push({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || new Date().toISOString().slice(0,10) });
     DB.beliers.push(belier);
     saveData(DB);
     currentBelierId = belier.id;
@@ -2838,7 +2932,8 @@ function renderBelierDetail() {
   document.getElementById('btn-add-sanitaire-belier').onclick = () => { editBelierContext = null; render('add-sanitaire-belier'); };
   document.getElementById('btn-add-mouvement-belier').onclick = () => { editBelierContext = null; render('add-mouvement-belier'); };
   document.getElementById('btn-delete-belier').onclick = () => {
-    if (!confirm('Supprimer définitivement le bélier n°' + numeroVisuel(belier.eid) + ' et tout son historique ? Cette action est irréversible.')) return;
+    if (!confirm('Supprimer le bélier n°' + numeroVisuel(belier.eid) + ' de la liste active ? Son carnet sanitaire et ses mouvements resteront conservés dans le registre d\'élevage réglementaire.')) return;
+    archiverDansRegistre('beliers', belier.eid, { sanitaire: belier.sanitaire, mouvements: belier.mouvements });
     DB.beliers = DB.beliers.filter(b => b.id !== belier.id);
     saveData(DB);
     render('beliers');
@@ -2921,7 +3016,7 @@ function renderAddSanitaireBelier() {
       chip.type = 'button';
       chip.className = 'chip' + (produit === val ? ' selected' : '');
       chip.textContent = val;
-      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); document.getElementById('err').classList.add('hidden'); if (!wasSelected) maybeAssociateAnmv(val, () => {}); };
+      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); document.getElementById('err').classList.add('hidden'); updatePosologieBox(produit); if (!wasSelected) maybeAssociateAnmv(val, () => updatePosologieBox(produit)); };
       list.appendChild(chip);
     });
   }
@@ -2961,7 +3056,7 @@ function renderAddSanitaireBelier() {
     input.value = '';
     produit = val;
     renderProduitChips();
-    maybeAssociateAnmv(val, () => {});
+    maybeAssociateAnmv(val, () => updatePosologieBox(produit));
   };
 
   document.getElementById('btn-save-sanitaire').onclick = () => {
@@ -3370,6 +3465,27 @@ function wireChantierTriTabBar() {
   });
 }
 
+/* Ouvre (en le créant ou en le rafraîchissant s'il existe déjà) un lot de
+   recherche technique, identifié par un id fixe — utilisé par les raccourcis
+   cliquables de l'accueil (ex: "Attendues à la traite") pour générer
+   automatiquement un lot de recherche en bergerie sur un critère donné,
+   sans passer par l'écran "Nouveau lot". */
+function openAutoLot(id, nom, membres) {
+  DB.lots = DB.lots || [];
+  let lot = DB.lots.find(l => l.id === id);
+  if (lot) {
+    lot.membres = membres;
+    lot.dateCreation = new Date().toISOString().slice(0,10);
+  } else {
+    lot = { id, nom, membres, dateCreation: new Date().toISOString().slice(0,10), auto: true };
+    DB.lots.push(lot);
+  }
+  saveData(DB);
+  if (window.__lotSessions) delete window.__lotSessions['trouvees_' + id];
+  currentLotId = id;
+  render('lot-search');
+}
+
 function renderLots() {
   DB.lots = DB.lots || [];
   pageTitle.textContent = 'Chantier de tri';
@@ -3380,9 +3496,9 @@ function renderLots() {
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:12px;">
-            ${iconCircle(ICON_SEARCH, 'green', 'sm')}
+            ${iconCircle(ICON_SEARCH, lot.type === 'reforme' ? 'coral' : 'green', 'sm')}
             <div>
-              <div style="font-weight:600;">${lot.nom}</div>
+              <div style="font-weight:600;">${lot.nom}${lot.type === 'reforme' ? ' <span class="badge badge-coral" style="margin-left:6px;">Réforme</span>' : ''}</div>
               <div style="font-size:12px;color:var(--text-muted);">${lot.membres.length} brebis · créé le ${lot.dateCreation}</div>
             </div>
           </div>
@@ -3394,14 +3510,18 @@ function renderLots() {
 
   app.innerHTML = chantierTriTabBarHtml() + listHtml + `
     <button class="btn btn-primary" id="btn-new-lot" style="margin-top:10px;margin-bottom:10px;">+ Nouveau lot</button>
+    <button class="btn btn-secondary" id="btn-new-lot-reforme" style="border-color:var(--coral-fg);color:var(--coral-fg);margin-bottom:10px;">+ Nouveau lot de réforme</button>
     <button class="btn btn-secondary" id="btn-mouvement-groupe" style="border-color:var(--danger);color:var(--danger);margin-bottom:10px;">Mouvement groupé (vente / sortie multiple)</button>
     <button class="btn btn-secondary" id="btn-traitement-collectif" style="border-color:var(--danger);color:var(--danger);">Traitement collectif (tout le troupeau)</button>
+    <button class="btn btn-secondary" id="btn-historique-collectif" style="margin-top:10px;">Gérer / supprimer un traitement collectif</button>
   `;
 
   wireChantierTriTabBar();
   document.getElementById('btn-traitement-collectif').onclick = () => render('traitement-collectif');
+  document.getElementById('btn-historique-collectif').onclick = () => render('traitements-collectifs');
   document.getElementById('btn-mouvement-groupe').onclick = () => render('mouvement-groupe');
   document.getElementById('btn-new-lot').onclick = () => render('add-lot');
+  document.getElementById('btn-new-lot-reforme').onclick = () => render('add-lot-reforme');
   document.querySelectorAll('.btn-search-lot').forEach(btn => {
     btn.onclick = () => { currentLotId = btn.dataset.id; render('lot-search'); };
   });
@@ -3413,6 +3533,116 @@ function renderLots() {
       render('lots');
     };
   });
+}
+
+/* ---------- Composant de sélection généralisé (clic dans une liste OU bip en série) ----------
+   Réutilisé partout où l'on choisit un sous-ensemble d'animaux : Nouveau lot,
+   Mouvement groupé, Traitement collectif, Lot de réforme. Les deux façons de
+   sélectionner ne s'excluent pas : on peut bipper en série puis affiner à la
+   main dans la liste (ou l'inverse), la sélection est partagée entre les
+   deux onglets.
+   - containerEl : élément DOM où injecter le composant (vidé et reconstruit
+     à chaque appel).
+   - pool : tableau des animaux disponibles ({id, eid, ...}).
+   - selectedIds : Set (fourni et conservé par l'appelant) des `id` cochés.
+   - opts.renderMeta(item) : texte optionnel affiché à droite de chaque ligne.
+   - opts.onChange() : rappelée après chaque changement de sélection. */
+function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
+  opts = opts || {};
+  const renderMeta = opts.renderMeta || (() => '');
+  const onChange = opts.onChange || (() => {});
+  const state = { mode: opts.initialMode || 'liste', filtre: '' };
+
+  function findByEid(val) {
+    return pool.find(it => cleanEid(it.eid) === val);
+  }
+
+  function renderCounter() {
+    const el = containerEl.querySelector('.sp-counter');
+    if (el) el.textContent = selectedIds.size + ' sélectionnée(s) sur ' + pool.length + '.';
+  }
+
+  function renderRows() {
+    const listEl = containerEl.querySelector('.sp-list');
+    if (!listEl) return;
+    let items = pool;
+    if (state.filtre.trim()) {
+      const f = state.filtre.trim().toLowerCase();
+      items = items.filter(it => numeroVisuel(it.eid).toLowerCase().includes(f));
+    }
+    listEl.innerHTML = items.map(it => `
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);">
+        <input type="checkbox" class="sp-check" data-id="${it.id}" ${selectedIds.has(it.id) ? 'checked' : ''} style="width:18px;height:18px;margin:0;flex-shrink:0;">
+        <span style="font-size:14px;">N°${numeroVisuel(it.eid)}</span>
+        <span style="font-size:12px;color:var(--text-muted);margin-left:auto;">${renderMeta(it)}</span>
+      </label>
+    `).join('') || '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucun animal.</div>';
+    listEl.querySelectorAll('.sp-check').forEach(cb => {
+      cb.onchange = () => {
+        if (cb.checked) selectedIds.add(cb.dataset.id);
+        else selectedIds.delete(cb.dataset.id);
+        renderCounter();
+        onChange();
+      };
+    });
+  }
+
+  function full() {
+    containerEl.innerHTML = `
+      <div class="tab-bar" style="margin-bottom:10px;">
+        <button type="button" class="tab-btn sp-mode-btn${state.mode === 'liste' ? ' active' : ''}" data-mode="liste">Sélection dans la liste</button>
+        <button type="button" class="tab-btn sp-mode-btn${state.mode === 'bip' ? ' active' : ''}" data-mode="bip">Bip en série</button>
+      </div>
+      <div class="sp-counter" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">${selectedIds.size} sélectionnée(s) sur ${pool.length}.</div>
+      ${state.mode === 'bip' ? `
+        <input type="text" class="sp-scan" placeholder="Scanner ou saisir l'EID" autofocus>
+        <div class="sp-scan-feedback" style="margin-top:8px;font-size:13px;"></div>
+      ` : `
+        <input type="text" class="sp-filtre" placeholder="Filtrer par numéro..." value="${state.filtre}" style="margin-bottom:4px;">
+      `}
+      <div class="sp-list" style="max-height:360px;overflow-y:auto;"></div>
+    `;
+
+    containerEl.querySelectorAll('.sp-mode-btn').forEach(btn => {
+      btn.onclick = () => { state.mode = btn.dataset.mode; full(); };
+    });
+
+    if (state.mode === 'bip') {
+      const scan = containerEl.querySelector('.sp-scan');
+      const feedback = containerEl.querySelector('.sp-scan-feedback');
+      scan.focus();
+      scan.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        const val = cleanEid(scan.value);
+        scan.value = '';
+        if (!val) return;
+        const item = findByEid(val);
+        if (!item) {
+          playBeepRate();
+          feedback.textContent = 'n°' + numeroVisuel(val) + ' introuvable dans cette liste.';
+          feedback.style.color = 'var(--danger)';
+          return;
+        }
+        if (selectedIds.has(item.id)) {
+          playBeepDejaTrouve();
+          feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' déjà sélectionnée.';
+          feedback.style.color = 'var(--warning)';
+          return;
+        }
+        playBeepTrouve();
+        feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' ajoutée.';
+        feedback.style.color = 'var(--green-fg)';
+        selectedIds.add(item.id);
+        renderCounter();
+        onChange();
+      });
+    } else {
+      const filtre = containerEl.querySelector('.sp-filtre');
+      filtre.addEventListener('input', () => { state.filtre = filtre.value; renderRows(); });
+    }
+    renderRows();
+  }
+  full();
 }
 
 function renderAddLot() {
@@ -3433,10 +3663,10 @@ function renderAddLot() {
         <button type="button" class="chip" data-val="Pleine">Pleine (constat)</button>
         <button type="button" class="chip" data-val="Aucune">Sans échographie</button>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Coche un ou plusieurs critères pour présélectionner des brebis ci-dessous — tu peux ensuite ajuster la sélection à la main.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Coche un ou plusieurs critères pour présélectionner des brebis ci-dessous — tu peux ensuite ajuster la sélection à la main ou au bip.</div>
 
-      <label>Brebis du lot (${actives.length} actives)</label>
-      <div id="brebis-checklist" style="max-height:400px;overflow-y:auto;margin-bottom:14px;"></div>
+      <label>Brebis du lot</label>
+      <div id="lot-picker" style="margin-bottom:14px;"></div>
 
       <div id="err" class="error-box hidden"></div>
       <button class="btn btn-primary" id="btn-save-lot">Créer le lot</button>
@@ -3452,23 +3682,8 @@ function renderAddLot() {
     return last.stade || 'Aucune';
   }
 
-  function renderChecklist() {
-    const container = document.getElementById('brebis-checklist');
-    container.innerHTML = actives.map(s => `
-      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);">
-        <input type="checkbox" class="lot-check" data-id="${s.id}" ${selected.has(s.id) ? 'checked' : ''} style="width:18px;height:18px;margin:0;">
-        <span style="font-size:14px;">Brebis n°${numeroVisuel(s.eid)}</span>
-        <span style="font-size:12px;color:var(--text-muted);margin-left:auto;">${lastStadeOf(s)}</span>
-      </label>
-    `).join('');
-    document.querySelectorAll('.lot-check').forEach(cb => {
-      cb.onchange = () => {
-        if (cb.checked) selected.add(cb.dataset.id);
-        else selected.delete(cb.dataset.id);
-      };
-    });
-  }
-  renderChecklist();
+  const picker = document.getElementById('lot-picker');
+  renderSelectionPicker(picker, actives, selected, { renderMeta: lastStadeOf });
 
   document.querySelectorAll('#critere-list .chip').forEach(chip => {
     chip.onclick = () => {
@@ -3478,7 +3693,7 @@ function renderAddLot() {
       actives.forEach(s => {
         if (criteres.has(lastStadeOf(s))) selected.add(s.id);
       });
-      renderChecklist();
+      renderSelectionPicker(picker, actives, selected, { renderMeta: lastStadeOf });
     };
   });
 
@@ -3499,6 +3714,47 @@ function renderAddLot() {
     const membres = actives.filter(s => selected.has(s.id)).map(s => s.eid);
     DB.lots = DB.lots || [];
     DB.lots.push({ id: Date.now().toString(), nom, dateCreation: new Date().toISOString().slice(0,10), membres });
+    saveData(DB);
+    render('lots');
+  };
+}
+
+/* ---------- Lot de réforme ----------
+   Même principe qu'un lot classique (sélection puis recherche en bergerie
+   via renderLotSearch), mais taggé type:'reforme' pour se distinguer dans
+   "Chantier de tri". Ne couvre que la constitution + recherche du lot — pas
+   encore de statut/sortie "réformée" dédié (hors périmètre pour l'instant). */
+function renderAddLotReforme() {
+  pageTitle.textContent = 'Nouveau lot de réforme';
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const today = new Date().toISOString().slice(0,10);
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Sélectionne les brebis à réformer — le lot sera ensuite disponible pour une recherche en bergerie, comme n'importe quel autre lot.</div>
+      <label>Nom du lot</label>
+      <input type="text" id="f-lot-nom" value="Réforme du ${today}">
+
+      <label>Brebis à réformer</label>
+      <div id="reforme-picker" style="margin-bottom:14px;"></div>
+
+      <div id="err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-save-lot-reforme" style="background:var(--coral-fg);">Créer le lot de réforme</button>
+    </div>
+  `;
+
+  const selected = new Set();
+  renderSelectionPicker(document.getElementById('reforme-picker'), actives, selected);
+
+  document.getElementById('btn-save-lot-reforme').onclick = () => {
+    const err = document.getElementById('err');
+    const nom = document.getElementById('f-lot-nom').value.trim();
+    if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
+    if (selected.size === 0) { err.textContent = "Sélectionne au moins une brebis (à la main ou au bip)."; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    const membres = actives.filter(s => selected.has(s.id)).map(s => s.eid);
+    DB.lots = DB.lots || [];
+    DB.lots.push({ id: Date.now().toString(), nom, dateCreation: today, membres, type: 'reforme' });
     saveData(DB);
     render('lots');
   };
@@ -3571,9 +3827,13 @@ function renderLotSearch(lotId) {
 function renderMouvementGroupe() {
   pageTitle.textContent = 'Mouvement groupé';
   const today = new Date().toISOString().slice(0,10);
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
 
-  if (!window.__panierGroupe) window.__panierGroupe = [];
-  const panier = window.__panierGroupe;
+  if (!window.__mouvementGroupeSelected) window.__mouvementGroupeSelected = new Set();
+  const selected = window.__mouvementGroupeSelected;
+  // Ne garde que les ids encore actifs (une sélection lancée puis reprise
+  // plus tard ne doit pas pointer vers une brebis déjà sortie entre-temps).
+  Array.from(selected).forEach(id => { if (!actives.some(s => s.id === id)) selected.delete(id); });
 
   let type = null, cause = null, acheteur = null;
 
@@ -3601,25 +3861,17 @@ function renderMouvementGroupe() {
       </div>
 
       <div class="card">
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">Scanne les brebis à la suite — en lecture continue ou brebis par brebis selon le réglage du bâton, chaque bip valide ajoute directement la brebis au panier.</div>
-        <label>Scanner une brebis</label>
-        <input type="text" id="scan-groupe" placeholder="Scanner ou saisir l'EID" autofocus>
-        <div id="scan-groupe-err" class="error-box hidden"></div>
-      </div>
-
-      <div style="font-size:14px;font-weight:600;margin:16px 0 10px;">Panier (${panier.length})</div>
-      <div>
-        ${panier.map((eid, i) => `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);font-size:14px;">
-            <span style="display:flex;align-items:center;gap:10px;">${iconCircle(ICON_SHEEP, 'coral', 'sm')}n°${numeroVisuel(eid)}</span>
-            <button type="button" class="btn btn-secondary btn-remove-panier" data-i="${i}" style="width:auto;padding:4px 10px;font-size:12px;">Retirer</button>
-          </div>
-        `).join('') || '<div style="font-size:13px;color:var(--text-muted);">Aucune brebis scannée pour l\'instant.</div>'}
+        <label>Brebis concernées</label>
+        <div id="groupe-picker"></div>
       </div>
 
       <div id="err" class="error-box hidden" style="margin-top:14px;"></div>
-      <button class="btn btn-primary" id="btn-valider-groupe" style="margin-top:10px;background:var(--danger);">Valider ${panier.length} mouvement(s)</button>
+      <button class="btn btn-primary" id="btn-valider-groupe" style="margin-top:10px;background:var(--danger);">Valider ${selected.size} mouvement(s)</button>
     `;
+
+    renderSelectionPicker(document.getElementById('groupe-picker'), actives, selected, {
+      onChange: () => { document.getElementById('btn-valider-groupe').textContent = 'Valider ' + selected.size + ' mouvement(s)'; }
+    });
 
     function renderCauseChips() {
       const list = document.getElementById('cause-list');
@@ -3676,54 +3928,22 @@ function renderMouvementGroupe() {
       saveData(DB); input.value = ''; acheteur = val; renderAcheteurChips();
     };
 
-    const scanInput = document.getElementById('scan-groupe');
-    scanInput.focus();
-    scanInput.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      const val = cleanEid(scanInput.value);
-      const err = document.getElementById('scan-groupe-err');
-      scanInput.value = '';
-      if (!val) return;
-      const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
-      if (!sheep) {
-        playBeepRate();
-        err.textContent = "Aucune brebis trouvée avec cet EID.";
-        err.classList.remove('hidden');
-        return;
-      }
-      if (panier.includes(sheep.eid)) {
-        playBeepDejaTrouve();
-        err.textContent = "Déjà dans le panier.";
-        err.classList.remove('hidden');
-        return;
-      }
-      playBeepTrouve();
-      err.classList.add('hidden');
-      panier.push(sheep.eid);
-      render_();
-    });
-
-    document.querySelectorAll('.btn-remove-panier').forEach(btn => {
-      btn.onclick = () => { panier.splice(parseInt(btn.dataset.i, 10), 1); render_(); };
-    });
-
     document.getElementById('btn-valider-groupe').onclick = () => {
       const errBox = document.getElementById('err');
       if (!type) { errBox.textContent = "Choisis un type de mouvement."; errBox.classList.remove('hidden'); return; }
       if ((type === 'Vendue' || type === 'Vendue reproduction') && !acheteur) { errBox.textContent = "Sélectionne ou ajoute un acheteur."; errBox.classList.remove('hidden'); return; }
-      if (panier.length === 0) { errBox.textContent = "Scanne au moins une brebis."; errBox.classList.remove('hidden'); return; }
-      if (!confirm('Appliquer "' + type + '" à ' + panier.length + ' brebis ?')) return;
+      if (selected.size === 0) { errBox.textContent = "Sélectionne au moins une brebis (à la main ou au bip)."; errBox.classList.remove('hidden'); return; }
+      if (!confirm('Appliquer "' + type + '" à ' + selected.size + ' brebis ?')) return;
       const date = document.getElementById('f-date').value;
-      panier.forEach(eid => {
-        const sheep = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eid));
-        if (!sheep) return;
+      const concernees = actives.filter(s => selected.has(s.id));
+      concernees.forEach(sheep => {
         sheep.mouvements = sheep.mouvements || [];
         sheep.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date });
         sheep.statut = type === 'Morte' ? 'morte' : type === 'Vendue' ? 'vendue' : 'vendue reproduction';
       });
       saveData(DB);
-      window.__panierGroupe = [];
-      alert(panier.length + ' mouvement(s) enregistré(s).');
+      selected.clear();
+      alert(concernees.length + ' mouvement(s) enregistré(s).');
       render('lots');
     };
   }
@@ -3740,8 +3960,15 @@ function renderTraitementCollectif() {
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
-        <div style="font-size:13px;color:var(--text-muted);">Sera appliqué aux ${actives.length} brebis actives du troupeau.</div>
+        <div style="font-size:13px;color:var(--text-muted);">Applique un soin à plusieurs brebis en une fois.</div>
       </div>
+
+      <label>Brebis concernées</label>
+      <div class="grid2" style="margin-bottom:14px;">
+        <button type="button" class="opt-btn cible-opt coral selected" data-val="toutes">Toutes les actives (${actives.length})</button>
+        <button type="button" class="opt-btn cible-opt coral" data-val="partiel">Sélectionner une partie</button>
+      </div>
+      <div id="cible-picker" class="hidden" style="margin-bottom:14px;"></div>
 
       <label>Type d'évènement</label>
       <div class="grid4" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px;">
@@ -3787,6 +4014,28 @@ function renderTraitementCollectif() {
   `;
 
   let type = null, sousType = null, produit = null;
+  let cibleMode = 'toutes';
+  const selectedCibles = new Set();
+
+  function cibles() {
+    return cibleMode === 'toutes' ? actives : actives.filter(s => selectedCibles.has(s.id));
+  }
+  function updateSaveButtonLabel() {
+    document.getElementById('btn-save-collectif').textContent = 'Appliquer aux ' + cibles().length + ' brebis ' + (cibleMode === 'toutes' ? 'actives' : 'sélectionnées');
+  }
+  document.querySelectorAll('.cible-opt').forEach(btn => {
+    btn.onclick = () => {
+      cibleMode = btn.dataset.val;
+      document.querySelectorAll('.cible-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      const picker = document.getElementById('cible-picker');
+      picker.classList.toggle('hidden', cibleMode !== 'partiel');
+      if (cibleMode === 'partiel') {
+        renderSelectionPicker(picker, actives, selectedCibles, { onChange: updateSaveButtonLabel });
+      }
+      updateSaveButtonLabel();
+    };
+  });
 
   function categorieKey() {
     if (type === 'Vaccin') return 'vaccins';
@@ -3806,7 +4055,7 @@ function renderTraitementCollectif() {
       chip.type = 'button';
       chip.className = 'chip' + (produit === val ? ' selected' : '');
       chip.textContent = val;
-      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); document.getElementById('err').classList.add('hidden'); if (!wasSelected) maybeAssociateAnmv(val, () => {}); };
+      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); document.getElementById('err').classList.add('hidden'); updatePosologieBox(produit); if (!wasSelected) maybeAssociateAnmv(val, () => updatePosologieBox(produit)); };
       list.appendChild(chip);
     });
   }
@@ -3846,31 +4095,281 @@ function renderTraitementCollectif() {
     input.value = '';
     produit = val;
     renderProduitChips();
-    maybeAssociateAnmv(val, () => {});
+    maybeAssociateAnmv(val, () => updatePosologieBox(produit));
   };
 
   document.getElementById('btn-save-collectif').onclick = () => {
     const err = document.getElementById('err');
+    const cible = cibles();
     if (!type) { err.textContent = "Choisis un type d'évènement."; err.classList.remove('hidden'); return; }
     if (type === 'Traitement' && !sousType) { err.textContent = "Choisis une catégorie de traitement."; err.classList.remove('hidden'); return; }
     if (type !== 'Autre' && !produit) { err.textContent = "Sélectionne ou ajoute un produit."; err.classList.remove('hidden'); return; }
-    if (!confirm('Appliquer ce traitement collectif aux ' + actives.length + ' brebis actives ?')) return;
+    if (cible.length === 0) { err.textContent = "Sélectionne au moins une brebis (à la main ou au bip)."; err.classList.remove('hidden'); return; }
+    if (!confirm('Appliquer ce traitement collectif à ' + cible.length + ' brebis ?')) return;
     err.classList.add('hidden');
+    const collectifId = 'TC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    const soinDate = document.getElementById('f-date').value;
+    const soinDose = document.getElementById('f-dose').value.trim();
+    const soinComment = document.getElementById('f-comment').value.trim();
+    const soinProduit = type === 'Autre' ? 'Soin de plaie' : produit;
     const soin = {
-      type: type, sousType: sousType, produit: type === 'Autre' ? 'Soin de plaie' : produit,
-      date: document.getElementById('f-date').value,
-      dose: document.getElementById('f-dose').value.trim(),
-      commentaire: document.getElementById('f-comment').value.trim(),
-      collectif: true
+      type: type, sousType: sousType, produit: soinProduit,
+      date: soinDate,
+      dose: soinDose,
+      commentaire: soinComment,
+      collectif: true,
+      collectifId: collectifId
     };
-    actives.forEach(s => {
+    cible.forEach(s => {
       s.sanitaire = s.sanitaire || [];
       s.sanitaire.push(soin);
     });
+    DB.traitementsCollectifs = DB.traitementsCollectifs || [];
+    DB.traitementsCollectifs.push({
+      id: collectifId,
+      type: type, sousType: sousType, produit: soinProduit,
+      date: soinDate, dose: soinDose, commentaire: soinComment,
+      membres: cible.map(s => s.eid),
+      createdAt: Date.now()
+    });
     saveData(DB);
-    alert('Traitement appliqué à ' + actives.length + ' brebis.');
+    alert('Traitement appliqué à ' + cible.length + ' brebis.');
     render('lots');
   };
+}
+
+/* ---------- Historique des traitements collectifs (suppression en masse) ----------
+   Les traitements créés après l'ajout du collectifId sont retrouvés via
+   DB.traitementsCollectifs. Les entrées créées avant ce correctif n'ont pas
+   de collectifId : on les détecte a posteriori en regroupant, sur les brebis
+   actives, les soins collectifs qui partagent exactement le même
+   {type, sousType, produit, date} — c'est le seul repère disponible pour ces
+   anciennes saisies (cas typique : un traitement Chlamyvax appliqué en masse
+   avant que cet écran n'existe). */
+function detectLegacyCollectifGroups() {
+  const groups = {};
+  DB.brebis.forEach(s => {
+    (s.sanitaire || []).forEach(soin => {
+      if (!soin.collectif || soin.collectifId) return;
+      const key = JSON.stringify([soin.type, soin.sousType || null, soin.produit || null, soin.date || null]);
+      if (!groups[key]) groups[key] = { type: soin.type, sousType: soin.sousType, produit: soin.produit, date: soin.date, membres: [] };
+      groups[key].membres.push(s.eid);
+    });
+  });
+  return Object.values(groups).filter(g => g.membres.length >= 2);
+}
+
+function renderTraitementsCollectifsHistorique() {
+  pageTitle.textContent = 'Traitements collectifs';
+  DB.traitementsCollectifs = DB.traitementsCollectifs || [];
+  const legacyGroups = detectLegacyCollectifGroups();
+
+  const itemHtml = (t, isLegacy) => `
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+        ${iconCircle(ICON_SANTE, 'coral', 'sm')}
+        <div>
+          <div style="font-weight:600;">${t.produit || t.type}${t.sousType ? ' · ' + t.sousType : ''}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${t.date || 'date inconnue'} · ${t.membres.length} brebis${isLegacy ? ' · saisie ancienne (sans identifiant)' : ''}</div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-secondary btn-del-collectif" data-key="${isLegacy ? 'legacy:' + encodeURIComponent(JSON.stringify([t.type, t.sousType || null, t.produit || null, t.date || null])) : 'id:' + t.id}" style="color:var(--danger);border-color:var(--danger);">Supprimer ce traitement collectif</button>
+    </div>
+  `;
+
+  const recentHtml = DB.traitementsCollectifs.length === 0
+    ? '<div class="empty">Aucun traitement collectif enregistré avec identifiant pour l\'instant.</div>'
+    : [...DB.traitementsCollectifs].reverse().map(t => itemHtml(t, false)).join('');
+
+  const legacyHtml = legacyGroups.length === 0 ? '' : `
+    <div style="font-size:13px;color:var(--text-muted);margin:18px 2px 8px;">Groupes détectés dans d'anciennes saisies (avant cet écran) — vérifie le nombre de brebis avant de supprimer :</div>
+    ${legacyGroups.map(g => itemHtml(g, true)).join('')}
+  `;
+
+  app.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Retrouve un traitement appliqué à plusieurs brebis en une fois et supprime-le d'un coup de toutes les fiches concernées.</div>
+    ${recentHtml}
+    ${legacyHtml}
+  `;
+
+  document.querySelectorAll('.btn-del-collectif').forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.key;
+      if (key.startsWith('id:')) {
+        const id = key.slice(3);
+        const t = DB.traitementsCollectifs.find(x => x.id === id);
+        if (!t) return;
+        if (!confirm('Supprimer ce traitement collectif de ' + t.membres.length + ' brebis ? Cette action est irréversible.')) return;
+        DB.brebis.forEach(s => {
+          if (!s.sanitaire) return;
+          s.sanitaire = s.sanitaire.filter(soin => soin.collectifId !== id);
+        });
+        DB.traitementsCollectifs = DB.traitementsCollectifs.filter(x => x.id !== id);
+      } else {
+        const [type, sousType, produit, date] = JSON.parse(decodeURIComponent(key.slice(7)));
+        const g = legacyGroups.find(x => x.type === type && (x.sousType || null) === sousType && (x.produit || null) === produit && (x.date || null) === date);
+        if (!g) return;
+        if (!confirm('Supprimer ce groupe détecté (' + g.membres.length + ' brebis) ? Cette action est irréversible.')) return;
+        DB.brebis.forEach(s => {
+          if (!s.sanitaire) return;
+          s.sanitaire = s.sanitaire.filter(soin => !(soin.collectif && !soin.collectifId && soin.type === type && (soin.sousType || null) === sousType && (soin.produit || null) === produit && (soin.date || null) === date));
+        });
+      }
+      saveData(DB);
+      render('traitements-collectifs');
+    };
+  });
+}
+
+/* ---------- Registre d'élevage réglementaire (conditionnalité PAC) ----------
+   Écran de consultation (lecture seule) qui fusionne, pour chaque EID, les
+   données encore actives (fiche en cours) et les données archivées dans
+   DB.registre (fiches supprimées ou remises à zéro de campagne) — voir
+   archiverDansRegistre(). Conformément à l'arrêté du 5 juin 2000 relatif au
+   registre d'élevage (base de la conditionnalité PAC sur ce point) : contenu
+   couvrant sanitaire/mises bas/mouvements, conservation 5 ans, édition papier
+   possible à partir d'une tenue informatique. */
+let registreTab = 'brebis';
+let registreFiltre = '';
+
+function registreEntriesFor(categorie) {
+  const archive = (DB.registre && DB.registre[categorie]) || {};
+  const map = {};
+  Object.keys(archive).forEach(eid => {
+    const a = archive[eid];
+    map[eid] = { eid, actif: false, sanitaire: (a.sanitaire || []).slice(), agnelages: (a.agnelages || []).slice(), mouvements: (a.mouvements || []).slice() };
+  });
+  const actifs = categorie === 'brebis' ? DB.brebis : categorie === 'beliers' ? DB.beliers : DB.agnelles;
+  (actifs || []).forEach(a => {
+    if (!map[a.eid]) map[a.eid] = { eid: a.eid, actif: true, sanitaire: [], agnelages: [], mouvements: [] };
+    else map[a.eid].actif = true;
+    map[a.eid].sanitaire = map[a.eid].sanitaire.concat(a.sanitaire || []);
+    map[a.eid].agnelages = map[a.eid].agnelages.concat(a.agnelages || []);
+    map[a.eid].mouvements = map[a.eid].mouvements.concat(a.mouvements || []);
+  });
+  return Object.values(map).sort((x, y) => (anneeNaissance(x.eid) || 0) - (anneeNaissance(y.eid) || 0));
+}
+
+function registreAnimalLinesHtml(entry, categorie) {
+  const sanitaireHtml = entry.sanitaire.length
+    ? entry.sanitaire.map(s => `<div class="registre-line">${s.date || '?'} — ${s.type}${s.sousType ? ' · ' + s.sousType : ''}${s.produit ? ' · ' + s.produit : ''}${s.dose ? ' (' + s.dose + ')' : ''}</div>`).join('')
+    : '<div class="registre-line muted">Aucun soin.</div>';
+  const agnelagesHtml = entry.agnelages.length
+    ? entry.agnelages.map(a => `<div class="registre-line">${a.date || '?'} — mise bas (${(a.agneaux || []).length} agneau(x))</div>`).join('')
+    : '<div class="registre-line muted">Aucune mise bas.</div>';
+  const mouvementsHtml = entry.mouvements.length
+    ? entry.mouvements.map(m => `<div class="registre-line">${m.date || '?'} — ${m.type}${m.cause ? ' · ' + m.cause : ''}${m.acheteur ? ' · ' + m.acheteur : ''}</div>`).join('')
+    : '<div class="registre-line muted">Aucun mouvement.</div>';
+  return `
+    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:4px;">Carnet sanitaire</div>
+    ${sanitaireHtml}
+    ${categorie === 'brebis' ? `<div style="font-size:12px;font-weight:600;color:var(--text-muted);margin:10px 0 4px;">Carnet de mises bas</div>${agnelagesHtml}` : ''}
+    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin:10px 0 4px;">Mouvements</div>
+    ${mouvementsHtml}
+  `;
+}
+
+function registreAnimalCardHtml(entry, categorie) {
+  return `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-weight:700;">N°${numeroVisuel(entry.eid)}</div>
+        <span class="badge ${entry.actif ? 'badge-green' : 'badge-muted'}">${entry.actif ? 'Active' : 'Archivée'}</span>
+      </div>
+      ${registreAnimalLinesHtml(entry, categorie)}
+    </div>
+  `;
+}
+
+/* Génère un fichier HTML autonome, mis en page pour impression (une page par
+   animal), à ouvrir dans n'importe quel navigateur pour imprimer ou
+   enregistrer en PDF — la WebView Android packagée de l'application ne sait
+   pas piloter d'imprimante elle-même. */
+function buildRegistrePrintableHtml() {
+  const cats = [
+    { key: 'brebis', label: 'Brebis' },
+    { key: 'beliers', label: 'Béliers' },
+    { key: 'agneaux', label: 'Agnelles / agneaux' }
+  ];
+  const farmName = (DB.exploitation && DB.exploitation.nom) || '';
+  const sections = cats.map(c => {
+    const entries = registreEntriesFor(c.key);
+    const rows = entries.map(e => `
+      <section style="page-break-inside:avoid;border:1px solid #ccc;border-radius:8px;padding:12px;margin-bottom:14px;">
+        <h3 style="margin:0 0 8px;">N°${numeroVisuel(e.eid)} — ${e.actif ? 'Active' : 'Archivée'}</h3>
+        ${registreAnimalLinesHtml(e, c.key).replace(/class="registre-line muted"/g, 'style="color:#888;"').replace(/class="registre-line"/g, 'style="margin:2px 0;"')}
+      </section>
+    `).join('') || '<p>Aucune donnée.</p>';
+    return `<h2>${c.label}</h2>${rows}`;
+  }).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Registre d'élevage${farmName ? ' — ' + farmName : ''}</title>
+    <style>body{font-family:Arial,sans-serif;color:#222;padding:20px;max-width:900px;margin:0 auto;} h1{margin-bottom:0;} .sub{color:#666;margin-top:4px;margin-bottom:24px;}</style>
+    </head><body>
+    <h1>Registre d'élevage${farmName ? ' — ' + farmName : ''}</h1>
+    <div class="sub">Édité le ${new Date().toLocaleDateString('fr-FR')} — carnet sanitaire, carnet de mises bas et mouvements (conditionnalité PAC, arrêté du 5 juin 2000, conservation 5 ans).</div>
+    ${sections}
+    </body></html>`;
+}
+
+function downloadRegistrePrintable() {
+  const html = buildRegistrePrintableHtml();
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'registre-elevage-' + new Date().toISOString().slice(0,10) + '.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function renderRegistre() {
+  pageTitle.textContent = "Registre d'élevage";
+  const tabs = [
+    { key: 'brebis', label: 'Brebis' },
+    { key: 'beliers', label: 'Béliers' },
+    { key: 'agneaux', label: 'Agnelles' }
+  ];
+  const tabBarHtml = `<div class="tab-bar">${tabs.map(t =>
+    `<button type="button" class="tab-btn${registreTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
+  ).join('')}</div>`;
+
+  let entries = registreEntriesFor(registreTab);
+  if (registreFiltre.trim()) {
+    const f = registreFiltre.trim().toLowerCase();
+    entries = entries.filter(e => numeroVisuel(e.eid).toLowerCase().includes(f) || cleanEid(e.eid).toLowerCase().includes(f));
+  }
+  const listHtml = entries.length === 0
+    ? '<div class="empty">Aucun animal trouvé.</div>'
+    : entries.map(e => registreAnimalCardHtml(e, registreTab)).join('');
+
+  app.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Conserve le carnet sanitaire, les mises bas et les mouvements de chaque animal — y compris après suppression de sa fiche, conformément à la conditionnalité PAC (registre d'élevage, conservation 5 ans).</div>
+    <div class="card" style="padding:12px;margin-bottom:14px;">
+      <button type="button" class="btn btn-secondary" id="btn-export-registre" style="margin-bottom:8px;">Exporter le registre (JSON)</button>
+      <button type="button" class="btn btn-secondary" id="btn-print-registre">Édition imprimable (HTML à ouvrir dans un navigateur)</button>
+    </div>
+    ${tabBarHtml}
+    <input type="text" id="registre-filtre" placeholder="Rechercher un numéro..." value="${registreFiltre}" style="margin:12px 0;">
+    ${listHtml}
+  `;
+
+  document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
+    btn.onclick = () => { registreTab = btn.dataset.tab; render('registre'); };
+  });
+  document.getElementById('registre-filtre').addEventListener('input', (e) => {
+    registreFiltre = e.target.value;
+    render('registre');
+  });
+  document.getElementById('btn-export-registre').onclick = () => {
+    exportBackupFile({
+      brebis: registreEntriesFor('brebis'),
+      beliers: registreEntriesFor('beliers'),
+      agneaux: registreEntriesFor('agneaux')
+    }, 'registre-elevage');
+  };
+  document.getElementById('btn-print-registre').onclick = downloadRegistrePrintable;
 }
 
 /* ---------- Import CSV inventaire + échographies ---------- */
@@ -4123,7 +4622,7 @@ function renderImportEcho() {
     parsedRows.forEach(row => {
       let sheep = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(row.eid));
       if (!sheep) {
-        sheep = { id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: row.eid, createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active' };
+        sheep = { id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: row.eid, createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Import (fichier CSV/Excel)', date: date }], controleLaitier: [], statut: 'active' };
         DB.brebis.push(sheep);
       }
       sheep.echographies = sheep.echographies || [];
@@ -4226,21 +4725,32 @@ function renderParametres() {
     if (!confirm(
       'Démarrer une nouvelle campagne ?\n\n' +
       '- ' + nbAgnelles + ' agnelle(s) rejoindront le troupeau de brebis\n' +
-      '- Les mises bas, agneaux et mouvements de toutes les brebis actives seront supprimés\n\n' +
+      '- Les mises bas et mouvements de la campagne précédente seront retirés des fiches actives (mais conservés dans le registre d\'élevage réglementaire)\n\n' +
       'Cette action est irréversible.'
     )) return;
 
-    (DB.agnelles || []).forEach(ag => {
-      DB.brebis.push({ id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: ag.eid, mereEid: ag.motherEid || null, createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: ag.sanitaire || [], mouvements: [], controleLaitier: [], statut: 'active' });
-    });
-    DB.agnelles = [];
-
+    // Archive puis vide les brebis déjà actives AVANT d'ajouter les nouvelles
+    // (renouvelées depuis les agnelles), pour ne pas effacer le mouvement
+    // d'entrée qu'on vient de créer pour ces dernières.
     DB.brebis.forEach(sheep => {
       if ((sheep.statut || 'active') === 'active') {
+        archiverDansRegistre('brebis', sheep.eid, { agnelages: sheep.agnelages, mouvements: sheep.mouvements });
         sheep.agnelages = [];
         sheep.mouvements = [];
       }
     });
+
+    const dateRenouvellement = new Date().toISOString().slice(0,10);
+    (DB.agnelles || []).forEach(ag => {
+      DB.brebis.push({
+        id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: ag.eid, mereEid: ag.motherEid || null,
+        createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: ag.sanitaire || [],
+        mouvements: [{ type: 'Entrée', cause: 'Renouvellement (agnelle devenue brebis)', date: dateRenouvellement }],
+        controleLaitier: [], statut: 'active'
+      });
+      archiverDansRegistre('agneaux', ag.eid, { mouvements: ag.mouvements });
+    });
+    DB.agnelles = [];
 
     const now = new Date();
     DB.campagneDebut = now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1;

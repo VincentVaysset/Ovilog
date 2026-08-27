@@ -56,6 +56,14 @@ OUTPUT_PATH = "www_anmv_ovins.json"
 # contient "ovin" en sous-chaîne) ou "provincialis".
 SHEEP_TERM_RE = re.compile(r"\b(ovin\w*|brebis|agneau\w*|b[ée]lier\w*|agnelle\w*|mouton\w*)", re.IGNORECASE)
 WITHDRAWAL_SECTION_RE = re.compile(r"temps d.?attente", re.IGNORECASE)
+# Section RCP vétérinaire "Posologie et voie d'administration" (4.9 ou 3.9
+# selon le gabarit) — combinée en une seule section pour les médicaments
+# vétérinaires, contrairement au RCP humain. Le texte couvre souvent
+# plusieurs espèces cibles à la fois (bovins/ovins/caprins/porcins...) sans
+# séparation exploitable : on le restitue tel quel, à l'éleveur de repérer
+# la ligne ovine, plutôt que de tenter une extraction structurée risquée.
+POSOLOGY_SECTION_RE = re.compile(r"posologie", re.IGNORECASE)
+POSOLOGY_MAX_LEN = 600
 
 LABEL_RE = re.compile(r"\b(Lait|Viande(?:\s+et\s+abats)?)\b", re.IGNORECASE)
 VALUE_RE = re.compile(r"\b(z[ée]ro|\d+)\s*(heures?|jours?)\b", re.IGNORECASE)
@@ -125,6 +133,10 @@ def find_withdrawal_titre_codes(term_titre_dict):
     return {code: label for code, label in term_titre_dict.items() if label and WITHDRAWAL_SECTION_RE.search(label)}
 
 
+def find_posology_titre_codes(term_titre_dict):
+    return {code: label for code, label in term_titre_dict.items() if label and POSOLOGY_SECTION_RE.search(label)}
+
+
 GLUED_LABEL_RE = re.compile(r"(?<=[a-zà-ÿ])(Lait\b|Viande\b)", re.IGNORECASE)
 
 
@@ -166,6 +178,19 @@ def extract_delays(text):
     return lait, viande
 
 
+def extract_posology(text):
+    """Nettoie et tronque le texte libre de la section 'Posologie et voie
+    d'administration'. Retourne None si le texte est vide — on ne devine
+    jamais un contenu absent du RCP source."""
+    text = clean_text(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return None
+    if len(text) > POSOLOGY_MAX_LEN:
+        text = text[:POSOLOGY_MAX_LEN].rsplit(" ", 1)[0] + "…"
+    return text
+
+
 def explore(resources):
     print(f"\nTéléchargement du dictionnaire ({DICT_XML_URL})...")
     http_get(DICT_XML_URL, dest=DICT_XML_PATH)
@@ -176,6 +201,8 @@ def explore(resources):
     term_titre = dicts.get("term-titre", {})
     withdrawal_codes = find_withdrawal_titre_codes(term_titre)
     print(f"Codes section 'temps d'attente' : {withdrawal_codes}")
+    posology_codes = find_posology_titre_codes(term_titre)
+    print(f"Codes section 'posologie' : {posology_codes}")
 
     print(f"\nTéléchargement du fichier principal ({MAIN_XML_URL})...")
     http_get(MAIN_XML_URL, dest=MAIN_XML_PATH)
@@ -197,7 +224,10 @@ def explore(resources):
         textes = [p.findtext("contenu") or "" for p in elem.findall("./paragraphes-rcp/para-rcp")
                   if p.findtext("term-titre") in withdrawal_codes]
         lait, viande = extract_delays(" ".join(textes))
-        print(f"{nom!r} -> lait={lait} viande={viande} | texte brut: {textes}")
+        posology_textes = [p.findtext("contenu") or "" for p in elem.findall("./paragraphes-rcp/para-rcp")
+                            if p.findtext("term-titre") in posology_codes]
+        posologie = extract_posology(" ".join(posology_textes))
+        print(f"{nom!r} -> lait={lait} viande={viande} posologie={posologie!r}")
         shown += 1
         elem.clear()
         if shown >= 25:
@@ -211,7 +241,9 @@ def build():
     term_esp = dicts.get("term-esp", {})
     sheep_codes = set(find_sheep_espece_codes(term_esp).keys())
     withdrawal_codes = set(find_withdrawal_titre_codes(dicts.get("term-titre", {})).keys())
-    print(f"{len(sheep_codes)} code(s) espèce ovine, {len(withdrawal_codes)} code(s) section temps d'attente.")
+    posology_codes = set(find_posology_titre_codes(dicts.get("term-titre", {})).keys())
+    print(f"{len(sheep_codes)} code(s) espèce ovine, {len(withdrawal_codes)} code(s) section temps d'attente, "
+          f"{len(posology_codes)} code(s) section posologie.")
 
     print(f"Téléchargement du fichier principal ({MAIN_XML_URL})...")
     http_get(MAIN_XML_URL, dest=MAIN_XML_PATH)
@@ -240,6 +272,9 @@ def build():
         textes = [p.findtext("contenu") or "" for p in elem.findall("./paragraphes-rcp/para-rcp")
                   if p.findtext("term-titre") in withdrawal_codes]
         lait, viande = extract_delays(" ".join(textes))
+        posology_textes = [p.findtext("contenu") or "" for p in elem.findall("./paragraphes-rcp/para-rcp")
+                            if p.findtext("term-titre") in posology_codes]
+        posologie = extract_posology(" ".join(posology_textes))
         elem.clear()
         if not nom or (lait is None and viande is None):
             continue
@@ -249,7 +284,13 @@ def build():
             existing_lait, existing_viande = existing["l"], existing["v"]
             lait = max([v for v in (lait, existing_lait) if v is not None], default=None)
             viande = max([v for v in (viande, existing_viande) if v is not None], default=None)
-        by_name[key] = {"n": nom, "l": lait, "v": viande}
+            # Garde la posologie déjà connue si ce doublon n'en apporte pas de nouvelle.
+            if not posologie:
+                posologie = existing.get("p")
+        entry = {"n": nom, "l": lait, "v": viande}
+        if posologie:
+            entry["p"] = posologie
+        by_name[key] = entry
 
     entries = sorted(by_name.values(), key=lambda e: e["n"])
     print(f"{total_products} produit(s) au total, {total_ovine} ciblant une espèce ovine, "
