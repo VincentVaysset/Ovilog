@@ -4,20 +4,26 @@ Génère un fichier JSON compact des délais d'attente lait/viande ANMV pour les
 ovins, à partir de la base de données publique des médicaments vétérinaires
 autorisés en France (data.gouv.fr).
 
+On utilise la variante XML "V1" du jeu de données (fichiers directement en
+.xml, sans archive) : un fichier principal (~44 Mo) listant les spécialités,
+et un fichier "Données de Référence" servant de dictionnaire pour décoder les
+codes (espèces, unités...).
+
 Deux modes :
-  --mode explore  : n'écrit rien, affiche juste la structure des fichiers
-                    source (utile pour ajuster le filtrage sans deviner).
+  --mode explore  : n'écrit rien, affiche la structure des fichiers source
+                    (XSD + échantillons de données) pour ajuster le filtrage
+                    sans deviner.
   --mode build     : fait le vrai travail et écrit le JSON de sortie.
 
 Ce script est fait pour tourner dans le workflow GitHub Actions
-`.github/workflows/update-anmv-data.yml` (le réseau data.gouv.fr n'est pas
-joignable depuis le bac à sable de développement) — mais il tourne tout
-aussi bien en local si besoin.
+`.github/workflows/update-anmv-data.yml` (le réseau data.gouv.fr / anses.fr
+n'est pas joignable depuis le bac à sable de développement) — mais il tourne
+tout aussi bien en local si besoin.
 """
 import argparse
 import json
-import re
 import sys
+import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -27,11 +33,14 @@ DATASET_API_URL = (
 )
 OUTPUT_PATH = "www_anmv_ovins.json"
 
+MAIN_XML_PATH = "/tmp/anmv_main_v1.xml"
+DICT_XML_PATH = "/tmp/anmv_dict_v1.xml"
 
-def http_get(url, dest=None):
+
+def http_get(url, dest=None, max_bytes=None):
     req = urllib.request.Request(url, headers={"User-Agent": "ovilog-anmv-import/1.0"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        data = resp.read()
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        data = resp.read(max_bytes) if max_bytes else resp.read()
     if dest:
         with open(dest, "wb") as f:
             f.write(data)
@@ -41,16 +50,20 @@ def http_get(url, dest=None):
 def fetch_dataset_resources():
     raw = http_get(DATASET_API_URL)
     meta = json.loads(raw)
-    resources = meta.get("resources", [])
-    return resources
+    return meta.get("resources", [])
 
 
-def dump_tag_tree(elem, max_depth=4, depth=0, seen=None, limit_children=6):
-    """Affiche récursivement les noms de balises + un échantillon de texte,
-    sans jamais charger tout le document (appelé sur un élément déjà en
-    mémoire, typiquement un seul enregistrement)."""
-    if seen is None:
-        seen = set()
+def find_resource(resources, title_substrings):
+    """Trouve la ressource dont le titre contient tous les fragments donnés
+    (comparaison insensible à la casse)."""
+    for r in resources:
+        title = (r.get("title") or "").lower()
+        if all(s.lower() in title for s in title_substrings):
+            return r
+    return None
+
+
+def dump_tag_tree(elem, max_depth=6, depth=0, limit_children=8):
     indent = "  " * depth
     text = (elem.text or "").strip()
     attribs = dict(elem.attrib)
@@ -59,27 +72,25 @@ def dump_tag_tree(elem, max_depth=4, depth=0, seen=None, limit_children=6):
         line += " " + " ".join(f'{k}="{v}"' for k, v in attribs.items())
     line += ">"
     if text:
-        line += f" {text[:80]!r}"
+        line += f" {text[:100]!r}"
     print(line)
     if depth >= max_depth:
         return
     for i, child in enumerate(elem):
         if i >= limit_children:
-            print(f"{indent}  ... ({len(elem) - limit_children} autres enfants '{elem[0].tag if len(elem) else ''}' omis)")
+            print(f"{indent}  ... ({len(elem) - limit_children} autres enfants omis)")
             break
-        dump_tag_tree(child, max_depth=max_depth, depth=depth + 1, seen=seen, limit_children=limit_children)
+        dump_tag_tree(child, max_depth=max_depth, depth=depth + 1, limit_children=limit_children)
 
 
-def explore_xml(path, sample_count=2):
-    print(f"\n--- Exploration de {path} ---")
+def explore_xml(path, label, sample_count=2):
+    print(f"\n--- Exploration de {label} ({path}) ---")
     depth = 0
     tag_counts = {}
     printed_by_tag = {}
-    root = None
     for event, elem in ET.iterparse(path, events=("start", "end")):
         if event == "start":
             if depth == 0:
-                root = elem
                 print(f"Balise racine : <{elem.tag}>")
             depth += 1
             continue
@@ -90,22 +101,56 @@ def explore_xml(path, sample_count=2):
         shown = printed_by_tag.get(elem.tag, 0)
         if shown < sample_count:
             print(f"\nÉchantillon '<{elem.tag}>' #{shown + 1} :")
-            dump_tag_tree(elem, max_depth=5)
+            dump_tag_tree(elem)
             printed_by_tag[elem.tag] = shown + 1
         elem.clear()
-        if root is not None:
-            root.clear()  # libère la mémoire des frères déjà traités
 
     print("\nBalises de niveau 1 rencontrées au total (nom: occurrences) :")
-    for tag, n in sorted(tag_counts.items(), key=lambda x: -x[1])[:10]:
+    for tag, n in sorted(tag_counts.items(), key=lambda x: -x[1])[:15]:
         print(f"  {tag}: {n}")
+
+
+def explore(resources):
+    xsd_main = find_resource(resources, ["xsd", "v1"]) or find_resource(resources, ["description de la base", "v1"])
+    xsd_dict = find_resource(resources, ["xsd", "reference", "v1"]) or find_resource(resources, ["description des donn", "v1"])
+    xml_main = find_resource(resources, ["base de donn", "xml v1"])
+    xml_dict = find_resource(resources, ["donn", "reference", "xml v1"]) or find_resource(resources, ["référence", "xml v1"])
+
+    for label, res in [("XSD principal", xsd_main), ("XSD dictionnaire", xsd_dict)]:
+        if not res:
+            print(f"[!] Ressource {label} introuvable automatiquement.")
+            continue
+        print(f"\n=== {label} : {res['title']} ({res['url']}) ===")
+        try:
+            content = http_get(res["url"]).decode("utf-8", errors="replace")
+            print(content[:8000])
+            if len(content) > 8000:
+                print(f"... ({len(content) - 8000} caractères supplémentaires tronqués)")
+        except Exception as e:
+            print(f"  échec : {e}")
+
+    for label, res, dest in [
+        ("XML principal V1", xml_main, MAIN_XML_PATH),
+        ("XML dictionnaire V1", xml_dict, DICT_XML_PATH),
+    ]:
+        if not res:
+            print(f"[!] Ressource {label} introuvable automatiquement — vérifie la liste ci-dessus.")
+            continue
+        print(f"\nTéléchargement de {label} ({res['url']}) -> {dest}")
+        try:
+            http_get(res["url"], dest=dest)
+        except Exception as e:
+            print(f"  échec du téléchargement : {e}")
+            continue
+        try:
+            explore_xml(dest, label, sample_count=3)
+        except Exception as e:
+            print(f"  échec de l'exploration : {e}")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["explore", "build"], required=True)
-    parser.add_argument("--xml-path", default="/tmp/anmv_main.xml")
-    parser.add_argument("--dict-path", default="/tmp/anmv_dict.xml")
     args = parser.parse_args()
 
     print("Récupération de la liste des ressources du jeu de données...")
@@ -115,25 +160,9 @@ def main():
         print(f"  - title={r.get('title')!r} format={r.get('format')!r} url={r.get('url')}")
 
     if args.mode == "explore":
-        # On télécharge tout ce qui ressemble à du XML pour inspection.
-        xml_resources = [r for r in resources if (r.get("format") or "").lower() == "xml"]
-        if not xml_resources:
-            print("Aucune ressource au format XML trouvée — vérifie la liste ci-dessus à la main.")
-            return
-        for r in xml_resources:
-            title = r.get("title") or "sans_titre"
-            safe = re.sub(r"[^a-zA-Z0-9_.-]", "_", title)[:60]
-            dest = f"/tmp/{safe}.xml"
-            print(f"\nTéléchargement de {title!r} -> {dest}")
-            try:
-                http_get(r["url"], dest=dest)
-            except Exception as e:
-                print(f"  échec du téléchargement : {e}")
-                continue
-            explore_xml(dest)
+        explore(resources)
         return
 
-    # --- mode build : implémenté une fois la structure connue (voir explore) ---
     print("Mode build pas encore finalisé — lance d'abord --mode explore.")
     sys.exit(1)
 
