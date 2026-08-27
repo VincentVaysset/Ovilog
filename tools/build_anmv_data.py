@@ -62,8 +62,14 @@ WITHDRAWAL_SECTION_RE = re.compile(r"temps d.?attente", re.IGNORECASE)
 # plusieurs espèces cibles à la fois (bovins/ovins/caprins/porcins...) sans
 # séparation exploitable : on le restitue tel quel, à l'éleveur de repérer
 # la ligne ovine, plutôt que de tenter une extraction structurée risquée.
+# Constaté empiriquement : sur un premier run avec un seuil de 600
+# caractères, 179/261 produits étaient tronqués — et la ligne "Brebis :"
+# arrive souvent après les autres espèces dans le texte, donc coupée avant
+# d'être atteinte. Seuil relevé nettement ; il ne reste qu'un filet de
+# sécurité contre un texte RCP pathologiquement long, pas une troncature de
+# confort.
 POSOLOGY_SECTION_RE = re.compile(r"posologie", re.IGNORECASE)
-POSOLOGY_MAX_LEN = 600
+POSOLOGY_MAX_LEN = 4000
 
 LABEL_RE = re.compile(r"\b(Lait|Viande(?:\s+et\s+abats)?)\b", re.IGNORECASE)
 VALUE_RE = re.compile(r"\b(z[ée]ro|\d+)\s*(heures?|jours?)\b", re.IGNORECASE)
