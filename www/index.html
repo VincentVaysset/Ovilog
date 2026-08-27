@@ -350,6 +350,23 @@ function loadData() {
     produitsInfo: {}
   };
 }
+/* Déclenche le téléchargement d'un fichier JSON de sauvegarde — utilisée à
+   la fois par le bouton "Exporter" manuel et par la synchronisation cloud
+   (sauvegarde automatique avant de remplacer les données locales d'un
+   appareil par celles du cloud). */
+function exportBackupFile(data, filenamePrefix) {
+  const dataStr = JSON.stringify(data, null, 2);
+  const blob = new Blob([dataStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filenamePrefix + '-' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function saveData(data) {
   localStorage.setItem(DB_KEY, JSON.stringify(data));
 }
@@ -601,6 +618,10 @@ const ICON_SETTINGS = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3
   <circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="2"/>
   <path d="M12 3.5v2.4M12 18.1v2.4M20.5 12h-2.4M5.9 12H3.5M17.6 6.4l-1.7 1.7M8.1 15.9l-1.7 1.7M17.6 17.6l-1.7-1.7M8.1 8.1L6.4 6.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
 </svg>`;
+const ICON_SYNC = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M4.5 12a7.5 7.5 0 0 1 12.6-5.5M19.5 12a7.5 7.5 0 0 1-12.6 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M17.5 3.5v3.5H14M6.5 20.5V17H10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
 function iconCircle(svg, color, size) {
   return `<span class="icon-circle ic-${color} ic-${size || 'md'}">${svg}</span>`;
 }
@@ -693,6 +714,7 @@ btnBack.onclick = () => {
   else if (currentView === 'mouvement-groupe') render('lots');
   else if (currentView === 'traitement-collectif') render('lots');
   else if (currentView === 'import-echo') render('parametres');
+  else if (currentView === 'sync-login') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render(belierDetailOrigin);
   else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
@@ -824,6 +846,7 @@ function render(view, sheepId) {
   else if (view === 'traitement-collectif') renderTraitementCollectif();
   else if (view === 'import-echo') renderImportEcho();
   else if (view === 'parametres') renderParametres();
+  else if (view === 'sync-login') renderSyncLogin();
 
   requestAnimationFrame(() => window.scrollTo(0, isRoot ? (scrollPositions[view] || 0) : 0));
 }
@@ -4122,8 +4145,24 @@ function renderImportEcho() {
 
 function renderParametres() {
   pageTitle.textContent = 'Paramètres';
+  const syncState = window.OvilogSync ? window.OvilogSync.getState() : { loggedIn: false };
 
   app.innerHTML = `
+    <div class="card" id="sync-card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+        ${iconCircle(ICON_SYNC, 'blue', 'sm')}
+        <div style="font-size:14px;font-weight:600;">Synchronisation cloud</div>
+      </div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">
+        ${syncState.loggedIn
+          ? `Connecté en tant que <strong style="color:var(--text);">${syncState.email}</strong> — tes données se synchronisent automatiquement entre tes appareils, y compris hors-ligne (elles se remettent à jour dès que la connexion revient).`
+          : `Non connecté — active la synchronisation pour utiliser l'appli sur ton téléphone et ta tablette avec les mêmes données.`}
+      </div>
+      <button class="btn btn-secondary" id="btn-sync-action" ${syncState.loggedIn ? 'style="color:var(--danger);border-color:var(--danger);"' : ''}>
+        ${syncState.loggedIn ? 'Se déconnecter' : 'Se connecter'}
+      </button>
+    </div>
+
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Exploitation</div>
       <label>Nom de l'exploitation</label>
@@ -4172,6 +4211,16 @@ function renderParametres() {
 
   document.getElementById('btn-goto-import').onclick = () => render('import-echo');
 
+  document.getElementById('btn-sync-action').onclick = () => {
+    if (syncState.loggedIn) {
+      if (!confirm('Se déconnecter de la synchronisation ? L\'appli continuera de fonctionner avec les données actuelles, en local uniquement, jusqu\'à ta prochaine connexion.')) return;
+      window.OvilogSync.logout();
+      render('parametres');
+    } else {
+      render('sync-login');
+    }
+  };
+
   document.getElementById('btn-nouvelle-campagne').onclick = () => {
     const nbAgnelles = (DB.agnelles || []).length;
     if (!confirm(
@@ -4218,18 +4267,7 @@ function renderParametres() {
     render('parametres');
   };
 
-  document.getElementById('btn-export').onclick = () => {
-    const dataStr = JSON.stringify(DB, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'troupeau-sauvegarde-' + new Date().toISOString().slice(0,10) + '.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
+  document.getElementById('btn-export').onclick = () => exportBackupFile(DB, 'troupeau-sauvegarde');
 
   document.getElementById('btn-import').onclick = () => {
     document.getElementById('import-file').click();
@@ -4257,8 +4295,284 @@ function renderParametres() {
   };
 }
 
+/* ---------- Connexion à la synchronisation cloud ---------- */
+function renderSyncLogin() {
+  pageTitle.textContent = 'Connexion à la synchronisation';
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Connecte-toi avec le compte créé pour la synchronisation (même e-mail et mot de passe sur tous tes appareils).</div>
+      <label>Adresse e-mail</label>
+      <input type="email" id="f-sync-email" placeholder="ton@email.fr" autocomplete="username">
+      <label>Mot de passe</label>
+      <input type="password" id="f-sync-password" autocomplete="current-password">
+      <div id="sync-err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-sync-login">Se connecter</button>
+    </div>
+  `;
+  const emailInput = document.getElementById('f-sync-email');
+  const passwordInput = document.getElementById('f-sync-password');
+  const btn = document.getElementById('btn-sync-login');
+  const err = document.getElementById('sync-err');
+
+  function attemptLogin() {
+    const email = emailInput.value.trim();
+    const password = passwordInput.value;
+    if (!email || !password) {
+      err.textContent = "Renseigne l'e-mail et le mot de passe.";
+      err.classList.remove('hidden');
+      return;
+    }
+    err.classList.add('hidden');
+    btn.textContent = 'Connexion en cours...';
+    btn.disabled = true;
+    window.OvilogSync.login(email, password).then(() => {
+      render('parametres');
+    }).catch(e => {
+      err.textContent = e.message || "Connexion impossible.";
+      err.classList.remove('hidden');
+      btn.textContent = 'Se connecter';
+      btn.disabled = false;
+    });
+  }
+  btn.onclick = attemptLogin;
+  passwordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') attemptLogin(); });
+}
+
 /* ---------- Démarrage ---------- */
 render('list');
+</script>
+
+<!--
+  Synchronisation cloud (Firebase). Séparée du script principal ci-dessus
+  car elle a besoin des imports ES module — elle s'exécute après lui (les
+  scripts "module" sont différés par le navigateur), donc DB, render(),
+  saveData() etc. existent déjà quand ce code tourne, et peut les lire/
+  écrire directement (même portée globale que le script classique).
+-->
+<script type="module">
+import {
+  initializeApp, getAuth, setPersistence, browserLocalPersistence,
+  signInWithEmailAndPassword, onAuthStateChanged, signOut,
+  initializeFirestore, persistentLocalCache, persistentSingleTabManager,
+  collection, doc, setDoc, updateDoc, deleteDoc, getDoc, onSnapshot, arrayUnion
+} from './vendor/firebase.bundle.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDY_Z3Jqo92RAuJlYX5K4sZKTFmf-0P-h4",
+  authDomain: "ovilog-15ef6.firebaseapp.com",
+  projectId: "ovilog-15ef6",
+  storageBucket: "ovilog-15ef6.firebasestorage.app",
+  messagingSenderId: "861492569011",
+  appId: "1:861492569011:web:67ade13ee7fdedff62a1c6"
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const fbAuth = getAuth(fbApp);
+const fbDb = initializeFirestore(fbApp, {
+  localCache: persistentLocalCache({ tabManager: persistentSingleTabManager() })
+});
+
+// Champs regroupés dans un unique document 'meta' par compte (petits,
+// bornés, pas besoin d'un document par enregistrement comme pour les
+// animaux).
+const META_FIELDS = ['exploitation', 'campagneDebut', 'produits', 'acheteurs',
+  'causesMortalite', 'casParticuliers', 'typesJournal', 'lots', 'journal',
+  'laitTank', 'luttes', 'produitsInfo'];
+const ANIMAL_COLLECTIONS = ['brebis', 'beliers', 'agnelles'];
+const BOOTSTRAP_FLAG_KEY = 'ovilog_sync_bootstrapped_uid';
+
+const sync = {
+  uid: null,
+  email: null,
+  applyingRemote: false,
+  unsubscribers: [],
+  // Dernier état connu de chaque collection/document tel qu'envoyé vers ou
+  // reçu depuis Firestore, pour calculer un diff minimal à chaque sauvegarde
+  // plutôt que de tout réécrire.
+  lastSynced: { brebis: {}, beliers: {}, agnelles: {}, meta: undefined }
+};
+
+/* Calcule un payload de mise à jour Firestore entre un ancien et un nouvel
+   enregistrement : arrayUnion pour un simple ajout en fin de tableau (les
+   ajouts concurrents depuis 2 appareils se combinent alors sans s'écraser),
+   remplacement complet du champ dans les autres cas (édition, suppression,
+   réordonnancement — dernier écrit gagne, comme le reste de Firestore). */
+function buildUpdatePayload(oldRec, newRec) {
+  const updates = {};
+  const keys = new Set([...Object.keys(oldRec || {}), ...Object.keys(newRec || {})]);
+  keys.forEach(key => {
+    const oldVal = oldRec ? oldRec[key] : undefined;
+    const newVal = newRec[key];
+    if (JSON.stringify(oldVal) === JSON.stringify(newVal)) return;
+    if (Array.isArray(oldVal) && Array.isArray(newVal) && newVal.length > oldVal.length &&
+        JSON.stringify(newVal.slice(0, oldVal.length)) === JSON.stringify(oldVal)) {
+      updates[key] = arrayUnion(...newVal.slice(oldVal.length));
+    } else {
+      updates[key] = newVal === undefined ? null : newVal;
+    }
+  });
+  return Object.keys(updates).length ? updates : null;
+}
+
+async function syncAnimalCollection(colName, records) {
+  const colRef = collection(fbDb, 'users', sync.uid, colName);
+  const lastMap = sync.lastSynced[colName];
+  const seenIds = new Set();
+  for (const rec of (records || [])) {
+    if (!rec.id) continue;
+    seenIds.add(rec.id);
+    const old = lastMap[rec.id];
+    if (old === undefined) {
+      await setDoc(doc(colRef, rec.id), rec);
+    } else {
+      const payload = buildUpdatePayload(old, rec);
+      if (payload) await updateDoc(doc(colRef, rec.id), payload);
+    }
+    lastMap[rec.id] = rec;
+  }
+  for (const id of Object.keys(lastMap)) {
+    if (!seenIds.has(id)) {
+      await deleteDoc(doc(colRef, id));
+      delete lastMap[id];
+    }
+  }
+}
+
+async function syncMeta(data) {
+  const metaRecord = {};
+  META_FIELDS.forEach(k => { metaRecord[k] = data[k] !== undefined ? data[k] : null; });
+  const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
+  if (sync.lastSynced.meta === undefined) {
+    await setDoc(metaRef, metaRecord);
+  } else {
+    const payload = buildUpdatePayload(sync.lastSynced.meta, metaRecord);
+    if (payload) await updateDoc(metaRef, payload);
+  }
+  sync.lastSynced.meta = metaRecord;
+}
+
+async function syncAllToCloud(data) {
+  for (const col of ANIMAL_COLLECTIONS) await syncAnimalCollection(col, data[col]);
+  await syncMeta(data);
+}
+
+// Remplace la sauvegarde locale-uniquement par une version qui écrit aussi
+// vers Firestore quand la synchro est active — sans toucher aux dizaines
+// d'endroits de l'appli qui appellent déjà saveData(DB).
+saveData = function(data) {
+  localStorage.setItem(DB_KEY, JSON.stringify(data));
+  DB = data;
+  if (sync.uid && !sync.applyingRemote) {
+    syncAllToCloud(data).catch(e => console.error('Erreur de synchronisation cloud :', e));
+  }
+};
+
+/* Applique un changement reçu depuis Firestore (un autre appareil, ou notre
+   propre écriture confirmée) : met à jour DB + le cache local + l'écran
+   affiché, sans redéclencher un envoi vers le cloud (sync.applyingRemote). */
+function applyRemoteUpdate(mutatorFn) {
+  sync.applyingRemote = true;
+  try {
+    mutatorFn();
+    localStorage.setItem(DB_KEY, JSON.stringify(DB));
+    render(currentView);
+  } finally {
+    sync.applyingRemote = false;
+  }
+}
+
+function startListeners() {
+  ANIMAL_COLLECTIONS.forEach(colName => {
+    const colRef = collection(fbDb, 'users', sync.uid, colName);
+    const unsub = onSnapshot(colRef, snap => {
+      const arr = [];
+      snap.forEach(d => arr.push(d.data()));
+      sync.lastSynced[colName] = {};
+      arr.forEach(r => { sync.lastSynced[colName][r.id] = r; });
+      applyRemoteUpdate(() => { DB[colName] = arr; });
+    }, err => console.error('Erreur d\'écoute Firestore (' + colName + ') :', err));
+    sync.unsubscribers.push(unsub);
+  });
+  const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
+  const unsubMeta = onSnapshot(metaRef, snap => {
+    if (!snap.exists()) return;
+    const meta = snap.data();
+    sync.lastSynced.meta = meta;
+    applyRemoteUpdate(() => { Object.assign(DB, meta); });
+  }, err => console.error('Erreur d\'écoute Firestore (meta) :', err));
+  sync.unsubscribers.push(unsubMeta);
+}
+
+function stopListeners() {
+  sync.unsubscribers.forEach(u => u());
+  sync.unsubscribers = [];
+}
+
+/* Décision prise une seule fois par appareil, la première fois qu'il se
+   connecte à un compte donné : si le cloud est vide, on y pousse les
+   données locales actuelles (cet appareil devient la source) ; s'il
+   contient déjà des données (un autre appareil a synchronisé avant), on
+   sauvegarde les données locales de cet appareil par sécurité puis on
+   bascule sur celles du cloud (récupérées ensuite par startListeners). */
+async function bootstrapDevice(uid) {
+  const metaRef = doc(fbDb, 'users', uid, 'meta', 'main');
+  const metaSnap = await getDoc(metaRef);
+  if (!metaSnap.exists()) {
+    await syncAllToCloud(DB);
+  } else {
+    exportBackupFile(DB, 'avant-synchronisation-cloud');
+  }
+  localStorage.setItem(BOOTSTRAP_FLAG_KEY, uid);
+}
+
+async function onSignedIn(user) {
+  sync.uid = user.uid;
+  sync.email = user.email;
+  const alreadyBootstrapped = localStorage.getItem(BOOTSTRAP_FLAG_KEY) === user.uid;
+  if (!alreadyBootstrapped) {
+    await bootstrapDevice(user.uid);
+  }
+  startListeners();
+}
+
+function onSignedOut() {
+  stopListeners();
+  sync.uid = null;
+  sync.email = null;
+}
+
+onAuthStateChanged(fbAuth, user => {
+  if (user) onSignedIn(user).catch(e => console.error('Erreur de connexion à la synchronisation :', e));
+  else onSignedOut();
+});
+
+function friendlyAuthError(e) {
+  const code = e && e.code;
+  if (code === 'auth/invalid-credential' || code === 'auth/invalid-email' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+    return "E-mail ou mot de passe incorrect.";
+  }
+  if (code === 'auth/too-many-requests') return "Trop de tentatives — réessaie dans quelques minutes.";
+  if (code === 'auth/network-request-failed') return "Pas de connexion réseau — la première connexion nécessite d'être en ligne.";
+  return "Connexion impossible (" + (code || (e && e.message) || 'erreur inconnue') + ").";
+}
+
+window.OvilogSync = {
+  getState() {
+    return { loggedIn: !!sync.uid, email: sync.email };
+  },
+  async login(email, password) {
+    try {
+      await setPersistence(fbAuth, browserLocalPersistence);
+      await signInWithEmailAndPassword(fbAuth, email, password);
+      // onAuthStateChanged prend le relais (bootstrap + écoute) juste après.
+    } catch (e) {
+      throw new Error(friendlyAuthError(e));
+    }
+  },
+  logout() {
+    signOut(fbAuth).catch(e => console.error('Erreur de déconnexion :', e));
+  }
+};
 </script>
 </body>
 </html>
