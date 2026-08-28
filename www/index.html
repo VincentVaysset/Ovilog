@@ -1024,6 +1024,7 @@ btnBack.onclick = () => {
   else if (currentView === 'bilan-campagne') render('home');
   else if (currentView === 'gerer-produits') render('sanitaire');
   else if (currentView === 'historique-echo') render('echo-rapide');
+  else if (currentView === 'diag-bluetooth') { btDiagLeaveScreen(); render('parametres'); }
 };
 fabAdd.onclick = () => render('add-sheep');
 
@@ -1163,6 +1164,7 @@ function render(view, sheepId) {
     else if (view === 'gerer-produits') renderGererProduits();
     else if (view === 'historique-echo') renderHistoriqueEcho();
     else if (view === 'sync-login') renderSyncLogin();
+    else if (view === 'diag-bluetooth') renderDiagBluetooth();
   } catch (e) {
     console.error('Erreur lors de l\'affichage de l\'écran "' + view + '"', e);
     renderCrashScreen(view);
@@ -6847,6 +6849,12 @@ function renderParametres() {
     </div>
 
     <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Diagnostic Bluetooth (bâton Allflex)</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID.</div>
+      <button class="btn btn-secondary" id="btn-goto-diag-bluetooth">Ouvrir le diagnostic</button>
+    </div>
+
+    <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Sauvegarde des données</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Important : à chaque fois qu'une nouvelle version du fichier est installée, exporte d'abord tes données ici, puis réimporte-les une fois la nouvelle version ouverte — sinon tout repart à zéro.</div>
       <button class="btn btn-secondary" id="btn-export" style="margin-bottom:10px;">Exporter mes données (sauvegarde)</button>
@@ -6856,6 +6864,7 @@ function renderParametres() {
   `;
 
   document.getElementById('btn-goto-import').onclick = () => render('import-echo');
+  document.getElementById('btn-goto-diag-bluetooth').onclick = () => render('diag-bluetooth');
 
   document.getElementById('btn-sync-action').onclick = () => {
     if (syncState.loggedIn) {
@@ -6955,6 +6964,190 @@ function renderParametres() {
     };
     reader.readAsText(file);
   };
+}
+
+/* ---------- Diagnostic Bluetooth (bâton Allflex, Bluetooth Classic/SPP) ----------
+   Écran TEMPORAIRE : montre chaque trame reçue en brut (hex + ASCII), sans
+   aucune interprétation, pour déterminer avec l'éleveur le format exact
+   utilisé par le bâton (délimiteurs, encodage, longueur) avant d'écrire le
+   parsing définitif de l'EID (voir plan "migration Bluetooth Classic/SPP").
+   Le plugin bluetooth-serial ne fait volontairement AUCUNE découverte ici :
+   list() ne retourne que les appareils déjà appairés (le bâton est appairé
+   via l'autre appli d'insémination, sa configuration ne doit jamais être
+   modifiée). Les trames sont lues en polling (available()/read()) — voir
+   BluetoothSerialPlugin.java, qui accumule les octets reçus dans un buffer
+   interne au fur et à mesure, plutôt que de les pousser via un événement.
+   Le correctif ISO-8859-1 (patches/bluetooth-serial+1.0.0.patch) garantit
+   que chaque caractère de la chaîne retournée par read() correspond
+   exactement à un octet reçu, récupérable via charCodeAt(). */
+let btDiag = {
+  devices: [],
+  connectedAddress: null,
+  frames: [], // { ts, hex, ascii, len }
+  pollTimer: null,
+  error: null
+};
+
+function btPlugin() {
+  return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BluetoothSerial;
+}
+
+function btDiagStopPolling() {
+  if (btDiag.pollTimer) { clearInterval(btDiag.pollTimer); btDiag.pollTimer = null; }
+}
+
+function btDiagStartPolling() {
+  btDiagStopPolling();
+  const plugin = btPlugin();
+  if (!plugin) return;
+  btDiag.pollTimer = setInterval(async () => {
+    try {
+      const { available } = await plugin.available();
+      if (available > 0) {
+        const { data } = await plugin.read();
+        const bytes = [];
+        for (let i = 0; i < data.length; i++) bytes.push(data.charCodeAt(i) & 0xFF);
+        const hex = bytes.map(b => b.toString(16).padStart(2, '0')).join(' ');
+        const ascii = bytes.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+        btDiag.frames.unshift({ ts: new Date().toLocaleTimeString('fr-FR'), hex, ascii, len: bytes.length });
+        if (btDiag.frames.length > 200) btDiag.frames.length = 200; // borne la mémoire — outil de diagnostic, pas persisté
+        if (currentView === 'diag-bluetooth') renderDiagBluetooth();
+      }
+    } catch (e) {
+      // Une erreur de lecture signale le plus souvent une déconnexion.
+      btDiag.error = (e && e.message) ? e.message : String(e);
+      btDiag.connectedAddress = null;
+      btDiagStopPolling();
+      if (currentView === 'diag-bluetooth') renderDiagBluetooth();
+    }
+  }, 200);
+}
+
+// Appelé en quittant l'écran (voir btnBack.onclick) : un écran de diagnostic
+// n'a pas vocation à garder une connexion ouverte en arrière-plan.
+function btDiagLeaveScreen() {
+  btDiagStopPolling();
+  const plugin = btPlugin();
+  if (plugin && btDiag.connectedAddress) plugin.disconnect().catch(() => {});
+  btDiag.connectedAddress = null;
+}
+
+async function btDiagEnsurePermission() {
+  const plugin = btPlugin();
+  const status = await plugin.checkPermissions();
+  const already = Array.isArray(status) && status.some(s => s.connect === 'granted');
+  if (already) return true;
+  const requested = await plugin.requestPermissions({ permissions: ['connect'] });
+  return Array.isArray(requested) && requested.some(s => s.connect === 'granted');
+}
+
+async function btDiagRefreshDevices() {
+  const plugin = btPlugin();
+  btDiag.error = null;
+  try {
+    const ok = await btDiagEnsurePermission();
+    if (!ok) { btDiag.error = "Permission Bluetooth refusée — impossible de lister les appareils appairés."; renderDiagBluetooth(); return; }
+    const { devices } = await plugin.list();
+    btDiag.devices = devices || [];
+  } catch (e) {
+    btDiag.error = (e && e.message) ? e.message : String(e);
+  }
+  renderDiagBluetooth();
+}
+
+async function btDiagConnect(address) {
+  const plugin = btPlugin();
+  btDiag.error = null;
+  try {
+    await plugin.connect({ address });
+    btDiag.connectedAddress = address;
+    btDiagStartPolling();
+  } catch (e) {
+    btDiag.error = (e && e.message) ? e.message : String(e);
+  }
+  renderDiagBluetooth();
+}
+
+async function btDiagDisconnect() {
+  const plugin = btPlugin();
+  btDiagStopPolling();
+  try { await plugin.disconnect(); } catch (e) {}
+  btDiag.connectedAddress = null;
+  renderDiagBluetooth();
+}
+
+function renderDiagDevicesList() {
+  const container = document.getElementById('diag-devices');
+  if (!container) return;
+  if (btDiag.devices.length === 0) {
+    container.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">Aucun appareil listé pour l\'instant — appuie sur "Rafraîchir la liste".</div>';
+    return;
+  }
+  container.innerHTML = btDiag.devices.map(d => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+      <div>
+        <div style="font-weight:600;">${d.name || '(sans nom)'}</div>
+        <div style="font-size:12px;color:var(--text-muted);">${d.address}</div>
+      </div>
+      <button type="button" class="btn btn-secondary btn-diag-connect" data-address="${d.address}" style="width:auto;padding:6px 14px;" ${btDiag.connectedAddress === d.address ? 'disabled' : ''}>${btDiag.connectedAddress === d.address ? 'Connecté' : 'Connecter'}</button>
+    </div>
+  `).join('');
+  container.querySelectorAll('.btn-diag-connect').forEach(btn => {
+    btn.onclick = () => btDiagConnect(btn.dataset.address);
+  });
+}
+
+function renderDiagBluetooth() {
+  pageTitle.textContent = 'Diagnostic Bluetooth';
+  const plugin = btPlugin();
+  if (!plugin) {
+    app.innerHTML = `<div class="empty">Le plugin Bluetooth n'est disponible que dans l'appli installée sur téléphone (pas dans un navigateur).</div>`;
+    return;
+  }
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Appareils déjà appairés</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Le bâton Allflex doit apparaître ici (déjà appairé via l'autre appli) — aucune découverte n'est lancée, sa configuration matérielle n'est jamais touchée.</div>
+      <button type="button" class="btn btn-secondary" id="btn-diag-refresh">Rafraîchir la liste</button>
+      <div id="diag-devices" style="margin-top:10px;"></div>
+    </div>
+
+    ${btDiag.connectedAddress ? `
+    <div class="card" style="border-color:var(--accent);">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-weight:600;">Connecté à ${btDiag.connectedAddress}</div>
+        <button type="button" class="btn btn-secondary" id="btn-diag-disconnect" style="width:auto;padding:6px 14px;">Déconnecter</button>
+      </div>
+    </div>
+    ` : ''}
+
+    ${btDiag.error ? `<div class="error-box">${btDiag.error}</div>` : ''}
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-size:14px;font-weight:600;">Trames reçues (${btDiag.frames.length})</div>
+        <button type="button" class="btn btn-secondary" id="btn-diag-clear" style="width:auto;padding:4px 10px;font-size:12px;">Vider</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Scanne une boucle avec le bâton — chaque trame reçue s'affiche ci-dessous en hexadécimal et en ASCII, sans aucune interprétation.</div>
+      <div style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;">
+        ${btDiag.frames.length === 0 ? '<div style="color:var(--text-muted);font-family:inherit;">Aucune trame reçue pour l\'instant.</div>' : btDiag.frames.map(f => `
+          <div style="padding:6px 0;border-top:1px solid var(--border);">
+            <div style="color:var(--text-muted);font-family:inherit;">${f.ts} — ${f.len} octet(s)</div>
+            <div style="word-break:break-all;">${f.hex}</div>
+            <div style="word-break:break-all;color:var(--accent);">${f.ascii.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btn-diag-refresh').onclick = () => btDiagRefreshDevices();
+  const btnDisconnect = document.getElementById('btn-diag-disconnect');
+  if (btnDisconnect) btnDisconnect.onclick = () => btDiagDisconnect();
+  document.getElementById('btn-diag-clear').onclick = () => { btDiag.frames = []; renderDiagBluetooth(); };
+
+  renderDiagDevicesList();
 }
 
 /* ---------- Connexion à la synchronisation cloud ---------- */
