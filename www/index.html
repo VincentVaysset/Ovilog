@@ -1229,9 +1229,9 @@ function dashboardKpiHtml() {
 }
 
 /* ---------- Écran d'accueil ----------
-   Vue d'ensemble de l'exploitation (pastilles, scan rapide, KPIs) — distincte
-   de l'onglet "Brebis" du menu, qui n'affiche que l'inventaire pur (voir
-   renderList ci-dessous). */
+   Vue d'ensemble de l'exploitation (pastilles, KPIs) — distincte de l'onglet
+   "Brebis" du menu, qui n'affiche que l'inventaire pur et son propre scan
+   (voir renderList ci-dessous). */
 function renderHome() {
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   pageTitle.textContent = 'Mon troupeau';
@@ -1258,6 +1258,27 @@ function renderHome() {
   hero.querySelector('#hero-agnelles').onclick = () => render('agnelles');
   hero.querySelector('#hero-beliers').onclick = () => render('beliers');
 
+  const dashboard = document.createElement('div');
+  dashboard.innerHTML = dashboardKpiHtml();
+  app.appendChild(dashboard);
+  const kpiAgnelles = document.getElementById('kpi-agnelles');
+  if (kpiAgnelles) kpiAgnelles.onclick = () => render('agnelles');
+  const kpiAttendues = document.getElementById('kpi-attendues-traite');
+  if (kpiAttendues) kpiAttendues.onclick = () => {
+    openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(isAttendueTraite).map(s => s.eid));
+  };
+  const kpiBilan = document.getElementById('kpi-bilan-campagne');
+  if (kpiBilan) kpiBilan.onclick = () => render('bilan-campagne');
+}
+
+/* ---------- Onglet "Brebis" du menu ----------
+   Inventaire pur : uniquement la liste des brebis actives, sans les cadres
+   de stats (déplacés sur l'écran d'accueil, voir renderHome ci-dessus) —
+   même logique que les onglets Béliers/Agneaux. */
+function renderList() {
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  pageTitle.textContent = 'Brebis (' + actives.length + ')';
+
   const scanCard = document.createElement('div');
   scanCard.className = 'card';
   scanCard.innerHTML = `
@@ -1280,31 +1301,10 @@ function renderHome() {
       return;
     }
     playBeepTrouve();
-    detailOrigin = 'home';
+    detailOrigin = 'list';
     previousDetailId = null;
     render('detail', sheep.id);
   });
-
-  const dashboard = document.createElement('div');
-  dashboard.innerHTML = dashboardKpiHtml();
-  app.appendChild(dashboard);
-  const kpiAgnelles = document.getElementById('kpi-agnelles');
-  if (kpiAgnelles) kpiAgnelles.onclick = () => render('agnelles');
-  const kpiAttendues = document.getElementById('kpi-attendues-traite');
-  if (kpiAttendues) kpiAttendues.onclick = () => {
-    openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(isAttendueTraite).map(s => s.eid));
-  };
-  const kpiBilan = document.getElementById('kpi-bilan-campagne');
-  if (kpiBilan) kpiBilan.onclick = () => render('bilan-campagne');
-}
-
-/* ---------- Onglet "Brebis" du menu ----------
-   Inventaire pur : uniquement la liste des brebis actives, sans les cadres
-   de stats (déplacés sur l'écran d'accueil, voir renderHome ci-dessus) —
-   même logique que les onglets Béliers/Agneaux. */
-function renderList() {
-  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  pageTitle.textContent = 'Brebis (' + actives.length + ')';
 
   if (actives.length === 0) {
     const empty = document.createElement('div');
@@ -1748,6 +1748,17 @@ function renderAgneaux() {
   const introHtml = items.length === 0 ? '' :
     `<div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${enAttente} en attente de devenir sur ${items.length} agneau(x) bouclé(s).</div>`;
 
+  // Pas de fiche dédiée par agneau : le scan fait défiler jusqu'à sa carte
+  // dans l'inventaire et la met en surbrillance (même principe que le scan
+  // du Chantier de tri), plutôt que d'ouvrir un écran séparé.
+  const scanHtml = `
+    <div class="card">
+      <label>Scanner un agneau pour le retrouver</label>
+      <input type="text" id="scan-open-agneau" placeholder="Scanner ou saisir l'EID" autofocus>
+      <div id="scan-open-agneau-err" class="error-box hidden"></div>
+    </div>
+  `;
+
   const listHtml = items.length === 0
     ? '<div class="empty">Aucun agneau bouclé pour l\'instant.</div>'
     : items.map((it, i) => {
@@ -1757,7 +1768,7 @@ function renderAgneaux() {
       const mvts = (it.lamb.mouvements || []).slice().reverse();
       const mvtHtml = mvts.length === 0 ? '' : `<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">${mvts.map(m => `${m.type}${m.acheteur ? ' — ' + m.acheteur : ''} · ${m.date}`).join('<br>')}</div>`;
       return `
-      <div class="card">
+      <div class="card" id="agneau-item-${i}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:12px;">
             ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
@@ -1780,7 +1791,30 @@ function renderAgneaux() {
     `;
     }).join('');
 
-  app.innerHTML = introHtml + listHtml;
+  app.innerHTML = scanHtml + introHtml + listHtml;
+
+  const scanOpenAgneau = document.getElementById('scan-open-agneau');
+  scanOpenAgneau.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const val = cleanEid(scanOpenAgneau.value);
+    const err = document.getElementById('scan-open-agneau-err');
+    if (!val) return;
+    const idx = items.findIndex(it => cleanEid(it.lamb.eid) === val);
+    if (idx === -1) {
+      playBeepRate();
+      err.textContent = "Aucun agneau trouvé avec cet EID dans l'inventaire.";
+      err.classList.remove('hidden');
+      return;
+    }
+    err.classList.add('hidden');
+    playBeepTrouve();
+    const card = document.getElementById('agneau-item-' + idx);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.add('scan-highlight');
+      setTimeout(() => card.classList.remove('scan-highlight'), 2500);
+    }
+  });
 
   document.querySelectorAll('.btn-agneau-vendu').forEach(btn => {
     btn.onclick = () => {
@@ -3924,6 +3958,14 @@ function renderBeliers() {
   DB.beliers = DB.beliers || [];
   pageTitle.textContent = 'Béliers (' + DB.beliers.filter(b => (b.statut||'actif')==='actif').length + ')';
 
+  const scanHtml = `
+    <div class="card">
+      <label>Scanner un bélier pour ouvrir sa fiche</label>
+      <input type="text" id="scan-open-belier" placeholder="Scanner ou saisir l'EID" autofocus>
+      <div id="scan-open-belier-err" class="error-box hidden"></div>
+    </div>
+  `;
+
   const listHtml = DB.beliers.length === 0
     ? '<div class="empty">Aucun bélier pour l\'instant.<br>Appuie sur le bouton ci-dessous pour en ajouter un.</div>'
     : sortByAge(DB.beliers).map(b => `
@@ -3939,7 +3981,26 @@ function renderBeliers() {
       </div>
     `).join('');
 
-  app.innerHTML = listHtml + '<button class="btn btn-primary" id="btn-add-belier" style="margin-top:14px;">+ Ajouter un bélier</button>';
+  app.innerHTML = scanHtml + listHtml + '<button class="btn btn-primary" id="btn-add-belier" style="margin-top:14px;">+ Ajouter un bélier</button>';
+
+  const scanOpenBelier = document.getElementById('scan-open-belier');
+  scanOpenBelier.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const val = cleanEid(scanOpenBelier.value);
+    const err = document.getElementById('scan-open-belier-err');
+    if (!val) return;
+    const belier = DB.beliers.find(b => cleanEid(b.eid) === val);
+    if (!belier) {
+      playBeepRate();
+      err.textContent = "Aucun bélier trouvé avec cet EID.";
+      err.classList.remove('hidden');
+      return;
+    }
+    playBeepTrouve();
+    currentBelierId = belier.id;
+    belierDetailOrigin = 'beliers';
+    render('belier-detail');
+  });
 
   document.querySelectorAll('.sheep-item').forEach(el => {
     el.onclick = () => { currentBelierId = el.dataset.id; belierDetailOrigin = 'beliers'; render('belier-detail'); };
