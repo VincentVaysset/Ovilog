@@ -326,6 +326,7 @@ function migrateData(d) {
   if (!d.produitsInfo) d.produitsInfo = {};
   if (!d.agnelles) d.agnelles = [];
   if (d.campagneDebut === undefined) d.campagneDebut = null;
+  if (d.campagneDateDemarrage === undefined) d.campagneDateDemarrage = null;
   if (!d.beliers) d.beliers = [];
   if (!d.luttes) d.luttes = [];
   if (!d.journal) d.journal = [];
@@ -679,28 +680,43 @@ function tauxReussiteGlobal(activeList) {
   return { avecEcho, gestantes, taux: avecEcho > 0 ? Math.round((gestantes / avecEcho) * 1000) / 10 : 0 };
 }
 
-/* Reconstruit la population de brebis "présentes" au 1er octobre de la
-   campagne en cours (date de démarrage) — l'appli ne garde pas d'instantané
-   du troupeau à une date passée, donc on le déduit de l'historique de
-   mouvements de chaque brebis (actives ou non aujourd'hui). Une brebis
-   compte si elle était déjà entrée avant le 1er octobre ET pas encore
-   sortie à cette date : une vente ou une mort survenue PENDANT la campagne
-   ne la retire pas de cette population, puisqu'elle était bien là au
-   démarrage. Sert de base à statsDetailleesParGroupeAge, pour que toutes
+/* Date de référence pour "brebis présentes" (voir campagneCohortPresente
+   ci-dessous) : la date RÉELLE du clic sur "Démarrer une nouvelle campagne"
+   (DB.campagneDateDemarrage, posée à la bascule agnelles→brebis) si elle a
+   été enregistrée pour cette campagne — plus fidèle que toute date calculée,
+   puisque c'est le vrai instant où le troupeau a basculé. À défaut (campagne
+   démarrée avant l'ajout de ce champ), repli sur le 1er octobre calculé de
+   l'année de campagne, comme avant. Jamais recalculée rétroactivement : une
+   campagne déjà en cours garde son 1er octobre calculé pour toujours. */
+function campagneRefDate() {
+  if (DB.campagneDateDemarrage) return new Date(DB.campagneDateDemarrage);
+  if (DB.campagneDebut) return new Date(DB.campagneDebut, 9, 1); // 1er octobre (mois 9 = octobre, 0-indexé)
+  return null;
+}
+
+/* Reconstruit la population de brebis "présentes" à la date de référence de
+   la campagne en cours (voir campagneRefDate) — l'appli ne garde pas
+   d'instantané du troupeau à une date passée, donc on le déduit de
+   l'historique de mouvements de chaque brebis (actives ou non aujourd'hui).
+   Une brebis compte si elle était déjà entrée avant cette date ET pas
+   encore sortie à cette date : une vente ou une mort survenue PENDANT la
+   campagne ne la retire pas de cette population, puisqu'elle était bien là
+   au démarrage. Sert de base à statsDetailleesParGroupeAge, pour que toutes
    ses lignes restent cohérentes entre elles (sinon une vente en cours de
-   campagne gonflerait artificiellement "% mises bas"). Sans campagne
-   configurée, retombe sur les brebis actives aujourd'hui. */
+   campagne gonflerait artificiellement "% mises bas"). Sans date de
+   référence disponible (campagne non configurée du tout), retombe sur les
+   brebis actives aujourd'hui. */
 function campagneCohortPresente() {
-  if (!DB.campagneDebut) return DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  const refDate = new Date(DB.campagneDebut, 9, 1); // 1er octobre (mois 9 = octobre, 0-indexé)
+  const refDate = campagneRefDate();
+  if (!refDate) return DB.brebis.filter(s => (s.statut || 'active') === 'active');
   return DB.brebis.filter(s => {
     const mouvements = s.mouvements || [];
     const entreeMvt = mouvements.find(m => m.type === 'Entrée');
     const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
     const entreeDate = entreeDateStr ? new Date(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
-    if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > refDate) return false; // entrée après le 1er octobre : pas présente au démarrage
+    if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > refDate) return false; // entrée après la date de référence : pas présente au démarrage
     if ((s.statut || 'active') === 'active') return true;
-    // Inactive aujourd'hui : ne compte que si sa sortie a eu lieu APRÈS le 1er octobre.
+    // Inactive aujourd'hui : ne compte que si sa sortie a eu lieu APRÈS la date de référence.
     const sortieMvt = [...mouvements].reverse().find(m => ['Vendue', 'Morte', 'Vendue reproduction'].includes(m.type));
     if (!sortieMvt || !sortieMvt.date) return true; // pas de mouvement de sortie retrouvé (anomalie de données) : on la compte plutôt que de la perdre silencieusement
     const sortieDate = new Date(sortieMvt.date);
@@ -1547,10 +1563,16 @@ function bilanReproductionHtml(actives) {
   const { avecEcho, taux: tauxReussite } = tauxReussiteGlobal(actives);
 
   // Population de référence du tableau détaillé ci-dessous : brebis
-  // présentes au 1er octobre de la campagne (voir campagneCohortPresente),
-  // pas les actives d'aujourd'hui — pour rester cohérente avec elle-même
-  // (une vente en cours de campagne ne doit pas gonfler "% mises bas").
+  // présentes à la date de référence de la campagne (voir campagneRefDate/
+  // campagneCohortPresente), pas les actives d'aujourd'hui — pour rester
+  // cohérente avec elle-même (une vente en cours de campagne ne doit pas
+  // gonfler "% mises bas").
   const cohort = campagneCohortPresente();
+  const refDateLabel = DB.campagneDateDemarrage
+    ? new Date(DB.campagneDateDemarrage).toLocaleDateString('fr-FR') + ' (date du changement de campagne)'
+    : DB.campagneDebut
+    ? '1<sup>er</sup> octobre ' + DB.campagneDebut + ' (date calculée, campagne démarrée avant l\'enregistrement de cette date)'
+    : null;
   const [g1An, g2AnsPlus] = statsDetailleesParGroupeAge(cohort);
   const rows = [
     { label: 'Brebis présentes', v1: g1An.presentes, v2: g2AnsPlus.presentes },
@@ -1585,7 +1607,7 @@ function bilanReproductionHtml(actives) {
 
     <div class="card" style="margin-bottom:10px;">
       <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Bilan détaillé par groupe d'âge</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Population de référence : brebis présentes au 1<sup>er</sup> octobre ${DB.campagneDebut ? DB.campagneDebut : '?'} (début de campagne)${!DB.campagneDebut ? ' — campagne non définie, brebis actives aujourd\'hui utilisées à la place' : ''}. Colonnes : agnelles de 1 an (première reproduction) / brebis de 2 ans et plus.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Population de référence : brebis présentes le ${refDateLabel || 'campagne non définie, brebis actives aujourd\'hui utilisées à la place'}. Colonnes : agnelles de 1 an (première reproduction) / brebis de 2 ans et plus.</div>
       <div style="overflow-x:auto;">
         <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:300px;">
           <tr style="color:var(--text-muted);text-align:left;">
@@ -6879,6 +6901,11 @@ function renderParametres() {
 
     const now = new Date();
     DB.campagneDebut = now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1;
+    // Date réelle de ce clic, utilisée comme référence pour "brebis présentes"
+    // dans Bilan de reproduction (voir campagneCohortPresente) — plus fidèle
+    // que le 1er octobre calculé, puisque c'est le vrai instant de bascule
+    // agnelles→brebis pour CETTE campagne.
+    DB.campagneDateDemarrage = dateRenouvellement;
     saveData(DB);
     render('parametres');
   };
