@@ -624,6 +624,98 @@ function isGestanteEcho(echo) {
   return echo.stade && echo.stade !== 'Vide';
 }
 
+/* ---------- Vide définitive ----------
+   Une brebis peut être notée "Vide" à plusieurs échographies d'affilée sans
+   que ce soit définitif (elle peut redevenir pleine à l'écho suivante) —
+   seule une action explicite ("dernière écho de la campagne" ou le bouton
+   de la fiche) fait foi. Tagué par campagne comme les échographies, pour
+   ne jamais écraser l'historique des campagnes passées et pouvoir annuler
+   sans ambiguïté. Volontairement indépendant de sheep.agnelages : si les
+   deux coexistent pour la même campagne (mise bas ET vide définitive), on
+   ne corrige rien silencieusement — voir l'alerte "Incohérences fin de
+   campagne" du Bilan de campagne, à corriger à la main. */
+function estVideDefinitiveCampagne(sheep) {
+  const list = Array.isArray(sheep.videesDefinitives) ? sheep.videesDefinitives : [];
+  return list.some(v => v && v.campagne === DB.campagneDebut);
+}
+function marquerVideDefinitive(sheep) {
+  if (estVideDefinitiveCampagne(sheep)) return; // idempotent : pas de doublon si déjà marquée cette campagne
+  sheep.videesDefinitives = sheep.videesDefinitives || [];
+  sheep.videesDefinitives.push({ campagne: DB.campagneDebut, date: new Date().toISOString().slice(0,10) });
+}
+function annulerVideDefinitive(sheep) {
+  if (!Array.isArray(sheep.videesDefinitives)) return;
+  const idx = sheep.videesDefinitives.findIndex(v => v && v.campagne === DB.campagneDebut);
+  if (idx !== -1) sheep.videesDefinitives.splice(idx, 1);
+}
+
+/* Chiffres-clé de la campagne en cours, partagés par l'écran d'accueil et
+   le Bilan de campagne :
+   - Troupeau à mettre bas = actives − vides définitives
+   - Mises bas restantes attendues = troupeau à mettre bas − mises bas déjà réalisées
+   Une brebis à la fois "mise bas" et "vide définitive" (incohérence, voir
+   l'alerte dédiée du Bilan de campagne) compte comme mise bas ici — on ne
+   veut pas qu'une donnée contradictoire fasse passer "mises bas restantes"
+   en négatif ; Math.max(0, …) protège en plus contre ce cas. */
+function campagneBilanChiffres(activeList) {
+  const misesBasActives = activeList.filter(s => s.agnelages && s.agnelages.length > 0).length;
+  const videsDefinitivesActives = activeList.filter(s => estVideDefinitiveCampagne(s) && !(s.agnelages && s.agnelages.length > 0)).length;
+  const troupeauAMettreBas = activeList.length - videsDefinitivesActives;
+  const misesBasRestantes = Math.max(0, troupeauAMettreBas - misesBasActives);
+  return { misesBasActives, videsDefinitivesActives, troupeauAMettreBas, misesBasRestantes };
+}
+
+/* Taux de réussite global (gestantes / brebis échographiées sur leur
+   dernière écho) — n'a de sens qu'en fin de campagne, affiché uniquement
+   dans Bilan de campagne (voir renderBilanCampagne). */
+function tauxReussiteGlobal(activeList) {
+  let gestantes = 0, avecEcho = 0;
+  activeList.forEach(s => {
+    const last = s.echographies[s.echographies.length - 1];
+    if (!last) return;
+    avecEcho++;
+    if (isGestanteEcho(last)) gestantes++;
+  });
+  return { avecEcho, gestantes, taux: avecEcho > 0 ? Math.round((gestantes / avecEcho) * 1000) / 10 : 0 };
+}
+
+/* Stats de reproduction de la campagne par groupe d'âge (remplace l'ancien
+   détail par année de naissance exacte) : agnelles de 1 an (première
+   reproduction) vs brebis de 2 ans et plus, basé sur l'année de naissance
+   déduite de l'EID comme partout ailleurs dans l'appli. Les brebis d'âge 0
+   (nées cette année, trop jeunes pour la lutte en cours) ou d'âge inconnu
+   (EID invalide) sont exclues des deux groupes plutôt que rattachées
+   arbitrairement à "1 an". */
+function statsParGroupeAge(activeList) {
+  const groupes = {
+    '1 an': { effectif: 0, misesBas: 0, videsDefinitives: 0, agneaux: 0 },
+    '2 ans et plus': { effectif: 0, misesBas: 0, videsDefinitives: 0, agneaux: 0 }
+  };
+  activeList.forEach(s => {
+    const a = age(s.eid);
+    if (a === null || a < 1) return;
+    const g = groupes[a === 1 ? '1 an' : '2 ans et plus'];
+    g.effectif++;
+    const agnelages = s.agnelages || [];
+    if (agnelages.length > 0) {
+      g.misesBas++; // une brebis ne peut avoir qu'un agnelage par campagne (voir renderAddAgnelage)
+      agnelages.forEach(ag => { g.agneaux += ag.lambs.length; });
+    } else if (estVideDefinitiveCampagne(s)) {
+      g.videsDefinitives++;
+    }
+  });
+  return Object.keys(groupes).map(key => {
+    const g = groupes[key];
+    const connu = g.misesBas + g.videsDefinitives; // "en attente" (ni mise bas ni vide définitive) exclues du taux
+    return {
+      label: key === '1 an' ? 'Agnelles de 1 an' : 'Brebis de 2 ans et plus',
+      effectif: g.effectif,
+      prolificite: g.misesBas > 0 ? Math.round((g.agneaux / g.misesBas) * 100) / 100 : null,
+      tauxMisesBas: connu > 0 ? Math.round((g.misesBas / connu) * 1000) / 10 : null
+    };
+  });
+}
+
 /* Statut de reproduction d'une brebis pour la campagne EN COURS — utile en
    fin de campagne pour s'assurer qu'aucune brebis ne reste "dans le flou"
    (ex: vide mais jamais confirmée comme telle). Ne considère QUE les
@@ -633,13 +725,17 @@ function isGestanteEcho(echo) {
    aux agnelages/mouvements) donc on ne peut pas s'y fier sans ce tag pour
    savoir "où on en est cette campagne".
    - 'Mise bas' : un agnelage existe déjà cette campagne (le plus fiable).
+   - 'Vide définitive' : marquage explicite (bouton fiche ou case "dernière
+     écho de la campagne"), prioritaire sur toute échographie car c'est une
+     décision volontaire de l'éleveur, pas une simple lecture d'écho.
    - 'Non suivie' : aucune échographie taguée de cette campagne pour l'instant.
    - Sinon, dérivé de la dernière échographie de la campagne : cas
      particulier (Avortée/Pseudogestation), gestante en cours, ou vide
-     confirmée. */
+     confirmée (provisoire, contrairement à "Vide définitive" ci-dessus). */
 function statutReproductionCampagne(sheep) {
   try {
     if (Array.isArray(sheep.agnelages) && sheep.agnelages.length > 0) return 'Mise bas';
+    if (estVideDefinitiveCampagne(sheep)) return 'Vide définitive';
     const echos = Array.isArray(sheep.echographies) ? sheep.echographies : [];
     const echosCampagne = echos.filter(e => e && e.campagne === DB.campagneDebut);
     if (echosCampagne.length === 0) return 'Non suivie';
@@ -1036,19 +1132,15 @@ function dashboardKpiHtml() {
   const total = active.length;
 
   const stadeCount = { 'Début': 0, 'Milieu': 0, 'Fin': 0, 'Vide': 0 };
-  let gestantes = 0, avecEcho = 0;
+  let avecEcho = 0;
   active.forEach(s => {
     const last = s.echographies[s.echographies.length - 1];
     if (!last) return;
     avecEcho++;
-    if (last.type === 'constat') {
-      if (last.stade === 'Pleine') gestantes++;
-    } else if (last.stade && stadeCount.hasOwnProperty(last.stade)) {
+    if (last.type !== 'constat' && last.stade && stadeCount.hasOwnProperty(last.stade)) {
       stadeCount[last.stade]++;
-      if (last.stade !== 'Vide') gestantes++;
     }
   });
-  const tauxReussite = avecEcho > 0 ? Math.round((gestantes / avecEcho) * 1000) / 10 : 0;
 
   let totalMisesBas = 0, totalAgneaux = 0, totalMortNes = 0;
   DB.brebis.forEach(s => {
@@ -1062,38 +1154,11 @@ function dashboardKpiHtml() {
   });
   const prolificite = totalMisesBas > 0 ? Math.round((totalAgneaux / totalMisesBas) * 100) / 100 : 0;
 
-  const parAge = {};
-  active.forEach(s => {
-    const an = anneeNaissance(s.eid);
-    if (an === null) return;
-    if (!parAge[an]) parAge[an] = { effectif: 0, avecEcho: 0, gestantes: 0, misesBas: 0, agneaux: 0 };
-    parAge[an].effectif++;
-    const last = s.echographies[s.echographies.length - 1];
-    if (last) {
-      parAge[an].avecEcho++;
-      if (isGestanteEcho(last)) parAge[an].gestantes++;
-    }
-    (s.agnelages || []).forEach(a => {
-      parAge[an].misesBas++;
-      parAge[an].agneaux += a.lambs.length;
-    });
-  });
-  const ageRows = Object.keys(parAge).sort((a,b) => b - a).map(an => {
-    const d = parAge[an];
-    return {
-      annee: an,
-      age: new Date().getFullYear() - an,
-      effectif: d.effectif,
-      tauxReussite: d.avecEcho > 0 ? Math.round((d.gestantes / d.avecEcho) * 1000) / 10 : null,
-      prolificite: d.misesBas > 0 ? Math.round((d.agneaux / d.misesBas) * 100) / 100 : null
-    };
-  });
-
-  const misesBasRestantes = active.filter(s => {
-    const last = s.echographies[s.echographies.length - 1];
-    if (!isGestanteEcho(last)) return false;
-    return !(s.agnelages && s.agnelages.length > 0);
-  }).length;
+  // Troupeau à mettre bas / Mises bas restantes attendues : voir
+  // campagneBilanChiffres — même formule qu'au Bilan de campagne, où le
+  // taux de réussite global et le détail par groupe d'âge sont affichés
+  // (ces indicateurs n'ont de sens qu'en fin de campagne, pas au quotidien).
+  const { troupeauAMettreBas, misesBasRestantes } = campagneBilanChiffres(active);
 
   const attendueTraiteCount = active.filter(s => isAttendueTraite(s)).length;
 
@@ -1146,23 +1211,23 @@ function dashboardKpiHtml() {
         <div class="stat-card-value">${totalMisesBas}</div>
         <div class="stat-card-sub">${totalAgneaux} agneaux nés, dont ${totalMortNes} mort-né(s)</div>
       </div>
-      <div class="stat-card sc-green">
-        ${iconCircle(ICON_ECHO, 'green', 'sm')}
-        <div class="stat-card-label" style="margin-top:8px;">Taux de réussite</div>
-        <div class="stat-card-value">${tauxReussite}%</div>
-        <div class="stat-card-sub">Sur ${avecEcho} brebis échographiées</div>
-      </div>
       <div class="stat-card sc-amber">
         ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
         <div class="stat-card-label" style="margin-top:8px;">Prolificité</div>
         <div class="stat-card-value">${prolificite}</div>
         <div class="stat-card-sub">Agneaux / mise bas, mort-nés inclus</div>
       </div>
+      <div class="stat-card sc-green">
+        ${iconCircle(ICON_SHEEP, 'green', 'sm')}
+        <div class="stat-card-label" style="margin-top:8px;">Troupeau à mettre bas</div>
+        <div class="stat-card-value">${troupeauAMettreBas}</div>
+        <div class="stat-card-sub">Actives moins les vides définitives</div>
+      </div>
       <div class="stat-card sc-amber">
         ${iconCircle(ICON_ECHO, 'amber', 'sm')}
         <div class="stat-card-label" style="margin-top:8px;">Mises bas restantes</div>
         <div class="stat-card-value">${misesBasRestantes}</div>
-        <div class="stat-card-sub">Gestantes n'ayant pas encore mis bas</div>
+        <div class="stat-card-sub">Sur le troupeau à mettre bas</div>
       </div>
       <div class="stat-card sc-blue stat-card-clickable" id="kpi-attendues-traite" role="button" tabindex="0">
         ${iconCircle(ICON_LAIT, 'blue', 'sm')}
@@ -1185,26 +1250,6 @@ function dashboardKpiHtml() {
       ${bar('Fin', stadeCount['Fin'], 'var(--success)')}
       ${bar('Vide', stadeCount['Vide'], 'var(--danger)')}
       <div style="font-size:12px;color:var(--text-muted);">${total - avecEcho} brebis sans échographie enregistrée</div>
-    </div>
-
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Taux de réussite et prolificité par âge</div>
-      <table style="width:100%;font-size:13px;border-collapse:collapse;">
-        <tr style="color:var(--text-muted);text-align:left;">
-          <th style="padding:4px 4px;font-weight:500;">Année</th>
-          <th style="padding:4px 4px;font-weight:500;">Effectif</th>
-          <th style="padding:4px 4px;font-weight:500;">Réussite</th>
-          <th style="padding:4px 4px;font-weight:500;">Prolificité</th>
-        </tr>
-        ${ageRows.map(r => `
-          <tr style="border-top:1px solid var(--border);">
-            <td style="padding:6px 4px;">${r.annee} (${r.age} an(s))</td>
-            <td style="padding:6px 4px;">${r.effectif}</td>
-            <td style="padding:6px 4px;">${r.tauxReussite !== null ? r.tauxReussite + '%' : '—'}</td>
-            <td style="padding:6px 4px;">${r.prolificite !== null ? r.prolificite : '—'}</td>
-          </tr>
-        `).join('')}
-      </table>
     </div>
 
     <div class="card">
@@ -1351,16 +1396,29 @@ function renderList() {
 /* ---------- Bilan de reproduction de la campagne en cours ----------
    Répartit toutes les brebis actives par statutReproductionCampagne(), pour
    s'assurer qu'aucune ne reste "dans le flou" en fin de campagne (ex: vide
-   mais jamais confirmée comme telle) — voir statutReproductionCampagne(). */
+   mais jamais confirmée comme telle) — voir statutReproductionCampagne().
+   Regroupe aussi les indicateurs qui n'ont de sens qu'en fin de campagne
+   (taux de réussite, détail par groupe d'âge) — voir tauxReussiteGlobal()
+   et statsParGroupeAge(). */
 function renderBilanCampagne() {
   pageTitle.textContent = 'Bilan de campagne';
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  const groupes = { 'Mise bas': [], 'Gestante (en cours)': [], 'Vide confirmée': [], 'Avortée': [], 'Pseudogestation': [], 'Non suivie': [] };
+  const groupes = { 'Mise bas': [], 'Vide définitive': [], 'Gestante (en cours)': [], 'Vide confirmée': [], 'Avortée': [], 'Pseudogestation': [], 'Non suivie': [] };
   actives.forEach(s => {
     const statut = statutReproductionCampagne(s);
     if (!groupes[statut]) groupes[statut] = []; // filet de sécurité : ne devrait jamais arriver, voir statutReproductionCampagne
     groupes[statut].push(s);
   });
+
+  // Incohérence fin de campagne : mise bas ET vide définitive enregistrées
+  // pour la même brebis cette campagne. Volontairement non corrigée toute
+  // seule (voir marquerVideDefinitive/renderAddAgnelage) — listée ici pour
+  // une correction manuelle, en plus du bouton "Annuler" déjà sur la fiche.
+  const incoherentes = sortByAge(actives.filter(s => (s.agnelages && s.agnelages.length > 0) && estVideDefinitiveCampagne(s)));
+
+  const { troupeauAMettreBas, misesBasRestantes } = campagneBilanChiffres(actives);
+  const { avecEcho, taux: tauxReussite } = tauxReussiteGlobal(actives);
+  const groupesAge = statsParGroupeAge(actives);
 
   // "Non suivie" en tête : c'est la liste la plus actionnable (aucune info
   // de reproduction cette campagne — ni écho, ni mise bas, ni vide confirmé —
@@ -1368,7 +1426,8 @@ function renderBilanCampagne() {
   const config = [
     { key: 'Non suivie', color: 'amber', intro: "Aucune information de reproduction cette campagne (ni échographie, ni mise bas) — à vérifier en priorité." },
     { key: 'Gestante (en cours)', color: 'green' },
-    { key: 'Vide confirmée', color: 'gray' },
+    { key: 'Vide confirmée', color: 'gray', intro: "Dernière échographie de la campagne notée \"Vide\" mais pas (encore) marquée définitive." },
+    { key: 'Vide définitive', color: 'blue' },
     { key: 'Avortée', color: 'coral' },
     { key: 'Pseudogestation', color: 'indigo' },
     { key: 'Mise bas', color: 'green' }
@@ -1376,6 +1435,59 @@ function renderBilanCampagne() {
 
   app.innerHTML = `
     <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Statut de reproduction de chaque brebis active pour la campagne en cours (${DB.campagneDebut ? DB.campagneDebut + 1 : 'année non définie'}) — utile pour vérifier qu'aucune brebis ne reste sans suivi avant la fin de campagne.</div>
+
+    ${incoherentes.length > 0 ? `
+    <div class="card" style="border-color:var(--danger);margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        ${iconCircle(ICON_WARNING, 'coral', 'sm')}
+        <div style="font-weight:700;color:var(--coral-fg);">Incohérences fin de campagne (${incoherentes.length})</div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Mise bas ET vide définitive enregistrées pour ces brebis cette campagne — à corriger toi-même sur leur fiche (bouton "Annuler" du statut reproduction).</div>
+      <div>${incoherentes.map(s => `
+        <div class="bilan-eid-link" data-id="${s.id}" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);cursor:pointer;">
+          <span style="font-size:14px;">n°${numeroVisuel(s.eid)}</span>
+          <span style="font-size:12px;color:var(--text-muted);">${age(s.eid) !== null ? age(s.eid) + ' an(s)' : 'âge inconnu'}</span>
+        </div>
+      `).join('')}</div>
+    </div>
+    ` : ''}
+
+    <div class="card" style="margin-bottom:10px;">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Troupeau à mettre bas</div>
+      <div class="grid2">
+        <div><div style="font-size:12px;color:var(--text-muted);">Troupeau à mettre bas</div><div style="font-size:20px;font-weight:600;">${troupeauAMettreBas}</div></div>
+        <div><div style="font-size:12px;color:var(--text-muted);">Mises bas restantes attendues</div><div style="font-size:20px;font-weight:600;">${misesBasRestantes}</div></div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Troupeau actif total moins les brebis vides définitives ; mises bas restantes = troupeau à mettre bas moins les mises bas déjà réalisées.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px;">
+      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Taux de réussite</div>
+      <div style="font-size:20px;font-weight:600;">${tauxReussite}%</div>
+      <div style="font-size:12px;color:var(--text-muted);">Sur ${avecEcho} brebis échographiées (dernière échographie)</div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px;">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Prolificité et taux de mises bas par groupe d'âge</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr style="color:var(--text-muted);text-align:left;">
+          <th style="padding:4px 4px;font-weight:500;">Groupe</th>
+          <th style="padding:4px 4px;font-weight:500;">Effectif</th>
+          <th style="padding:4px 4px;font-weight:500;">Prolificité</th>
+          <th style="padding:4px 4px;font-weight:500;">Taux de mises bas</th>
+        </tr>
+        ${groupesAge.map(g => `
+          <tr style="border-top:1px solid var(--border);">
+            <td style="padding:6px 4px;">${g.label}</td>
+            <td style="padding:6px 4px;">${g.effectif}</td>
+            <td style="padding:6px 4px;">${g.prolificite !== null ? g.prolificite : '—'}</td>
+            <td style="padding:6px 4px;">${g.tauxMisesBas !== null ? g.tauxMisesBas + '%' : '—'}</td>
+          </tr>
+        `).join('')}
+      </table>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Taux de mises bas = mises bas ÷ (mises bas + vides définitives) — les brebis encore en attente (ni mise bas, ni vide définitive) ne comptent pas dans ce taux.</div>
+    </div>
+
     ${config.map(c => {
       const list = groupes[c.key] || [];
       if (list.length === 0) return '';
@@ -1392,7 +1504,7 @@ function renderBilanCampagne() {
           </div>
         `).join('')}</div>
       </div>`;
-    }).join('') || '<div class="empty">Aucune brebis active.</div>'}
+    }).join('') || (actives.length === 0 ? '<div class="empty">Aucune brebis active.</div>' : '')}
   `;
 
   document.querySelectorAll('.bilan-eid-link').forEach(el => {
@@ -1978,6 +2090,30 @@ function renderDetail(id) {
     ? `<button type="button" class="btn btn-secondary" id="btn-voir-mere-sheep" style="margin-bottom:16px;">Voir la fiche de la mère (n°${numeroVisuel(sheep.mereEid)})</button>`
     : '';
 
+  // Statut reproduction de la campagne + action "vide définitive" — secours
+  // manuel en dehors du flux "dernière écho de la campagne" (voir Écho
+  // rapide). Le bouton "Annuler" reste visible même si un agnelage existe
+  // déjà cette campagne (incohérence à corriger à la main, voir l'alerte du
+  // Bilan de campagne) : mieux vaut la montrer que la masquer.
+  const campagneAffichage = DB.campagneDebut ? (DB.campagneDebut + 1) : null;
+  const videDefCampagne = estVideDefinitiveCampagne(sheep);
+  const dejaMiseBasCampagne = sheep.agnelages && sheep.agnelages.length > 0;
+  const reproStatutHtml = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div>
+          <div style="font-size:12px;color:var(--text-muted);">Statut reproduction${campagneAffichage ? ' — campagne ' + campagneAffichage : ''}</div>
+          <div style="font-weight:600;">${statutReproductionCampagne(sheep)}</div>
+        </div>
+        ${videDefCampagne
+          ? `<button type="button" class="btn btn-secondary" id="btn-annuler-vide-def" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">Annuler</button>`
+          : dejaMiseBasCampagne
+          ? ''
+          : `<button type="button" class="btn btn-secondary" id="btn-marquer-vide-def" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;color:var(--coral-fg);border-color:var(--danger);">Marquer vide définitive</button>`}
+      </div>
+    </div>
+  `;
+
   app.innerHTML = `
     <div class="card">
       <div style="font-size:12px;color:var(--text-muted);">EID complet</div>
@@ -1989,6 +2125,7 @@ function renderDetail(id) {
       ${sheep.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${sheep.dateEntree}</strong></div>` : ''}
     </div>
     ${statutBadge}
+    ${reproStatutHtml}
     ${attendueTraiteBadge}
     ${withdrawalBadge}
     ${mereBlock}
@@ -2040,6 +2177,20 @@ function renderDetail(id) {
   `;
   document.getElementById('btn-add-echo').onclick = () => { editContext = null; render('add-echo', sheep.id); };
   if (document.getElementById('btn-add-agnelage')) document.getElementById('btn-add-agnelage').onclick = () => { editContext = null; render('add-agnelage', sheep.id); };
+  const btnMarquerVideDef = document.getElementById('btn-marquer-vide-def');
+  if (btnMarquerVideDef) btnMarquerVideDef.onclick = () => {
+    if (!confirm('Marquer la brebis n°' + numeroVisuel(sheep.eid) + ' comme vide définitive pour cette campagne ? Elle ne sera plus comptée dans "mises bas restantes attendues".')) return;
+    marquerVideDefinitive(sheep);
+    saveData(DB);
+    render('detail', sheep.id);
+  };
+  const btnAnnulerVideDef = document.getElementById('btn-annuler-vide-def');
+  if (btnAnnulerVideDef) btnAnnulerVideDef.onclick = () => {
+    if (!confirm('Annuler le statut "vide définitive" de la n°' + numeroVisuel(sheep.eid) + ' pour cette campagne ?')) return;
+    annulerVideDefinitive(sheep);
+    saveData(DB);
+    render('detail', sheep.id);
+  };
   document.getElementById('btn-add-sanitaire').onclick = () => { editContext = null; render('add-sanitaire', sheep.id); };
   if (document.getElementById('btn-add-mouvement')) document.getElementById('btn-add-mouvement').onclick = () => { editContext = null; render('add-mouvement', sheep.id); };
   document.getElementById('btn-add-controle').onclick = () => { editContext = null; render('add-controle', sheep.id); };
@@ -2494,8 +2645,8 @@ function renderAddAgnelage(sheepId) {
    la page de sélection du type"). Réinitialisée uniquement quand l'écran
    d'accueil (ou tout autre écran) est explicitement quitté vers autre chose
    ET qu'on revient plus tard : voir resetEchoRapideSession(). */
-let echoRapideSession = { typeEcho: null, count: 0 };
-function resetEchoRapideSession() { echoRapideSession = { typeEcho: null, count: 0 }; }
+let echoRapideSession = { typeEcho: null, count: 0, dernierEcho: false };
+function resetEchoRapideSession() { echoRapideSession = { typeEcho: null, count: 0, dernierEcho: false }; }
 
 function renderEchoRapide() {
   function typeLabel() {
@@ -2514,6 +2665,13 @@ function renderEchoRapide() {
           <button type="button" class="opt-btn type-echo-session-opt" data-val="stade_comptage">Stades + comptage (+ 1 ou 2 agneaux)</button>
         </div>
       </div>
+      <div class="card">
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:0;">
+          <input type="checkbox" id="f-dernier-echo" style="width:18px;height:18px;margin:0;flex-shrink:0;">
+          <span style="font-size:14px;color:var(--text);">Ceci est la dernière échographie de la campagne</span>
+        </label>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Coché, chaque brebis marquée "Vide" pendant cette session sera aussi enregistrée comme <strong>vide définitive</strong> pour la campagne — pas de double saisie à faire.</div>
+      </div>
       <button class="btn btn-primary" id="btn-start-echo-session" style="margin-top:14px;" disabled>Commencer la saisie</button>
       <button type="button" class="btn btn-secondary" id="btn-historique-echo" style="margin-top:10px;">Voir l'historique des échographies</button>
     `;
@@ -2525,6 +2683,8 @@ function renderEchoRapide() {
         document.getElementById('btn-start-echo-session').disabled = false;
       };
     });
+    document.getElementById('f-dernier-echo').checked = echoRapideSession.dernierEcho;
+    document.getElementById('f-dernier-echo').onchange = (e) => { echoRapideSession.dernierEcho = e.target.checked; };
     document.getElementById('btn-start-echo-session').onclick = () => {
       if (!echoRapideSession.typeEcho) return;
       screenLoop();
@@ -2660,6 +2820,7 @@ function renderEchoRapide() {
         <div style="display:flex;justify-content:center;margin-bottom:16px;">
           <div class="session-counter sc-green">${ICON_ECHO}${count} échographie${count > 1 ? 's' : ''} saisie${count > 1 ? 's' : ''}</div>
         </div>
+        ${echoRapideSession.dernierEcho ? `<div style="display:flex;align-items:center;gap:10px;background:var(--blue-bg);color:var(--blue-fg);padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">Dernière écho de la campagne — toute brebis "Vide" sera aussi marquée vide définitive</div>` : ''}
         <div class="card">
           <label>${currentSheep ? 'Scanner la prochaine brebis' : 'Scanner une brebis'}</label>
           <input type="text" id="scan-echo" placeholder="Scanner ou saisir l'EID" autofocus>
@@ -2767,6 +2928,10 @@ function renderEchoRapide() {
             campagne: DB.campagneDebut
           };
           currentSheep.echographies.push(echo);
+          // "Dernière écho de la campagne" cochée : une brebis notée "Vide"
+          // ici est vide définitive, pas juste vide "à cette écho" — pas de
+          // double saisie à faire (voir marquerVideDefinitive).
+          if (echoRapideSession.dernierEcho && stade === 'Vide') marquerVideDefinitive(currentSheep);
           saveData(DB);
           echoRapideSession.count++;
           resetResult();
