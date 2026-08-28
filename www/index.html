@@ -679,39 +679,87 @@ function tauxReussiteGlobal(activeList) {
   return { avecEcho, gestantes, taux: avecEcho > 0 ? Math.round((gestantes / avecEcho) * 1000) / 10 : 0 };
 }
 
-/* Stats de reproduction de la campagne par groupe d'âge (remplace l'ancien
-   détail par année de naissance exacte) : agnelles de 1 an (première
-   reproduction) vs brebis de 2 ans et plus, basé sur l'année de naissance
-   déduite de l'EID comme partout ailleurs dans l'appli. Les brebis d'âge 0
-   (nées cette année, trop jeunes pour la lutte en cours) ou d'âge inconnu
-   (EID invalide) sont exclues des deux groupes plutôt que rattachées
-   arbitrairement à "1 an". */
-function statsParGroupeAge(activeList) {
+/* Reconstruit la population de brebis "présentes" au 1er octobre de la
+   campagne en cours (date de démarrage) — l'appli ne garde pas d'instantané
+   du troupeau à une date passée, donc on le déduit de l'historique de
+   mouvements de chaque brebis (actives ou non aujourd'hui). Une brebis
+   compte si elle était déjà entrée avant le 1er octobre ET pas encore
+   sortie à cette date : une vente ou une mort survenue PENDANT la campagne
+   ne la retire pas de cette population, puisqu'elle était bien là au
+   démarrage. Sert de base à statsDetailleesParGroupeAge, pour que toutes
+   ses lignes restent cohérentes entre elles (sinon une vente en cours de
+   campagne gonflerait artificiellement "% mises bas"). Sans campagne
+   configurée, retombe sur les brebis actives aujourd'hui. */
+function campagneCohortPresente() {
+  if (!DB.campagneDebut) return DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const refDate = new Date(DB.campagneDebut, 9, 1); // 1er octobre (mois 9 = octobre, 0-indexé)
+  return DB.brebis.filter(s => {
+    const mouvements = s.mouvements || [];
+    const entreeMvt = mouvements.find(m => m.type === 'Entrée');
+    const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
+    const entreeDate = entreeDateStr ? new Date(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
+    if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > refDate) return false; // entrée après le 1er octobre : pas présente au démarrage
+    if ((s.statut || 'active') === 'active') return true;
+    // Inactive aujourd'hui : ne compte que si sa sortie a eu lieu APRÈS le 1er octobre.
+    const sortieMvt = [...mouvements].reverse().find(m => ['Vendue', 'Morte', 'Vendue reproduction'].includes(m.type));
+    if (!sortieMvt || !sortieMvt.date) return true; // pas de mouvement de sortie retrouvé (anomalie de données) : on la compte plutôt que de la perdre silencieusement
+    const sortieDate = new Date(sortieMvt.date);
+    return isNaN(sortieDate.getTime()) || sortieDate >= refDate;
+  });
+}
+
+/* Tableau détaillé de Bilan de reproduction, par groupe d'âge (agnelles de
+   1 an / brebis de 2 ans et plus, basé sur l'EID comme partout ailleurs —
+   voir campagneCohortPresente ci-dessus pour la population de référence).
+   Un agneau adopté n'existe qu'à un seul endroit dans les données (dans
+   agnelages de sa mère biologique — le champ adoptif n'est qu'une note,
+   jamais une entrée dupliquée chez la mère adoptive), donc pas de risque de
+   double-comptage en parcourant simplement les agnelages de chaque brebis.
+   Les brebis d'âge 0 (nées cette année, trop jeunes pour la lutte en cours)
+   ou d'âge inconnu (EID invalide) sont exclues des deux groupes. */
+function statsDetailleesParGroupeAge(cohort) {
   const groupes = {
-    '1 an': { effectif: 0, misesBas: 0, videsDefinitives: 0, agneaux: 0 },
-    '2 ans et plus': { effectif: 0, misesBas: 0, videsDefinitives: 0, agneaux: 0 }
+    '1 an': { presentes: 0, misesBas: 0, males: 0, femelles: 0, mortNes: 0, morts: 0 },
+    '2 ans et plus': { presentes: 0, misesBas: 0, males: 0, femelles: 0, mortNes: 0, morts: 0 }
   };
-  activeList.forEach(s => {
+  cohort.forEach(s => {
     const a = age(s.eid);
     if (a === null || a < 1) return;
     const g = groupes[a === 1 ? '1 an' : '2 ans et plus'];
-    g.effectif++;
+    g.presentes++;
     const agnelages = s.agnelages || [];
-    if (agnelages.length > 0) {
-      g.misesBas++; // une brebis ne peut avoir qu'un agnelage par campagne (voir renderAddAgnelage)
-      agnelages.forEach(ag => { g.agneaux += ag.lambs.length; });
-    } else if (estVideDefinitiveCampagne(s)) {
-      g.videsDefinitives++;
-    }
+    if (agnelages.length === 0) return;
+    g.misesBas++; // une brebis ne peut avoir qu'un agnelage par campagne (voir renderAddAgnelage)
+    agnelages.forEach(ag => {
+      ag.lambs.forEach(l => {
+        if (l.sexe === 'Mort-né') { g.mortNes++; g.morts++; }
+        else {
+          if (l.sexe === 'Mâle') g.males++;
+          else if (l.sexe === 'Femelle') g.femelles++;
+          if (l.statutFinal === 'mort') g.morts++; // né vivant puis décédé (voir showLambSortieModal)
+        }
+      });
+    });
   });
+  const div = (num, den) => den > 0 ? num / den : null;
   return Object.keys(groupes).map(key => {
     const g = groupes[key];
-    const connu = g.misesBas + g.videsDefinitives; // "en attente" (ni mise bas ni vide définitive) exclues du taux
+    const nesTotal = g.mortNes + g.males + g.femelles;
+    const pctMisesBas = div(g.misesBas, g.presentes);
+    const prolificite = div(nesTotal, g.misesBas);
+    const pctMortalite = div(g.morts, nesTotal);
     return {
       label: key === '1 an' ? 'Agnelles de 1 an' : 'Brebis de 2 ans et plus',
-      effectif: g.effectif,
-      prolificite: g.misesBas > 0 ? Math.round((g.agneaux / g.misesBas) * 100) / 100 : null,
-      tauxMisesBas: connu > 0 ? Math.round((g.misesBas / connu) * 1000) / 10 : null
+      presentes: g.presentes,
+      misesBas: g.misesBas,
+      males: g.males,
+      femelles: g.femelles,
+      mortNes: g.mortNes,
+      morts: g.morts,
+      nesTotal,
+      pctMisesBas: pctMisesBas !== null ? Math.round(pctMisesBas * 1000) / 10 : null,
+      prolificite: prolificite !== null ? Math.round(prolificite * 100) / 100 : null,
+      pctMortalite: pctMortalite !== null ? Math.round(pctMortalite * 1000) / 10 : null
     };
   });
 }
@@ -1415,7 +1463,7 @@ function bilanBrebisRowsHtml(list) {
    - "Bilan de reproduction" : les indicateurs chiffrés qui n'ont de sens
      qu'en fin de campagne (taux de réussite, troupeau à mettre bas, détail
      par groupe d'âge) — voir campagneBilanChiffres/tauxReussiteGlobal/
-     statsParGroupeAge.
+     statsDetailleesParGroupeAge.
    Les statuts intermédiaires (Gestante en cours, Vide confirmée, Avortée,
    Pseudogestation) ne sont pas repris ici : ils restent visibles sur la
    fiche de chaque brebis et en badge dans l'onglet "Brebis" du menu. */
@@ -1497,7 +1545,25 @@ function bilanIncoherencesHtml(actives) {
 function bilanReproductionHtml(actives) {
   const { troupeauAMettreBas, misesBasRestantes } = campagneBilanChiffres(actives);
   const { avecEcho, taux: tauxReussite } = tauxReussiteGlobal(actives);
-  const groupesAge = statsParGroupeAge(actives);
+
+  // Population de référence du tableau détaillé ci-dessous : brebis
+  // présentes au 1er octobre de la campagne (voir campagneCohortPresente),
+  // pas les actives d'aujourd'hui — pour rester cohérente avec elle-même
+  // (une vente en cours de campagne ne doit pas gonfler "% mises bas").
+  const cohort = campagneCohortPresente();
+  const [g1An, g2AnsPlus] = statsDetailleesParGroupeAge(cohort);
+  const rows = [
+    { label: 'Brebis présentes', v1: g1An.presentes, v2: g2AnsPlus.presentes },
+    { label: 'Brebis ayant mis bas', v1: g1An.misesBas, v2: g2AnsPlus.misesBas },
+    { label: 'Mâles nés', v1: g1An.males, v2: g2AnsPlus.males },
+    { label: 'Femelles nées', v1: g1An.femelles, v2: g2AnsPlus.femelles },
+    { label: 'Mort-nés', v1: g1An.mortNes, v2: g2AnsPlus.mortNes },
+    { label: 'Agneaux morts totaux', v1: g1An.morts, v2: g2AnsPlus.morts },
+    { label: 'Agneaux nés totaux', v1: g1An.nesTotal, v2: g2AnsPlus.nesTotal },
+    { label: '% mises bas', v1: g1An.pctMisesBas !== null ? g1An.pctMisesBas + '%' : '—', v2: g2AnsPlus.pctMisesBas !== null ? g2AnsPlus.pctMisesBas + '%' : '—' },
+    { label: 'Prolificité', v1: g1An.prolificite !== null ? g1An.prolificite : '—', v2: g2AnsPlus.prolificite !== null ? g2AnsPlus.prolificite : '—' },
+    { label: '% mortalité', v1: g1An.pctMortalite !== null ? g1An.pctMortalite + '%' : '—', v2: g2AnsPlus.pctMortalite !== null ? g2AnsPlus.pctMortalite + '%' : '—' }
+  ];
 
   return `
     <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Indicateurs de reproduction de la campagne en cours (${DB.campagneDebut ? DB.campagneDebut + 1 : 'année non définie'}) — n'ont de sens qu'une fois la campagne suffisamment avancée.</div>
@@ -1518,24 +1584,25 @@ function bilanReproductionHtml(actives) {
     </div>
 
     <div class="card" style="margin-bottom:10px;">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Prolificité et taux de mises bas par groupe d'âge</div>
-      <table style="width:100%;font-size:13px;border-collapse:collapse;">
-        <tr style="color:var(--text-muted);text-align:left;">
-          <th style="padding:4px 4px;font-weight:500;">Groupe</th>
-          <th style="padding:4px 4px;font-weight:500;">Effectif</th>
-          <th style="padding:4px 4px;font-weight:500;">Prolificité</th>
-          <th style="padding:4px 4px;font-weight:500;">Taux de mises bas</th>
-        </tr>
-        ${groupesAge.map(g => `
-          <tr style="border-top:1px solid var(--border);">
-            <td style="padding:6px 4px;">${g.label}</td>
-            <td style="padding:6px 4px;">${g.effectif}</td>
-            <td style="padding:6px 4px;">${g.prolificite !== null ? g.prolificite : '—'}</td>
-            <td style="padding:6px 4px;">${g.tauxMisesBas !== null ? g.tauxMisesBas + '%' : '—'}</td>
+      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Bilan détaillé par groupe d'âge</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Population de référence : brebis présentes au 1<sup>er</sup> octobre ${DB.campagneDebut ? DB.campagneDebut : '?'} (début de campagne)${!DB.campagneDebut ? ' — campagne non définie, brebis actives aujourd\'hui utilisées à la place' : ''}. Colonnes : agnelles de 1 an (première reproduction) / brebis de 2 ans et plus.</div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:300px;">
+          <tr style="color:var(--text-muted);text-align:left;">
+            <th style="padding:4px 4px;font-weight:500;">Indicateur</th>
+            <th style="padding:4px 4px;font-weight:500;text-align:right;">1 an</th>
+            <th style="padding:4px 4px;font-weight:500;text-align:right;">2 ans+</th>
           </tr>
-        `).join('')}
-      </table>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Taux de mises bas = mises bas ÷ (mises bas + vides définitives) — les brebis encore en attente (ni mise bas, ni vide définitive) ne comptent pas dans ce taux.</div>
+          ${rows.map(r => `
+            <tr style="border-top:1px solid var(--border);">
+              <td style="padding:6px 4px;">${r.label}</td>
+              <td style="padding:6px 4px;text-align:right;">${r.v1}</td>
+              <td style="padding:6px 4px;text-align:right;">${r.v2}</td>
+            </tr>
+          `).join('')}
+        </table>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">% mises bas = brebis ayant mis bas ÷ brebis présentes. Prolificité = agneaux nés totaux ÷ brebis ayant mis bas. % mortalité = agneaux morts totaux ÷ agneaux nés totaux.</div>
     </div>
   `;
 }
