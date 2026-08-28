@@ -713,7 +713,7 @@ let inventaireTab = 'brebis';
 
 // Vues racines, accessibles directement depuis le menu hamburger : elles
 // affichent le hamburger (pas de flèche retour) dans l'en-tête.
-const ROOT_VIEWS = new Set(['list', 'beliers', 'agneaux', 'inventaire', 'lots', 'agnelles', 'journal', 'parametres', 'registre']);
+const ROOT_VIEWS = new Set(['list', 'beliers', 'agneaux', 'inventaire', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'sanitaire', 'echo-rapide', 'misebas-rapide']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -730,6 +730,9 @@ const NAV_ITEMS = [
   { view: 'agneaux', label: 'Agneaux', icon: ICON_SHEEP, color: 'amber' },
   { view: 'inventaire', label: 'Inventaire', icon: ICON_BOX, color: 'coral' },
   { view: 'lots', label: 'Chantier de tri', icon: ICON_SEARCH, color: 'green' },
+  { view: 'sanitaire', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
+  { view: 'echo-rapide', label: 'Écho rapide', icon: ICON_ECHO, color: 'green' },
+  { view: 'misebas-rapide', label: 'Mise bas rapide', icon: ICON_SHEEP, color: 'amber' },
   { view: 'journal', label: 'Agenda', icon: ICON_JOURNAL, color: 'green' },
   { view: 'registre', label: "Registre d'élevage", icon: ICON_JOURNAL, color: 'coral' },
   { view: 'parametres', label: 'Paramètres', icon: ICON_SETTINGS, color: 'gray' }
@@ -785,9 +788,9 @@ btnBack.onclick = () => {
   else if (currentView === 'add-agnelle') { editingAgnelleId = null; render('agnelles'); }
   else if (currentView === 'add-lot' || currentView === 'add-lot-reforme') render('lots');
   else if (currentView === 'lot-search') render('lots');
-  else if (currentView === 'mouvement-groupe') render('lots');
-  else if (currentView === 'traitement-collectif') render('lots');
-  else if (currentView === 'traitements-collectifs') render('lots');
+  else if (currentView === 'mouvement-groupe') render('inventaire');
+  else if (currentView === 'traitement-collectif') render('sanitaire');
+  else if (currentView === 'traitements-collectifs') render('sanitaire');
   else if (currentView === 'import-echo') render('parametres');
   else if (currentView === 'sync-login') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
@@ -924,6 +927,7 @@ function render(view, sheepId) {
   else if (view === 'mouvement-groupe') renderMouvementGroupe();
   else if (view === 'traitement-collectif') renderTraitementCollectif();
   else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
+  else if (view === 'sanitaire') renderSanitaire();
   else if (view === 'import-echo') renderImportEcho();
   else if (view === 'parametres') renderParametres();
   else if (view === 'registre') renderRegistre();
@@ -1183,17 +1187,6 @@ function renderList() {
     render('detail', sheep.id);
   });
 
-  const rapideRow = document.createElement('div');
-  rapideRow.className = 'row';
-  rapideRow.style.marginBottom = '16px';
-  rapideRow.innerHTML = `
-    <button type="button" class="btn btn-secondary" id="btn-echo-rapide">Saisie rapide — Échographies</button>
-    <button type="button" class="btn btn-secondary" id="btn-misebas-rapide">Saisie rapide — Mises bas</button>
-  `;
-  app.appendChild(rapideRow);
-  rapideRow.querySelector('#btn-echo-rapide').onclick = () => render('echo-rapide');
-  rapideRow.querySelector('#btn-misebas-rapide').onclick = () => render('misebas-rapide');
-
   const dashboard = document.createElement('div');
   dashboard.innerHTML = dashboardKpiHtml();
   app.appendChild(dashboard);
@@ -1344,11 +1337,18 @@ function renderInventaire() {
     : inventaireTab === 'beliers' ? inventaireBeliersHtml()
     : inventaireAgneauxHtml();
 
-  app.innerHTML = tabBarHtml + bodyHtml;
+  const mouvementGroupeHtml = inventaireTab === 'brebis'
+    ? `<button class="btn btn-secondary" id="btn-mouvement-groupe" style="border-color:var(--danger);color:var(--danger);margin-bottom:14px;">Mouvement groupé (vente / sortie multiple)</button>`
+    : '';
+
+  app.innerHTML = tabBarHtml + mouvementGroupeHtml + bodyHtml;
 
   document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
     btn.onclick = () => { inventaireTab = btn.dataset.tab; render('inventaire'); };
   });
+  if (document.getElementById('btn-mouvement-groupe')) {
+    document.getElementById('btn-mouvement-groupe').onclick = () => render('mouvement-groupe');
+  }
 
   if (inventaireTab === 'brebis') wireInventaireBrebis();
   else if (inventaireTab === 'beliers') wireInventaireBeliers();
@@ -2100,12 +2100,20 @@ function renderAddAgnelage(sheepId) {
    (stade/constat, comptage d'agneaux, parasitisme, cas particulier) — seul
    le sélecteur de type et la date disparaissent, fixés pour la session
    (date = aujourd'hui pour chaque échographie saisie). */
-function renderEchoRapide() {
-  let typeEcho = null;
-  let count = 0;
+/* État de session persisté au niveau module (pas dans renderEchoRapide) :
+   si l'utilisateur quitte et revient sur cet écran (ex: ouverture accidentelle
+   du menu hamburger pendant une série de scans, puis retape sur "Écho
+   rapide"), la session reprend là où elle en était au lieu de repartir sur
+   l'écran de choix du type — c'est précisément le bug rapporté ("revient à
+   la page de sélection du type"). Réinitialisée uniquement quand l'écran
+   d'accueil (ou tout autre écran) est explicitement quitté vers autre chose
+   ET qu'on revient plus tard : voir resetEchoRapideSession(). */
+let echoRapideSession = { typeEcho: null, count: 0 };
+function resetEchoRapideSession() { echoRapideSession = { typeEcho: null, count: 0 }; }
 
+function renderEchoRapide() {
   function typeLabel() {
-    return typeEcho === 'constat' ? 'Constat' : typeEcho === 'stade' ? 'Stades' : 'Stades + comptage';
+    return echoRapideSession.typeEcho === 'constat' ? 'Constat' : echoRapideSession.typeEcho === 'stade' ? 'Stades' : 'Stades + comptage';
   }
 
   function screenChooseType() {
@@ -2124,14 +2132,14 @@ function renderEchoRapide() {
     `;
     document.querySelectorAll('.type-echo-session-opt').forEach(btn => {
       btn.onclick = () => {
-        typeEcho = btn.dataset.val;
+        echoRapideSession.typeEcho = btn.dataset.val;
         document.querySelectorAll('.type-echo-session-opt').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
         document.getElementById('btn-start-echo-session').disabled = false;
       };
     });
     document.getElementById('btn-start-echo-session').onclick = () => {
-      if (!typeEcho) return;
+      if (!echoRapideSession.typeEcho) return;
       screenLoop();
     };
   }
@@ -2152,7 +2160,7 @@ function renderEchoRapide() {
     function renderStadeButtons() {
       const group = document.getElementById('stade-group');
       if (!group) return;
-      if (typeEcho === 'constat') {
+      if (echoRapideSession.typeEcho === 'constat') {
         group.style.gridTemplateColumns = 'repeat(2,1fr)';
         group.innerHTML = `
           <button type="button" class="opt-btn stade-opt" data-val="Pleine">Pleine</button>
@@ -2175,7 +2183,7 @@ function renderEchoRapide() {
           renderSpecialChips();
           clearGroup('.stade-opt');
           btn.classList.add('selected');
-          const showAgneaux = (typeEcho === 'stade_comptage') && stade !== 'Vide';
+          const showAgneaux = (echoRapideSession.typeEcho === 'stade_comptage') && stade !== 'Vide';
           document.getElementById('agneaux-block').classList.toggle('hidden', !showAgneaux);
           if (!showAgneaux) { agneaux = null; clearGroup('#agneaux-group .opt-btn'); }
         };
@@ -2208,7 +2216,7 @@ function renderEchoRapide() {
     function resultFieldsHtml() {
       return `
         <div class="card">
-          <label>${typeEcho === 'constat' ? 'Résultat' : 'Stade'}</label>
+          <label>${echoRapideSession.typeEcho === 'constat' ? 'Résultat' : 'Stade'}</label>
           <div class="grid4" id="stade-group" style="margin-bottom:14px;"></div>
           <div id="agneaux-block" class="hidden">
             <label>Nombre d'agneaux</label>
@@ -2259,6 +2267,7 @@ function renderEchoRapide() {
         </div>
       ` : '';
 
+      const count = echoRapideSession.count;
       app.innerHTML = `
         <div style="display:flex;justify-content:center;margin-bottom:16px;">
           <div class="session-counter sc-green">${ICON_ECHO}${count} échographie${count > 1 ? 's' : ''} saisie${count > 1 ? 's' : ''}</div>
@@ -2270,12 +2279,19 @@ function renderEchoRapide() {
         ${unknownHtml}
         ${foundHtml}
         ${currentSheep ? resultFieldsHtml() : ''}
+        <button type="button" class="btn btn-secondary" id="btn-fin-session-echo" style="margin-top:14px;">Terminer la session</button>
       `;
 
       const scanInput = document.getElementById('scan-echo');
-      scanInput.focus();
+      // .focus() juste après avoir remplacé innerHTML échoue parfois sur
+      // WebView mobile (le clavier virtuel n'a pas encore de quoi s'accrocher
+      // tant que le reflow n'a pas eu lieu) — on le reporte d'une frame.
+      requestAnimationFrame(() => scanInput.focus());
       scanInput.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter') return;
+        // e.keyCode en secours : certains claviers/WebView Android ne
+        // renseignent pas e.key de façon fiable pour la touche Entrée.
+        if (e.key !== 'Enter' && e.keyCode !== 13) return;
+        e.preventDefault();
         const val = cleanEid(scanInput.value);
         if (!val) return;
         const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
@@ -2291,6 +2307,11 @@ function renderEchoRapide() {
         currentSheep = sheep;
         draw();
       });
+      document.getElementById('btn-fin-session-echo').onclick = () => {
+        if (count > 0 && !confirm('Terminer cette session d\'échographies (' + count + ' saisie(s)) ? Tu pourras en commencer une nouvelle à tout moment.')) return;
+        resetEchoRapideSession();
+        render('list');
+      };
 
       if (unknownEid) {
         document.getElementById('btn-create-unknown').onclick = () => {
@@ -2327,28 +2348,30 @@ function renderEchoRapide() {
         document.getElementById('f-parasit').checked = parasit;
         document.getElementById('f-parasit').onchange = (e) => { parasit = e.target.checked; };
 
-        document.getElementById('btn-valider-echo').onclick = () => {
+        const btnValider = document.getElementById('btn-valider-echo');
+        btnValider.onclick = () => {
           const err = document.getElementById('err');
           if (!stade && !special) {
             err.textContent = "Choisis un résultat (ou un cas particulier).";
             err.classList.remove('hidden');
             return;
           }
-          const needAgneaux = typeEcho === 'stade_comptage' && (stade === 'Début' || stade === 'Milieu' || stade === 'Fin');
+          const needAgneaux = echoRapideSession.typeEcho === 'stade_comptage' && (stade === 'Début' || stade === 'Milieu' || stade === 'Fin');
           if (needAgneaux && !agneaux) {
             err.textContent = "Précise si c'est 1 agneau ou 2 et plus.";
             err.classList.remove('hidden');
             return;
           }
+          btnValider.disabled = true; // évite un double-clic/double-tap qui rejouerait la validation
           const echo = {
-            type: typeEcho,
+            type: echoRapideSession.typeEcho,
             date: new Date().toISOString().slice(0,10),
             stade: stade, agneaux: agneaux, special: special, parasitisme: parasit
           };
           currentSheep.echographies = currentSheep.echographies || [];
           currentSheep.echographies.push(echo);
           saveData(DB);
-          count++;
+          echoRapideSession.count++;
           resetResult();
           draw();
         };
@@ -2357,7 +2380,8 @@ function renderEchoRapide() {
     draw();
   }
 
-  screenChooseType();
+  if (echoRapideSession.typeEcho) screenLoop();
+  else screenChooseType();
 }
 
 /* ---------- Saisie rapide de mises bas (boucle scan → agnelage) ----------
@@ -2366,8 +2390,13 @@ function renderEchoRapide() {
    l'écran entre deux brebis : scan → formulaire → Valider et scanner la
    suivante → tout se vide. Compteur de session. EID inconnu → création à la
    volée, comme pour les échographies. */
+/* Compteur de session persisté au niveau module — voir echoRapideSession
+   pour l'explication (une ré-entrée sur cet écran, ex: via le menu
+   hamburger, reprend le compteur au lieu de le remettre à zéro). */
+let misebasRapideCount = 0;
+function resetMisebasRapideSession() { misebasRapideCount = 0; }
+
 function renderMiseBasRapide() {
-  let count = 0;
   let currentSheep = null;
   let unknownEid = null;
   let lambCount = 0;
@@ -2486,6 +2515,7 @@ function renderMiseBasRapide() {
       </div>
     ` : '';
 
+    const count = misebasRapideCount;
     app.innerHTML = `
       <div style="display:flex;justify-content:center;margin-bottom:16px;">
         <div class="session-counter sc-amber">${ICON_SHEEP}${count} mise${count > 1 ? 's' : ''} bas saisie${count > 1 ? 's' : ''}</div>
@@ -2497,12 +2527,14 @@ function renderMiseBasRapide() {
       ${unknownHtml}
       ${foundHtml}
       ${formHtml}
+      <button type="button" class="btn btn-secondary" id="btn-fin-session-mb" style="margin-top:14px;">Terminer la session</button>
     `;
 
     const scanInput = document.getElementById('scan-misebas');
-    scanInput.focus();
+    requestAnimationFrame(() => scanInput.focus());
     scanInput.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
+      if (e.key !== 'Enter' && e.keyCode !== 13) return;
+      e.preventDefault();
       const val = cleanEid(scanInput.value);
       if (!val) return;
       const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
@@ -2518,6 +2550,11 @@ function renderMiseBasRapide() {
       currentSheep = sheep;
       draw();
     });
+    document.getElementById('btn-fin-session-mb').onclick = () => {
+      if (count > 0 && !confirm('Terminer cette session de mises bas (' + count + ' saisie(s)) ? Tu pourras en commencer une nouvelle à tout moment.')) return;
+      resetMisebasRapideSession();
+      render('list');
+    };
 
     if (unknownEid) {
       document.getElementById('btn-create-unknown-mb').onclick = () => {
@@ -2544,7 +2581,8 @@ function renderMiseBasRapide() {
       document.getElementById('add-lamb-rapide').onclick = addLamb;
       if (Object.keys(lambs).length === 0) addLamb();
 
-      document.getElementById('btn-valider-misebas').onclick = () => {
+      const btnValiderMb = document.getElementById('btn-valider-misebas');
+      btnValiderMb.onclick = () => {
         const err = document.getElementById('err');
         const ids = Object.keys(lambs);
         if (ids.length === 0) {
@@ -2578,6 +2616,7 @@ function renderMiseBasRapide() {
           }
         }
         err.classList.add('hidden');
+        btnValiderMb.disabled = true; // évite un double-clic/double-tap qui rejouerait la validation
         const agnelage = {
           date: document.getElementById('f-date-rapide').value,
           lambs: ids.map(id => lambs[id])
@@ -2585,7 +2624,7 @@ function renderMiseBasRapide() {
         currentSheep.agnelages = currentSheep.agnelages || [];
         currentSheep.agnelages.push(agnelage);
         saveData(DB);
-        count++;
+        misebasRapideCount++;
         resetForm();
         draw();
       };
@@ -4036,16 +4075,10 @@ function renderLots() {
 
   app.innerHTML = chantierTriTabBarHtml() + listHtml + `
     <button class="btn btn-primary" id="btn-new-lot" style="margin-top:10px;margin-bottom:10px;">+ Nouveau lot</button>
-    <button class="btn btn-secondary" id="btn-new-lot-reforme" style="border-color:var(--coral-fg);color:var(--coral-fg);margin-bottom:10px;">+ Nouveau lot de réforme</button>
-    <button class="btn btn-secondary" id="btn-mouvement-groupe" style="border-color:var(--danger);color:var(--danger);margin-bottom:10px;">Mouvement groupé (vente / sortie multiple)</button>
-    <button class="btn btn-secondary" id="btn-traitement-collectif" style="border-color:var(--danger);color:var(--danger);">Traitement collectif (tout le troupeau)</button>
-    <button class="btn btn-secondary" id="btn-historique-collectif" style="margin-top:10px;">Gérer / supprimer un traitement collectif</button>
+    <button class="btn btn-secondary" id="btn-new-lot-reforme" style="border-color:var(--coral-fg);color:var(--coral-fg);">+ Nouveau lot de réforme</button>
   `;
 
   wireChantierTriTabBar();
-  document.getElementById('btn-traitement-collectif').onclick = () => render('traitement-collectif');
-  document.getElementById('btn-historique-collectif').onclick = () => render('traitements-collectifs');
-  document.getElementById('btn-mouvement-groupe').onclick = () => render('mouvement-groupe');
   document.getElementById('btn-new-lot').onclick = () => render('add-lot');
   document.getElementById('btn-new-lot-reforme').onclick = () => render('add-lot-reforme');
   document.querySelectorAll('.btn-search-lot').forEach(btn => {
@@ -4470,10 +4503,22 @@ function renderMouvementGroupe() {
       saveData(DB);
       selected.clear();
       alert(concernees.length + ' mouvement(s) enregistré(s).');
-      render('lots');
+      render('inventaire');
     };
   }
   render_();
+}
+
+/* ---------- Sanitaire (accueil des actions sanitaires collectives) ---------- */
+function renderSanitaire() {
+  pageTitle.textContent = 'Sanitaire';
+  app.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Applique un soin à plusieurs brebis en une fois, et retrouve l'historique des traitements déjà appliqués en masse.</div>
+    <button class="btn btn-secondary" id="btn-traitement-collectif" style="border-color:var(--danger);color:var(--danger);margin-bottom:10px;">Traitement collectif (nouveau)</button>
+    <button class="btn btn-secondary" id="btn-historique-collectif">Gérer / supprimer un traitement collectif</button>
+  `;
+  document.getElementById('btn-traitement-collectif').onclick = () => render('traitement-collectif');
+  document.getElementById('btn-historique-collectif').onclick = () => render('traitements-collectifs');
 }
 
 /* ---------- Traitement collectif (tout le troupeau) ---------- */
@@ -4660,7 +4705,7 @@ function renderTraitementCollectif() {
     });
     saveData(DB);
     alert('Traitement appliqué à ' + cible.length + ' brebis.');
-    render('lots');
+    render('sanitaire');
   };
 }
 
@@ -4668,21 +4713,27 @@ function renderTraitementCollectif() {
    Les traitements créés après l'ajout du collectifId sont retrouvés via
    DB.traitementsCollectifs. Les entrées créées avant ce correctif n'ont pas
    de collectifId : on les détecte a posteriori en regroupant, sur les brebis
-   actives, les soins collectifs qui partagent exactement le même
-   {type, sousType, produit, date} — c'est le seul repère disponible pour ces
-   anciennes saisies (cas typique : un traitement Chlamyvax appliqué en masse
-   avant que cet écran n'existe). */
+   actives, les soins collectifs qui partagent le même {type, sousType,
+   produit} — SANS exiger la même date exacte. Un traitement de masse (ex:
+   316 brebis) est rarement saisi à la même seconde pour tout le monde : il
+   peut s'étaler sur 2-3 jours. Exiger une date identique ratait une partie
+   du troupeau, qui restait affichée comme "non supprimée" — d'où le regroupement
+   plus large ici, avec la plage de dates couverte affichée pour vérification
+   avant suppression. */
 function detectLegacyCollectifGroups() {
   const groups = {};
   DB.brebis.forEach(s => {
     (s.sanitaire || []).forEach(soin => {
       if (!soin.collectif || soin.collectifId) return;
-      const key = JSON.stringify([soin.type, soin.sousType || null, soin.produit || null, soin.date || null]);
-      if (!groups[key]) groups[key] = { type: soin.type, sousType: soin.sousType, produit: soin.produit, date: soin.date, membres: [] };
+      const key = JSON.stringify([soin.type, soin.sousType || null, soin.produit || null]);
+      if (!groups[key]) groups[key] = { type: soin.type, sousType: soin.sousType, produit: soin.produit, dates: new Set(), membres: [] };
+      groups[key].dates.add(soin.date || '');
       groups[key].membres.push(s.eid);
     });
   });
-  return Object.values(groups).filter(g => g.membres.length >= 2);
+  return Object.values(groups)
+    .map(g => ({ ...g, dates: Array.from(g.dates).filter(Boolean).sort() }))
+    .filter(g => g.membres.length >= 2);
 }
 
 function renderTraitementsCollectifsHistorique() {
@@ -4690,26 +4741,45 @@ function renderTraitementsCollectifsHistorique() {
   DB.traitementsCollectifs = DB.traitementsCollectifs || [];
   const legacyGroups = detectLegacyCollectifGroups();
 
-  const itemHtml = (t, isLegacy) => `
+  function dateRangeLabel(dates) {
+    if (dates.length === 0) return 'date inconnue';
+    if (dates.length === 1) return dates[0];
+    return dates[0] + ' → ' + dates[dates.length - 1] + ' (' + dates.length + ' dates)';
+  }
+
+  const recentItemHtml = (t) => `
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
         <div>
           <div style="font-weight:600;">${t.produit || t.type}${t.sousType ? ' · ' + t.sousType : ''}</div>
-          <div style="font-size:12px;color:var(--text-muted);">${t.date || 'date inconnue'} · ${t.membres.length} brebis${isLegacy ? ' · saisie ancienne (sans identifiant)' : ''}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${t.date || 'date inconnue'} · ${t.membres.length} brebis</div>
         </div>
       </div>
-      <button type="button" class="btn btn-secondary btn-del-collectif" data-key="${isLegacy ? 'legacy:' + encodeURIComponent(JSON.stringify([t.type, t.sousType || null, t.produit || null, t.date || null])) : 'id:' + t.id}" style="color:var(--danger);border-color:var(--danger);">Supprimer ce traitement collectif</button>
+      <button type="button" class="btn btn-secondary btn-del-collectif" data-key="id:${t.id}" style="color:var(--danger);border-color:var(--danger);">Supprimer ce traitement collectif</button>
+    </div>
+  `;
+
+  const legacyItemHtml = (g) => `
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+        ${iconCircle(ICON_SANTE, 'coral', 'sm')}
+        <div>
+          <div style="font-weight:600;">${g.produit || g.type}${g.sousType ? ' · ' + g.sousType : ''}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${dateRangeLabel(g.dates)} · ${g.membres.length} brebis · saisie ancienne (sans identifiant)</div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-secondary btn-del-collectif" data-key="legacy:${encodeURIComponent(JSON.stringify([g.type, g.sousType || null, g.produit || null]))}" style="color:var(--danger);border-color:var(--danger);">Supprimer ce traitement collectif</button>
     </div>
   `;
 
   const recentHtml = DB.traitementsCollectifs.length === 0
     ? '<div class="empty">Aucun traitement collectif enregistré avec identifiant pour l\'instant.</div>'
-    : [...DB.traitementsCollectifs].reverse().map(t => itemHtml(t, false)).join('');
+    : [...DB.traitementsCollectifs].reverse().map(recentItemHtml).join('');
 
   const legacyHtml = legacyGroups.length === 0 ? '' : `
-    <div style="font-size:13px;color:var(--text-muted);margin:18px 2px 8px;">Groupes détectés dans d'anciennes saisies (avant cet écran) — vérifie le nombre de brebis avant de supprimer :</div>
-    ${legacyGroups.map(g => itemHtml(g, true)).join('')}
+    <div style="font-size:13px;color:var(--text-muted);margin:18px 2px 8px;">Groupes détectés dans d'anciennes saisies (avant cet écran), regroupés par produit toutes dates confondues — vérifie le nombre de brebis et la plage de dates avant de supprimer :</div>
+    ${legacyGroups.map(legacyItemHtml).join('')}
   `;
 
   app.innerHTML = `
@@ -4732,13 +4802,13 @@ function renderTraitementsCollectifsHistorique() {
         });
         DB.traitementsCollectifs = DB.traitementsCollectifs.filter(x => x.id !== id);
       } else {
-        const [type, sousType, produit, date] = JSON.parse(decodeURIComponent(key.slice(7)));
-        const g = legacyGroups.find(x => x.type === type && (x.sousType || null) === sousType && (x.produit || null) === produit && (x.date || null) === date);
+        const [type, sousType, produit] = JSON.parse(decodeURIComponent(key.slice(7)));
+        const g = legacyGroups.find(x => x.type === type && (x.sousType || null) === sousType && (x.produit || null) === produit);
         if (!g) return;
-        if (!confirm('Supprimer ce groupe détecté (' + g.membres.length + ' brebis) ? Cette action est irréversible.')) return;
+        if (!confirm('Supprimer ce groupe détecté (' + g.membres.length + ' brebis, ' + dateRangeLabel(g.dates) + ') ? Cette action est irréversible.')) return;
         DB.brebis.forEach(s => {
           if (!s.sanitaire) return;
-          s.sanitaire = s.sanitaire.filter(soin => !(soin.collectif && !soin.collectifId && soin.type === type && (soin.sousType || null) === sousType && (soin.produit || null) === produit && (soin.date || null) === date));
+          s.sanitaire = s.sanitaire.filter(soin => !(soin.collectif && !soin.collectifId && soin.type === type && (soin.sousType || null) === sousType && (soin.produit || null) === produit));
         });
       }
       saveData(DB);
@@ -4757,6 +4827,7 @@ function renderTraitementsCollectifsHistorique() {
    possible à partir d'une tenue informatique. */
 let registreView = 'agnelage'; // 'agnelage' | 'mouvements' | 'sanitaire'
 let registreFiltre = '';
+let registreColFiltres = { agnelage: { sexe: '' }, mouvements: { categorie: '', type: '' }, sanitaire: { categorie: '', type: '' } };
 const REGISTRE_CATEGORIES = [
   { key: 'brebis', label: 'Brebis' },
   { key: 'beliers', label: 'Bélier' },
@@ -4838,55 +4909,85 @@ function registreSanitaireRows() {
 const REGISTRE_TH = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);white-space:nowrap;font-size:12px;color:var(--text-muted);';
 const REGISTRE_TD = 'padding:7px 10px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:13px;';
 
-function registreAgnelageTableHtml(filtre) {
-  let rows = registreAgnelageRows();
-  if (filtre.trim()) {
-    const f = filtre.trim().toLowerCase();
+/* Construit un <select> de filtre par colonne : les options listent les
+   valeurs réellement présentes dans les lignes (calculées AVANT filtrage,
+   pour ne jamais faire disparaître une option déjà sélectionnée). */
+function registreColSelectHtml(col, label, valeurs, valeurCourante) {
+  const distinct = Array.from(new Set(valeurs.filter(Boolean))).sort();
+  return `<select class="registre-col-filter" data-col="${col}" style="margin-right:8px;margin-bottom:8px;">
+    <option value="">${label} (tous)</option>
+    ${distinct.map(v => `<option value="${v}"${v === valeurCourante ? ' selected' : ''}>${v}</option>`).join('')}
+  </select>`;
+}
+
+/* Chacune des 3 fonctions ci-dessous retourne { controlsHtml, tableHtml } :
+   controlsHtml (les <select> de filtre par colonne, propres à ce tableau)
+   ne doit être injecté qu'une fois par changement d'onglet — pas à chaque
+   frappe dans le champ de recherche numéro, sous peine de perdre le focus
+   du champ texte à chaque caractère (voir renderRegistre()). */
+function registreAgnelageTableHtml(filtreNumero, colFiltres) {
+  const allRows = registreAgnelageRows();
+  const controlsHtml = registreColSelectHtml('sexe', 'Sexe', allRows.map(r => r.sexe), colFiltres.sexe);
+  let rows = allRows;
+  if (filtreNumero.trim()) {
+    const f = filtreNumero.trim().toLowerCase();
     rows = rows.filter(r => numeroVisuel(r.mereEid).toLowerCase().includes(f) || (r.agneauEid && numeroVisuel(r.agneauEid).toLowerCase().includes(f)));
   }
-  if (rows.length === 0) return '<div class="empty">Aucune mise bas enregistrée.</div>';
-  const trs = rows.map(r => `
+  if (colFiltres.sexe) rows = rows.filter(r => r.sexe === colFiltres.sexe);
+  const tableHtml = rows.length === 0 ? '<div class="empty">Aucune mise bas ne correspond aux filtres.</div>' : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+    <thead><tr><th style="${REGISTRE_TH}">N° mère</th><th style="${REGISTRE_TH}">N° agneau</th><th style="${REGISTRE_TH}">Sexe</th><th style="${REGISTRE_TH}">Date de naissance</th></tr></thead>
+    <tbody>${rows.map(r => `
     <tr>
       <td style="${REGISTRE_TD}">n°${numeroVisuel(r.mereEid)}</td>
       <td style="${REGISTRE_TD}">${r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : '<span style="color:var(--text-muted);">Mort-né</span>'}</td>
       <td style="${REGISTRE_TD}">${r.sexe}</td>
       <td style="${REGISTRE_TD}">${r.date}</td>
-    </tr>`).join('');
-  return `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
-    <thead><tr><th style="${REGISTRE_TH}">N° mère</th><th style="${REGISTRE_TH}">N° agneau</th><th style="${REGISTRE_TH}">Sexe</th><th style="${REGISTRE_TH}">Date de naissance</th></tr></thead>
-    <tbody>${trs}</tbody>
+    </tr>`).join('')}</tbody>
   </table></div>`;
+  return { controlsHtml, tableHtml };
 }
 
-function registreMouvementsTableHtml(filtre) {
-  let rows = registreMouvementsRows();
-  if (filtre.trim()) {
-    const f = filtre.trim().toLowerCase();
+function registreMouvementsTableHtml(filtreNumero, colFiltres) {
+  const allRows = registreMouvementsRows();
+  const controlsHtml =
+    registreColSelectHtml('categorie', 'Catégorie', allRows.map(r => r.categorie), colFiltres.categorie) +
+    registreColSelectHtml('type', 'Type', allRows.map(r => r.type), colFiltres.type);
+  let rows = allRows;
+  if (filtreNumero.trim()) {
+    const f = filtreNumero.trim().toLowerCase();
     rows = rows.filter(r => numeroVisuel(r.eid).toLowerCase().includes(f));
   }
-  if (rows.length === 0) return '<div class="empty">Aucun mouvement enregistré.</div>';
-  const trs = rows.map(r => `
+  if (colFiltres.categorie) rows = rows.filter(r => r.categorie === colFiltres.categorie);
+  if (colFiltres.type) rows = rows.filter(r => r.type === colFiltres.type);
+  const tableHtml = rows.length === 0 ? '<div class="empty">Aucun mouvement ne correspond aux filtres.</div>' : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type</th><th style="${REGISTRE_TH}">Cause / détail</th><th style="${REGISTRE_TH}">Date</th></tr></thead>
+    <tbody>${rows.map(r => `
     <tr>
       <td style="${REGISTRE_TD}">n°${numeroVisuel(r.eid)}</td>
       <td style="${REGISTRE_TD}">${r.categorie}</td>
       <td style="${REGISTRE_TD}">${r.type}</td>
       <td style="${REGISTRE_TD}">${r.detail}</td>
       <td style="${REGISTRE_TD}">${r.date}</td>
-    </tr>`).join('');
-  return `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
-    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type</th><th style="${REGISTRE_TH}">Cause / détail</th><th style="${REGISTRE_TH}">Date</th></tr></thead>
-    <tbody>${trs}</tbody>
+    </tr>`).join('')}</tbody>
   </table></div>`;
+  return { controlsHtml, tableHtml };
 }
 
-function registreSanitaireTableHtml(filtre) {
-  let rows = registreSanitaireRows();
-  if (filtre.trim()) {
-    const f = filtre.trim().toLowerCase();
+function registreSanitaireTableHtml(filtreNumero, colFiltres) {
+  const allRows = registreSanitaireRows();
+  const controlsHtml =
+    registreColSelectHtml('categorie', 'Catégorie', allRows.map(r => r.categorie), colFiltres.categorie) +
+    registreColSelectHtml('type', 'Type de soin', allRows.map(r => r.type), colFiltres.type);
+  let rows = allRows;
+  if (filtreNumero.trim()) {
+    const f = filtreNumero.trim().toLowerCase();
     rows = rows.filter(r => numeroVisuel(r.eid).toLowerCase().includes(f));
   }
-  if (rows.length === 0) return '<div class="empty">Aucun soin enregistré.</div>';
-  const trs = rows.map(r => `
+  if (colFiltres.categorie) rows = rows.filter(r => r.categorie === colFiltres.categorie);
+  if (colFiltres.type) rows = rows.filter(r => r.type === colFiltres.type);
+  const tableHtml = rows.length === 0 ? '<div class="empty">Aucun soin ne correspond aux filtres.</div>' : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type de soin</th><th style="${REGISTRE_TH}">Produit</th><th style="${REGISTRE_TH}">Date</th><th style="${REGISTRE_TH}">Dose</th></tr></thead>
+    <tbody>${rows.map(r => `
     <tr>
       <td style="${REGISTRE_TD}">n°${numeroVisuel(r.eid)}</td>
       <td style="${REGISTRE_TD}">${r.categorie}</td>
@@ -4894,11 +4995,15 @@ function registreSanitaireTableHtml(filtre) {
       <td style="${REGISTRE_TD}">${r.produit}</td>
       <td style="${REGISTRE_TD}">${r.date}</td>
       <td style="${REGISTRE_TD}">${r.dose}</td>
-    </tr>`).join('');
-  return `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
-    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type de soin</th><th style="${REGISTRE_TH}">Produit</th><th style="${REGISTRE_TH}">Date</th><th style="${REGISTRE_TH}">Dose</th></tr></thead>
-    <tbody>${trs}</tbody>
+    </tr>`).join('')}</tbody>
   </table></div>`;
+  return { controlsHtml, tableHtml };
+}
+
+function registreTableFor(view, filtreNumero, colFiltres) {
+  return view === 'agnelage' ? registreAgnelageTableHtml(filtreNumero, colFiltres)
+    : view === 'mouvements' ? registreMouvementsTableHtml(filtreNumero, colFiltres)
+    : registreSanitaireTableHtml(filtreNumero, colFiltres);
 }
 
 /* Génère le document HTML autonome (3 tableaux complets, toutes catégories),
@@ -4979,6 +5084,90 @@ async function shareOrDownloadFile(filename, mimeType, content) {
   URL.revokeObjectURL(url);
 }
 
+/* Copie du texte dans le presse-papiers, avec repli sur l'ancienne méthode
+   document.execCommand('copy') (textarea invisible sélectionnée) si l'API
+   Clipboard moderne n'est pas disponible ou refuse (permission, contexte
+   non sécurisé...). Retourne true/false selon le succès réel. */
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) { /* on retente la méthode de repli ci-dessous */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+/* Affiche le contenu exporté dans une fenêtre modale, avec un bouton de
+   copie presse-papiers qui fonctionne de façon fiable partout (y compris
+   dans la WebView Android packagée où navigator.share et <a download> se
+   sont révélés peu fiables selon les téléphones) — le contenu reste aussi
+   visible et sélectionnable manuellement en dernier recours. Le partage/
+   téléchargement natif reste proposé en option secondaire. */
+function showExportModal(filename, mimeType, content) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const safeContent = String(content).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  overlay.innerHTML = `
+    <div class="modal-card" style="max-width:640px;max-height:88vh;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+        ${iconCircle(ICON_JOURNAL, 'blue', 'md')}
+        <div>
+          <div style="font-weight:700;font-size:15px;word-break:break-all;">${filename}</div>
+          <div style="font-size:12px;color:var(--text-muted);">Copie le contenu ci-dessous, ou tente le partage/téléchargement natif.</div>
+        </div>
+      </div>
+      <textarea readonly id="export-modal-content" style="flex:1;min-height:200px;max-height:42vh;font-family:monospace;font-size:11px;line-height:1.4;padding:10px;border-radius:var(--radius);border:1px solid var(--border);background:#f7f6f2;resize:vertical;margin-bottom:10px;white-space:pre;overflow:auto;">${safeContent}</textarea>
+      <div id="export-copy-feedback" style="font-size:12px;color:var(--success, #2f7a3d);min-height:16px;margin-bottom:6px;"></div>
+      <button type="button" class="btn btn-primary" id="export-copy-btn" style="margin-bottom:8px;">Copier dans le presse-papiers</button>
+      <button type="button" class="btn btn-secondary" id="export-share-btn" style="margin-bottom:8px;">Partager / télécharger (si disponible)</button>
+      <button type="button" class="btn btn-secondary" id="export-close-btn">Fermer</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const feedback = overlay.querySelector('#export-copy-feedback');
+  overlay.querySelector('#export-copy-btn').onclick = async () => {
+    const ok = await copyTextToClipboard(content);
+    feedback.style.color = ok ? 'var(--success, #2f7a3d)' : 'var(--danger)';
+    feedback.textContent = ok ? 'Copié dans le presse-papiers.' : "Échec de la copie automatique — sélectionne le texte ci-dessus à la main (appui long) puis copie-le.";
+  };
+  overlay.querySelector('#export-share-btn').onclick = async () => {
+    try {
+      if (typeof navigator.canShare === 'function' && typeof navigator.share === 'function') {
+        const file = new File([content], filename, { type: mimeType });
+        if (navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+    }
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  overlay.querySelector('#export-close-btn').onclick = () => document.body.removeChild(overlay);
+}
+
 function downloadRegistreJson() {
   const data = {
     genereLe: new Date().toISOString(),
@@ -4986,11 +5175,29 @@ function downloadRegistreJson() {
     mouvements: registreMouvementsRows(),
     sanitaire: registreSanitaireRows()
   };
-  shareOrDownloadFile('registre-elevage-' + new Date().toISOString().slice(0,10) + '.json', 'application/json', JSON.stringify(data, null, 2));
+  showExportModal('registre-elevage-' + new Date().toISOString().slice(0,10) + '.json', 'application/json', JSON.stringify(data, null, 2));
 }
 
 function downloadRegistrePrintable() {
-  shareOrDownloadFile('registre-elevage-' + new Date().toISOString().slice(0,10) + '.html', 'text/html', buildRegistrePrintableHtml());
+  showExportModal('registre-elevage-' + new Date().toISOString().slice(0,10) + '.html', 'text/html', buildRegistrePrintableHtml());
+}
+
+/* Ne réaffiche que le tableau + ses filtres de colonne (#registre-body),
+   sans toucher au champ de recherche numéro (#registre-filtre) : c'est ce
+   qui évite de perdre le focus/curseur du champ à chaque caractère tapé
+   (un render('registre') complet reconstruirait l'input et lui ferait
+   perdre le focus après chaque frappe). */
+function renderRegistreBody() {
+  const { controlsHtml, tableHtml } = registreTableFor(registreView, registreFiltre, registreColFiltres[registreView]);
+  const body = document.getElementById('registre-body');
+  if (!body) return;
+  body.innerHTML = `<div style="display:flex;flex-wrap:wrap;">${controlsHtml}</div>${tableHtml}`;
+  body.querySelectorAll('.registre-col-filter').forEach(sel => {
+    sel.onchange = () => {
+      registreColFiltres[registreView][sel.dataset.col] = sel.value;
+      renderRegistreBody();
+    };
+  });
 }
 
 function renderRegistre() {
@@ -5004,10 +5211,6 @@ function renderRegistre() {
     `<button type="button" class="tab-btn${registreView === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
   ).join('')}</div>`;
 
-  const bodyHtml = registreView === 'agnelage' ? registreAgnelageTableHtml(registreFiltre)
-    : registreView === 'mouvements' ? registreMouvementsTableHtml(registreFiltre)
-    : registreSanitaireTableHtml(registreFiltre);
-
   app.innerHTML = `
     <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Registre d'élevage réglementaire : agnelage, mouvements et carnet sanitaire de tous les animaux — actifs et archivés — conformément à la conditionnalité PAC (arrêté du 5 juin 2000, conservation 5 ans).</div>
     <div class="card" style="padding:12px;margin-bottom:14px;">
@@ -5016,18 +5219,20 @@ function renderRegistre() {
     </div>
     ${tabBarHtml}
     <input type="text" id="registre-filtre" placeholder="Rechercher un numéro..." value="${registreFiltre}" style="margin:12px 0;">
-    ${bodyHtml}
+    <div id="registre-body"></div>
   `;
 
   document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
     btn.onclick = () => { registreView = btn.dataset.tab; render('registre'); };
   });
-  document.getElementById('registre-filtre').addEventListener('input', (e) => {
+  const filtreInput = document.getElementById('registre-filtre');
+  filtreInput.addEventListener('input', (e) => {
     registreFiltre = e.target.value;
-    render('registre');
+    renderRegistreBody();
   });
   document.getElementById('btn-export-registre').onclick = () => downloadRegistreJson();
   document.getElementById('btn-print-registre').onclick = () => downloadRegistrePrintable();
+  renderRegistreBody();
 }
 
 /* ---------- Import CSV inventaire + échographies ---------- */
