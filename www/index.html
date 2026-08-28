@@ -847,6 +847,8 @@ btnBack.onclick = () => {
   else if (currentView === 'add-echo' || currentView === 'add-agnelage' || currentView === 'add-sanitaire' || currentView === 'add-mouvement' || currentView === 'add-controle') render('detail', currentSheepId);
   else if (currentView === 'echo-rapide' || currentView === 'misebas-rapide') render('list');
   else if (currentView === 'bilan-campagne') render('list');
+  else if (currentView === 'gerer-produits') render('sanitaire');
+  else if (currentView === 'historique-echo') render('echo-rapide');
 };
 fabAdd.onclick = () => render('add-sheep');
 
@@ -981,6 +983,8 @@ function render(view, sheepId) {
   else if (view === 'parametres') renderParametres();
   else if (view === 'registre') renderRegistre();
   else if (view === 'bilan-campagne') renderBilanCampagne();
+  else if (view === 'gerer-produits') renderGererProduits();
+  else if (view === 'historique-echo') renderHistoriqueEcho();
   else if (view === 'sync-login') renderSyncLogin();
 
   requestAnimationFrame(() => window.scrollTo(0, isRoot ? (scrollPositions[view] || 0) : 0));
@@ -2262,6 +2266,7 @@ function renderEchoRapide() {
         </div>
       </div>
       <button class="btn btn-primary" id="btn-start-echo-session" style="margin-top:14px;" disabled>Commencer la saisie</button>
+      <button type="button" class="btn btn-secondary" id="btn-historique-echo" style="margin-top:10px;">Voir l'historique des échographies</button>
     `;
     document.querySelectorAll('.type-echo-session-opt').forEach(btn => {
       btn.onclick = () => {
@@ -2275,6 +2280,7 @@ function renderEchoRapide() {
       if (!echoRapideSession.typeEcho) return;
       screenLoop();
     };
+    document.getElementById('btn-historique-echo').onclick = () => render('historique-echo');
   }
 
   function screenLoop() {
@@ -2413,6 +2419,7 @@ function renderEchoRapide() {
         ${foundHtml}
         ${currentSheep ? resultFieldsHtml() : ''}
         <button type="button" class="btn btn-secondary" id="btn-fin-session-echo" style="margin-top:14px;">Terminer la session</button>
+        <button type="button" class="btn btn-secondary" id="btn-historique-echo-loop" style="margin-top:10px;">Voir l'historique des échographies</button>
       `;
 
       const scanInput = document.getElementById('scan-echo');
@@ -2445,6 +2452,7 @@ function renderEchoRapide() {
         resetEchoRapideSession();
         render('list');
       };
+      document.getElementById('btn-historique-echo-loop').onclick = () => render('historique-echo');
 
       if (unknownEid) {
         document.getElementById('btn-create-unknown').onclick = () => {
@@ -2522,6 +2530,87 @@ function renderEchoRapide() {
 
   if (echoRapideSession.typeEcho) screenLoop();
   else screenChooseType();
+}
+
+/* ---------- Historique des échographies (consultation/édition/suppression) ----------
+   Tableau cross-brebis de toutes les échographies enregistrées, filtrable
+   par date. Modifier réutilise l'écran d'édition existant (add-echo, via
+   editItem) — après enregistrement on revient sur la fiche de la brebis,
+   comme partout ailleurs dans l'appli ; Supprimer reste sur cet écran et se
+   contente de rafraîchir le tableau. */
+let historiqueEchoFiltreDate = '';
+
+function historiqueEchoRows() {
+  const rows = [];
+  DB.brebis.forEach(sheep => {
+    (sheep.echographies || []).forEach((e, idx) => {
+      rows.push({
+        sheepId: sheep.id,
+        eid: sheep.eid,
+        idx,
+        date: e.date || '',
+        resultLabel: (e.special ? e.special : ((e.stade || '?') + (e.agneaux ? ' — ' + (e.agneaux === 'Double' ? '2 et plus' : '1 agneau') : ''))) + (e.parasitisme ? ' · parasitisme' : '')
+      });
+    });
+  });
+  rows.sort((a, b) => (b.date || '').localeCompare(a.date || '') || numeroVisuel(a.eid).localeCompare(numeroVisuel(b.eid)));
+  return rows;
+}
+
+function renderHistoriqueEchoBody() {
+  let rows = historiqueEchoRows();
+  if (historiqueEchoFiltreDate) rows = rows.filter(r => r.date === historiqueEchoFiltreDate);
+  const body = document.getElementById('historique-echo-body');
+  if (!body) return;
+  body.innerHTML = rows.length === 0 ? '<div class="empty">Aucune échographie ne correspond.</div>' : `
+    <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+      <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Date</th><th style="${REGISTRE_TH}">Résultat</th><th style="${REGISTRE_TH}"></th></tr></thead>
+      <tbody>${rows.map(r => `
+        <tr>
+          <td style="${REGISTRE_TD}">n°${numeroVisuel(r.eid)}</td>
+          <td style="${REGISTRE_TD}">${r.date}</td>
+          <td style="${REGISTRE_TD}">${r.resultLabel}</td>
+          <td style="${REGISTRE_TD}">
+            <button type="button" class="btn btn-secondary btn-edit-histo-echo" data-sheep-id="${r.sheepId}" data-idx="${r.idx}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px;">Modifier</button>
+            <button type="button" class="btn btn-secondary btn-del-histo-echo" data-sheep-id="${r.sheepId}" data-idx="${r.idx}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
+          </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
+  body.querySelectorAll('.btn-edit-histo-echo').forEach(btn => {
+    btn.onclick = () => { currentSheepId = btn.dataset.sheepId; editItem('echographies', parseInt(btn.dataset.idx, 10)); };
+  });
+  body.querySelectorAll('.btn-del-histo-echo').forEach(btn => {
+    btn.onclick = () => {
+      if (!confirm('Supprimer cette échographie ? Cette action est irréversible.')) return;
+      const sheep = findSheep(btn.dataset.sheepId);
+      if (!sheep) return;
+      sheep.echographies.splice(parseInt(btn.dataset.idx, 10), 1);
+      saveData(DB);
+      renderHistoriqueEchoBody();
+    };
+  });
+}
+
+function renderHistoriqueEcho() {
+  pageTitle.textContent = 'Historique des échographies';
+  app.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Toutes les échographies enregistrées, toutes brebis confondues — filtrables par date.</div>
+    <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:14px;">
+      <div style="flex:1;"><label>Filtrer par date</label><input type="date" id="historique-echo-date" value="${historiqueEchoFiltreDate}"></div>
+      <button type="button" class="btn btn-secondary" id="historique-echo-reset" style="width:auto;padding:0 16px;height:44px;">Toutes</button>
+    </div>
+    <div id="historique-echo-body"></div>
+  `;
+  document.getElementById('historique-echo-date').addEventListener('change', (e) => {
+    historiqueEchoFiltreDate = e.target.value;
+    renderHistoriqueEchoBody();
+  });
+  document.getElementById('historique-echo-reset').onclick = () => {
+    historiqueEchoFiltreDate = '';
+    document.getElementById('historique-echo-date').value = '';
+    renderHistoriqueEchoBody();
+  };
+  renderHistoriqueEchoBody();
 }
 
 /* ---------- Saisie rapide de mises bas (boucle scan → agnelage) ----------
@@ -4753,10 +4842,141 @@ function renderSanitaire() {
   app.innerHTML = `
     <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Applique un soin à plusieurs brebis en une fois, et retrouve l'historique des traitements déjà appliqués en masse.</div>
     <button class="btn btn-secondary" id="btn-traitement-collectif" style="border-color:var(--danger);color:var(--danger);margin-bottom:10px;">Traitement collectif (nouveau)</button>
-    <button class="btn btn-secondary" id="btn-historique-collectif">Gérer / supprimer un traitement collectif</button>
+    <button class="btn btn-secondary" id="btn-historique-collectif" style="margin-bottom:10px;">Gérer / supprimer un traitement collectif</button>
+    <button class="btn btn-secondary" id="btn-gerer-produits">Gérer les produits (vaccins, traitements...)</button>
   `;
   document.getElementById('btn-traitement-collectif').onclick = () => render('traitement-collectif');
   document.getElementById('btn-historique-collectif').onclick = () => render('traitements-collectifs');
+  document.getElementById('btn-gerer-produits').onclick = () => render('gerer-produits');
+}
+
+/* ---------- Gestion de la liste modulable des produits (vaccins, traitements) ----------
+   Modifier renomme le produit PARTOUT (picklist + historique déjà saisi +
+   DB.produitsInfo) pour garder une traçabilité cohérente d'un seul nom.
+   Supprimer ne retire le produit QUE de la liste proposée à la saisie —
+   l'historique déjà enregistré avec ce produit n'est jamais touché. */
+const PRODUIT_CATEGORIES = [
+  { key: 'vaccins', label: 'Vaccins' },
+  { key: 'antibiotiques', label: 'Antibiotiques' },
+  { key: 'antiparasitaires', label: 'Antiparasitaires' },
+  { key: 'antiinflammatoires', label: 'Anti-inflammatoires' }
+];
+
+function renameProduitPartout(oldName, newName) {
+  if (DB.produitsInfo && DB.produitsInfo[oldName] !== undefined) {
+    DB.produitsInfo[newName] = DB.produitsInfo[oldName];
+    delete DB.produitsInfo[oldName];
+  }
+  function renameIn(list) {
+    (list || []).forEach(soin => { if (soin.produit === oldName) soin.produit = newName; });
+  }
+  DB.brebis.forEach(s => renameIn(s.sanitaire));
+  (DB.beliers || []).forEach(b => renameIn(b.sanitaire));
+  (DB.agnelles || []).forEach(a => renameIn(a.sanitaire));
+  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+    const archive = DB.registre && DB.registre[cat];
+    if (!archive) return;
+    Object.values(archive).forEach(entry => renameIn(entry.sanitaire));
+  });
+  (DB.traitementsCollectifs || []).forEach(t => { if (t.produit === oldName) t.produit = newName; });
+}
+
+function showProduitInfoModal(nom, info) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <div style="font-weight:700;font-size:15px;margin-bottom:12px;">${nom}</div>
+      <div class="grid2" style="margin-bottom:10px;">
+        <div><div style="font-size:11px;color:var(--text-muted);">Délai lait</div><div style="font-weight:600;">${formatDelaiAnmv(info.lait)}</div></div>
+        <div><div style="font-size:11px;color:var(--text-muted);">Délai viande</div><div style="font-weight:600;">${formatDelaiAnmv(info.viande)}</div></div>
+      </div>
+      ${info.posologie ? `<div style="font-size:13px;"><strong>Posologie / voie d'administration (RCP) :</strong> ${info.posologie}</div>` : ''}
+      <button type="button" class="btn btn-primary" id="produit-info-close" style="margin-top:14px;">Fermer</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#produit-info-close').onclick = () => document.body.removeChild(overlay);
+}
+
+function showRenommerProduitModal(cat, oldName) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <div style="font-weight:700;font-size:15px;margin-bottom:12px;">Modifier « ${oldName} »</div>
+      <label>Nouveau nom</label>
+      <input type="text" id="renommer-produit-input" value="${oldName}" style="margin-bottom:14px;">
+      <div id="renommer-err" class="error-box hidden"></div>
+      <button type="button" class="btn btn-primary" id="renommer-confirm" style="margin-bottom:8px;">Enregistrer</button>
+      <button type="button" class="btn btn-secondary" id="renommer-cancel">Annuler</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#renommer-cancel').onclick = () => document.body.removeChild(overlay);
+  overlay.querySelector('#renommer-confirm').onclick = () => {
+    const newName = overlay.querySelector('#renommer-produit-input').value.trim();
+    const err = overlay.querySelector('#renommer-err');
+    if (!newName) { err.textContent = "Le nom ne peut pas être vide."; err.classList.remove('hidden'); return; }
+    if (newName !== oldName && DB.produits[cat].includes(newName)) { err.textContent = "Ce nom existe déjà dans cette catégorie."; err.classList.remove('hidden'); return; }
+    if (newName === oldName) { document.body.removeChild(overlay); return; }
+    if (!confirm('Renommer « ' + oldName + ' » en « ' + newName + ' » ? Toutes les saisies déjà enregistrées avec ce produit seront mises à jour.')) return;
+    const idx = DB.produits[cat].indexOf(oldName);
+    if (idx !== -1) DB.produits[cat][idx] = newName;
+    renameProduitPartout(oldName, newName);
+    saveData(DB);
+    document.body.removeChild(overlay);
+    render('gerer-produits');
+  };
+}
+
+function renderGererProduits() {
+  pageTitle.textContent = 'Gérer les produits';
+  const html = PRODUIT_CATEGORIES.map(cat => {
+    const items = DB.produits[cat.key] || [];
+    const rows = items.length === 0
+      ? '<div style="font-size:13px;color:var(--text-muted);padding:6px 0;">Aucun produit.</div>'
+      : items.map(nom => {
+        const info = DB.produitsInfo[nom];
+        const hasInfo = !!(info && !info.declined && (info.posologie || (info.lait !== null && info.lait !== undefined) || (info.viande !== null && info.viande !== undefined)));
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+          <span class="produit-info-link" data-nom="${nom}" style="cursor:pointer;${hasInfo ? 'text-decoration:underline;' : ''}">${nom}${hasInfo ? ' · ⓘ' : ''}</span>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn btn-secondary btn-edit-produit" data-cat="${cat.key}" data-nom="${nom}" style="width:auto;padding:4px 10px;font-size:12px;">Modifier</button>
+            <button type="button" class="btn btn-secondary btn-del-produit" data-cat="${cat.key}" data-nom="${nom}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
+          </div>
+        </div>`;
+      }).join('');
+    return `<div class="card" style="margin-bottom:12px;">
+      <div style="font-weight:600;margin-bottom:4px;">${cat.label}</div>
+      ${rows}
+    </div>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Modifie ou supprime les produits proposés à la saisie. Un produit supprimé ici reste visible dans l'historique déjà enregistré. Clique sur un produit marqué ⓘ pour voir sa dose, ses délais d'attente et sa voie d'administration (ANMV).</div>
+    ${html}
+  `;
+
+  document.querySelectorAll('.produit-info-link').forEach(el => {
+    el.onclick = () => {
+      const nom = el.dataset.nom;
+      const info = DB.produitsInfo[nom];
+      if (!info || info.declined) { alert("Aucune information ANMV connue pour « " + nom + " »."); return; }
+      showProduitInfoModal(nom, info);
+    };
+  });
+  document.querySelectorAll('.btn-del-produit').forEach(btn => {
+    btn.onclick = () => {
+      if (!confirm('Retirer « ' + btn.dataset.nom + ' » de la liste des produits proposés ? L\'historique déjà saisi avec ce produit est conservé.')) return;
+      DB.produits[btn.dataset.cat] = DB.produits[btn.dataset.cat].filter(n => n !== btn.dataset.nom);
+      saveData(DB);
+      render('gerer-produits');
+    };
+  });
+  document.querySelectorAll('.btn-edit-produit').forEach(btn => {
+    btn.onclick = () => showRenommerProduitModal(btn.dataset.cat, btn.dataset.nom);
+  });
 }
 
 /* ---------- Traitement collectif (tout le troupeau) ---------- */
