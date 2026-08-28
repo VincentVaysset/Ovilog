@@ -866,6 +866,7 @@ let belierDetailOrigin = 'beliers';
 let editBelierContext = null; // { kind, idx }
 let currentLotId = null;
 let inventaireTab = 'brebis';
+let bilanCampagneTab = 'incoherences';
 
 // Vues racines, accessibles directement depuis le menu hamburger : elles
 // affichent le hamburger (pas de flèche retour) dans l'en-tête.
@@ -1393,48 +1394,79 @@ function renderList() {
   });
 }
 
-/* ---------- Bilan de reproduction de la campagne en cours ----------
-   Répartit toutes les brebis actives par statutReproductionCampagne(), pour
-   s'assurer qu'aucune ne reste "dans le flou" en fin de campagne (ex: vide
-   mais jamais confirmée comme telle) — voir statutReproductionCampagne().
-   Regroupe aussi les indicateurs qui n'ont de sens qu'en fin de campagne
-   (taux de réussite, détail par groupe d'âge) — voir tauxReussiteGlobal()
-   et statsParGroupeAge(). */
+/* Une ligne "brebis" cliquable (numéro + âge), réutilisée par les deux
+   onglets de Bilan de campagne — le clic ouvre toujours sa fiche (voir le
+   wiring commun .bilan-eid-link dans renderBilanCampagne). */
+function bilanBrebisRowsHtml(list) {
+  return sortByAge(list).map(s => `
+    <div class="bilan-eid-link" data-id="${s.id}" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);cursor:pointer;">
+      <span style="font-size:14px;">n°${numeroVisuel(s.eid)}</span>
+      <span style="font-size:12px;color:var(--text-muted);">${age(s.eid) !== null ? age(s.eid) + ' an(s)' : 'âge inconnu'}</span>
+    </div>
+  `).join('');
+}
+
+/* ---------- Bilan de campagne ----------
+   Deux onglets, sur une variable d'état locale (même principe que
+   l'Inventaire Brebis/Béliers/Agneaux) :
+   - "Incohérences fin de campagne" : ce qui reste à vérifier ou à corriger
+     avant la clôture — brebis sans aucun suivi, et les deux issues connues
+     (mise bas / vide définitive), plus l'alerte de contradiction.
+   - "Bilan de reproduction" : les indicateurs chiffrés qui n'ont de sens
+     qu'en fin de campagne (taux de réussite, troupeau à mettre bas, détail
+     par groupe d'âge) — voir campagneBilanChiffres/tauxReussiteGlobal/
+     statsParGroupeAge.
+   Les statuts intermédiaires (Gestante en cours, Vide confirmée, Avortée,
+   Pseudogestation) ne sont pas repris ici : ils restent visibles sur la
+   fiche de chaque brebis et en badge dans l'onglet "Brebis" du menu. */
 function renderBilanCampagne() {
   pageTitle.textContent = 'Bilan de campagne';
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  const groupes = { 'Mise bas': [], 'Vide définitive': [], 'Gestante (en cours)': [], 'Vide confirmée': [], 'Avortée': [], 'Pseudogestation': [], 'Non suivie': [] };
+
+  const tabs = [
+    { key: 'incoherences', label: 'Incohérences fin de campagne' },
+    { key: 'reproduction', label: 'Bilan de reproduction' }
+  ];
+  const tabBarHtml = `<div class="tab-bar">${tabs.map(t =>
+    `<button type="button" class="tab-btn${bilanCampagneTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
+  ).join('')}</div>`;
+
+  const bodyHtml = bilanCampagneTab === 'incoherences' ? bilanIncoherencesHtml(actives) : bilanReproductionHtml(actives);
+
+  app.innerHTML = tabBarHtml + bodyHtml;
+
+  document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
+    btn.onclick = () => { bilanCampagneTab = btn.dataset.tab; render('bilan-campagne'); };
+  });
+  document.querySelectorAll('.bilan-eid-link').forEach(el => {
+    el.onclick = () => { detailOrigin = 'bilan-campagne'; previousDetailId = null; render('detail', el.dataset.id); };
+  });
+}
+
+function bilanIncoherencesHtml(actives) {
+  const groupes = { 'Non suivie': [], 'Mise bas': [], 'Vide définitive': [] };
   actives.forEach(s => {
     const statut = statutReproductionCampagne(s);
-    if (!groupes[statut]) groupes[statut] = []; // filet de sécurité : ne devrait jamais arriver, voir statutReproductionCampagne
-    groupes[statut].push(s);
+    if (groupes[statut]) groupes[statut].push(s);
   });
 
   // Incohérence fin de campagne : mise bas ET vide définitive enregistrées
   // pour la même brebis cette campagne. Volontairement non corrigée toute
   // seule (voir marquerVideDefinitive/renderAddAgnelage) — listée ici pour
   // une correction manuelle, en plus du bouton "Annuler" déjà sur la fiche.
-  const incoherentes = sortByAge(actives.filter(s => (s.agnelages && s.agnelages.length > 0) && estVideDefinitiveCampagne(s)));
-
-  const { troupeauAMettreBas, misesBasRestantes } = campagneBilanChiffres(actives);
-  const { avecEcho, taux: tauxReussite } = tauxReussiteGlobal(actives);
-  const groupesAge = statsParGroupeAge(actives);
+  const incoherentes = actives.filter(s => (s.agnelages && s.agnelages.length > 0) && estVideDefinitiveCampagne(s));
 
   // "Non suivie" en tête : c'est la liste la plus actionnable (aucune info
-  // de reproduction cette campagne — ni écho, ni mise bas, ni vide confirmé —
+  // de reproduction cette campagne — ni écho, ni mise bas, ni vide définitive —
   // donc celle à vérifier en priorité pour ne rien laisser passer).
   const config = [
-    { key: 'Non suivie', color: 'amber', intro: "Aucune information de reproduction cette campagne (ni échographie, ni mise bas) — à vérifier en priorité." },
-    { key: 'Gestante (en cours)', color: 'green' },
-    { key: 'Vide confirmée', color: 'gray', intro: "Dernière échographie de la campagne notée \"Vide\" mais pas (encore) marquée définitive." },
-    { key: 'Vide définitive', color: 'blue' },
-    { key: 'Avortée', color: 'coral' },
-    { key: 'Pseudogestation', color: 'indigo' },
-    { key: 'Mise bas', color: 'green' }
+    { key: 'Non suivie', label: 'Non suivies', color: 'amber', intro: "Aucune information de reproduction cette campagne (ni échographie, ni mise bas) — à vérifier en priorité." },
+    { key: 'Mise bas', label: 'Ont mis bas', color: 'green' },
+    { key: 'Vide définitive', label: 'Vides définitives', color: 'blue' }
   ];
 
-  app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Statut de reproduction de chaque brebis active pour la campagne en cours (${DB.campagneDebut ? DB.campagneDebut + 1 : 'année non définie'}) — utile pour vérifier qu'aucune brebis ne reste sans suivi avant la fin de campagne.</div>
+  return `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Ce qui reste à vérifier ou à corriger avant la clôture de la campagne en cours (${DB.campagneDebut ? DB.campagneDebut + 1 : 'année non définie'}).</div>
 
     ${incoherentes.length > 0 ? `
     <div class="card" style="border-color:var(--danger);margin-bottom:10px;">
@@ -1443,14 +1475,32 @@ function renderBilanCampagne() {
         <div style="font-weight:700;color:var(--coral-fg);">Incohérences fin de campagne (${incoherentes.length})</div>
       </div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Mise bas ET vide définitive enregistrées pour ces brebis cette campagne — à corriger toi-même sur leur fiche (bouton "Annuler" du statut reproduction).</div>
-      <div>${incoherentes.map(s => `
-        <div class="bilan-eid-link" data-id="${s.id}" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);cursor:pointer;">
-          <span style="font-size:14px;">n°${numeroVisuel(s.eid)}</span>
-          <span style="font-size:12px;color:var(--text-muted);">${age(s.eid) !== null ? age(s.eid) + ' an(s)' : 'âge inconnu'}</span>
-        </div>
-      `).join('')}</div>
+      <div>${bilanBrebisRowsHtml(incoherentes)}</div>
     </div>
     ` : ''}
+
+    ${config.map(c => {
+      const list = groupes[c.key] || [];
+      if (list.length === 0) return '';
+      return `<div class="card" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span class="badge badge-${c.color}">${c.label}</span>
+          <span style="font-size:13px;color:var(--text-muted);">${list.length} brebis (${actives.length > 0 ? Math.round(list.length / actives.length * 1000) / 10 : 0}%)</span>
+        </div>
+        ${c.intro ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">${c.intro}</div>` : ''}
+        <div>${bilanBrebisRowsHtml(list)}</div>
+      </div>`;
+    }).join('') || (actives.length === 0 ? '<div class="empty">Aucune brebis active.</div>' : '')}
+  `;
+}
+
+function bilanReproductionHtml(actives) {
+  const { troupeauAMettreBas, misesBasRestantes } = campagneBilanChiffres(actives);
+  const { avecEcho, taux: tauxReussite } = tauxReussiteGlobal(actives);
+  const groupesAge = statsParGroupeAge(actives);
+
+  return `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Indicateurs de reproduction de la campagne en cours (${DB.campagneDebut ? DB.campagneDebut + 1 : 'année non définie'}) — n'ont de sens qu'une fois la campagne suffisamment avancée.</div>
 
     <div class="card" style="margin-bottom:10px;">
       <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Troupeau à mettre bas</div>
@@ -1487,29 +1537,7 @@ function renderBilanCampagne() {
       </table>
       <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Taux de mises bas = mises bas ÷ (mises bas + vides définitives) — les brebis encore en attente (ni mise bas, ni vide définitive) ne comptent pas dans ce taux.</div>
     </div>
-
-    ${config.map(c => {
-      const list = groupes[c.key] || [];
-      if (list.length === 0) return '';
-      return `<div class="card" style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span class="badge badge-${c.color}">${c.key}</span>
-          <span style="font-size:13px;color:var(--text-muted);">${list.length} brebis (${actives.length > 0 ? Math.round(list.length / actives.length * 1000) / 10 : 0}%)</span>
-        </div>
-        ${c.intro ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">${c.intro}</div>` : ''}
-        <div>${sortByAge(list).map(s => `
-          <div class="bilan-eid-link" data-id="${s.id}" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);cursor:pointer;">
-            <span style="font-size:14px;">n°${numeroVisuel(s.eid)}</span>
-            <span style="font-size:12px;color:var(--text-muted);">${age(s.eid) !== null ? age(s.eid) + ' an(s)' : 'âge inconnu'}</span>
-          </div>
-        `).join('')}</div>
-      </div>`;
-    }).join('') || (actives.length === 0 ? '<div class="empty">Aucune brebis active.</div>' : '')}
   `;
-
-  document.querySelectorAll('.bilan-eid-link').forEach(el => {
-    el.onclick = () => { detailOrigin = 'bilan-campagne'; previousDetailId = null; render('detail', el.dataset.id); };
-  });
 }
 
 /* ---------- Sorties (brebis mortes / vendues) ---------- */
