@@ -587,10 +587,58 @@ function age(eid) {
   return new Date().getFullYear() - y;
 }
 /* Tri commun à toutes les listes d'animaux : du plus vieux au plus jeune,
-   par année de naissance croissante (déduite de l'EID). Ne mute pas le
-   tableau reçu. */
+   par année de naissance croissante (déduite de l'EID), puis par numéro
+   visuel croissant à âge égal (ex: 90059, 90060, 90061 avant 02001, 02002
+   s'ils sont nés une autre année — mais 02001 avant 02002 s'ils sont nés
+   la même année). Sans ce second critère, deux animaux nés la même année
+   se retrouvaient dans un ordre arbitraire. Ne mute pas le tableau reçu. */
 function sortByAge(list) {
-  return [...list].sort((a, b) => anneeNaissance(a.eid) - anneeNaissance(b.eid));
+  return [...list].sort((a, b) => {
+    const ya = anneeNaissance(a.eid), yb = anneeNaissance(b.eid);
+    if (ya !== yb) {
+      if (ya === null) return 1;
+      if (yb === null) return -1;
+      return ya - yb;
+    }
+    const na = parseInt(numeroVisuel(a.eid), 10);
+    const nb = parseInt(numeroVisuel(b.eid), 10);
+    if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
+    return numeroVisuel(a.eid).localeCompare(numeroVisuel(b.eid));
+  });
+}
+
+/* Une échographie est-elle un constat de gestation positif ? Le type
+   "constat" (visuel simple) code juste Pleine/Vide ; les autres types
+   (stade, stade_comptage) sont positifs à partir du moment où un stade est
+   renseigné et différent de "Vide" (Début/Milieu/Fin/Pleine). */
+function isGestanteEcho(echo) {
+  if (!echo) return false;
+  if (echo.type === 'constat') return echo.stade === 'Pleine';
+  return echo.stade && echo.stade !== 'Vide';
+}
+
+/* Statut de reproduction d'une brebis pour la campagne EN COURS — utile en
+   fin de campagne pour s'assurer qu'aucune brebis ne reste "dans le flou"
+   (ex: vide mais jamais confirmée comme telle). Ne considère QUE les
+   échographies taguées de la campagne actuelle (voir DB.campagneDebut et le
+   champ `campagne` posé sur chaque nouvelle échographie) — les
+   échographies plus anciennes ne sont jamais remises à zéro (contrairement
+   aux agnelages/mouvements) donc on ne peut pas s'y fier sans ce tag pour
+   savoir "où on en est cette campagne".
+   - 'Mise bas' : un agnelage existe déjà cette campagne (le plus fiable).
+   - 'Non suivie' : aucune échographie taguée de cette campagne pour l'instant.
+   - Sinon, dérivé de la dernière échographie de la campagne : cas
+     particulier (Avortée/Pseudogestation), gestante en cours, ou vide
+     confirmée. */
+function statutReproductionCampagne(sheep) {
+  if (sheep.agnelages && sheep.agnelages.length > 0) return 'Mise bas';
+  const echosCampagne = (sheep.echographies || []).filter(e => e.campagne === DB.campagneDebut);
+  if (echosCampagne.length === 0) return 'Non suivie';
+  const dernier = echosCampagne[echosCampagne.length - 1];
+  if (dernier.special === 'Avortée') return 'Avortée';
+  if (dernier.special === 'Pseudogestation') return 'Pseudogestation';
+  if (isGestanteEcho(dernier)) return 'Gestante (en cours)';
+  return 'Vide confirmée';
 }
 
 /* ---------- Bip sonore de confirmation de scan ---------- */
@@ -731,8 +779,8 @@ const NAV_ITEMS = [
   { view: 'inventaire', label: 'Inventaire', icon: ICON_BOX, color: 'coral' },
   { view: 'lots', label: 'Chantier de tri', icon: ICON_SEARCH, color: 'green' },
   { view: 'sanitaire', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
-  { view: 'echo-rapide', label: 'Écho rapide', icon: ICON_ECHO, color: 'green' },
-  { view: 'misebas-rapide', label: 'Mise bas rapide', icon: ICON_SHEEP, color: 'amber' },
+  { view: 'echo-rapide', label: 'Échographies', icon: ICON_ECHO, color: 'green' },
+  { view: 'misebas-rapide', label: 'Mises-bas', icon: ICON_SHEEP, color: 'amber' },
   { view: 'journal', label: 'Agenda', icon: ICON_JOURNAL, color: 'green' },
   { view: 'registre', label: "Registre d'élevage", icon: ICON_JOURNAL, color: 'coral' },
   { view: 'parametres', label: 'Paramètres', icon: ICON_SETTINGS, color: 'gray' }
@@ -798,6 +846,7 @@ btnBack.onclick = () => {
   else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
   else if (currentView === 'add-echo' || currentView === 'add-agnelage' || currentView === 'add-sanitaire' || currentView === 'add-mouvement' || currentView === 'add-controle') render('detail', currentSheepId);
   else if (currentView === 'echo-rapide' || currentView === 'misebas-rapide') render('list');
+  else if (currentView === 'bilan-campagne') render('list');
 };
 fabAdd.onclick = () => render('add-sheep');
 
@@ -931,6 +980,7 @@ function render(view, sheepId) {
   else if (view === 'import-echo') renderImportEcho();
   else if (view === 'parametres') renderParametres();
   else if (view === 'registre') renderRegistre();
+  else if (view === 'bilan-campagne') renderBilanCampagne();
   else if (view === 'sync-login') renderSyncLogin();
 
   requestAnimationFrame(() => window.scrollTo(0, isRoot ? (scrollPositions[view] || 0) : 0));
@@ -967,12 +1017,6 @@ function dashboardKpiHtml() {
     });
   });
   const prolificite = totalMisesBas > 0 ? Math.round((totalAgneaux / totalMisesBas) * 100) / 100 : 0;
-
-  function isGestanteEcho(echo) {
-    if (!echo) return false;
-    if (echo.type === 'constat') return echo.stade === 'Pleine';
-    return echo.stade && echo.stade !== 'Vide';
-  }
 
   const parAge = {};
   active.forEach(s => {
@@ -1081,6 +1125,12 @@ function dashboardKpiHtml() {
         <div class="stat-card-label" style="margin-top:8px;">Attendues à la traite</div>
         <div class="stat-card-value">${attendueTraiteCount}</div>
         <div class="stat-card-sub">Tous leurs agneaux sont partis</div>
+      </div>
+      <div class="stat-card sc-coral stat-card-clickable" id="kpi-bilan-campagne" role="button" tabindex="0">
+        ${iconCircle(ICON_JOURNAL, 'coral', 'sm')}
+        <div class="stat-card-label" style="margin-top:8px;">Bilan de campagne</div>
+        <div class="stat-card-value">${active.filter(s => statutReproductionCampagne(s) === 'Non suivie').length}</div>
+        <div class="stat-card-sub">Brebis sans statut de reproduction connu</div>
       </div>
     </div>
 
@@ -1196,6 +1246,8 @@ function renderList() {
   if (kpiAttendues) kpiAttendues.onclick = () => {
     openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(isAttendueTraite).map(s => s.eid));
   };
+  const kpiBilan = document.getElementById('kpi-bilan-campagne');
+  if (kpiBilan) kpiBilan.onclick = () => render('bilan-campagne');
 
   if (actives.length === 0) {
     const empty = document.createElement('div');
@@ -1212,6 +1264,16 @@ function renderList() {
       : lastAgnelage
         ? `<span class="badge badge-amber">${lastAgnelage.date} · ${lastAgnelage.lambs.length} agn.</span>`
         : `<span class="badge badge-muted">Aucun agnelage</span>`;
+    // Statut de reproduction de la campagne : redondant avec badgeHtml pour
+    // "Mise bas" (déjà visible ci-dessus) et sans intérêt pour "Non suivie"
+    // (pas encore d'échographie cette campagne) — affiché uniquement pour
+    // les statuts qui apportent une information nouvelle.
+    const repro = statutReproductionCampagne(sheep);
+    const reproBadgeHtml = repro === 'Vide confirmée' ? `<span class="badge badge-gray">Vide confirmée</span>`
+      : repro === 'Avortée' ? `<span class="badge badge-coral">Avortée</span>`
+      : repro === 'Pseudogestation' ? `<span class="badge badge-indigo">Pseudogestation</span>`
+      : repro === 'Gestante (en cours)' ? `<span class="badge badge-green">Gestante</span>`
+      : '';
     const div = document.createElement('div');
     div.className = 'sheep-item';
     div.innerHTML = `
@@ -1222,10 +1284,49 @@ function renderList() {
           <div class="sub">${age(sheep.eid) !== null ? age(sheep.eid) + ' an(s)' : 'âge inconnu'}</div>
         </div>
       </div>
-      ${badgeHtml}
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">${badgeHtml}${reproBadgeHtml}</div>
     `;
     div.onclick = () => { detailOrigin = 'list'; previousDetailId = null; render('detail', sheep.id); };
     app.appendChild(div);
+  });
+}
+
+/* ---------- Bilan de reproduction de la campagne en cours ----------
+   Répartit toutes les brebis actives par statutReproductionCampagne(), pour
+   s'assurer qu'aucune ne reste "dans le flou" en fin de campagne (ex: vide
+   mais jamais confirmée comme telle) — voir statutReproductionCampagne(). */
+function renderBilanCampagne() {
+  pageTitle.textContent = 'Bilan de campagne';
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const groupes = { 'Mise bas': [], 'Gestante (en cours)': [], 'Vide confirmée': [], 'Avortée': [], 'Pseudogestation': [], 'Non suivie': [] };
+  actives.forEach(s => { groupes[statutReproductionCampagne(s)].push(s); });
+
+  const config = [
+    { key: 'Mise bas', color: 'green' },
+    { key: 'Gestante (en cours)', color: 'green' },
+    { key: 'Vide confirmée', color: 'gray' },
+    { key: 'Avortée', color: 'coral' },
+    { key: 'Pseudogestation', color: 'indigo' },
+    { key: 'Non suivie', color: 'amber' }
+  ];
+
+  app.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Statut de reproduction de chaque brebis active pour la campagne en cours (${DB.campagneDebut ? DB.campagneDebut + 1 : 'année non définie'}) — utile pour vérifier qu'aucune brebis ne reste sans suivi avant la fin de campagne.</div>
+    ${config.map(c => {
+      const list = groupes[c.key];
+      if (list.length === 0) return '';
+      return `<div class="card" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span class="badge badge-${c.color}">${c.key}</span>
+          <span style="font-size:13px;color:var(--text-muted);">${list.length} brebis (${Math.round(list.length / actives.length * 1000) / 10}%)</span>
+        </div>
+        <div style="font-size:13px;line-height:1.8;">${sortByAge(list).map(s => `<span class="bilan-eid-link" data-id="${s.id}" style="cursor:pointer;text-decoration:underline;margin-right:10px;">n°${numeroVisuel(s.eid)}</span>`).join('')}</div>
+      </div>`;
+    }).join('') || '<div class="empty">Aucune brebis active.</div>'}
+  `;
+
+  document.querySelectorAll('.bilan-eid-link').forEach(el => {
+    el.onclick = () => { detailOrigin = 'bilan-campagne'; previousDetailId = null; render('detail', el.dataset.id); };
   });
 }
 
@@ -1913,16 +2014,27 @@ function renderAddEcho(sheepId) {
       err.classList.remove('hidden');
       return;
     }
+    const dateEcho = document.getElementById('f-date').value;
+    sheep.echographies = sheep.echographies || [];
+    const doublon = sheep.echographies.some((e, i) => e.date === dateEcho && (!editing || i !== editContext.idx));
+    if (doublon) {
+      err.textContent = "Une échographie est déjà enregistrée pour cette brebis à cette date — modifie l'existante plutôt que d'en ajouter une seconde.";
+      err.classList.remove('hidden');
+      return;
+    }
     err.classList.add('hidden');
     const echo = {
       type: typeEcho,
-      date: document.getElementById('f-date').value,
+      date: dateEcho,
       stade: stade,
       agneaux: agneaux,
       special: special,
-      parasitisme: document.getElementById('f-parasit').checked
+      parasitisme: document.getElementById('f-parasit').checked,
+      // Sur une modification, on garde le tag de campagne d'origine (même
+      // absent, pour une saisie antérieure à cette fonctionnalité) plutôt
+      // que de la rattacher silencieusement à la campagne actuelle.
+      campagne: editing ? existing.campagne : DB.campagneDebut
     };
-    sheep.echographies = sheep.echographies || [];
     if (editing) sheep.echographies[editContext.idx] = echo;
     else sheep.echographies.push(echo);
     editContext = null;
@@ -1937,6 +2049,27 @@ function renderAddAgnelage(sheepId) {
   const editing = editContext && editContext.kind === 'agnelages';
   const existing = editing ? sheep.agnelages[editContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier l\'agnelage' : 'Nouvel agnelage';
+
+  // Une brebis ne peut avoir qu'un seul agnelage par campagne (sheep.agnelages
+  // est remis à zéro — et archivé dans le registre — à chaque nouvelle
+  // campagne, voir "Nouvelle campagne" dans Paramètres). Si un agnelage
+  // existe déjà et qu'on n'est pas en train de le modifier, on bloque l'ajout
+  // d'un second plutôt que de laisser la fiche en avoir deux.
+  if (!editing && sheep.agnelages.length > 0) {
+    app.innerHTML = `
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+          ${iconCircle(ICON_WARNING, 'coral', 'md')}
+          <div style="font-weight:700;">Agnelage déjà enregistré cette campagne</div>
+        </div>
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Cette brebis a déjà un agnelage enregistré le ${sheep.agnelages[0].date}. Modifie-le plutôt que d'en ajouter un second — une brebis ne peut avoir qu'un agnelage par campagne.</div>
+        <button type="button" class="btn btn-primary" id="btn-edit-existing-agnelage">Modifier l'agnelage existant</button>
+      </div>
+    `;
+    document.getElementById('btn-edit-existing-agnelage').onclick = () => editItem('agnelages', 0);
+    return;
+  }
+
   const today = existing ? existing.date : new Date().toISOString().slice(0,10);
   let lambCount = 0;
   const lambs = {};
@@ -2362,13 +2495,20 @@ function renderEchoRapide() {
             err.classList.remove('hidden');
             return;
           }
+          const dateEcho = new Date().toISOString().slice(0,10);
+          currentSheep.echographies = currentSheep.echographies || [];
+          if (currentSheep.echographies.some(e => e.date === dateEcho)) {
+            err.textContent = "Une échographie a déjà été saisie aujourd'hui pour cette brebis — modifie-la depuis sa fiche si besoin.";
+            err.classList.remove('hidden');
+            return;
+          }
           btnValider.disabled = true; // évite un double-clic/double-tap qui rejouerait la validation
           const echo = {
             type: echoRapideSession.typeEcho,
-            date: new Date().toISOString().slice(0,10),
-            stade: stade, agneaux: agneaux, special: special, parasitisme: parasit
+            date: dateEcho,
+            stade: stade, agneaux: agneaux, special: special, parasitisme: parasit,
+            campagne: DB.campagneDebut
           };
-          currentSheep.echographies = currentSheep.echographies || [];
           currentSheep.echographies.push(echo);
           saveData(DB);
           echoRapideSession.count++;
@@ -2490,6 +2630,7 @@ function renderMiseBasRapide() {
         <button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">Annuler ce scan</button>
       </div>
     ` : '';
+    const dejaAgnelage = currentSheep && currentSheep.agnelages && currentSheep.agnelages.length > 0;
     const foundHtml = currentSheep ? `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -2504,7 +2645,15 @@ function renderMiseBasRapide() {
         </div>
       </div>
     ` : '';
-    const formHtml = currentSheep ? `
+    // Une brebis ne peut avoir qu'un agnelage par campagne (voir renderAddAgnelage) :
+    // on bloque ici aussi plutôt que de laisser la boucle rapide en créer un second.
+    const dejaAgnelageHtml = dejaAgnelage ? `
+      <div class="card">
+        <div style="font-size:13px;color:var(--coral-fg);margin-bottom:12px;">Cette brebis a déjà un agnelage enregistré le ${currentSheep.agnelages[0].date} — une seule mise bas par campagne. Modifie-la depuis sa fiche si besoin, ou scanne la brebis suivante.</div>
+        <button type="button" class="btn btn-secondary" id="btn-edit-existing-agnelage-rapide">Modifier l'agnelage existant</button>
+      </div>
+    ` : '';
+    const formHtml = (currentSheep && !dejaAgnelage) ? `
       <div class="card">
         <label>Date de naissance</label>
         <input type="date" id="f-date-rapide" value="${new Date().toISOString().slice(0,10)}" style="margin-bottom:16px;">
@@ -2526,9 +2675,17 @@ function renderMiseBasRapide() {
       </div>
       ${unknownHtml}
       ${foundHtml}
+      ${dejaAgnelageHtml}
       ${formHtml}
       <button type="button" class="btn btn-secondary" id="btn-fin-session-mb" style="margin-top:14px;">Terminer la session</button>
     `;
+
+    if (dejaAgnelage) {
+      document.getElementById('btn-edit-existing-agnelage-rapide').onclick = () => {
+        currentSheepId = currentSheep.id;
+        editItem('agnelages', 0);
+      };
+    }
 
     const scanInput = document.getElementById('scan-misebas');
     requestAnimationFrame(() => scanInput.focus());
@@ -2577,7 +2734,7 @@ function renderMiseBasRapide() {
       };
     }
 
-    if (currentSheep) {
+    if (currentSheep && !dejaAgnelage) {
       document.getElementById('add-lamb-rapide').onclick = addLamb;
       if (Object.keys(lambs).length === 0) addLamb();
 
@@ -3085,6 +3242,78 @@ function getEcartees() {
   return sortLambItemsByAge(list);
 }
 
+/* Vente d'une agnelle du roster de renouvellement (Chantier de tri) —
+   distincte d'une simple suppression : trace un vrai mouvement "Vendue"
+   (acheteur + date) pour le registre, plutôt que de la faire disparaître
+   sans motif. */
+function showVendreAgnelleModal(ag, onDone) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const today = new Date().toISOString().slice(0,10);
+  let acheteur = null;
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+        ${iconCircle(ICON_SHEEP, 'coral', 'md')}
+        <div>
+          <div style="font-weight:700;font-size:15px;">Vendre l'agnelle n°${numeroVisuel(ag.eid)}</div>
+          <div style="font-size:12px;color:var(--text-muted);">Elle sortira du roster de renouvellement.</div>
+        </div>
+      </div>
+      <label>Acheteur</label>
+      <div class="chip-list" id="vendre-acheteur-list" style="margin-bottom:8px;"></div>
+      <div class="row" style="margin-bottom:14px;"><input type="text" id="vendre-new-acheteur" placeholder="Ajouter un nouvel acheteur..."><button type="button" class="btn btn-secondary" id="vendre-add-acheteur" style="width:auto;padding:0 16px;">+</button></div>
+      <label>Date</label>
+      <input type="date" id="vendre-date" value="${today}" style="margin-bottom:14px;">
+      <div id="vendre-err" class="error-box hidden"></div>
+      <button type="button" class="btn btn-primary" id="vendre-confirm" style="background:var(--coral-fg);margin-bottom:8px;">Valider la vente</button>
+      <button type="button" class="btn btn-secondary" id="vendre-cancel">Annuler</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  function renderAcheteurChips() {
+    const list = overlay.querySelector('#vendre-acheteur-list');
+    list.innerHTML = '';
+    (DB.acheteurs || []).forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (acheteur === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { acheteur = (acheteur === val) ? null : val; renderAcheteurChips(); };
+      list.appendChild(chip);
+    });
+  }
+  renderAcheteurChips();
+
+  overlay.querySelector('#vendre-add-acheteur').onclick = () => {
+    const input = overlay.querySelector('#vendre-new-acheteur');
+    const val = input.value.trim();
+    if (!val) return;
+    DB.acheteurs = DB.acheteurs || [];
+    if (!DB.acheteurs.includes(val)) DB.acheteurs.push(val);
+    saveData(DB); input.value = ''; acheteur = val; renderAcheteurChips();
+  };
+  overlay.querySelector('#vendre-cancel').onclick = () => document.body.removeChild(overlay);
+  overlay.querySelector('#vendre-confirm').onclick = () => {
+    const err = overlay.querySelector('#vendre-err');
+    const date = overlay.querySelector('#vendre-date').value;
+    if (!acheteur) { err.textContent = "Sélectionne ou ajoute un acheteur."; err.classList.remove('hidden'); return; }
+    if (!date) { err.textContent = "Choisis une date."; err.classList.remove('hidden'); return; }
+    if (!confirm('Confirmer la vente de la n°' + numeroVisuel(ag.eid) + ' à ' + acheteur + ' ? Cette action est irréversible.')) return;
+    ag.mouvements = ag.mouvements || [];
+    ag.mouvements.push({ type: 'Vendue', cause: null, acheteur, date });
+    ag.statut = 'vendue';
+    const lamb = findLambByEid(ag.eid);
+    if (lamb) lamb.statutFinal = 'vendu';
+    archiverDansRegistre('agneaux', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
+    DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
+    saveData(DB);
+    document.body.removeChild(overlay);
+    onDone();
+  };
+}
+
 function renderAgnelles() {
   DB.agnelles = DB.agnelles || [];
   const candidates = getCandidatesATrier();
@@ -3124,6 +3353,7 @@ function renderAgnelles() {
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;">
             <button type="button" class="btn btn-secondary btn-edit-agnelle" data-id="${ag.id}" style="width:auto;padding:6px 14px;font-size:13px;">Modifier</button>
+            <button type="button" class="btn btn-secondary btn-vendre-agnelle" data-id="${ag.id}" style="color:var(--coral-fg);border-color:var(--coral-fg);width:auto;padding:6px 14px;font-size:13px;">Vendre</button>
             <button type="button" class="btn btn-secondary btn-remove-agnelle" data-id="${ag.id}" style="color:var(--danger);border-color:var(--danger);width:auto;padding:6px 14px;font-size:13px;">Suppr.</button>
           </div>
         </div>
@@ -3219,6 +3449,13 @@ function renderAgnelles() {
       DB.agnelles = DB.agnelles.filter(a => a.id !== btn.dataset.id);
       saveData(DB);
       render('agnelles');
+    };
+  });
+  document.querySelectorAll('.btn-vendre-agnelle').forEach(btn => {
+    btn.onclick = () => {
+      const ag = DB.agnelles.find(a => a.id === btn.dataset.id);
+      if (!ag) return;
+      showVendreAgnelleModal(ag, () => render('agnelles'));
     };
   });
   document.querySelectorAll('.btn-annuler-tri').forEach(btn => {
@@ -4108,6 +4345,7 @@ function renderLots() {
    - opts.onChange() : rappelée après chaque changement de sélection. */
 function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
   opts = opts || {};
+  pool = sortByAge(pool); // trié une fois pour toutes ici : les appelants passent souvent un simple .filter() non trié
   const renderMeta = opts.renderMeta || (() => '');
   const onChange = opts.onChange || (() => {});
   const state = { mode: opts.initialMode || 'liste', filtre: '' };
@@ -5482,6 +5720,7 @@ function renderImportEcho() {
     if (!parsedRows || parsedRows.length === 0) return;
     if (!confirm('Importer ' + parsedRows.length + ' échographie(s) ? Cette action ajoute des données, elle ne supprime rien.')) return;
     const date = document.getElementById('import-echo-date').value;
+    let skipped = 0;
     parsedRows.forEach(row => {
       let sheep = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(row.eid));
       if (!sheep) {
@@ -5489,17 +5728,19 @@ function renderImportEcho() {
         DB.brebis.push(sheep);
       }
       sheep.echographies = sheep.echographies || [];
+      if (sheep.echographies.some(e => e.date === date)) { skipped++; return; } // une échographie existe déjà à cette date pour cette brebis
       sheep.echographies.push({
         type: row.special ? 'stade_comptage' : (row.agneaux ? 'stade_comptage' : 'stade'),
         date: date,
         stade: row.stade,
         agneaux: row.agneaux,
         special: row.special,
-        parasitisme: row.parasitisme
+        parasitisme: row.parasitisme,
+        campagne: DB.campagneDebut
       });
     });
     saveData(DB);
-    alert(parsedRows.length + ' échographie(s) importée(s) avec succès.');
+    alert((parsedRows.length - skipped) + ' échographie(s) importée(s) avec succès.' + (skipped > 0 ? ' ' + skipped + ' ignorée(s) car une échographie existait déjà à cette date pour ces brebis.' : ''));
     render('parametres');
   };
 }
