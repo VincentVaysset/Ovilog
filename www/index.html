@@ -924,6 +924,10 @@ let currentView = 'list';
 let currentSheepId = null;
 let detailOrigin = 'list';
 let previousDetailId = null;
+// Champ <input> actuellement en attente d'un scan EID (voir onEidScanned,
+// section Bluetooth plus bas) — déclaré explicitement par l'écran affiché,
+// remis à zéro à chaque navigation (voir render()).
+let activeScanTarget = null;
 let editingAgnelleId = null;
 let currentBelierId = null;
 let belierDetailOrigin = 'beliers';
@@ -1117,6 +1121,11 @@ function render(view, sheepId) {
   currentView = view;
   if (sheepId !== undefined) currentSheepId = sheepId;
   app.innerHTML = '';
+  // Réinitialisé à chaque navigation : c'est à l'écran qui s'affiche de se
+  // déclarer explicitement via setActiveScanTarget() s'il attend un scan EID
+  // (voir onEidScanned plus bas). Évite qu'un scan Bluetooth reçu sur un
+  // écran sans champ de scan n'aille remplir un champ resté d'un écran quitté.
+  activeScanTarget = null;
   const isRoot = ROOT_VIEWS.has(view);
   btnBack.classList.toggle('hidden', isRoot);
   btnMenu.classList.toggle('hidden', !isRoot);
@@ -1400,6 +1409,7 @@ function renderList() {
   `;
   app.appendChild(scanCard);
   const scanOpen = document.getElementById('scan-open');
+  setActiveScanTarget(scanOpen);
   scanOpen.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const val = cleanEid(scanOpen.value);
@@ -1777,6 +1787,7 @@ function renderAddSheep() {
     </div>
   `;
   const inputEid = document.getElementById('input-eid');
+  setActiveScanTarget(inputEid);
   attachEidBeep(inputEid);
   const preview = document.getElementById('preview');
   inputEid.addEventListener('input', () => {
@@ -2025,6 +2036,7 @@ function renderAgneaux() {
   app.innerHTML = scanHtml + introHtml + listHtml;
 
   const scanOpenAgneau = document.getElementById('scan-open-agneau');
+  setActiveScanTarget(scanOpenAgneau);
   scanOpenAgneau.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const val = cleanEid(scanOpenAgneau.value);
@@ -2952,6 +2964,7 @@ function renderEchoRapide() {
       `;
 
       const scanInput = document.getElementById('scan-echo');
+      setActiveScanTarget(scanInput);
       // .focus() juste après avoir remplacé innerHTML échoue parfois sur
       // WebView mobile (le clavier virtuel n'a pas encore de quoi s'accrocher
       // tant que le reflow n'a pas eu lieu) — on le reporte d'une frame.
@@ -3310,6 +3323,7 @@ function renderMiseBasRapide() {
     }
 
     const scanInput = document.getElementById('scan-misebas');
+    setActiveScanTarget(scanInput);
     requestAnimationFrame(() => scanInput.focus());
     scanInput.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.keyCode !== 13) return;
@@ -4023,6 +4037,7 @@ function renderAgnelles() {
 
   wireChantierTriTabBar();
   const scanInput = document.getElementById('scan-tri');
+  setActiveScanTarget(scanInput);
   attachEidBeep(scanInput);
   scanInput.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
@@ -4173,6 +4188,7 @@ function renderAddAgnelle() {
   });
 
   const inputEid = document.getElementById('input-eid');
+  setActiveScanTarget(inputEid);
   if (inputEid) {
     attachEidBeep(inputEid);
     const preview = document.getElementById('preview');
@@ -4268,6 +4284,7 @@ function renderBeliers() {
   app.innerHTML = scanHtml + listHtml + '<button class="btn btn-primary" id="btn-add-belier" style="margin-top:14px;">+ Ajouter un bélier</button>';
 
   const scanOpenBelier = document.getElementById('scan-open-belier');
+  setActiveScanTarget(scanOpenBelier);
   scanOpenBelier.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const val = cleanEid(scanOpenBelier.value);
@@ -4306,6 +4323,7 @@ function renderAddBelier() {
     </div>
   `;
   const inputEid = document.getElementById('input-eid');
+  setActiveScanTarget(inputEid);
   attachEidBeep(inputEid);
   const preview = document.getElementById('preview');
   inputEid.addEventListener('input', () => {
@@ -5069,6 +5087,7 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
 
     if (state.mode === 'bip') {
       const scan = containerEl.querySelector('.sp-scan');
+      setActiveScanTarget(scan);
       const feedback = containerEl.querySelector('.sp-scan-feedback');
       scan.focus();
       scan.addEventListener('keydown', (e) => {
@@ -5254,6 +5273,7 @@ function renderLotSearch(lotId) {
       </div>
     `;
     const scanInput = document.getElementById('scan-lot');
+    setActiveScanTarget(scanInput);
     scanInput.focus();
     scanInput.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
@@ -6980,11 +7000,24 @@ function renderParametres() {
    Le correctif ISO-8859-1 (patches/bluetooth-serial+1.0.0.patch) garantit
    que chaque caractère de la chaîne retournée par read() correspond
    exactement à un octet reçu, récupérable via charCodeAt(). */
+/* ---------- Connexion Bluetooth Série partagée (lecteur Allflex, étape 3) ----------
+   Une seule connexion Bluetooth Série existe à la fois (le plugin lui-même ne
+   retient qu'une connexion). Ce module centralise donc connexion/lecture pour
+   toute l'appli — pas seulement l'écran de diagnostic — afin qu'un scan reçu
+   pendant, par ex., "Écho rapide" soit routé là où il faut (voir
+   onEidScanned/activeScanTarget) tout en continuant à alimenter l'affichage
+   brut hex/ASCII de l'écran de diagnostic quand il est ouvert.
+   La gestion fine du cycle de vie (reconnexion à la reprise de l'appli,
+   reconnexion auto en cas de coupure, indicateur visuel permanent) reste
+   prévue pour l'étape 4 — ici on connecte/déconnecte seulement à la demande
+   (bouton de l'écran de diagnostic). */
+let btConnectedAddress = null;
+let btPollTimer = null;
+let btReadBuffer = ''; // octets bruts accumulés (ISO-8859-1 : 1 char = 1 octet d'origine)
+
 let btDiag = {
   devices: [],
-  connectedAddress: null,
   frames: [], // { ts, hex, ascii, len }
-  pollTimer: null,
   error: null
 };
 
@@ -6992,15 +7025,54 @@ function btPlugin() {
   return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BluetoothSerial;
 }
 
-function btDiagStopPolling() {
-  if (btDiag.pollTimer) { clearInterval(btDiag.pollTimer); btDiag.pollTimer = null; }
+// Un EID ISO 11784/11785 fait toujours 250 (code pays France) + 12 chiffres
+// = 15 chiffres. Vérifié avec du vrai matériel : une boucle chien a renvoyé
+// un préambule de 8 chiffres avant les 15 chiffres utiles, et la numérotation
+// ovine (250 + 12 chiffres) suit la même logique — donc peu importe ce que le
+// bâton fait précéder l'EID (préambule fixe, variable, absent...), ne garder
+// que les 15 derniers chiffres de la trame est la règle robuste. En dessous
+// de 15 chiffres, ce n'est pas un EID (ex. la bannière d'accueil du module
+// Bluetooth lui-même, "AT+AB iAPConnect ...", observée à la connexion).
+function extractEidFromFrame(frameBody) {
+  const digits = frameBody.replace(/\D/g, '');
+  if (digits.length < 15) return null;
+  return digits.slice(-15);
 }
 
-function btDiagStartPolling() {
-  btDiagStopPolling();
+// Point d'entrée unique pour tout scan EID, quelle que soit sa source. Avant
+// l'étape 3, le bâton émulait un clavier (HID) et le système d'exploitation
+// tapait directement dans le champ qui avait le focus DOM (document.activeElement)
+// — mécanisme ambiant, jamais explicite dans le code de l'appli. En SPP, le
+// bâton ne fait plus ça : c'est nous qui recevons les octets et devons les
+// router nous-mêmes. On généralise via un registre explicite plutôt que de
+// re-simuler une dépendance au focus DOM (plus fragile en WebView) : chaque
+// écran qui affiche un champ de scan s'enregistre avec setActiveScanTarget(),
+// et onEidScanned() route vers ce champ en simulant saisie + Entrée — ce qui
+// réutilise sans les dupliquer tous les handlers déjà branchés sur ces champs
+// (attachEidBeep, traitement au clavier physique, saisie manuelle...).
+function setActiveScanTarget(el) {
+  activeScanTarget = el || null;
+}
+
+function onEidScanned(eid) {
+  // Pas d'écran en attente d'un scan actuellement (ex. on est sur l'accueil,
+  // ou sur un écran qui n'a pas de champ EID) : on ignore silencieusement,
+  // exactement comme si le lecteur "tapait" un scan dans le vide.
+  if (!activeScanTarget || !activeScanTarget.isConnected) { activeScanTarget = null; return; }
+  activeScanTarget.value = eid;
+  activeScanTarget.dispatchEvent(new Event('input', { bubbles: true }));
+  activeScanTarget.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+}
+
+function btStopPolling() {
+  if (btPollTimer) { clearInterval(btPollTimer); btPollTimer = null; }
+}
+
+function btStartPolling() {
+  btStopPolling();
   const plugin = btPlugin();
   if (!plugin) return;
-  btDiag.pollTimer = setInterval(async () => {
+  btPollTimer = setInterval(async () => {
     try {
       const { available } = await plugin.available();
       if (available > 0) {
@@ -7012,25 +7084,53 @@ function btDiagStartPolling() {
         btDiag.frames.unshift({ ts: new Date().toLocaleTimeString('fr-FR'), hex, ascii, len: bytes.length });
         if (btDiag.frames.length > 200) btDiag.frames.length = 200; // borne la mémoire — outil de diagnostic, pas persisté
         if (currentView === 'diag-bluetooth') renderDiagBluetooth();
+
+        // Reconstitution des trames complètes STX(0x02)...CRLF, indépendamment
+        // du découpage réel des read() (une trame peut arriver en plusieurs
+        // fois) — puis routage EID, quel que soit l'écran affiché.
+        btReadBuffer += data;
+        let stx, crlf;
+        while ((stx = btReadBuffer.indexOf('\x02')) !== -1 && (crlf = btReadBuffer.indexOf('\x0d\x0a', stx)) !== -1) {
+          const frameBody = btReadBuffer.slice(stx + 1, crlf);
+          btReadBuffer = btReadBuffer.slice(crlf + 2);
+          const eid = extractEidFromFrame(frameBody);
+          if (eid) onEidScanned(eid);
+        }
+        if (btReadBuffer.length > 4096) btReadBuffer = btReadBuffer.slice(-1024); // sécurité anti-fuite si jamais aucun STX n'arrive
       }
     } catch (e) {
       // Une erreur de lecture signale le plus souvent une déconnexion.
       btDiag.error = (e && e.message) ? e.message : String(e);
-      btDiag.connectedAddress = null;
-      btDiagStopPolling();
+      btConnectedAddress = null;
+      btStopPolling();
       if (currentView === 'diag-bluetooth') renderDiagBluetooth();
     }
   }, 200);
 }
 
-// Appelé en quittant l'écran (voir btnBack.onclick) : un écran de diagnostic
-// n'a pas vocation à garder une connexion ouverte en arrière-plan.
-function btDiagLeaveScreen() {
-  btDiagStopPolling();
+async function btConnect(address) {
   const plugin = btPlugin();
-  if (plugin && btDiag.connectedAddress) plugin.disconnect().catch(() => {});
-  btDiag.connectedAddress = null;
+  if (!plugin) throw new Error("Le plugin Bluetooth n'est disponible que dans l'appli installée sur téléphone (pas dans un navigateur).");
+  await plugin.connect({ address });
+  btConnectedAddress = address;
+  btReadBuffer = '';
+  btStartPolling();
 }
+
+async function btDisconnect() {
+  btStopPolling();
+  const plugin = btPlugin();
+  if (plugin && btConnectedAddress) { try { await plugin.disconnect(); } catch (e) {} }
+  btConnectedAddress = null;
+  btReadBuffer = '';
+}
+
+// Appelé en quittant l'écran de diagnostic (voir btnBack.onclick). Depuis
+// l'étape 3, la connexion Bluetooth est partagée avec le reste de l'appli
+// (onEidScanned) : on ne la coupe donc plus ici, ça romprait le scan sur tous
+// les autres écrans. L'écran de diagnostic n'a plus besoin de gérer son
+// propre cycle de vie de connexion — il ne fait qu'observer l'état partagé.
+function btDiagLeaveScreen() {}
 
 async function btDiagEnsurePermission() {
   // checkPermissions()/requestPermissions() résolvent avec un unique objet
@@ -7062,12 +7162,9 @@ async function btDiagRefreshDevices() {
 }
 
 async function btDiagConnect(address) {
-  const plugin = btPlugin();
   btDiag.error = null;
   try {
-    await plugin.connect({ address });
-    btDiag.connectedAddress = address;
-    btDiagStartPolling();
+    await btConnect(address);
   } catch (e) {
     btDiag.error = (e && e.message) ? e.message : String(e);
   }
@@ -7075,10 +7172,7 @@ async function btDiagConnect(address) {
 }
 
 async function btDiagDisconnect() {
-  const plugin = btPlugin();
-  btDiagStopPolling();
-  try { await plugin.disconnect(); } catch (e) {}
-  btDiag.connectedAddress = null;
+  await btDisconnect();
   renderDiagBluetooth();
 }
 
@@ -7095,7 +7189,7 @@ function renderDiagDevicesList() {
         <div style="font-weight:600;">${d.name || '(sans nom)'}</div>
         <div style="font-size:12px;color:var(--text-muted);">${d.address}</div>
       </div>
-      <button type="button" class="btn btn-secondary btn-diag-connect" data-address="${d.address}" style="width:auto;padding:6px 14px;" ${btDiag.connectedAddress === d.address ? 'disabled' : ''}>${btDiag.connectedAddress === d.address ? 'Connecté' : 'Connecter'}</button>
+      <button type="button" class="btn btn-secondary btn-diag-connect" data-address="${d.address}" style="width:auto;padding:6px 14px;" ${btConnectedAddress === d.address ? 'disabled' : ''}>${btConnectedAddress === d.address ? 'Connecté' : 'Connecter'}</button>
     </div>
   `).join('');
   container.querySelectorAll('.btn-diag-connect').forEach(btn => {
@@ -7119,10 +7213,10 @@ function renderDiagBluetooth() {
       <div id="diag-devices" style="margin-top:10px;"></div>
     </div>
 
-    ${btDiag.connectedAddress ? `
+    ${btConnectedAddress ? `
     <div class="card" style="border-color:var(--accent);">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div style="font-weight:600;">Connecté à ${btDiag.connectedAddress}</div>
+        <div style="font-weight:600;">Connecté à ${btConnectedAddress}</div>
         <button type="button" class="btn btn-secondary" id="btn-diag-disconnect" style="width:auto;padding:6px 14px;">Déconnecter</button>
       </div>
     </div>
