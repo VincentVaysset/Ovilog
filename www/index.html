@@ -4709,28 +4709,85 @@ function renderLotSearch(lotId) {
   render_();
 }
 
-/* ---------- Mouvement groupé (vente / sortie multiple) ---------- */
-function renderMouvementGroupe() {
-  pageTitle.textContent = 'Mouvement groupé';
-  const today = new Date().toISOString().slice(0,10);
-  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+/* ---------- Configuration partagée par catégorie d'animal ----------
+   Réutilisée par Mouvement groupé et Traitement collectif, qui doivent tous
+   deux pouvoir s'appliquer à Brebis, Béliers ou Agneaux (agnelles du roster
+   de renouvellement, DB.agnelles) — chaque catégorie a son propre réservoir
+   d'animaux, son statut "actif" par défaut, et ses accords grammaticaux
+   (bélier est masculin, brebis/agnelle sont féminins). */
+const CATEGORIE_ANIMAL_CONFIG = {
+  brebis: {
+    label: 'Brebis', tous: 'Toutes les', actives: 'actives', singulier: 'une brebis',
+    pool: () => DB.brebis,
+    isActive: s => (s.statut || 'active') === 'active',
+    typeSortie: ['Morte', 'Vendue', 'Vendue reproduction'],
+    applySortie: (s, type, cause, acheteur, date) => {
+      s.mouvements = s.mouvements || [];
+      s.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date });
+      s.statut = type === 'Morte' ? 'morte' : type === 'Vendue' ? 'vendue' : 'vendue reproduction';
+    }
+  },
+  beliers: {
+    label: 'Béliers', tous: 'Tous les', actives: 'actifs', singulier: 'un bélier',
+    pool: () => DB.beliers || [],
+    isActive: b => (b.statut || 'actif') === 'actif',
+    typeSortie: ['Mort', 'Vendu', 'Vendu reproduction'],
+    applySortie: (b, type, cause, acheteur, date) => {
+      b.mouvements = b.mouvements || [];
+      b.mouvements.push({ type, cause: type === 'Mort' ? cause : null, acheteur, date });
+      b.statut = type === 'Mort' ? 'mort' : type === 'Vendu' ? 'vendu' : 'vendu reproduction';
+    }
+  },
+  agneaux: {
+    label: 'Agneaux', tous: 'Toutes les', actives: 'actives', singulier: 'un agneau',
+    pool: () => DB.agnelles || [],
+    isActive: a => (a.statut || 'active') === 'active',
+    typeSortie: ['Morte', 'Vendue', 'Vendue reproduction'],
+    // Contrairement à brebis/béliers, il n'existe pas d'onglet "sorties" pour
+    // les agnelles dans Inventaire : une sortie les archive dans le registre
+    // et les retire directement du roster de renouvellement (Chantier de
+    // tri), comme le bouton "Vendre" individuel (voir showVendreAgnelleModal).
+    applySortie: (ag, type, cause, acheteur, date) => {
+      ag.mouvements = ag.mouvements || [];
+      ag.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date });
+      ag.statut = type === 'Morte' ? 'morte' : type === 'Vendue' ? 'vendue' : 'vendue reproduction';
+      archiverDansRegistre('agneaux', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
+      DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
+    }
+  }
+};
+const CATEGORIE_TABS = [
+  { key: 'brebis', label: 'Brebis' },
+  { key: 'beliers', label: 'Béliers' },
+  { key: 'agneaux', label: 'Agneaux' }
+];
 
-  if (!window.__mouvementGroupeSelected) window.__mouvementGroupeSelected = new Set();
-  const selected = window.__mouvementGroupeSelected;
+/* ---------- Mouvement groupé (vente / sortie multiple) ---------- */
+let mouvementGroupeTab = 'brebis';
+function renderMouvementGroupe() {
+  const cfg = CATEGORIE_ANIMAL_CONFIG[mouvementGroupeTab];
+  pageTitle.textContent = 'Mouvement groupé — ' + cfg.label;
+  const today = new Date().toISOString().slice(0,10);
+  const actives = cfg.pool().filter(cfg.isActive);
+
+  if (!window.__mouvementGroupeSelected) window.__mouvementGroupeSelected = { brebis: new Set(), beliers: new Set(), agneaux: new Set() };
+  const selected = window.__mouvementGroupeSelected[mouvementGroupeTab];
   // Ne garde que les ids encore actifs (une sélection lancée puis reprise
-  // plus tard ne doit pas pointer vers une brebis déjà sortie entre-temps).
+  // plus tard ne doit pas pointer vers un animal déjà sorti entre-temps).
   Array.from(selected).forEach(id => { if (!actives.some(s => s.id === id)) selected.delete(id); });
 
   let type = null, cause = null, acheteur = null;
 
+  const tabBarHtml = `<div class="tab-bar" style="margin-bottom:14px;">${CATEGORIE_TABS.map(t =>
+    `<button type="button" class="tab-btn mvt-groupe-tab${mouvementGroupeTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
+  ).join('')}</div>`;
+
   function render_() {
-    app.innerHTML = `
+    app.innerHTML = tabBarHtml + `
       <div class="card">
         <label>Type de mouvement</label>
         <div class="grid2" style="margin-bottom:10px;">
-          <button type="button" class="opt-btn type-opt coral" data-val="Morte">Morte</button>
-          <button type="button" class="opt-btn type-opt coral" data-val="Vendue">Vendue</button>
-          <button type="button" class="opt-btn type-opt coral" data-val="Vendue reproduction" style="grid-column:span 2;">Vendue reproduction</button>
+          ${cfg.typeSortie.map((val, i) => `<button type="button" class="opt-btn type-opt coral" data-val="${val}"${i === 2 ? ' style="grid-column:span 2;"' : ''}>${val}</button>`).join('')}
         </div>
         <div id="cause-block" class="hidden" style="margin-bottom:14px;">
           <label>Cause</label>
@@ -4747,13 +4804,17 @@ function renderMouvementGroupe() {
       </div>
 
       <div class="card">
-        <label>Brebis concernées</label>
+        <label>${cfg.label} concerné${cfg.actives === 'actifs' ? 's' : 'es'}</label>
         <div id="groupe-picker"></div>
       </div>
 
       <div id="err" class="error-box hidden" style="margin-top:14px;"></div>
       <button class="btn btn-primary" id="btn-valider-groupe" style="margin-top:10px;background:var(--danger);">Valider ${selected.size} mouvement(s)</button>
     `;
+
+    document.querySelectorAll('.mvt-groupe-tab').forEach(btn => {
+      btn.onclick = () => { mouvementGroupeTab = btn.dataset.tab; render('mouvement-groupe'); };
+    });
 
     renderSelectionPicker(document.getElementById('groupe-picker'), actives, selected, {
       onChange: () => { document.getElementById('btn-valider-groupe').textContent = 'Valider ' + selected.size + ' mouvement(s)'; }
@@ -4792,12 +4853,12 @@ function renderMouvementGroupe() {
         type = btn.dataset.val;
         document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
-        document.getElementById('cause-block').classList.toggle('hidden', type !== 'Morte');
-        document.getElementById('acheteur-block').classList.toggle('hidden', !(type === 'Vendue' || type === 'Vendue reproduction'));
+        document.getElementById('cause-block').classList.toggle('hidden', type !== cfg.typeSortie[0]);
+        document.getElementById('acheteur-block').classList.toggle('hidden', !(type === cfg.typeSortie[1] || type === cfg.typeSortie[2]));
       };
     });
-    if (type === 'Morte') document.getElementById('cause-block').classList.remove('hidden');
-    if (type === 'Vendue' || type === 'Vendue reproduction') document.getElementById('acheteur-block').classList.remove('hidden');
+    if (type === cfg.typeSortie[0]) document.getElementById('cause-block').classList.remove('hidden');
+    if (type === cfg.typeSortie[1] || type === cfg.typeSortie[2]) document.getElementById('acheteur-block').classList.remove('hidden');
 
     document.getElementById('add-cause').onclick = () => {
       const input = document.getElementById('new-cause');
@@ -4817,16 +4878,12 @@ function renderMouvementGroupe() {
     document.getElementById('btn-valider-groupe').onclick = () => {
       const errBox = document.getElementById('err');
       if (!type) { errBox.textContent = "Choisis un type de mouvement."; errBox.classList.remove('hidden'); return; }
-      if ((type === 'Vendue' || type === 'Vendue reproduction') && !acheteur) { errBox.textContent = "Sélectionne ou ajoute un acheteur."; errBox.classList.remove('hidden'); return; }
-      if (selected.size === 0) { errBox.textContent = "Sélectionne au moins une brebis (à la main ou au bip)."; errBox.classList.remove('hidden'); return; }
-      if (!confirm('Appliquer "' + type + '" à ' + selected.size + ' brebis ?')) return;
+      if ((type === cfg.typeSortie[1] || type === cfg.typeSortie[2]) && !acheteur) { errBox.textContent = "Sélectionne ou ajoute un acheteur."; errBox.classList.remove('hidden'); return; }
+      if (selected.size === 0) { errBox.textContent = "Sélectionne au moins " + cfg.singulier + " (à la main ou au bip)."; errBox.classList.remove('hidden'); return; }
+      if (!confirm('Appliquer "' + type + '" à ' + selected.size + ' ' + cfg.label.toLowerCase() + ' ?')) return;
       const date = document.getElementById('f-date').value;
       const concernees = actives.filter(s => selected.has(s.id));
-      concernees.forEach(sheep => {
-        sheep.mouvements = sheep.mouvements || [];
-        sheep.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date });
-        sheep.statut = type === 'Morte' ? 'morte' : type === 'Vendue' ? 'vendue' : 'vendue reproduction';
-      });
+      concernees.forEach(animal => cfg.applySortie(animal, type, cause, acheteur, date));
       saveData(DB);
       selected.clear();
       alert(concernees.length + ' mouvement(s) enregistré(s).');
@@ -4979,22 +5036,41 @@ function renderGererProduits() {
   });
 }
 
-/* ---------- Traitement collectif (tout le troupeau) ---------- */
+/* ---------- Traitement collectif ---------- */
 function renderTraitementCollectif() {
-  pageTitle.textContent = 'Traitement collectif';
+  let categorie = null;
+
+  function screenChooseCategorie() {
+    pageTitle.textContent = 'Traitement collectif';
+    app.innerHTML = `
+      <div class="card">
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">À qui appliquer ce traitement ?</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          ${CATEGORIE_TABS.map(t => `<button type="button" class="opt-btn cat-tc-opt coral" data-val="${t.key}">${t.label}</button>`).join('')}
+        </div>
+      </div>
+    `;
+    document.querySelectorAll('.cat-tc-opt').forEach(btn => {
+      btn.onclick = () => { categorie = btn.dataset.val; screenForm(); };
+    });
+  }
+
+  function screenForm() {
+  const cfg = CATEGORIE_ANIMAL_CONFIG[categorie];
+  pageTitle.textContent = 'Traitement collectif — ' + cfg.label;
   const today = new Date().toISOString().slice(0,10);
-  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const actives = cfg.pool().filter(cfg.isActive);
 
   app.innerHTML = `
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
-        <div style="font-size:13px;color:var(--text-muted);">Applique un soin à plusieurs brebis en une fois.</div>
+        <div style="font-size:13px;color:var(--text-muted);">Applique un soin à plusieurs ${cfg.label.toLowerCase()} en une fois.</div>
       </div>
 
-      <label>Brebis concernées</label>
+      <label>${cfg.label} concerné${cfg.actives === 'actifs' ? 's' : 'es'}</label>
       <div class="grid2" style="margin-bottom:14px;">
-        <button type="button" class="opt-btn cible-opt coral selected" data-val="toutes">Toutes les actives (${actives.length})</button>
+        <button type="button" class="opt-btn cible-opt coral selected" data-val="toutes">${cfg.tous} ${cfg.actives} (${actives.length})</button>
         <button type="button" class="opt-btn cible-opt coral" data-val="partiel">Sélectionner une partie</button>
       </div>
       <div id="cible-picker" class="hidden" style="margin-bottom:14px;"></div>
@@ -5038,7 +5114,7 @@ function renderTraitementCollectif() {
       <input type="text" id="f-comment" placeholder="ex: rappel dans 3 semaines">
 
       <div id="err" class="error-box hidden"></div>
-      <button class="btn btn-primary" id="btn-save-collectif" style="background:var(--danger);">Appliquer aux ${actives.length} brebis actives</button>
+      <button class="btn btn-primary" id="btn-save-collectif" style="background:var(--danger);">Appliquer aux ${actives.length} ${cfg.label.toLowerCase()} ${cfg.actives}</button>
     </div>
   `;
 
@@ -5050,7 +5126,7 @@ function renderTraitementCollectif() {
     return cibleMode === 'toutes' ? actives : actives.filter(s => selectedCibles.has(s.id));
   }
   function updateSaveButtonLabel() {
-    document.getElementById('btn-save-collectif').textContent = 'Appliquer aux ' + cibles().length + ' brebis ' + (cibleMode === 'toutes' ? 'actives' : 'sélectionnées');
+    document.getElementById('btn-save-collectif').textContent = 'Appliquer aux ' + cibles().length + ' ' + cfg.label.toLowerCase() + ' ' + (cibleMode === 'toutes' ? cfg.actives : 'sélectionné' + (cfg.actives === 'actifs' ? 's' : 'es'));
   }
   document.querySelectorAll('.cible-opt').forEach(btn => {
     btn.onclick = () => {
@@ -5133,8 +5209,8 @@ function renderTraitementCollectif() {
     if (!type) { err.textContent = "Choisis un type d'évènement."; err.classList.remove('hidden'); return; }
     if (type === 'Traitement' && !sousType) { err.textContent = "Choisis une catégorie de traitement."; err.classList.remove('hidden'); return; }
     if (type !== 'Autre' && !produit) { err.textContent = "Sélectionne ou ajoute un produit."; err.classList.remove('hidden'); return; }
-    if (cible.length === 0) { err.textContent = "Sélectionne au moins une brebis (à la main ou au bip)."; err.classList.remove('hidden'); return; }
-    if (!confirm('Appliquer ce traitement collectif à ' + cible.length + ' brebis ?')) return;
+    if (cible.length === 0) { err.textContent = "Sélectionne au moins " + cfg.singulier + " (à la main ou au bip)."; err.classList.remove('hidden'); return; }
+    if (!confirm('Appliquer ce traitement collectif à ' + cible.length + ' ' + cfg.label.toLowerCase() + ' ?')) return;
     err.classList.add('hidden');
     const collectifId = 'TC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
     const soinDate = document.getElementById('f-date').value;
@@ -5156,15 +5232,19 @@ function renderTraitementCollectif() {
     DB.traitementsCollectifs = DB.traitementsCollectifs || [];
     DB.traitementsCollectifs.push({
       id: collectifId,
+      categorie: categorie,
       type: type, sousType: sousType, produit: soinProduit,
       date: soinDate, dose: soinDose, commentaire: soinComment,
       membres: cible.map(s => s.eid),
       createdAt: Date.now()
     });
     saveData(DB);
-    alert('Traitement appliqué à ' + cible.length + ' brebis.');
+    alert('Traitement appliqué à ' + cible.length + ' ' + cfg.label.toLowerCase() + '.');
     render('sanitaire');
   };
+  }
+
+  screenChooseCategorie();
 }
 
 /* ---------- Historique des traitements collectifs (suppression en masse) ----------
@@ -5180,15 +5260,20 @@ function renderTraitementCollectif() {
    avant suppression. */
 function detectLegacyCollectifGroups() {
   const groups = {};
-  DB.brebis.forEach(s => {
-    (s.sanitaire || []).forEach(soin => {
-      if (!soin.collectif || soin.collectifId) return;
-      const key = JSON.stringify([soin.type, soin.sousType || null, soin.produit || null]);
-      if (!groups[key]) groups[key] = { type: soin.type, sousType: soin.sousType, produit: soin.produit, dates: new Set(), membres: [] };
-      groups[key].dates.add(soin.date || '');
-      groups[key].membres.push(s.eid);
+  function scan(list, categorie) {
+    (list || []).forEach(animal => {
+      (animal.sanitaire || []).forEach(soin => {
+        if (!soin.collectif || soin.collectifId) return;
+        const key = JSON.stringify([categorie, soin.type, soin.sousType || null, soin.produit || null]);
+        if (!groups[key]) groups[key] = { categorie, type: soin.type, sousType: soin.sousType, produit: soin.produit, dates: new Set(), membres: [] };
+        groups[key].dates.add(soin.date || '');
+        groups[key].membres.push(animal.eid);
+      });
     });
-  });
+  }
+  scan(DB.brebis, 'brebis');
+  scan(DB.beliers, 'beliers');
+  scan(DB.agnelles, 'agneaux');
   return Object.values(groups)
     .map(g => ({ ...g, dates: Array.from(g.dates).filter(Boolean).sort() }))
     .filter(g => g.membres.length >= 2);
@@ -5204,14 +5289,15 @@ function renderTraitementsCollectifsHistorique() {
     if (dates.length === 1) return dates[0];
     return dates[0] + ' → ' + dates[dates.length - 1] + ' (' + dates.length + ' dates)';
   }
+  function catLabel(cat) { return CATEGORIE_ANIMAL_CONFIG[cat || 'brebis'].label; }
 
   const recentItemHtml = (t) => `
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
         <div>
-          <div style="font-weight:600;">${t.produit || t.type}${t.sousType ? ' · ' + t.sousType : ''}</div>
-          <div style="font-size:12px;color:var(--text-muted);">${t.date || 'date inconnue'} · ${t.membres.length} brebis</div>
+          <div style="font-weight:600;">${catLabel(t.categorie)} · ${t.produit || t.type}${t.sousType ? ' · ' + t.sousType : ''}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${t.date || 'date inconnue'} · ${t.membres.length} ${catLabel(t.categorie).toLowerCase()}</div>
         </div>
       </div>
       <button type="button" class="btn btn-secondary btn-del-collectif" data-key="id:${t.id}" style="color:var(--danger);border-color:var(--danger);">Supprimer ce traitement collectif</button>
@@ -5223,11 +5309,11 @@ function renderTraitementsCollectifsHistorique() {
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
         <div>
-          <div style="font-weight:600;">${g.produit || g.type}${g.sousType ? ' · ' + g.sousType : ''}</div>
-          <div style="font-size:12px;color:var(--text-muted);">${dateRangeLabel(g.dates)} · ${g.membres.length} brebis · saisie ancienne (sans identifiant)</div>
+          <div style="font-weight:600;">${catLabel(g.categorie)} · ${g.produit || g.type}${g.sousType ? ' · ' + g.sousType : ''}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${dateRangeLabel(g.dates)} · ${g.membres.length} ${catLabel(g.categorie).toLowerCase()} · saisie ancienne (sans identifiant)</div>
         </div>
       </div>
-      <button type="button" class="btn btn-secondary btn-del-collectif" data-key="legacy:${encodeURIComponent(JSON.stringify([g.type, g.sousType || null, g.produit || null]))}" style="color:var(--danger);border-color:var(--danger);">Supprimer ce traitement collectif</button>
+      <button type="button" class="btn btn-secondary btn-del-collectif" data-key="legacy:${encodeURIComponent(JSON.stringify([g.categorie, g.type, g.sousType || null, g.produit || null]))}" style="color:var(--danger);border-color:var(--danger);">Supprimer ce traitement collectif</button>
     </div>
   `;
 
@@ -5236,12 +5322,12 @@ function renderTraitementsCollectifsHistorique() {
     : [...DB.traitementsCollectifs].reverse().map(recentItemHtml).join('');
 
   const legacyHtml = legacyGroups.length === 0 ? '' : `
-    <div style="font-size:13px;color:var(--text-muted);margin:18px 2px 8px;">Groupes détectés dans d'anciennes saisies (avant cet écran), regroupés par produit toutes dates confondues — vérifie le nombre de brebis et la plage de dates avant de supprimer :</div>
+    <div style="font-size:13px;color:var(--text-muted);margin:18px 2px 8px;">Groupes détectés dans d'anciennes saisies (avant cet écran), regroupés par produit toutes dates confondues — vérifie le nombre d'animaux et la plage de dates avant de supprimer :</div>
     ${legacyGroups.map(legacyItemHtml).join('')}
   `;
 
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Retrouve un traitement appliqué à plusieurs brebis en une fois et supprime-le d'un coup de toutes les fiches concernées.</div>
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Retrouve un traitement appliqué à plusieurs animaux en une fois et supprime-le d'un coup de toutes les fiches concernées.</div>
     ${recentHtml}
     ${legacyHtml}
   `;
@@ -5253,20 +5339,22 @@ function renderTraitementsCollectifsHistorique() {
         const id = key.slice(3);
         const t = DB.traitementsCollectifs.find(x => x.id === id);
         if (!t) return;
-        if (!confirm('Supprimer ce traitement collectif de ' + t.membres.length + ' brebis ? Cette action est irréversible.')) return;
-        DB.brebis.forEach(s => {
-          if (!s.sanitaire) return;
-          s.sanitaire = s.sanitaire.filter(soin => soin.collectifId !== id);
+        if (!confirm('Supprimer ce traitement collectif de ' + t.membres.length + ' ' + catLabel(t.categorie).toLowerCase() + ' ? Cette action est irréversible.')) return;
+        const pool = CATEGORIE_ANIMAL_CONFIG[t.categorie || 'brebis'].pool();
+        pool.forEach(a => {
+          if (!a.sanitaire) return;
+          a.sanitaire = a.sanitaire.filter(soin => soin.collectifId !== id);
         });
         DB.traitementsCollectifs = DB.traitementsCollectifs.filter(x => x.id !== id);
       } else {
-        const [type, sousType, produit] = JSON.parse(decodeURIComponent(key.slice(7)));
-        const g = legacyGroups.find(x => x.type === type && (x.sousType || null) === sousType && (x.produit || null) === produit);
+        const [cat, type, sousType, produit] = JSON.parse(decodeURIComponent(key.slice(7)));
+        const g = legacyGroups.find(x => x.categorie === cat && x.type === type && (x.sousType || null) === sousType && (x.produit || null) === produit);
         if (!g) return;
-        if (!confirm('Supprimer ce groupe détecté (' + g.membres.length + ' brebis, ' + dateRangeLabel(g.dates) + ') ? Cette action est irréversible.')) return;
-        DB.brebis.forEach(s => {
-          if (!s.sanitaire) return;
-          s.sanitaire = s.sanitaire.filter(soin => !(soin.collectif && !soin.collectifId && soin.type === type && (soin.sousType || null) === sousType && (soin.produit || null) === produit));
+        if (!confirm('Supprimer ce groupe détecté (' + g.membres.length + ' ' + catLabel(cat).toLowerCase() + ', ' + dateRangeLabel(g.dates) + ') ? Cette action est irréversible.')) return;
+        const pool = CATEGORIE_ANIMAL_CONFIG[cat || 'brebis'].pool();
+        pool.forEach(a => {
+          if (!a.sanitaire) return;
+          a.sanitaire = a.sanitaire.filter(soin => !(soin.collectif && !soin.collectifId && soin.type === type && (soin.sousType || null) === sousType && (soin.produit || null) === produit));
         });
       }
       saveData(DB);
