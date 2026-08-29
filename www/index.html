@@ -369,6 +369,11 @@ function migrateData(d) {
   if (!d.exploitation) d.exploitation = { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' };
   if (!d.brebis) d.brebis = [];
   if (!d.prelevementsQualite) d.prelevementsQualite = [];
+  // Liste en série (onglet du Chantier de tri) : tableau {eid, espece} de
+  // travail, persisté pour survivre à une fermeture de l'appli, mais jamais
+  // relié aux fiches brebis/béliers/agnelles (espece n'est qu'une étiquette
+  // déduite à l'affichage, pas une référence).
+  if (!d.listeSerie) d.listeSerie = [];
   // Coefficient du calcul de prix (prixHorsQualite = MSU × coefficient), un
   // tableau d'entrées rattachées à une campagne plutôt qu'une valeur unique :
   // le prix de référence négocié avec la laiterie change chaque année (déjà
@@ -421,6 +426,7 @@ function loadData() {
     typesJournal: ['Lutte', 'Tonte', 'Vermifuge collectif', 'Visite vétérinaire'],
     laitTank: [],
     prelevementsQualite: [],
+    listeSerie: [],
     parametresPrixLait: [
       { campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null },
       { campagne: 2025, coefficientMsu: 12.1538, prixReference: 1580, msuReference: 130 }
@@ -1329,7 +1335,6 @@ const NAV_ITEMS = [
   { view: 'sanitaire', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
   { view: 'echo-rapide', label: 'Échographies', icon: ICON_ECHO, color: 'green' },
   { view: 'misebas-rapide', label: 'Mises-bas', icon: ICON_SHEEP, color: 'amber' },
-  { view: 'liste-serie', label: 'Liste en série', icon: ICON_JOURNAL, color: 'indigo' },
   { view: 'qualite', label: 'Qualité', icon: ICON_LAIT, color: 'blue' },
   { view: 'journal', label: 'Agenda', icon: ICON_JOURNAL, color: 'green' },
   { view: 'registre', label: "Registre d'élevage", icon: ICON_JOURNAL, color: 'coral' },
@@ -3824,13 +3829,15 @@ function renderMiseBasRapide() {
    on scanne à la suite et chaque bip (connu ou pas) rejoint la liste. Sert
    à faire un décompte ou une liste ad hoc (ex: animaux présents dans un
    parc, un lot de transport...) sans avoir à créer un lot de recherche ou
-   toucher aux fiches. La liste vit en mémoire (window.__listeSerieSession)
-   pour la durée de vie de l'appli, pas dans DB — un pense-bête temporaire,
-   pas un enregistrement métier à conserver ni à synchroniser. */
+   toucher aux fiches. 3e onglet du Chantier de tri (au même titre que Lots
+   de recherche et Tri des agnelles). La liste est persistée (DB.listeSerie,
+   sauvegardée comme le reste) pour survivre à une fermeture de l'appli,
+   mais reste un simple tableau d'EID + espèce déduite à l'affichage —
+   jamais reliée aux fiches brebis/béliers/agnelles elles-mêmes. */
 function renderListeSerie() {
-  pageTitle.textContent = 'Liste en série';
-  if (!window.__listeSerieSession) window.__listeSerieSession = [];
-  const session = window.__listeSerieSession;
+  pageTitle.textContent = 'Chantier de tri';
+  DB.listeSerie = DB.listeSerie || [];
+  const session = DB.listeSerie;
 
   function trouverAnimal(eid) {
     if (DB.brebis.some(s => cleanEid(s.eid) === eid)) return 'Brebis';
@@ -3840,8 +3847,8 @@ function renderListeSerie() {
   }
 
   function draw() {
-    app.innerHTML = `
-      <div class="card">
+    app.innerHTML = chantierTriTabBarHtml() + `
+      <div class="card" style="margin-top:14px;">
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">Scanne les animaux à la suite, un par un — peu importe qu'ils soient connus ou non, tous rejoignent la liste.</div>
         <label>Scanner un animal</label>
         <input type="text" id="scan-liste-serie" placeholder="Scanner ou saisir l'EID" autofocus>
@@ -3855,6 +3862,7 @@ function renderListeSerie() {
       <div id="liste-serie-rows"></div>
       <div id="liste-serie-empty" class="empty${session.length ? ' hidden' : ''}">Aucun animal scanné pour l'instant.</div>
     `;
+    wireChantierTriTabBar();
 
     const rowsEl = document.getElementById('liste-serie-rows');
     [...session].reverse().forEach((entry, revIdx) => {
@@ -3870,15 +3878,17 @@ function renderListeSerie() {
       rowsEl.appendChild(row);
     });
     document.querySelectorAll('.btn-remove-liste-serie').forEach(btn => {
-      // Retrait simple, sans confirm() : c'est une liste de travail éphémère
-      // qu'on peut reconstituer en re-scannant, pas un enregistrement
-      // métier — le "Vider" global, plus destructeur, reste confirmé.
-      btn.onclick = () => { session.splice(parseInt(btn.dataset.idx, 10), 1); draw(); };
+      // Retrait simple, sans confirm() : c'est une liste de travail, pas un
+      // enregistrement métier — le "Vider" global, plus destructeur, reste
+      // confirmé. Persistée quand même (saveData) pour que le retrait tienne
+      // après fermeture de l'appli, comme le reste de la liste.
+      btn.onclick = () => { session.splice(parseInt(btn.dataset.idx, 10), 1); saveData(DB); draw(); };
     });
     const btnVider = document.getElementById('btn-vider-liste-serie');
     if (btnVider) btnVider.onclick = () => {
       if (!confirm('Vider toute la liste (' + session.length + ' ' + (session.length > 1 ? 'animaux' : 'animal') + ') ?')) return;
       session.length = 0;
+      saveData(DB);
       draw();
     };
     const btnExport = document.getElementById('btn-export-liste-serie');
@@ -3902,6 +3912,7 @@ function renderListeSerie() {
       playBeepTrouve();
       feedback.textContent = '';
       session.push({ eid: val, espece: trouverAnimal(val) });
+      saveData(DB);
       draw();
     });
   }
@@ -6012,12 +6023,14 @@ function openQualiteSheet(record) {
 }
 
 /* ---------- Lots de recherche ---------- */
-/* Tab-bar partagée entre les deux onglets du Chantier de tri (Lots de
-   recherche = vue 'lots', Tri des agnelles = vue 'agnelles'). */
+/* Tab-bar partagée entre les trois onglets du Chantier de tri (Lots de
+   recherche = vue 'lots', Tri des agnelles = vue 'agnelles', Liste en
+   série = vue 'liste-serie'). */
 function chantierTriTabBarHtml() {
   return `<div class="tab-bar">
     <button type="button" class="tab-btn${currentView === 'lots' ? ' active' : ''}" data-tab="lots">Lots de recherche</button>
     <button type="button" class="tab-btn${currentView === 'agnelles' ? ' active' : ''}" data-tab="agnelles">Tri des agnelles</button>
+    <button type="button" class="tab-btn${currentView === 'liste-serie' ? ' active' : ''}" data-tab="liste-serie">Liste en série</button>
   </div>`;
 }
 function wireChantierTriTabBar() {
