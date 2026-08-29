@@ -635,6 +635,21 @@ function isGestanteEcho(echo) {
    deux coexistent pour la même campagne (mise bas ET vide définitive), on
    ne corrige rien silencieusement — voir l'alerte "Incohérences fin de
    campagne" du Bilan de campagne, à corriger à la main. */
+/* Détermine l'année de "campagneDebut" (1er octobre → 30 septembre) pour une
+   date arbitraire au format 'YYYY-MM-DD' — même règle que celle utilisée pour
+   démarrer une nouvelle campagne (voir renderParametres, bouton "Démarrer une
+   nouvelle campagne"), mais généralisée à n'importe quelle date passée (utile
+   pour regrouper un historique qui s'étale sur plusieurs campagnes, ex. le
+   tank laitier). Travaille directement sur la chaîne plutôt que via
+   new Date(...).getMonth() : le reste de l'appli compare déjà ces dates en
+   texte pour éviter tout décalage de fuseau horaire, on garde la même
+   approche ici. Un "Campagne 2026" (affiché ainsi partout dans l'appli) est
+   donc campagneAnneeDebutPourDate(...) + 1. */
+function campagneAnneeDebutPourDate(dateStr) {
+  const [y, m] = dateStr.split('-').map(Number);
+  return m >= 10 ? y : y - 1;
+}
+
 function estVideDefinitiveCampagne(sheep) {
   const list = Array.isArray(sheep.videesDefinitives) ? sheep.videesDefinitives : [];
   return list.some(v => v && v.campagne === DB.campagneDebut);
@@ -4713,10 +4728,16 @@ function renderJournal() {
   pageTitle.textContent = 'Agenda';
 
   const now = new Date();
-  const moisActuel = now.toISOString().slice(0,7); // 'YYYY-MM'
-  const anneeActuelle = now.toISOString().slice(0,4); // 'YYYY'
+  const dateDuJour = now.toISOString().slice(0,10); // 'YYYY-MM-DD'
+  const moisActuel = dateDuJour.slice(0,7); // 'YYYY-MM' — un mois ne chevauche jamais la bascule de campagne (1er oct), logique inchangée
+  const campagneActuelle = campagneAnneeDebutPourDate(dateDuJour);
   const totalLaitMois = Math.round(DB.laitTank.filter(l => (l.date||'').startsWith(moisActuel)).reduce((s,l) => s + l.quantite, 0) * 10) / 10;
-  const totalLaitAnnee = Math.round(DB.laitTank.filter(l => (l.date||'').startsWith(anneeActuelle)).reduce((s,l) => s + l.quantite, 0) * 10) / 10;
+  const totalLaitCampagne = Math.round(DB.laitTank.filter(l => l.date && campagneAnneeDebutPourDate(l.date) === campagneActuelle).reduce((s,l) => s + l.quantite, 0) * 10) / 10;
+
+  // Anti-doublon : une saisie par date. On calcule l'index existant pour la
+  // date par défaut (aujourd'hui) au rendu initial ; le champ date a aussi un
+  // écouteur qui refait ce calcul à chaque changement (voir plus bas).
+  const laitIdxPourDateDuJour = DB.laitTank.findIndex(l => l.date === dateDuJour);
 
   const luttesBrebis = DB.luttes.filter(l => l.cible === 'Brebis');
   const luttesAgnelles = DB.luttes.filter(l => l.cible === 'Agnelles');
@@ -4753,15 +4774,16 @@ function renderJournal() {
           <div style="font-size:22px;font-weight:600;color:var(--blue-fg);">${totalLaitMois} L</div>
         </div>
         <div>
-          <div style="font-size:12px;color:var(--text-muted);">Cette année</div>
-          <div style="font-size:22px;font-weight:600;color:var(--blue-fg);">${totalLaitAnnee} L</div>
+          <div style="font-size:12px;color:var(--text-muted);">Cette campagne</div>
+          <div style="font-size:22px;font-weight:600;color:var(--blue-fg);">${totalLaitCampagne} L</div>
         </div>
       </div>
       <label>Ajouter le relevé du jour</label>
       <div class="row">
-        <input type="date" id="f-lait-date" value="${new Date().toISOString().slice(0,10)}" style="flex:1;">
-        <input type="number" step="0.1" id="f-lait-qte" placeholder="Litres" style="flex:1;">
+        <input type="date" id="f-lait-date" value="${dateDuJour}" style="flex:1;">
+        <input type="number" step="0.1" id="f-lait-qte" placeholder="Litres" value="${laitIdxPourDateDuJour !== -1 ? DB.laitTank[laitIdxPourDateDuJour].quantite : ''}" style="flex:1;">
       </div>
+      <div id="lait-doublon-note" class="${laitIdxPourDateDuJour === -1 ? 'hidden' : ''}" style="font-size:12px;color:var(--warning);margin-top:6px;">${laitIdxPourDateDuJour !== -1 ? `Une saisie existe déjà pour le ${dateDuJour} (${DB.laitTank[laitIdxPourDateDuJour].quantite} L) — elle sera mise à jour.` : ''}</div>
       <div id="lait-err" class="error-box hidden"></div>
       <button class="btn btn-secondary" id="btn-save-lait" style="margin-top:8px;">Enregistrer</button>
       ${DB.laitTank.length > 0 ? '<div style="font-size:12px;color:var(--text-muted);margin-top:12px;margin-bottom:6px;">Derniers relevés</div>' : ''}
@@ -4827,16 +4849,36 @@ function renderJournal() {
     ${listHtml}
   `;
 
+  const laitDateInput = document.getElementById('f-lait-date');
+  const laitQteInput = document.getElementById('f-lait-qte');
+  const laitDoublonNote = document.getElementById('lait-doublon-note');
+  laitDateInput.addEventListener('input', () => {
+    const idx = DB.laitTank.findIndex(l => l.date === laitDateInput.value);
+    if (idx !== -1) {
+      laitQteInput.value = DB.laitTank[idx].quantite;
+      laitDoublonNote.textContent = `Une saisie existe déjà pour le ${laitDateInput.value} (${DB.laitTank[idx].quantite} L) — elle sera mise à jour.`;
+      laitDoublonNote.classList.remove('hidden');
+    } else {
+      laitQteInput.value = '';
+      laitDoublonNote.classList.add('hidden');
+    }
+  });
   document.getElementById('btn-save-lait').onclick = () => {
     const err = document.getElementById('lait-err');
-    const qte = parseFloat(document.getElementById('f-lait-qte').value);
+    const qte = parseFloat(laitQteInput.value);
     if (isNaN(qte) || qte < 0) {
       err.textContent = "Saisis une quantité valide.";
       err.classList.remove('hidden');
       return;
     }
     err.classList.add('hidden');
-    DB.laitTank.push({ date: document.getElementById('f-lait-date').value, quantite: Math.round(qte * 10) / 10 });
+    const date = laitDateInput.value;
+    // Anti-doublon : une saisie par date. Recalculé ici indépendamment de
+    // l'écouteur ci-dessus, pour garantir qu'aucune ligne en double ne peut
+    // être créée même si le champ date n'a pas déclenché son évènement.
+    const idx = DB.laitTank.findIndex(l => l.date === date);
+    if (idx !== -1) DB.laitTank[idx].quantite = Math.round(qte * 10) / 10;
+    else DB.laitTank.push({ date, quantite: Math.round(qte * 10) / 10 });
     saveData(DB);
     render('journal');
   };
@@ -6928,8 +6970,7 @@ function renderParametres() {
     });
     DB.agnelles = [];
 
-    const now = new Date();
-    DB.campagneDebut = now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1;
+    DB.campagneDebut = campagneAnneeDebutPourDate(dateRenouvellement);
     // Date réelle de ce clic, utilisée comme référence pour "brebis présentes"
     // dans Bilan de reproduction (voir campagneCohortPresente) — plus fidèle
     // que le 1er octobre calculé, puisque c'est le vrai instant de bascule
