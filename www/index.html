@@ -369,9 +369,18 @@ function migrateData(d) {
   if (!d.exploitation) d.exploitation = { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' };
   if (!d.brebis) d.brebis = [];
   if (!d.prelevementsQualite) d.prelevementsQualite = [];
-  // Coefficient empirique du calcul de prix (prixHorsQualite = MSU × coefficient),
-  // volontairement modifiable ici plutôt que codé en dur — voir renderQualite.
-  if (!d.parametresPrixLait) d.parametresPrixLait = { coefficientMsu: 11.924 };
+  // Coefficient du calcul de prix (prixHorsQualite = MSU × coefficient), un
+  // tableau d'entrées rattachées à une campagne plutôt qu'une valeur unique :
+  // le prix de référence négocié avec la laiterie change chaque année (déjà
+  // confirmé pour 2027), donc changer le coefficient ne doit jamais modifier
+  // les calculs déjà faits sur une campagne passée. Voir coefficientMsuPourCampagne.
+  if (!d.parametresPrixLait || !Array.isArray(d.parametresPrixLait)) {
+    const ancienCoef = (d.parametresPrixLait && typeof d.parametresPrixLait === 'object') ? d.parametresPrixLait.coefficientMsu : null;
+    // campagne 0 = "depuis toujours" (sentinelle, toujours antérieure à une
+    // vraie campagne) : sert de valeur par défaut tant qu'aucune campagne
+    // n'a reçu sa propre entrée.
+    d.parametresPrixLait = [{ campagne: 0, coefficientMsu: ancienCoef || 11.924, prixReference: null, msuReference: null }];
+  }
   if (!d.traitementsCollectifs) d.traitementsCollectifs = [];
   if (!d.registre) d.registre = { brebis: {}, beliers: {}, agneaux: {} };
   return d;
@@ -391,7 +400,7 @@ function loadData() {
     typesJournal: ['Lutte', 'Tonte', 'Vermifuge collectif', 'Visite vétérinaire'],
     laitTank: [],
     prelevementsQualite: [],
-    parametresPrixLait: { coefficientMsu: 11.924 },
+    parametresPrixLait: [{ campagne: 0, coefficientMsu: 11.924, prixReference: null, msuReference: null }],
     lots: [],
     exploitation: { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' },
     campagneDebut: null,
@@ -755,12 +764,46 @@ function moyennesQualitePonderees(list) {
   };
 }
 
+// Coefficient MSU applicable à une campagne donnée (campagneDebut, ex. 2025
+// pour "Campagne 2026") : cherche l'entrée la plus récente dont la campagne
+// est <= à celle demandée (elle "s'applique jusqu'à nouvel ordre"), pour que
+// changer la valeur au démarrage d'une nouvelle campagne ne touche jamais le
+// calcul déjà fait sur les campagnes précédentes. À défaut (campagne
+// demandée plus ancienne que toute entrée connue), retombe sur l'entrée la
+// plus ancienne disponible plutôt que d'inventer une valeur.
+function coefficientMsuPourCampagne(campagne) {
+  const entrees = (DB.parametresPrixLait || []).filter(e => e.coefficientMsu != null).slice().sort((a, b) => a.campagne - b.campagne);
+  if (entrees.length === 0) return 11.924;
+  let applicable = null;
+  entrees.forEach(e => { if (e.campagne <= campagne) applicable = e; });
+  return (applicable || entrees[0]).coefficientMsu;
+}
+function entreeCoefficientPourCampagne(campagne) {
+  return (DB.parametresPrixLait || []).find(e => e.campagne === campagne) || null;
+}
+// Crée ou met à jour l'entrée spécifique à cette campagne (jamais les
+// campagnes précédentes) — prixReference/msuReference sont de simples aides
+// de saisie facultatives (le couple annoncé par la laiterie), coefficientMsu
+// reste le seul champ réellement utilisé par le calcul.
+function upsertCoefficientCampagne(campagne, coefficientMsu, prixReference, msuReference) {
+  DB.parametresPrixLait = DB.parametresPrixLait || [];
+  const existante = entreeCoefficientPourCampagne(campagne);
+  if (existante) {
+    existante.coefficientMsu = coefficientMsu;
+    existante.prixReference = prixReference;
+    existante.msuReference = msuReference;
+  } else {
+    DB.parametresPrixLait.push({ campagne, coefficientMsu, prixReference, msuReference });
+  }
+}
+
 /* ---------- Calcul du prix du lait (phase 2) ----------
    Grille de notation reprise telle quelle du document laiterie "G. Coulet —
    Modalités achat lait" (DO S/051F/ACH, mise à jour 10-2023). Les seuils et
    incidences sont volontairement codés en dur ici (contrat laiterie, censé
-   ne pas bouger souvent) — seul le coefficient MSU ci-dessous est un
-   paramètre modifiable en cours de route (voir DB.parametresPrixLait).
+   ne pas bouger souvent, et à rouvrir ensemble si la laiterie change sa
+   grille un jour) — seul le coefficient MSU est un paramètre modifiable,
+   rattaché à une campagne (voir coefficientMsuPourCampagne ci-dessus).
 
    Note sur le seuil Coliformes "<100 / 101-500" : le document laisse un
    trou d'1 unité pile à 100 (ni "<100" ni "101-500" ne le couvre), qui est
@@ -5412,7 +5455,7 @@ function moisInfoPourIndex(campagneDebut, idx) {
 
 function renderQualite() {
   DB.prelevementsQualite = DB.prelevementsQualite || [];
-  DB.parametresPrixLait = DB.parametresPrixLait || { coefficientMsu: 11.924 };
+  if (!DB.parametresPrixLait || !Array.isArray(DB.parametresPrixLait)) DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 11.924, prixReference: null, msuReference: null }];
   pageTitle.textContent = 'Qualité';
 
   const today = new Date().toISOString().slice(0, 10);
@@ -5443,9 +5486,17 @@ function renderQualite() {
         <div style="font-size:14px;font-weight:700;">💶 Prix du lait</div>
         <button type="button" id="btn-prix-coef" style="font-size:11.5px;color:var(--text-muted);background:none;border:none;padding:0;cursor:pointer;">Coefficient MSU : <span id="prix-coef-value"></span> ✎</button>
       </div>
-      <div id="qualite-prix-coef-edit" class="hidden" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
-        <input type="number" step="0.001" id="prix-coef-input" style="margin:0;" />
-        <button type="button" class="btn btn-primary" id="btn-prix-coef-save" style="width:auto;padding:10px 16px;margin:0;">OK</button>
+      <div id="qualite-prix-coef-edit" class="hidden" style="margin-bottom:12px;">
+        <div id="prix-coef-heritage" style="font-size:11.5px;color:var(--text-muted);margin-bottom:8px;"></div>
+        <label style="margin-bottom:2px;">Prix référence (€/1000L) — optionnel</label>
+        <input type="number" step="0.01" id="prix-ref-input" placeholder="ex. 1580" style="margin-bottom:8px;" />
+        <label style="margin-bottom:2px;">MSU référence (g/L) — optionnel</label>
+        <input type="number" step="0.01" id="msu-ref-input" placeholder="ex. 130" style="margin-bottom:8px;" />
+        <label style="margin-bottom:2px;">Coefficient MSU (€/1000L par point) — calculé si les 2 champs ci-dessus sont remplis, sinon à saisir directement</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="number" step="0.001" id="prix-coef-input" style="margin:0;" />
+          <button type="button" class="btn btn-primary" id="btn-prix-coef-save" style="width:auto;padding:10px 16px;margin:0;">OK</button>
+        </div>
       </div>
       <div id="qualite-prix-body"></div>
     </div>
@@ -5494,7 +5545,7 @@ function renderQualite() {
   }
 
   function renderPrixLait(list) {
-    const coef = DB.parametresPrixLait.coefficientMsu;
+    const coef = coefficientMsuPourCampagne(state.campagne);
     document.getElementById('prix-coef-value').textContent = fmtDecimal(coef, 3);
     const volumeMois = state.mois ? volumeTankMois(state.mois) : 0;
     const res = calculerPrixLaitMois(list, volumeMois, coef);
@@ -5533,13 +5584,36 @@ function renderQualite() {
 
   document.getElementById('btn-prix-coef').onclick = () => {
     const editRow = document.getElementById('qualite-prix-coef-edit');
-    document.getElementById('prix-coef-input').value = DB.parametresPrixLait.coefficientMsu;
+    // Ne pré-remplit prixReference/msuReference que si une entrée existe DÉJÀ
+    // spécifiquement pour cette campagne — une valeur héritée d'une campagne
+    // antérieure n'a pas le même couple prix/MSU de référence, ça n'aurait
+    // pas de sens de le recopier ici.
+    const existante = entreeCoefficientPourCampagne(state.campagne);
+    document.getElementById('prix-ref-input').value = existante && existante.prixReference != null ? existante.prixReference : '';
+    document.getElementById('msu-ref-input').value = existante && existante.msuReference != null ? existante.msuReference : '';
+    document.getElementById('prix-coef-input').value = coefficientMsuPourCampagne(state.campagne);
+    document.getElementById('prix-coef-heritage').textContent = existante
+      ? 'Valeur déjà définie pour la Campagne ' + (state.campagne + 1) + '.'
+      : 'Aucune valeur propre à la Campagne ' + (state.campagne + 1) + ' — ci-dessous, la valeur héritée d\'une campagne antérieure. L\'enregistrer créera une entrée dédiée à cette campagne, sans toucher aux campagnes précédentes.';
     editRow.classList.toggle('hidden');
   };
+  // Recalcule automatiquement le coefficient dès que les 2 champs de
+  // référence sont remplis (mais reste modifiable à la main ensuite).
+  function recalculerCoefDepuisReference() {
+    const pr = parseFloat(document.getElementById('prix-ref-input').value);
+    const msuRef = parseFloat(document.getElementById('msu-ref-input').value);
+    if (!isNaN(pr) && !isNaN(msuRef) && msuRef > 0) {
+      document.getElementById('prix-coef-input').value = (pr / msuRef).toFixed(3);
+    }
+  }
+  document.getElementById('prix-ref-input').oninput = recalculerCoefDepuisReference;
+  document.getElementById('msu-ref-input').oninput = recalculerCoefDepuisReference;
   document.getElementById('btn-prix-coef-save').onclick = () => {
     const v = parseFloat(document.getElementById('prix-coef-input').value);
     if (isNaN(v) || v <= 0) { alert('Coefficient invalide.'); return; }
-    DB.parametresPrixLait.coefficientMsu = v;
+    const pr = parseFloat(document.getElementById('prix-ref-input').value);
+    const msuRef = parseFloat(document.getElementById('msu-ref-input').value);
+    upsertCoefficientCampagne(state.campagne, v, isNaN(pr) ? null : pr, isNaN(msuRef) ? null : msuRef);
     saveData(DB);
     document.getElementById('qualite-prix-coef-edit').classList.add('hidden');
     renderStatsAndList();
