@@ -379,7 +379,28 @@ function migrateData(d) {
     // campagne 0 = "depuis toujours" (sentinelle, toujours antérieure à une
     // vraie campagne) : sert de valeur par défaut tant qu'aucune campagne
     // n'a reçu sa propre entrée.
-    d.parametresPrixLait = [{ campagne: 0, coefficientMsu: ancienCoef || 11.924, prixReference: null, msuReference: null }];
+    d.parametresPrixLait = [{ campagne: 0, coefficientMsu: ancienCoef || 12.1538, prixReference: null, msuReference: null }];
+  }
+  // Correction du coefficient MSU (29/08/2026) : 11,924 était une déduction
+  // empirique erronée (erreur non identifiée dans une feuille Excel) et ne
+  // doit plus jamais être utilisée. Le coefficient officiel confirmé est
+  // 1580€/1000L ÷ 130 g/L = 12,1538. Corrige toute entrée qui porterait
+  // encore l'ancienne valeur fautive, quelle que soit sa campagne — jamais
+  // un total déjà affiché ne doit rester basé dessus, et comme aucun total
+  // n'est stocké en dur (tout est recalculé à l'affichage), corriger la
+  // source suffit à corriger tous les calculs déjà faits.
+  d.parametresPrixLait.forEach(e => {
+    if (Math.abs(e.coefficientMsu - 11.924) < 0.0005) {
+      e.coefficientMsu = 12.1538;
+      e.prixReference = 1580;
+      e.msuReference = 130;
+    }
+  });
+  // Valeur officielle confirmée pour la Campagne 2026 (campagneDebut 2025) :
+  // n'écrase jamais une entrée déjà présente (l'utilisateur a pu la modifier
+  // depuis), ne fait que la créer si elle manque encore.
+  if (!d.parametresPrixLait.some(e => e.campagne === 2025)) {
+    d.parametresPrixLait.push({ campagne: 2025, coefficientMsu: 12.1538, prixReference: 1580, msuReference: 130 });
   }
   if (!d.traitementsCollectifs) d.traitementsCollectifs = [];
   if (!d.registre) d.registre = { brebis: {}, beliers: {}, agneaux: {} };
@@ -400,7 +421,10 @@ function loadData() {
     typesJournal: ['Lutte', 'Tonte', 'Vermifuge collectif', 'Visite vétérinaire'],
     laitTank: [],
     prelevementsQualite: [],
-    parametresPrixLait: [{ campagne: 0, coefficientMsu: 11.924, prixReference: null, msuReference: null }],
+    parametresPrixLait: [
+      { campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null },
+      { campagne: 2025, coefficientMsu: 12.1538, prixReference: 1580, msuReference: 130 }
+    ],
     lots: [],
     exploitation: { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' },
     campagneDebut: null,
@@ -773,7 +797,7 @@ function moyennesQualitePonderees(list) {
 // plus ancienne disponible plutôt que d'inventer une valeur.
 function coefficientMsuPourCampagne(campagne) {
   const entrees = (DB.parametresPrixLait || []).filter(e => e.coefficientMsu != null).slice().sort((a, b) => a.campagne - b.campagne);
-  if (entrees.length === 0) return 11.924;
+  if (entrees.length === 0) return 12.1538;
   let applicable = null;
   entrees.forEach(e => { if (e.campagne <= campagne) applicable = e; });
   return (applicable || entrees[0]).coefficientMsu;
@@ -5455,7 +5479,7 @@ function moisInfoPourIndex(campagneDebut, idx) {
 
 function renderQualite() {
   DB.prelevementsQualite = DB.prelevementsQualite || [];
-  if (!DB.parametresPrixLait || !Array.isArray(DB.parametresPrixLait)) DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 11.924, prixReference: null, msuReference: null }];
+  if (!DB.parametresPrixLait || !Array.isArray(DB.parametresPrixLait)) DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null }];
   pageTitle.textContent = 'Qualité';
 
   const today = new Date().toISOString().slice(0, 10);
@@ -5494,7 +5518,7 @@ function renderQualite() {
         <input type="number" step="0.01" id="msu-ref-input" placeholder="ex. 130" style="margin-bottom:8px;" />
         <label style="margin-bottom:2px;">Coefficient MSU (€/1000L par point) — calculé si les 2 champs ci-dessus sont remplis, sinon à saisir directement</label>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="number" step="0.001" id="prix-coef-input" style="margin:0;" />
+          <input type="number" step="0.0001" id="prix-coef-input" style="margin:0;" />
           <button type="button" class="btn btn-primary" id="btn-prix-coef-save" style="width:auto;padding:10px 16px;margin:0;">OK</button>
         </div>
       </div>
@@ -5546,7 +5570,7 @@ function renderQualite() {
 
   function renderPrixLait(list) {
     const coef = coefficientMsuPourCampagne(state.campagne);
-    document.getElementById('prix-coef-value').textContent = fmtDecimal(coef, 3);
+    document.getElementById('prix-coef-value').textContent = fmtDecimal(coef, 4);
     const volumeMois = state.mois ? volumeTankMois(state.mois) : 0;
     const res = calculerPrixLaitMois(list, volumeMois, coef);
     const g = res.grades;
@@ -5556,7 +5580,7 @@ function renderQualite() {
     const superARaison = res.superA.eligible ? 'Bonus +70,00 €/1000L appliqué' : (res.superA.raison || 'pas de résultat ce mois');
     document.getElementById('qualite-prix-body').innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div style="font-size:13px;color:var(--text-muted);">Prix hors qualité <span style="font-size:11px;">(MSU × ${fmtDecimal(coef, 3)})</span></div>
+        <div style="font-size:13px;color:var(--text-muted);">Prix hors qualité <span style="font-size:11px;">(MSU × ${fmtDecimal(coef, 4)})</span></div>
         <div style="font-weight:700;font-size:15px;">${fmtEuro(res.prixHorsQualite)}${res.prixHorsQualite !== null ? ' /1000L' : ''}</div>
       </div>
       ${ligneGrade('Cellules', g.cellules)}
@@ -5603,7 +5627,7 @@ function renderQualite() {
     const pr = parseFloat(document.getElementById('prix-ref-input').value);
     const msuRef = parseFloat(document.getElementById('msu-ref-input').value);
     if (!isNaN(pr) && !isNaN(msuRef) && msuRef > 0) {
-      document.getElementById('prix-coef-input').value = (pr / msuRef).toFixed(3);
+      document.getElementById('prix-coef-input').value = (pr / msuRef).toFixed(4);
     }
   }
   document.getElementById('prix-ref-input').oninput = recalculerCoefDepuisReference;
