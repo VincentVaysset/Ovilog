@@ -1308,7 +1308,7 @@ let bilanCampagneTab = 'incoherences';
 
 // Vues racines, accessibles directement depuis le menu hamburger : elles
 // affichent le hamburger (pas de flèche retour) dans l'en-tête.
-const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite']);
+const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite', 'liste-serie']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -1329,6 +1329,7 @@ const NAV_ITEMS = [
   { view: 'sanitaire', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
   { view: 'echo-rapide', label: 'Échographies', icon: ICON_ECHO, color: 'green' },
   { view: 'misebas-rapide', label: 'Mises-bas', icon: ICON_SHEEP, color: 'amber' },
+  { view: 'liste-serie', label: 'Liste en série', icon: ICON_JOURNAL, color: 'indigo' },
   { view: 'qualite', label: 'Qualité', icon: ICON_LAIT, color: 'blue' },
   { view: 'journal', label: 'Agenda', icon: ICON_JOURNAL, color: 'green' },
   { view: 'registre', label: "Registre d'élevage", icon: ICON_JOURNAL, color: 'coral' },
@@ -1529,6 +1530,7 @@ function render(view, sheepId) {
     else if (view === 'add-sanitaire-belier') renderAddSanitaireBelier(currentBelierId);
     else if (view === 'add-mouvement-belier') renderAddMouvementBelier(currentBelierId);
     else if (view === 'qualite') renderQualite();
+    else if (view === 'liste-serie') renderListeSerie();
     else if (view === 'journal') renderJournal();
     else if (view === 'lots') renderLots();
     else if (view === 'add-lot') renderAddLot();
@@ -3813,6 +3815,93 @@ function renderMiseBasRapide() {
     }
   }
 
+  draw();
+}
+
+/* ---------- Liste en série ----------
+   Scan-loop volontairement minimal : pas de fiche, pas de validation par
+   champ, pas de distinction connue/inconnue qui bloque quoi que ce soit —
+   on scanne à la suite et chaque bip (connu ou pas) rejoint la liste. Sert
+   à faire un décompte ou une liste ad hoc (ex: animaux présents dans un
+   parc, un lot de transport...) sans avoir à créer un lot de recherche ou
+   toucher aux fiches. La liste vit en mémoire (window.__listeSerieSession)
+   pour la durée de vie de l'appli, pas dans DB — un pense-bête temporaire,
+   pas un enregistrement métier à conserver ni à synchroniser. */
+function renderListeSerie() {
+  pageTitle.textContent = 'Liste en série';
+  if (!window.__listeSerieSession) window.__listeSerieSession = [];
+  const session = window.__listeSerieSession;
+
+  function trouverAnimal(eid) {
+    if (DB.brebis.some(s => cleanEid(s.eid) === eid)) return 'Brebis';
+    if (DB.beliers.some(s => cleanEid(s.eid) === eid)) return 'Bélier';
+    if (DB.agnelles.some(s => cleanEid(s.eid) === eid)) return 'Agnelle';
+    return null;
+  }
+
+  function draw() {
+    app.innerHTML = `
+      <div class="card">
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">Scanne les animaux à la suite, un par un — peu importe qu'ils soient connus ou non, tous rejoignent la liste.</div>
+        <label>Scanner un animal</label>
+        <input type="text" id="scan-liste-serie" placeholder="Scanner ou saisir l'EID" autofocus>
+        <div id="scan-liste-feedback" style="margin-top:8px;font-size:13px;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 8px;">
+        <div style="font-size:14px;font-weight:600;">${session.length} ${session.length > 1 ? 'animaux' : 'animal'} dans la liste</div>
+        ${session.length > 0 ? '<button type="button" class="btn btn-secondary" id="btn-vider-liste-serie" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Vider</button>' : ''}
+      </div>
+      <div id="liste-serie-rows"></div>
+      <div id="liste-serie-empty" class="empty${session.length ? ' hidden' : ''}">Aucun animal scanné pour l'instant.</div>
+    `;
+
+    const rowsEl = document.getElementById('liste-serie-rows');
+    [...session].reverse().forEach((entry, revIdx) => {
+      const idx = session.length - 1 - revIdx;
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid var(--border);';
+      row.innerHTML = `
+        <div style="font-weight:600;">n°${numeroVisuel(entry.eid)}
+          ${entry.espece ? `<span class="badge badge-green" style="margin-left:6px;">${entry.espece}</span>` : '<span class="badge badge-muted" style="margin-left:6px;">Inconnu</span>'}
+        </div>
+        <button type="button" class="btn-remove-liste-serie" data-idx="${idx}" style="background:none;border:none;color:var(--text-muted);font-size:19px;padding:2px 8px;line-height:1;">✕</button>
+      `;
+      rowsEl.appendChild(row);
+    });
+    document.querySelectorAll('.btn-remove-liste-serie').forEach(btn => {
+      // Retrait simple, sans confirm() : c'est une liste de travail éphémère
+      // qu'on peut reconstituer en re-scannant, pas un enregistrement
+      // métier — le "Vider" global, plus destructeur, reste confirmé.
+      btn.onclick = () => { session.splice(parseInt(btn.dataset.idx, 10), 1); draw(); };
+    });
+    const btnVider = document.getElementById('btn-vider-liste-serie');
+    if (btnVider) btnVider.onclick = () => {
+      if (!confirm('Vider toute la liste (' + session.length + ' ' + (session.length > 1 ? 'animaux' : 'animal') + ') ?')) return;
+      session.length = 0;
+      draw();
+    };
+
+    const scanInput = document.getElementById('scan-liste-serie');
+    setActiveScanTarget(scanInput);
+    scanInput.focus();
+    scanInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const val = cleanEid(scanInput.value);
+      const feedback = document.getElementById('scan-liste-feedback');
+      scanInput.value = '';
+      if (!val) return;
+      if (session.some(entry => entry.eid === val)) {
+        playBeepDejaTrouve();
+        feedback.textContent = 'n°' + numeroVisuel(val) + ' déjà dans la liste.';
+        feedback.style.color = 'var(--warning)';
+        return;
+      }
+      playBeepTrouve();
+      feedback.textContent = '';
+      session.push({ eid: val, espece: trouverAnimal(val) });
+      draw();
+    });
+  }
   draw();
 }
 
