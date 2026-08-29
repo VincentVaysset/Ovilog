@@ -369,6 +369,9 @@ function migrateData(d) {
   if (!d.exploitation) d.exploitation = { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' };
   if (!d.brebis) d.brebis = [];
   if (!d.prelevementsQualite) d.prelevementsQualite = [];
+  // Coefficient empirique du calcul de prix (prixHorsQualite = MSU × coefficient),
+  // volontairement modifiable ici plutôt que codé en dur — voir renderQualite.
+  if (!d.parametresPrixLait) d.parametresPrixLait = { coefficientMsu: 11.924 };
   if (!d.traitementsCollectifs) d.traitementsCollectifs = [];
   if (!d.registre) d.registre = { brebis: {}, beliers: {}, agneaux: {} };
   return d;
@@ -388,6 +391,7 @@ function loadData() {
     typesJournal: ['Lutte', 'Tonte', 'Vermifuge collectif', 'Visite vétérinaire'],
     laitTank: [],
     prelevementsQualite: [],
+    parametresPrixLait: { coefficientMsu: 11.924 },
     lots: [],
     exploitation: { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' },
     campagneDebut: null,
@@ -749,6 +753,148 @@ function moyennesQualitePonderees(list) {
     floreTotale: moyenneArithmetiqueQualite(list, 'floreTotale'),
     butyriques: moyenneArithmetiqueQualite(list, 'butyriques')
   };
+}
+
+/* ---------- Calcul du prix du lait (phase 2) ----------
+   Grille de notation reprise telle quelle du document laiterie "G. Coulet —
+   Modalités achat lait" (DO S/051F/ACH, mise à jour 10-2023). Les seuils et
+   incidences sont volontairement codés en dur ici (contrat laiterie, censé
+   ne pas bouger souvent) — seul le coefficient MSU ci-dessous est un
+   paramètre modifiable en cours de route (voir DB.parametresPrixLait).
+
+   Note sur le seuil Coliformes "<100 / 101-500" : le document laisse un
+   trou d'1 unité pile à 100 (ni "<100" ni "101-500" ne le couvre), qui est
+   manifestement un artefact de rédaction et non une règle métier. Choix
+   pris ici : v<100 → 3 pts, 100≤v≤500 → 2 pts (on rattache 100 au palier
+   du dessus), pour ne jamais laisser une valeur sans note. */
+const GRILLE_QUALITE_LAIT = {
+  cellules:   { A: 0, B: 0, C: -30.50, D: -68.60 },
+  coliformes: { A: 0, B: 0, C: -30.50, D: -68.60 },
+  floreTotale:{ A: 0, B: -30.50, C: -68.60 },
+  butyriques: { A: 0, B: -30.50, C: -68.60 }
+};
+
+// Cellules : grade calculé directement sur la moyenne arithmétique du mois
+// (pas de notation par prélèvement, contrairement aux 3 autres).
+function gradeCellules(moyenne) {
+  if (moyenne === null) return null;
+  if (moyenne <= 450000) return 'A';
+  if (moyenne <= 640000) return 'B';
+  if (moyenne <= 880000) return 'C';
+  return 'D';
+}
+
+function noteColiforme(v) { if (v < 100) return 3; if (v <= 500) return 2; if (v <= 2500) return 1; return 0; }
+function noteFlore(v) { if (v <= 100000) return 3; if (v <= 250000) return 2; return 1; }
+function noteButyrique(v) { if (v <= 1300) return 3; if (v <= 2400) return 2; return 1; }
+
+// Grade à partir de la somme des notes du mois — dépend du nombre de
+// prélèvements où l'indicateur est renseigné ce mois-ci (1, 2 ou 3 sur la
+// grille papier). Au-delà de 3 (ou 0), la grille ne dit rien : on renvoie
+// null plutôt que d'inventer un seuil ("hors barème", affiché comme tel,
+// jamais compté dans l'incidence).
+function gradeSommeColiforme(sum, n) {
+  if (n === 3) return sum >= 8 ? 'A' : sum >= 6 ? 'B' : sum === 5 ? 'C' : 'D';
+  if (n === 2) return sum >= 5 ? 'A' : sum === 4 ? 'B' : sum === 3 ? 'C' : 'D';
+  if (n === 1) return sum === 3 ? 'A' : sum === 2 ? 'B' : sum === 1 ? 'C' : 'D';
+  return null;
+}
+// Flore totale et Butyriques : pas de grade D sur la grille réelle (le
+// grade C est un plancher — mathématiquement inatteignable en-dessous
+// puisque la note minimale par prélèvement est 1, jamais 0).
+function gradeSommeFlore(sum, n) {
+  if (n === 3) return sum >= 8 ? 'A' : sum >= 6 ? 'B' : 'C';
+  if (n === 2) return sum >= 5 ? 'A' : sum === 4 ? 'B' : 'C';
+  if (n === 1) return sum === 3 ? 'A' : sum === 2 ? 'B' : 'C';
+  return null;
+}
+// Butyriques : la grille ne définit que 2 notes / 1 note (pas de colonne
+// "3 notes" contrairement aux 3 autres indicateurs) — au-delà, hors barème.
+function gradeSommeButyrique(sum, n) {
+  if (n === 2) return sum >= 5 ? 'A' : sum >= 3 ? 'B' : 'C';
+  if (n === 1) return sum === 3 ? 'A' : sum === 2 ? 'B' : 'C';
+  return null;
+}
+
+function calculerGradeParNotes(list, key, noteFn, gradeFn) {
+  const valeurs = list.map(p => p[key]).filter(v => v !== null && v !== undefined);
+  if (valeurs.length === 0) return { grade: null, sum: null, n: 0 };
+  const sum = valeurs.reduce((acc, v) => acc + noteFn(v), 0);
+  return { grade: gradeFn(sum, valeurs.length), sum, n: valeurs.length };
+}
+
+// Grades + incidence (€/1000L) des 4 indicateurs du mois. incidence vaut 0
+// aussi bien pour un grade B "neutre" que pour un indicateur non calculable
+// (pas de résultat renseigné, ou nombre de prélèvements hors barème) — dans
+// les deux cas, on ne pénalise ni ne bonifie ce qu'on ne sait pas noter.
+function calculerGradesQualiteMois(list) {
+  const moy = moyennesQualitePonderees(list);
+  const cGrade = gradeCellules(moy.cellules);
+  const coli = calculerGradeParNotes(list, 'coliformes', noteColiforme, gradeSommeColiforme);
+  const flore = calculerGradeParNotes(list, 'floreTotale', noteFlore, gradeSommeFlore);
+  const buty = calculerGradeParNotes(list, 'butyriques', noteButyrique, gradeSommeButyrique);
+  return {
+    moyennes: moy,
+    cellules:   { grade: cGrade, incidence: cGrade ? GRILLE_QUALITE_LAIT.cellules[cGrade] : 0 },
+    coliformes: { grade: coli.grade, n: coli.n, sum: coli.sum, incidence: coli.grade ? GRILLE_QUALITE_LAIT.coliformes[coli.grade] : 0 },
+    floreTotale:{ grade: flore.grade, n: flore.n, sum: flore.sum, incidence: flore.grade ? GRILLE_QUALITE_LAIT.floreTotale[flore.grade] : 0 },
+    butyriques: { grade: buty.grade, n: buty.n, sum: buty.sum, incidence: buty.grade ? GRILLE_QUALITE_LAIT.butyriques[buty.grade] : 0 }
+  };
+}
+
+// Bonus Super A : les 4 grades A + aucun résultat positif Listéria/Salmonelles
+// ce mois-ci parmi les critères qu'Ovilog sait vérifier. La grille réelle
+// exige en plus l'absence d'antibiotiques, de virage résazurine et de
+// déclassement hygiène — non trackés dans Ovilog : le statut "obtenu" reste
+// donc sous réserve de ces 3 critères externes (mention affichée à l'écran),
+// jamais présenté comme une certification définitive.
+function calculerSuperA(grades, list) {
+  const grades4A = grades.cellules.grade === 'A' && grades.coliformes.grade === 'A' && grades.floreTotale.grade === 'A' && grades.butyriques.grade === 'A';
+  const positif = list.some(p => p.listeria === 'positif' || p.salmonelles === 'positif');
+  const eligible = grades4A && !positif;
+  let raison = null;
+  if (!eligible) {
+    if (positif) {
+      raison = 'Résultat positif Listéria/Salmonelles ce mois';
+    } else {
+      const manquants = [];
+      if (grades.cellules.grade !== 'A') manquants.push('Cellules');
+      if (grades.coliformes.grade !== 'A') manquants.push('Coliformes');
+      if (grades.floreTotale.grade !== 'A') manquants.push('Flore totale');
+      if (grades.butyriques.grade !== 'A') manquants.push('Butyriques');
+      raison = 'Grade non-A : ' + manquants.join(', ');
+    }
+  }
+  return { eligible, raison };
+}
+
+// Volume total de lait livré sur le mois (tank complet, pas seulement les
+// jours avec prélèvement qualité) — c'est ce volume-là qui sert de base au
+// total € du mois, le prix s'appliquant à tout le lait livré, pas qu'aux
+// jours échantillonnés.
+function volumeTankMois(moisKey) {
+  return DB.laitTank.filter(l => l.date.slice(0, 7) === moisKey).reduce((s, l) => s + l.quantite, 0);
+}
+
+function calculerPrixLaitMois(list, volumeTotalMoisL, coefficientMsu) {
+  const grades = calculerGradesQualiteMois(list);
+  const superA = calculerSuperA(grades, list);
+  const prixHorsQualite = grades.moyennes.msu !== null ? grades.moyennes.msu * coefficientMsu : null;
+  const incidenceQualite = grades.cellules.incidence + grades.coliformes.incidence + grades.floreTotale.incidence + grades.butyriques.incidence + (superA.eligible ? 70 : 0);
+  const prixAvecQualite = prixHorsQualite !== null ? prixHorsQualite + incidenceQualite : null;
+  const totalMois = prixAvecQualite !== null ? prixAvecQualite * (volumeTotalMoisL / 1000) : null;
+  return { grades, superA, prixHorsQualite, incidenceQualite, prixAvecQualite, totalMois, volumeTotalMoisL };
+}
+
+// Formatage euros à la française, avec signe explicite pour les incidences
+// (utile pour distinguer "0,00 €" d'un B neutre d'un "+70,00 €" de bonus).
+function fmtEuro(n, avecSigne) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  const signe = avecSigne && n > 0 ? '+' : '';
+  return signe + n.toFixed(2).replace('.', ',') + ' €';
+}
+function gradeBadgeClass(grade) {
+  return grade === 'A' ? 'badge-green' : grade === 'B' ? 'badge-gray' : grade === 'C' ? 'badge-amber' : grade === 'D' ? 'badge-coral' : 'badge-muted';
 }
 
 function valOrEmpty(v) { return (v === null || v === undefined) ? '' : v; }
@@ -5266,6 +5412,7 @@ function moisInfoPourIndex(campagneDebut, idx) {
 
 function renderQualite() {
   DB.prelevementsQualite = DB.prelevementsQualite || [];
+  DB.parametresPrixLait = DB.parametresPrixLait || { coefficientMsu: 11.924 };
   pageTitle.textContent = 'Qualité';
 
   const today = new Date().toISOString().slice(0, 10);
@@ -5289,6 +5436,18 @@ function renderQualite() {
       <div class="stat-card sc-blue"><div class="stat-card-label">TP moyen</div><div class="stat-card-value" id="qualite-stat-tp">—</div><div class="stat-card-sub">pondéré par le volume</div></div>
       <div class="stat-card sc-blue"><div class="stat-card-label">MSU moyen</div><div class="stat-card-value" id="qualite-stat-msu">—</div><div class="stat-card-sub">TB + TP pondérés</div></div>
       <div class="stat-card sc-blue"><div class="stat-card-label">Cellules moyennes</div><div class="stat-card-value" id="qualite-stat-cellules">—</div><div class="stat-card-sub">milliers/mL, moyenne simple</div></div>
+    </div>
+
+    <div class="card" id="qualite-prix-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-size:14px;font-weight:700;">💶 Prix du lait</div>
+        <button type="button" id="btn-prix-coef" style="font-size:11.5px;color:var(--text-muted);background:none;border:none;padding:0;cursor:pointer;">Coefficient MSU : <span id="prix-coef-value"></span> ✎</button>
+      </div>
+      <div id="qualite-prix-coef-edit" class="hidden" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+        <input type="number" step="0.001" id="prix-coef-input" style="margin:0;" />
+        <button type="button" class="btn btn-primary" id="btn-prix-coef-save" style="width:auto;padding:10px 16px;margin:0;">OK</button>
+      </div>
+      <div id="qualite-prix-body"></div>
     </div>
 
     <button type="button" class="btn btn-secondary" id="btn-qualite-add" style="margin-bottom:16px;">+ Nouveau prélèvement qualité</button>
@@ -5323,6 +5482,69 @@ function renderQualite() {
     Array.from(row.children).forEach(chip => chip.classList.toggle('selected', chip.dataset.key === state.mois));
   }
 
+  function ligneGrade(nomAffiche, g) {
+    const badge = `<span class="badge ${gradeBadgeClass(g.grade)}" style="margin-left:6px;">${g.grade || '—'}</span>`;
+    const detail = g.grade === null
+      ? (g.n > 0 ? g.n + ' prélèvement(s), hors barème' : 'pas de résultat ce mois')
+      : (g.n !== undefined ? g.n + ' prélèvement(s), somme ' + g.sum : 'moyenne du mois');
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+      <div><div style="font-size:13.5px;">${nomAffiche}${badge}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${detail}</div></div>
+      <div style="font-weight:600;font-size:13.5px;">${fmtEuro(g.incidence, true)}</div>
+    </div>`;
+  }
+
+  function renderPrixLait(list) {
+    const coef = DB.parametresPrixLait.coefficientMsu;
+    document.getElementById('prix-coef-value').textContent = fmtDecimal(coef, 3);
+    const volumeMois = state.mois ? volumeTankMois(state.mois) : 0;
+    const res = calculerPrixLaitMois(list, volumeMois, coef);
+    const g = res.grades;
+    const superABadge = res.superA.eligible
+      ? '<span class="badge badge-green" style="margin-left:6px;">Obtenu</span>'
+      : '<span class="badge badge-coral" style="margin-left:6px;">Non obtenu</span>';
+    const superARaison = res.superA.eligible ? 'Bonus +70,00 €/1000L appliqué' : (res.superA.raison || 'pas de résultat ce mois');
+    document.getElementById('qualite-prix-body').innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:13px;color:var(--text-muted);">Prix hors qualité <span style="font-size:11px;">(MSU × ${fmtDecimal(coef, 3)})</span></div>
+        <div style="font-weight:700;font-size:15px;">${fmtEuro(res.prixHorsQualite)}${res.prixHorsQualite !== null ? ' /1000L' : ''}</div>
+      </div>
+      ${ligneGrade('Cellules', g.cellules)}
+      ${ligneGrade('Coliformes', g.coliformes)}
+      ${ligneGrade('Flore totale', g.floreTotale)}
+      ${ligneGrade('Butyriques', g.butyriques)}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+        <div><div style="font-size:13.5px;">Bonus Super A${superABadge}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${superARaison}</div></div>
+        <div style="font-weight:600;font-size:13.5px;">${res.superA.eligible ? fmtEuro(70, true) : fmtEuro(0, true)}</div>
+      </div>
+      <div class="note-warn" style="margin-top:10px;margin-bottom:0;">Statut Super A calculé sur les critères suivis par Ovilog (4 grades + Listéria/Salmonelles). La grille laiterie exige aussi l'absence d'antibiotiques, de virage résazurine et de déclassement pour conditions d'hygiène insuffisantes — à vérifier hors Ovilog avant application.</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:2px solid var(--border);margin-top:10px;">
+        <div style="font-weight:700;font-size:14px;">Prix avec qualité</div>
+        <div style="font-weight:700;font-size:16px;">${fmtEuro(res.prixAvecQualite)}${res.prixAvecQualite !== null ? ' /1000L' : ''}</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-muted);margin-top:4px;">
+        <div>Volume livré ce mois (tank)</div><div>${volumeMois} L</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+        <div style="font-weight:700;font-size:15px;">Total du mois</div>
+        <div style="font-weight:700;font-size:18px;color:var(--primary);">${res.totalMois !== null ? fmtEuro(res.totalMois) : '—'}</div>
+      </div>
+    `;
+  }
+
+  document.getElementById('btn-prix-coef').onclick = () => {
+    const editRow = document.getElementById('qualite-prix-coef-edit');
+    document.getElementById('prix-coef-input').value = DB.parametresPrixLait.coefficientMsu;
+    editRow.classList.toggle('hidden');
+  };
+  document.getElementById('btn-prix-coef-save').onclick = () => {
+    const v = parseFloat(document.getElementById('prix-coef-input').value);
+    if (isNaN(v) || v <= 0) { alert('Coefficient invalide.'); return; }
+    DB.parametresPrixLait.coefficientMsu = v;
+    saveData(DB);
+    document.getElementById('qualite-prix-coef-edit').classList.add('hidden');
+    renderStatsAndList();
+  };
+
   function renderStatsAndList() {
     const list = state.mois ? DB.prelevementsQualite.filter(p => moisKeyFromDate(p.date) === state.mois) : [];
     const m = moyennesQualitePonderees(list);
@@ -5330,6 +5552,7 @@ function renderQualite() {
     document.getElementById('qualite-stat-tp').textContent = m.tp === null ? '—' : fmtDecimal(m.tp, 1) + ' g/L';
     document.getElementById('qualite-stat-msu').textContent = m.msu === null ? '—' : fmtDecimal(m.msu, 1) + ' g/L';
     document.getElementById('qualite-stat-cellules').textContent = m.cellules === null ? '—' : fmtDecimal(m.cellules, 0);
+    renderPrixLait(list);
 
     const positifDates = [];
     const positifs = [];
@@ -7955,7 +8178,7 @@ const fbDb = initializeFirestore(fbApp, {
 // animaux).
 const META_FIELDS = ['exploitation', 'campagneDebut', 'produits', 'acheteurs',
   'causesMortalite', 'casParticuliers', 'typesJournal', 'lots', 'journal',
-  'laitTank', 'luttes', 'produitsInfo'];
+  'laitTank', 'luttes', 'produitsInfo', 'parametresPrixLait'];
 const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
 const BOOTSTRAP_FLAG_KEY = 'ovilog_sync_bootstrapped_uid';
 
