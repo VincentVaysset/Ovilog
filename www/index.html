@@ -1346,10 +1346,11 @@ let editBelierContext = null; // { kind, idx }
 let currentLotId = null;
 let inventaireTab = 'brebis';
 let bilanCampagneTab = 'incoherences';
+let inventaireActifsTab = 'brebis'; // 'brebis' | 'agnelles' | 'beliers' | 'agneaux' — voir renderInventaireActifs
 
 // Vues racines, accessibles directement depuis le menu hamburger : elles
 // affichent le hamburger (pas de flèche retour) dans l'en-tête.
-const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite', 'liste-serie']);
+const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'inventaire-actifs', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite', 'liste-serie']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -1365,7 +1366,8 @@ const NAV_ITEMS = [
   { view: 'list', label: 'Brebis', icon: ICON_SHEEP, color: 'green' },
   { view: 'beliers', label: 'Béliers', icon: ICON_RAM, color: 'indigo' },
   { view: 'agneaux', label: 'Agneaux', icon: ICON_SHEEP, color: 'amber' },
-  { view: 'inventaire', label: 'Inventaire', icon: ICON_BOX, color: 'coral' },
+  { view: 'inventaire-actifs', label: 'Inventaire', icon: ICON_BOX, color: 'coral' },
+  { view: 'inventaire', label: "Mouvements d'animaux", icon: ICON_MOUVEMENT, color: 'coral' },
   { view: 'lots', label: 'Chantier de tri', icon: ICON_SEARCH, color: 'green' },
   { view: 'sanitaire', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
   { view: 'echo-rapide', label: 'Échographies', icon: ICON_ECHO, color: 'green' },
@@ -1551,6 +1553,7 @@ function render(view, sheepId) {
     else if (view === 'add-controle') renderAddControle(currentSheepId);
     else if (view === 'agneaux') renderAgneaux();
     else if (view === 'inventaire') renderInventaire();
+    else if (view === 'inventaire-actifs') renderInventaireActifs();
     else if (view === 'agnelles') renderAgnelles();
     else if (view === 'add-agnelle') renderAddAgnelle();
     else if (view === 'beliers') renderBeliers();
@@ -2158,7 +2161,7 @@ function wireInventaireAgneaux() {
 }
 
 function renderInventaire() {
-  pageTitle.textContent = 'Inventaire';
+  pageTitle.textContent = "Mouvements d'animaux";
   const tabs = [
     { key: 'brebis', label: 'Brebis' },
     { key: 'beliers', label: 'Béliers' },
@@ -2193,6 +2196,102 @@ function renderInventaire() {
   if (inventaireTab === 'brebis') wireInventaireBrebis();
   else if (inventaireTab === 'beliers') wireInventaireBeliers();
   else wireInventaireAgneaux();
+}
+
+/* ---------- Inventaire (actifs) : Brebis/Agnelles/Béliers/Agneaux actifs,
+   avec export PDF/Excel — distinct de renderInventaire() ci-dessus
+   ("Mouvements d'animaux", qui liste les SORTIES). ---------- */
+const INVENTAIRE_ACTIFS_CATEGORIES = [
+  { key: 'brebis', label: 'Brebis actives', fichier: 'brebis' },
+  { key: 'agnelles', label: 'Agnelles actives', fichier: 'agnelles' },
+  { key: 'beliers', label: 'Béliers actifs', fichier: 'beliers' },
+  { key: 'agneaux', label: 'Agneaux actifs', fichier: 'agneaux' }
+];
+
+function inventaireActifsItems(key) {
+  if (key === 'brebis') return sortByAge(DB.brebis.filter(s => (s.statut || 'active') === 'active'));
+  if (key === 'agnelles') return sortByAge(DB.agnelles || []);
+  if (key === 'beliers') return sortByAge((DB.beliers || []).filter(b => (b.statut || 'actif') === 'actif'));
+  return sortByAge(getAgneauxActifsInventaire());
+}
+
+function renderInventaireActifs() {
+  pageTitle.textContent = 'Inventaire';
+  const cat = INVENTAIRE_ACTIFS_CATEGORIES.find(c => c.key === inventaireActifsTab);
+  const items = inventaireActifsItems(inventaireActifsTab);
+
+  const tabBarHtml = `<div class="tab-bar">${INVENTAIRE_ACTIFS_CATEGORIES.map(c =>
+    `<button type="button" class="tab-btn${inventaireActifsTab === c.key ? ' active' : ''}" data-tab="${c.key}">${c.label}</button>`
+  ).join('')}</div>`;
+
+  // Liste stricte à 2 colonnes (numéro officiel + EID complet) — ligne
+  // cliquable pour ouvrir la fiche correspondante (voir plus bas), mais
+  // sans rien ajouter visuellement à la ligne elle-même.
+  const tableHtml = items.length === 0 ? '<div class="empty">Aucun animal dans cette catégorie.</div>' : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+    <thead><tr><th style="${REGISTRE_TH}">Numéro officiel</th><th style="${REGISTRE_TH}">EID complet</th></tr></thead>
+    <tbody>${items.map((it, i) => `
+    <tr class="inventaire-actifs-row" data-i="${i}" style="cursor:pointer;">
+      <td style="${REGISTRE_TD}">n°${numeroVisuel(it.eid)}</td>
+      <td style="${REGISTRE_TD}">${it.eid}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+
+  app.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${items.length} animal(aux) actif(s).</div>
+    ${tabBarHtml}
+    <div class="row" style="margin:14px 0;">
+      <button type="button" class="btn btn-secondary" id="btn-export-inventaire-pdf">Export PDF</button>
+      <button type="button" class="btn btn-secondary" id="btn-export-inventaire-xlsx">Export Excel (.xlsx)</button>
+    </div>
+    ${tableHtml}
+  `;
+
+  document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
+    btn.onclick = () => { inventaireActifsTab = btn.dataset.tab; render('inventaire-actifs'); };
+  });
+
+  document.querySelectorAll('.inventaire-actifs-row').forEach(tr => {
+    tr.onclick = () => {
+      const it = items[parseInt(tr.dataset.i, 10)];
+      if (inventaireActifsTab === 'brebis') {
+        detailOrigin = 'inventaire-actifs';
+        previousDetailId = null;
+        render('detail', it.id);
+      } else if (inventaireActifsTab === 'beliers') {
+        currentBelierId = it.id;
+        belierDetailOrigin = 'inventaire-actifs';
+        render('belier-detail');
+      } else if (inventaireActifsTab === 'agnelles') {
+        editingAgnelleId = it.id;
+        render('add-agnelle');
+      } else {
+        // Agneaux actifs : pas de fiche dédiée — ouvre celle de la mère,
+        // comme partout ailleurs dans l'appli où un agneau est affiché.
+        const mother = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(it.mereEid));
+        if (!mother) { alert("Fiche de la mère introuvable (peut-être supprimée)."); return; }
+        detailOrigin = 'inventaire-actifs';
+        previousDetailId = null;
+        render('detail', mother.id);
+      }
+    };
+  });
+
+  document.getElementById('btn-export-inventaire-pdf').onclick = () => {
+    const bytes = buildPdfTable({
+      title: 'Inventaire — ' + cat.label,
+      subtitle: items.length + ' animal(aux) — ' + new Date().toISOString().slice(0,10),
+      columns: [{ label: 'Numéro officiel', x: 0 }, { label: 'EID complet', x: 170 }],
+      rows: items.map(it => ['n°' + numeroVisuel(it.eid), it.eid])
+    });
+    saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + new Date().toISOString().slice(0,10) + '.pdf', bytes, 'application/pdf');
+  };
+  document.getElementById('btn-export-inventaire-xlsx').onclick = async () => {
+    const bytes = await buildXlsxWorkbook([{ name: cat.label, rows: [
+      ['Numéro officiel', 'EID complet'],
+      ...items.map(it => ['n°' + numeroVisuel(it.eid), it.eid])
+    ] }]);
+    saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + new Date().toISOString().slice(0,10) + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  };
 }
 
 /* ---------- Ajout brebis ---------- */
@@ -2409,6 +2508,27 @@ function getAgneauxInventaire() {
     });
   });
   return sortLambItemsByAge(items);
+}
+
+/* "Agneaux actifs" pour l'onglet Inventaire (voir renderInventaireActifs) :
+   contrairement à getAgneauxInventaire() ci-dessus, INCLUT les femelles
+   déjà gardées comme agnelles (chevauchement avec la liste Agnelles
+   assumé — voir demande) — seuls les vendus/morts sont exclus. Aucun
+   filtre par campagne (même logique que le suivi individuel des agneaux
+   ailleurs dans l'appli, voir getAgneauxInventaire/isAttendueTraite). */
+function getAgneauxActifsInventaire() {
+  const items = [];
+  DB.brebis.forEach(sheep => {
+    (sheep.agnelages || []).forEach(a => {
+      a.lambs.forEach(l => {
+        if (l.sexe === 'Mort-né') return;
+        if (!l.eid) return; // pas bouclé — pas d'EID à afficher
+        if (l.statutFinal === 'vendu' || l.statutFinal === 'mort') return;
+        items.push({ eid: l.eid, mereEid: sheep.eid });
+      });
+    });
+  });
+  return items;
 }
 
 function renderAgneaux() {
@@ -7640,6 +7760,128 @@ async function buildXlsxWorkbook(sheets) {
     ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i+1}.xml`, data: xlsxSheetXml(s.rows) }))
   ];
   return xlsxBuildZip(entries);
+}
+
+/* ---------- Export PDF minimal (texte + tableau simple, sans dépendance) ----------
+   Même philosophie que l'export .xlsx ci-dessus : un PDF valide construit à
+   la main en JS pur (objets, xref, trailer), sans bibliothèque externe, pour
+   fonctionner offline dans la WebView. Police standard Helvetica (Base14) —
+   jamais besoin d'être embarquée — avec encodage WinAnsi, qui couvre tous
+   les accents français utilisés dans l'appli (mêmes points de code que
+   Latin-1 dans cette plage). Pagination calculée à l'avance à partir de la
+   hauteur de page disponible plutôt que gérée au fil de l'écriture, pour
+   garder la génération simple et déterministe. */
+const PDF_PAGE_W = 595, PDF_PAGE_H = 842; // A4 portrait, en points
+const PDF_MARGIN = 40;
+const PDF_ROW_HEIGHT = 16;
+
+// Une chaîne JS où chaque caractère est déjà un code 0-255 (voir
+// pdfTextBytes/pdfEscapeString) -> octets bruts du fichier PDF final.
+function pdfLatin1ToBytes(str) {
+  const bytes = new Uint8Array(str.length);
+  for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i) & 0xFF;
+  return bytes;
+}
+// Convertit un texte quelconque en chaîne "octets" via WinAnsiEncoding :
+// '?' pour tout caractère hors de la plage 0-255 plutôt que de corrompre le
+// flux PDF (nos textes — libellés de l'appli, EID, dates — n'utilisent que
+// des lettres accentuées françaises et quelques symboles déjà couverts).
+// Points de code Unicode que WinAnsiEncoding place à des octets 0x80-0x9F
+// (CP1252) plutôt qu'à leur valeur Unicode directe (ces octets sont des
+// codes de contrôle C1 en Unicode strict) — nécessaire ici car l'appli
+// utilise le tiret cadratin (—) dans plusieurs libellés générés pour le PDF.
+const PDF_WINANSI_SPECIALS = {
+  0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85,
+  0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A,
+  0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92,
+  0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
+  0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C,
+  0x017E: 0x9E, 0x0178: 0x9F
+};
+function pdfTextBytes(str) {
+  let out = '';
+  for (const ch of String(str)) {
+    const code = ch.codePointAt(0);
+    let byte;
+    if (code <= 255 && !(code >= 0x80 && code <= 0x9F)) byte = code; // ASCII + Latin-1 (identique à WinAnsi sur cette plage)
+    else if (PDF_WINANSI_SPECIALS[code] !== undefined) byte = PDF_WINANSI_SPECIALS[code];
+    else byte = 0x3F; // '?' de secours plutôt que de corrompre le flux
+    out += String.fromCharCode(byte);
+  }
+  return out;
+}
+function pdfEscapeString(str) {
+  return pdfTextBytes(str).replace(/([()\\])/g, '\\$1');
+}
+// Un seul placement de texte = un bloc BT/ET complet avec un unique Td :
+// Td déplace le repère de texte de façon RELATIVE au dernier repère posé
+// (pas une position absolue) — en ouvrant un nouveau BT à chaque fois, le
+// premier Td d'un bloc repart de l'origine de la page, ce qui donne des
+// coordonnées absolues simples plutôt que d'avoir à cumuler des deltas.
+function pdfTextOp(x, y, text, font, size) {
+  return 'BT\n/' + font + ' ' + size + ' Tf\n' + x + ' ' + y + ' Td\n(' + pdfEscapeString(text) + ') Tj\nET\n';
+}
+
+/* columns : [{ label, x }] (x = décalage en points depuis la marge gauche).
+   rows : tableau de tableaux de chaînes, même ordre que `columns`. Retourne
+   les octets du PDF complet (Uint8Array), prêt pour saveOrShareBinaryFile. */
+function buildPdfTable({ title, subtitle, columns, rows }) {
+  const topY = PDF_PAGE_H - PDF_MARGIN;
+  const headerBlockHeight = 70; // titre + sous-titre + en-têtes de colonnes + marge avant les lignes
+  const footerHeight = 20;
+  const usableHeight = topY - PDF_MARGIN - footerHeight;
+  const rowsPerPage = Math.max(1, Math.floor((usableHeight - headerBlockHeight) / PDF_ROW_HEIGHT));
+  const pages = [];
+  for (let i = 0; i < rows.length; i += rowsPerPage) pages.push(rows.slice(i, i + rowsPerPage));
+  if (pages.length === 0) pages.push([]);
+
+  const objects = []; // { num, body } — body = chaîne "octets" (voir pdfLatin1ToBytes)
+  let nextNum = 1;
+  const alloc = () => nextNum++;
+  const catalogNum = alloc();
+  const pagesNum = alloc();
+  const fontNum = alloc();
+  const fontBoldNum = alloc();
+  const pageNums = [];
+  const contentNums = [];
+  pages.forEach(() => { pageNums.push(alloc()); contentNums.push(alloc()); });
+
+  pages.forEach((pageRows, pageIndex) => {
+    let y = topY;
+    let content = pdfTextOp(PDF_MARGIN, y, title, 'FB', 13);
+    y -= 18;
+    content += pdfTextOp(PDF_MARGIN, y, subtitle, 'F1', 9);
+    y -= 22;
+    columns.forEach(col => { content += pdfTextOp(PDF_MARGIN + col.x, y, col.label, 'FB', 10); });
+    y -= 6;
+    content += PDF_MARGIN + ' ' + y + ' m ' + (PDF_PAGE_W - PDF_MARGIN) + ' ' + y + ' l S\n';
+    y -= 14;
+    pageRows.forEach(row => {
+      columns.forEach((col, ci) => { content += pdfTextOp(PDF_MARGIN + col.x, y, row[ci] || '', 'F1', 9.5); });
+      y -= PDF_ROW_HEIGHT;
+    });
+    content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Page ' + (pageIndex + 1) + '/' + pages.length, 'F1', 8);
+    objects.push({ num: contentNums[pageIndex], body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
+    objects.push({ num: pageNums[pageIndex], body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + PDF_PAGE_W + ' ' + PDF_PAGE_H + '] /Contents ' + contentNums[pageIndex] + ' 0 R >>' });
+  });
+  objects.push({ num: catalogNum, body: '<< /Type /Catalog /Pages ' + pagesNum + ' 0 R >>' });
+  objects.push({ num: pagesNum, body: '<< /Type /Pages /Kids [' + pageNums.map(n => n + ' 0 R').join(' ') + '] /Count ' + pageNums.length + ' >>' });
+  objects.push({ num: fontNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>' });
+  objects.push({ num: fontBoldNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>' });
+  objects.sort((a, b) => a.num - b.num);
+
+  let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
+  const offsets = [0];
+  objects.forEach(obj => {
+    offsets[obj.num] = pdf.length;
+    pdf += obj.num + ' 0 obj\n' + obj.body + '\nendobj\n';
+  });
+  const xrefStart = pdf.length;
+  pdf += 'xref\n0 ' + nextNum + '\n0000000000 65535 f \n';
+  for (let i = 1; i < nextNum; i++) pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  pdf += 'trailer\n<< /Size ' + nextNum + ' /Root ' + catalogNum + ' 0 R >>\nstartxref\n' + xrefStart + '\n%%EOF';
+
+  return pdfLatin1ToBytes(pdf);
 }
 
 function uint8ToBase64(bytes) {
