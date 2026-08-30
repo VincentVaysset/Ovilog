@@ -1347,10 +1347,11 @@ let currentLotId = null;
 let inventaireTab = 'brebis';
 let bilanCampagneTab = 'incoherences';
 let inventaireActifsTab = 'brebis'; // 'brebis' | 'agnelles' | 'beliers' | 'agneaux' — voir renderInventaireActifs
+let declarationAnneeSelectionnee = null; // année civile choisie sur l'écran Déclaration annuelle (voir renderDeclarationAnnuelle), initialisée à l'année en cours au premier rendu
 
 // Vues racines, accessibles directement depuis le menu hamburger : elles
 // affichent le hamburger (pas de flèche retour) dans l'en-tête.
-const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'inventaire-actifs', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite', 'liste-serie']);
+const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'inventaire-actifs', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'declaration-annuelle', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite', 'liste-serie']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -1375,6 +1376,7 @@ const NAV_ITEMS = [
   { view: 'qualite', label: 'Qualité', icon: ICON_LAIT, color: 'blue' },
   { view: 'journal', label: 'Agenda', icon: ICON_JOURNAL, color: 'green' },
   { view: 'registre', label: "Registre d'élevage", icon: ICON_JOURNAL, color: 'coral' },
+  { view: 'declaration-annuelle', label: 'Déclaration annuelle', icon: ICON_CALENDAR, color: 'coral' },
   { view: 'parametres', label: 'Paramètres', icon: ICON_SETTINGS, color: 'gray' }
 ];
 navDrawer.innerHTML = `
@@ -1576,6 +1578,7 @@ function render(view, sheepId) {
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
     else if (view === 'registre') renderRegistre();
+    else if (view === 'declaration-annuelle') renderDeclarationAnnuelle();
     else if (view === 'bilan-campagne') renderBilanCampagne();
     else if (view === 'gerer-produits') renderGererProduits();
     else if (view === 'historique-echo') renderHistoriqueEcho();
@@ -4830,7 +4833,21 @@ function renderAgnelles() {
 
   function garderAgnelle(c) {
     c.lamb.triStatut = 'gardée';
-    DB.agnelles.push({ id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: c.lamb.eid, origine: 'née', motherEid: c.motherEid, dateEntree: new Date().toISOString().slice(0,10), sanitaire: (c.lamb.sanitaire || []).slice(), mouvements: [] });
+    const dateEntree = new Date().toISOString().slice(0,10);
+    // Deux mouvements posés dès la création, comme une agnelle achetée en a
+    // déjà un ("Entrée"/"Achat") — sans ça, une agnelle née sur
+    // l'exploitation n'avait ni date de naissance distincte de sa date de
+    // tri, ni aucun mouvement archivé si elle est vendue plus tard. Sert au
+    // Registre PAC (effectifADate/agnelleDateReference) pour le seuil ">6
+    // mois" et pour rester exploitable même après suppression de la fiche.
+    DB.agnelles.push({
+      id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: c.lamb.eid, origine: 'née', motherEid: c.motherEid,
+      dateEntree, sanitaire: (c.lamb.sanitaire || []).slice(),
+      mouvements: [
+        { type: 'Naissance', cause: null, date: c.date },
+        { type: 'Entrée', cause: 'Tri (renouvellement)', date: dateEntree }
+      ]
+    });
     saveData(DB);
     render('agnelles');
   }
@@ -7342,6 +7359,155 @@ function registreEntriesFor(categorie) {
   return Object.values(map);
 }
 
+/* ---------- Registre PAC — Recensement annuel au 1er janvier ----------
+   Raisonne exclusivement en année civile (1er janvier - 31 décembre),
+   indépendamment de la campagne agricole et de campagneAnneeDebutPourDate()
+   — voir renderDeclarationAnnuelle(). Écran de calcul + export en lecture
+   seule, aucune de ces fonctions n'écrit dans DB. */
+
+/* string ISO ('YYYY-MM-DD') ou timestamp epoch -> Date, ou null si absent/
+   invalide plutôt que de planter plus loin. */
+function toDateOuNull(valeur) {
+  if (!valeur) return null;
+  const d = new Date(valeur);
+  return isNaN(d.getTime()) ? null : d;
+}
+// Date (chaîne ISO) du premier/dernier mouvement d'un des types donnés —
+// comparaison en chaîne (valide pour des dates 'YYYY-MM-DD', toujours au
+// même format ici), la conversion en Date n'intervenant qu'à l'usage final.
+function premierMouvementDate(mouvements, types) {
+  const dates = (mouvements || []).filter(m => m && types.includes(m.type) && m.date).map(m => m.date);
+  return dates.length ? dates.reduce((min, d) => d < min ? d : min) : null;
+}
+function dernierMouvementDate(mouvements, types) {
+  const dates = (mouvements || []).filter(m => m && types.includes(m.type) && m.date).map(m => m.date);
+  return dates.length ? dates.reduce((max, d) => d > max ? d : max) : null;
+}
+const TYPES_SORTIE = ['Vendue', 'Morte', 'Vendue reproduction'];
+
+/* Fusion actifs + archivés dédiée au Registre PAC — même principe que
+   registreEntriesFor() (juste au-dessus) mais SANS y toucher (partagée
+   avec l'écran Registre déjà en production) : conserve en plus, pour les
+   fiches encore actives, leurs dateEntree/createdAt (indisponibles pour
+   une fiche déjà supprimée, faute d'être archivés par archiverDansRegistre)
+   — nécessaires ici comme repli quand aucun mouvement "Entrée" n'existe.
+   categorie : 'brebis' | 'beliers' | 'agneaux' (agnelles). */
+function effectifEntriesFor(categorie) {
+  const archive = (DB.registre && DB.registre[categorie]) || {};
+  const map = {};
+  Object.keys(archive).forEach(eid => {
+    map[eid] = { eid, mouvements: (archive[eid].mouvements || []).slice(), dateEntreeFallback: null, createdAtFallback: null };
+  });
+  const actifs = categorie === 'brebis' ? DB.brebis : categorie === 'beliers' ? DB.beliers : DB.agnelles;
+  (actifs || []).forEach(a => {
+    if (!map[a.eid]) map[a.eid] = { eid: a.eid, mouvements: [], dateEntreeFallback: null, createdAtFallback: null };
+    map[a.eid].mouvements = map[a.eid].mouvements.concat(a.mouvements || []);
+    map[a.eid].dateEntreeFallback = a.dateEntree || null;
+    map[a.eid].createdAtFallback = a.createdAt || null;
+  });
+  return Object.values(map);
+}
+
+/* Date d'entrée dans l'effectif : premier mouvement "Entrée", sinon repli
+   sur dateEntree/createdAt (seulement disponibles pour une fiche encore
+   active) — null si rien de tout ça n'est reconstituable (fiche déjà
+   supprimée dont l'archive ne contient aucun mouvement "Entrée", ex. une
+   donnée antérieure à un correctif de traçabilité) : exclue proprement du
+   calcul plutôt que de deviner. */
+function animalDateEntree(entry) {
+  return toDateOuNull(premierMouvementDate(entry.mouvements, ['Entrée']))
+    || toDateOuNull(entry.dateEntreeFallback)
+    || toDateOuNull(entry.createdAtFallback);
+}
+function animalDateSortie(entry) {
+  return toDateOuNull(dernierMouvementDate(entry.mouvements, TYPES_SORTIE));
+}
+/* Date de naissance (ou d'achat) d'une agnelle, pour le seuil ">6 mois" —
+   voir garderAgnelle() : mouvement "Naissance" en priorité (née sur
+   l'exploitation), sinon "Entrée" (achetée : c'est alors sa date d'achat),
+   sinon repli sur dateEntree si la fiche est encore active. Renvoie null
+   (agnelle exclue du calcul, jamais une erreur) pour une agnelle triée
+   avant l'ajout de ces mouvements ET déjà sortie de l'inventaire depuis :
+   aucune trace de sa date de naissance n'a pu être archivée. */
+function agnelleDateReference(entry) {
+  return toDateOuNull(premierMouvementDate(entry.mouvements, ['Naissance']))
+    || toDateOuNull(premierMouvementDate(entry.mouvements, ['Entrée']))
+    || toDateOuNull(entry.dateEntreeFallback);
+}
+
+/* Reconstitue l'effectif ACTIF à une date passée (ou future) quelconque —
+   typeAnimal: 'brebis' | 'belier' | 'agnelle'. dateCible : chaîne
+   'YYYY-MM-DD'. Un animal compte si sa date d'entrée est ≤ dateCible ET
+   (aucune sortie, ou sortie strictement après dateCible) ; pour une
+   agnelle, en plus, si elle a plus de 6 mois à dateCible. */
+function effectifADate(typeAnimal, dateCible) {
+  const categorie = typeAnimal === 'brebis' ? 'brebis' : typeAnimal === 'belier' ? 'beliers' : 'agneaux';
+  const dateCibleObj = toDateOuNull(dateCible);
+  if (!dateCibleObj) return 0;
+  let count = 0;
+  effectifEntriesFor(categorie).forEach(entry => {
+    const dateEntree = animalDateEntree(entry);
+    if (!dateEntree || dateEntree > dateCibleObj) return;
+    const dateSortie = animalDateSortie(entry);
+    if (dateSortie && dateSortie <= dateCibleObj) return;
+    if (typeAnimal === 'agnelle') {
+      const dateRef = agnelleDateReference(entry);
+      if (!dateRef) return; // pas de date de naissance/achat reconstituable -> exclue, jamais une erreur
+      const seuilAge = new Date(dateCibleObj.getTime());
+      seuilAge.setMonth(seuilAge.getMonth() - 6);
+      if (dateRef > seuilAge) return; // pas encore >6 mois à dateCible
+    }
+    count++;
+  });
+  return count;
+}
+
+/* Année civile la plus ancienne pour laquelle l'appli a une quelconque
+   donnée d'entrée (brebis, béliers ou agnelles, actifs ou archivés) — sert
+   à la fois de borne de départ du sélecteur d'année de la Déclaration
+   annuelle et de seuil "données insuffisantes" pour le ratio PAC. Repli sur
+   l'année en cours si la base est entièrement vide (nouvelle install). */
+function premiereAnneeDonnees() {
+  let dateMin = null;
+  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+    effectifEntriesFor(cat).forEach(entry => {
+      const d = animalDateEntree(entry);
+      if (d && (!dateMin || d < dateMin)) dateMin = d;
+    });
+  });
+  return dateMin ? dateMin.getFullYear() : new Date().getFullYear();
+}
+
+/* Agneaux nés / vendus sur une ANNÉE CIVILE donnée (pas la campagne) —
+   basé sur registreEntriesFor('brebis') (déjà utilisée par le Registre
+   d'élevage, jamais modifiée ici) pour rester exact même si la mère a
+   depuis été supprimée de l'inventaire actif. */
+function agneauxNesAnneeCivile(annee) {
+  let count = 0;
+  registreEntriesFor('brebis').forEach(entry => {
+    entry.agnelages.forEach(a => {
+      if (a.date && a.date.slice(0, 4) === String(annee)) count += (a.lambs || []).length;
+    });
+  });
+  return count;
+}
+// Un agneau vendu porte un mouvement de type 'Vendu' (masculin — distinct
+// de 'Vendue', utilisé pour brebis/béliers/agnelles) sur son propre
+// sous-objet lamb.mouvements, voir showLambSortieModal().
+function agneauxVendusAnneeCivile(annee) {
+  let count = 0;
+  registreEntriesFor('brebis').forEach(entry => {
+    entry.agnelages.forEach(a => {
+      (a.lambs || []).forEach(l => {
+        (l.mouvements || []).forEach(m => {
+          if (m.type === 'Vendu' && m.date && m.date.slice(0, 4) === String(annee)) count++;
+        });
+      });
+    });
+  });
+  return count;
+}
+
 /* ---------- Lignes des 3 tableaux de synthèse (toutes catégories confondues) ---------- */
 function registreAgnelageRows() {
   const rows = [];
@@ -8187,6 +8353,117 @@ function renderRegistre() {
     Promise.resolve(exportRegistrePdf()).finally(() => { btn.disabled = false; btn.textContent = original; });
   };
   renderRegistreBody();
+}
+
+/* ---------- Déclaration annuelle (Registre PAC — recensement au 1er janvier) ----------
+   Écran de calcul + export en lecture seule, exclusivement en année civile
+   (indépendant de la campagne agricole/campagneAnneeDebutPourDate) — voir
+   effectifADate/agneauxNesAnneeCivile/agneauxVendusAnneeCivile juste avant
+   renderRegistre(). N'écrit jamais dans DB. */
+function declarationAnnuelleChiffres(annee) {
+  const premiereAnnee = premiereAnneeDonnees();
+  const anneePrecedente = annee - 1;
+  const recensement = {
+    brebis: effectifADate('brebis', annee + '-01-01'),
+    beliers: effectifADate('belier', annee + '-01-01'),
+    agnelles: effectifADate('agnelle', annee + '-01-01'),
+    agneauxNes: agneauxNesAnneeCivile(anneePrecedente)
+  };
+  const ratioDonneesInsuffisantes = anneePrecedente < premiereAnnee;
+  let ratio = null;
+  const brebisRatio = ratioDonneesInsuffisantes ? null : effectifADate('brebis', anneePrecedente + '-01-01');
+  const agneauxNesRatio = ratioDonneesInsuffisantes ? null : agneauxNesAnneeCivile(anneePrecedente);
+  const agneauxVendusRatio = ratioDonneesInsuffisantes ? null : agneauxVendusAnneeCivile(anneePrecedente);
+  if (!ratioDonneesInsuffisantes && brebisRatio > 0) ratio = Math.round((agneauxVendusRatio / brebisRatio) * 1000) / 1000;
+  return { premiereAnnee, recensement, ratioDonneesInsuffisantes, brebisRatio, agneauxNesRatio, agneauxVendusRatio, ratio };
+}
+
+function renderDeclarationAnnuelle() {
+  pageTitle.textContent = 'Déclaration annuelle';
+  const anneeCourante = new Date().getFullYear();
+  if (declarationAnneeSelectionnee === null) declarationAnneeSelectionnee = anneeCourante;
+  const c = declarationAnnuelleChiffres(declarationAnneeSelectionnee);
+
+  const annees = [];
+  for (let y = anneeCourante; y >= c.premiereAnnee; y--) annees.push(y);
+  const selectAnneeHtml = `<select id="declaration-annee">${annees.map(y =>
+    `<option value="${y}"${y === declarationAnneeSelectionnee ? ' selected' : ''}>${y}</option>`
+  ).join('')}</select>`;
+
+  app.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Registre PAC — recensement au 1er janvier et ratio de l'aide ovine, en année civile (indépendant de la campagne agricole). Écran de consultation uniquement, aucune donnée n'est modifiée ici.</div>
+    <div class="card" style="padding:12px;margin-bottom:14px;">
+      <label>Année</label>
+      ${selectAnneeHtml}
+    </div>
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Recensement au 1er janvier ${declarationAnneeSelectionnee}</div>
+      <div class="grid2">
+        <div><div style="font-size:12px;color:var(--text-muted);">Brebis présentes</div><div style="font-weight:600;font-size:18px;">${c.recensement.brebis}</div></div>
+        <div><div style="font-size:12px;color:var(--text-muted);">Béliers présents</div><div style="font-weight:600;font-size:18px;">${c.recensement.beliers}</div></div>
+        <div><div style="font-size:12px;color:var(--text-muted);">Agnelles &gt;6 mois présentes</div><div style="font-weight:600;font-size:18px;">${c.recensement.agnelles}</div></div>
+        <div><div style="font-size:12px;color:var(--text-muted);">Agneaux nés en ${declarationAnneeSelectionnee - 1}</div><div style="font-weight:600;font-size:18px;">${c.recensement.agneauxNes}</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Ratio PAC (aide ovine) — ${declarationAnneeSelectionnee - 1}</div>
+      ${c.ratioDonneesInsuffisantes ? `
+        <div style="color:var(--text-muted);font-size:13px;">Données insuffisantes (aucune donnée dans l'appli avant ${c.premiereAnnee}).</div>
+      ` : `
+        <div class="grid2" style="margin-bottom:10px;">
+          <div><div style="font-size:12px;color:var(--text-muted);">Brebis présentes au 1er janvier ${declarationAnneeSelectionnee - 1}</div><div style="font-weight:600;">${c.brebisRatio}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">Agneaux nés en ${declarationAnneeSelectionnee - 1}</div><div style="font-weight:600;">${c.agneauxNesRatio}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">Agneaux vendus en ${declarationAnneeSelectionnee - 1}</div><div style="font-weight:600;">${c.agneauxVendusRatio}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">Ratio (vendus / présentes)</div><div style="font-weight:600;">${c.ratio === null ? 'Non disponible' : c.ratio}</div></div>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);">Seuil réglementaire indicatif de l'aide ovine : ≈ 0,5.</div>
+      `}
+    </div>
+    <button type="button" class="btn btn-secondary" id="btn-export-declaration-pdf" style="margin-top:14px;">Exporter PDF</button>
+  `;
+
+  document.getElementById('declaration-annee').onchange = (e) => {
+    declarationAnneeSelectionnee = parseInt(e.target.value, 10);
+    render('declaration-annuelle');
+  };
+  document.getElementById('btn-export-declaration-pdf').onclick = () => {
+    const btn = document.getElementById('btn-export-declaration-pdf');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Export en cours...';
+    Promise.resolve(exportDeclarationAnnuellePdf(declarationAnneeSelectionnee, c)).finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
+}
+
+/* PDF récapitulatif de la déclaration annuelle — réutilise buildPdfTable()
+   (même en-tête/mise en forme que Registre/Inventaire), en 2 colonnes
+   Libellé/Valeur, portrait (peu de lignes). */
+async function exportDeclarationAnnuellePdf(annee, c) {
+  const rows = [
+    ['Brebis présentes au 1er janvier ' + annee, String(c.recensement.brebis)],
+    ['Béliers présents au 1er janvier ' + annee, String(c.recensement.beliers)],
+    ['Agnelles >6 mois présentes au 1er janvier ' + annee, String(c.recensement.agnelles)],
+    ['Agneaux nés en ' + (annee - 1), String(c.recensement.agneauxNes)],
+    ['', ''],
+    ['Ratio PAC (aide ovine) — ' + (annee - 1), '']
+  ];
+  if (c.ratioDonneesInsuffisantes) {
+    rows.push(['Données insuffisantes', 'aucune donnée avant ' + c.premiereAnnee]);
+  } else {
+    rows.push(['Brebis présentes au 1er janvier ' + (annee - 1), String(c.brebisRatio)]);
+    rows.push(['Agneaux nés en ' + (annee - 1), String(c.agneauxNesRatio)]);
+    rows.push(['Agneaux vendus en ' + (annee - 1), String(c.agneauxVendusRatio)]);
+    rows.push(['Ratio (vendus / présentes)', c.ratio === null ? 'Non disponible' : String(c.ratio)]);
+    rows.push(['Seuil réglementaire indicatif', '~ 0,5']);
+  }
+  const bytes = buildPdfTable({
+    title: 'Déclaration annuelle — ' + annee,
+    subtitle: 'Registre PAC, recensement au 1er janvier — ' + new Date().toISOString().slice(0, 10),
+    columns: [{ label: 'Libellé', x: 0 }, { label: 'Valeur', x: 320 }],
+    rows
+  });
+  const filename = 'declaration-annuelle_' + annee + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
 /* ---------- Import CSV inventaire + échographies ---------- */
