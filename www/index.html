@@ -7501,6 +7501,11 @@ function registreSanitaireFilteredRows(filtreNumero, colFiltres) {
 function registreCampagneLabel(r) {
   return r.campagne === null ? '<span style="color:var(--text-muted);">—</span>' : 'Campagne ' + (r.campagne + 1);
 }
+// Même libellé que ci-dessus mais en texte brut (pas de HTML) — pour les
+// exports .xlsx/PDF du registre.
+function registreCampagneLabelTexte(r) {
+  return r.campagne === null ? '—' : 'Campagne ' + (r.campagne + 1);
+}
 
 function registreAgnelageTableHtml(filtreNumero, colFiltres) {
   const allRows = registreAgnelageRows();
@@ -7823,11 +7828,19 @@ function pdfTextOp(x, y, text, font, size) {
 }
 
 /* columns : [{ label, x }] (x = décalage en points depuis la marge gauche).
-   rows : tableau de tableaux de chaînes, même ordre que `columns`. Retourne
-   les octets du PDF complet (Uint8Array), prêt pour saveOrShareBinaryFile. */
-function buildPdfTable({ title, subtitle, columns, rows }) {
-  const topY = PDF_PAGE_H - PDF_MARGIN;
-  const headerBlockHeight = 70; // titre + sous-titre + en-têtes de colonnes + marge avant les lignes
+   rows : tableau de tableaux de chaînes, même ordre que `columns`.
+   landscape : true pour basculer en A4 à l'italienne (tableaux à plus de
+   colonnes, ex. registre d'élevage) — portrait par défaut (ex. Inventaire).
+   Le nom de l'exploitation (DB.exploitation.nom), quand renseigné, est
+   affiché automatiquement sous le titre — un même en-tête pour tous les
+   PDF générés par cette fonction. Retourne les octets du PDF complet
+   (Uint8Array), prêt pour saveOrShareBinaryFile. */
+function buildPdfTable({ title, subtitle, columns, rows, landscape }) {
+  const pageW = landscape ? PDF_PAGE_H : PDF_PAGE_W;
+  const pageH = landscape ? PDF_PAGE_W : PDF_PAGE_H;
+  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || '';
+  const topY = pageH - PDF_MARGIN;
+  const headerBlockHeight = 84; // titre + nom d'exploitation + sous-titre + en-têtes de colonnes + marge avant les lignes
   const footerHeight = 20;
   const usableHeight = topY - PDF_MARGIN - footerHeight;
   const rowsPerPage = Math.max(1, Math.floor((usableHeight - headerBlockHeight) / PDF_ROW_HEIGHT));
@@ -7849,12 +7862,14 @@ function buildPdfTable({ title, subtitle, columns, rows }) {
   pages.forEach((pageRows, pageIndex) => {
     let y = topY;
     let content = pdfTextOp(PDF_MARGIN, y, title, 'FB', 13);
-    y -= 18;
+    y -= 16;
+    if (exploitationNom) content += pdfTextOp(PDF_MARGIN, y, exploitationNom, 'F1', 10);
+    y -= 14;
     content += pdfTextOp(PDF_MARGIN, y, subtitle, 'F1', 9);
     y -= 22;
     columns.forEach(col => { content += pdfTextOp(PDF_MARGIN + col.x, y, col.label, 'FB', 10); });
     y -= 6;
-    content += PDF_MARGIN + ' ' + y + ' m ' + (PDF_PAGE_W - PDF_MARGIN) + ' ' + y + ' l S\n';
+    content += PDF_MARGIN + ' ' + y + ' m ' + (pageW - PDF_MARGIN) + ' ' + y + ' l S\n';
     y -= 14;
     pageRows.forEach(row => {
       columns.forEach((col, ci) => { content += pdfTextOp(PDF_MARGIN + col.x, y, row[ci] || '', 'F1', 9.5); });
@@ -7862,7 +7877,7 @@ function buildPdfTable({ title, subtitle, columns, rows }) {
     });
     content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Page ' + (pageIndex + 1) + '/' + pages.length, 'F1', 8);
     objects.push({ num: contentNums[pageIndex], body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
-    objects.push({ num: pageNums[pageIndex], body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + PDF_PAGE_W + ' ' + PDF_PAGE_H + '] /Contents ' + contentNums[pageIndex] + ' 0 R >>' });
+    objects.push({ num: pageNums[pageIndex], body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + pageW + ' ' + pageH + '] /Contents ' + contentNums[pageIndex] + ' 0 R >>' });
   });
   objects.push({ num: catalogNum, body: '<< /Type /Catalog /Pages ' + pagesNum + ' 0 R >>' });
   objects.push({ num: pagesNum, body: '<< /Type /Pages /Kids [' + pageNums.map(n => n + ' 0 R').join(' ') + '] /Count ' + pageNums.length + ' >>' });
@@ -8037,6 +8052,75 @@ async function exportRegistreXlsx() {
   await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
+// Chaîne compatible nom de fichier : accents retirés, tout ce qui n'est pas
+// alphanumérique remplacé par un tiret (voir registreResumeFiltresFichier).
+function slugifyFiltre(str) {
+  return String(str).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+/* Résumé des filtres RÉELLEMENT actifs sur l'onglet (numéro recherché +
+   filtres de colonne non vides) pour le nom du fichier PDF exporté — voir
+   exportRegistrePdf(). Un filtre laissé à "tous"/vide n'apparaît pas dans
+   le résumé, qui peut donc être vide (aucun filtre actif). */
+function registreResumeFiltresFichier(filtreNumero, colFiltres) {
+  const parts = [];
+  if (filtreNumero && filtreNumero.trim()) parts.push('numero-' + slugifyFiltre(filtreNumero.trim()));
+  Object.keys(colFiltres).forEach(key => {
+    const val = colFiltres[key];
+    if (!val) return;
+    if (key === 'campagne') parts.push('campagne-' + slugifyFiltre(val === '?' ? 'inconnue' : String(Number(val) + 1)));
+    else parts.push(slugifyFiltre(key) + '-' + slugifyFiltre(val));
+  });
+  return parts.join('_');
+}
+
+/* Génère le PDF d'UN SEUL onglet du registre (celui actuellement affiché,
+   registreView) avec exactement les lignes filtrées à l'écran — jamais les
+   3 onglets combinés, contrairement à exportRegistreXlsx() ci-dessus.
+   Réutilise buildPdfTable() (même template que les exports Inventaire),
+   en paysage : le registre a jusqu'à 7 colonnes, trop serré en portrait. */
+async function exportRegistrePdf() {
+  const filtreNumero = registreFiltre;
+  const colFiltres = registreColFiltres[registreView];
+  let title, columns, rows;
+  if (registreView === 'agnelage') {
+    title = "Registre d'élevage — Agnelage";
+    columns = [
+      { label: 'N° mère', x: 0 }, { label: 'N° agneau', x: 90 }, { label: 'Sexe', x: 180 },
+      { label: 'Date de naissance', x: 250 }, { label: 'Campagne', x: 380 }
+    ];
+    rows = registreAgnelageFilteredRows(filtreNumero, colFiltres).map(r => [
+      'n°' + numeroVisuel(r.mereEid), r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : 'Mort-né', r.sexe, r.date, registreCampagneLabelTexte(r)
+    ]);
+  } else if (registreView === 'mouvements') {
+    title = "Registre d'élevage — Mouvements";
+    columns = [
+      { label: 'N°', x: 0 }, { label: 'Catégorie', x: 60 }, { label: 'Type', x: 150 },
+      { label: 'Cause / détail', x: 230 }, { label: 'Date', x: 440 }, { label: 'Campagne', x: 500 }
+    ];
+    rows = registreMouvementsFilteredRows(filtreNumero, colFiltres).map(r => [
+      'n°' + numeroVisuel(r.eid), r.categorie, r.type, r.detail, r.date, registreCampagneLabelTexte(r)
+    ]);
+  } else {
+    title = "Registre d'élevage — Sanitaire";
+    columns = [
+      { label: 'N°', x: 0 }, { label: 'Catégorie', x: 60 }, { label: 'Type de soin', x: 150 },
+      { label: 'Produit', x: 320 }, { label: 'Date', x: 480 }, { label: 'Dose', x: 550 }, { label: 'Campagne', x: 620 }
+    ];
+    rows = registreSanitaireFilteredRows(filtreNumero, colFiltres).map(r => [
+      'n°' + numeroVisuel(r.eid), r.categorie, r.type, r.produit, r.date, r.dose, registreCampagneLabelTexte(r)
+    ]);
+  }
+  const bytes = buildPdfTable({
+    title,
+    subtitle: rows.length + ' ligne(s) — ' + new Date().toISOString().slice(0,10),
+    columns, rows,
+    landscape: true
+  });
+  const resume = registreResumeFiltresFichier(filtreNumero, colFiltres);
+  const filename = 'registre_' + registreView + (resume ? '_' + resume : '') + '_' + new Date().toISOString().slice(0,10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
 /* Ne réaffiche que le tableau + ses filtres de colonne (#registre-body),
    sans toucher au champ de recherche numéro (#registre-filtre) : c'est ce
    qui évite de perdre le focus/curseur du champ à chaque caractère tapé
@@ -8069,7 +8153,11 @@ function renderRegistre() {
   app.innerHTML = `
     <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Registre d'élevage réglementaire : agnelage, mouvements et carnet sanitaire de tous les animaux — actifs et archivés — conformément à la conditionnalité PAC (arrêté du 5 juin 2000, conservation 5 ans).</div>
     <div class="card" style="padding:12px;margin-bottom:14px;">
-      <button type="button" class="btn btn-secondary" id="btn-export-registre">Exporter en Excel (.xlsx)</button>
+      <div class="row">
+        <button type="button" class="btn btn-secondary" id="btn-export-registre">Exporter en Excel (.xlsx)</button>
+        <button type="button" class="btn btn-secondary" id="btn-export-registre-pdf">Export PDF</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">L'Excel exporte les 3 onglets ; le PDF exporte uniquement l'onglet et les filtres actuellement affichés.</div>
     </div>
     ${tabBarHtml}
     <input type="text" id="registre-filtre" placeholder="Rechercher un numéro..." value="${registreFiltre}" style="margin:12px 0;">
@@ -8090,6 +8178,13 @@ function renderRegistre() {
     const original = btn.textContent;
     btn.textContent = 'Export en cours...';
     exportRegistreXlsx().finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
+  document.getElementById('btn-export-registre-pdf').onclick = () => {
+    const btn = document.getElementById('btn-export-registre-pdf');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Export en cours...';
+    Promise.resolve(exportRegistrePdf()).finally(() => { btn.disabled = false; btn.textContent = original; });
   };
   renderRegistreBody();
 }
