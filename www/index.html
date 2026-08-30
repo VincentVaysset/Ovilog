@@ -359,6 +359,13 @@ function migrateData(d) {
   if (!d.agnelles) d.agnelles = [];
   if (d.campagneDebut === undefined) d.campagneDebut = null;
   if (d.campagneDateDemarrage === undefined) d.campagneDateDemarrage = null;
+  // Posé automatiquement au premier vrai clic sur "Démarrer une nouvelle
+  // campagne" (voir renderParametres) — tant qu'il est false, le champ
+  // rapide "Campagne actuelle" reste modifiable (réglage de démarrage à
+  // froid). Une install existante ayant déjà une date de démarrage est
+  // considérée comme déjà initialisée, pour ne pas déverrouiller le champ
+  // rapide chez des utilisateurs déjà en cours de route.
+  if (d.campagneInitialisee === undefined) d.campagneInitialisee = !!d.campagneDateDemarrage;
   if (!d.beliers) d.beliers = [];
   if (!d.luttes) d.luttes = [];
   if (!d.journal) d.journal = [];
@@ -367,6 +374,19 @@ function migrateData(d) {
   if (!d.lots) d.lots = [];
   if (!d.exploitation) d.exploitation = { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' };
   if (!d.brebis) d.brebis = [];
+  // Rétro-tag des agnelages/contrôles laitiers déjà enregistrés avant
+  // l'ajout du champ `campagne` (voir renderAddAgnelage/renderAddControle) :
+  // dérivé de la date de l'entrée elle-même (campagneAnneeDebutPourDate),
+  // jamais de DB.campagneDebut, pour ne pas mal classer une donnée passée
+  // dont la campagne réelle diffère de la campagne actuellement en cours.
+  d.brebis.forEach(s => {
+    (s.agnelages || []).forEach(a => {
+      if (a.campagne === undefined && a.date) a.campagne = campagneAnneeDebutPourDate(a.date);
+    });
+    (s.controleLaitier || []).forEach(c => {
+      if (c.campagne === undefined && c.date) c.campagne = campagneAnneeDebutPourDate(c.date);
+    });
+  });
   if (!d.prelevementsQualite) d.prelevementsQualite = [];
   // Liste en série (onglet du Chantier de tri) : tableau {eid, espece} de
   // travail, persisté pour survivre à une fermeture de l'appli, mais jamais
@@ -1025,6 +1045,22 @@ function annulerVideDefinitive(sheep) {
   if (idx !== -1) sheep.videesDefinitives.splice(idx, 1);
 }
 
+/* Index (dans sheep.agnelages, jamais remis à zéro d'une campagne à l'autre
+   — voir "Démarrer une nouvelle campagne") de l'agnelage de la campagne EN
+   COURS, ou -1 s'il n'y en a pas encore. Une brebis ne peut avoir qu'un seul
+   agnelage par campagne (anti-doublon, voir renderAddAgnelage), donc au plus
+   une correspondance possible. Sert à la fois à l'anti-doublon et à tous les
+   comptages "mises bas de la campagne en cours" (campagneBilanChiffres,
+   statutReproductionCampagne, statsDetailleesParGroupeAge). */
+function agnelageCampagneActuelleIdx(sheep) {
+  const list = sheep.agnelages || [];
+  return list.findIndex(a => a && a.campagne === DB.campagneDebut);
+}
+function agnelageCampagneActuelle(sheep) {
+  const idx = agnelageCampagneActuelleIdx(sheep);
+  return idx === -1 ? null : sheep.agnelages[idx];
+}
+
 /* Chiffres-clé de la campagne en cours, partagés par l'écran d'accueil et
    le Bilan de campagne :
    - Troupeau à mettre bas = actives − vides définitives
@@ -1034,8 +1070,8 @@ function annulerVideDefinitive(sheep) {
    veut pas qu'une donnée contradictoire fasse passer "mises bas restantes"
    en négatif ; Math.max(0, …) protège en plus contre ce cas. */
 function campagneBilanChiffres(activeList) {
-  const misesBasActives = activeList.filter(s => s.agnelages && s.agnelages.length > 0).length;
-  const videsDefinitivesActives = activeList.filter(s => estVideDefinitiveCampagne(s) && !(s.agnelages && s.agnelages.length > 0)).length;
+  const misesBasActives = activeList.filter(s => agnelageCampagneActuelleIdx(s) !== -1).length;
+  const videsDefinitivesActives = activeList.filter(s => estVideDefinitiveCampagne(s) && agnelageCampagneActuelleIdx(s) === -1).length;
   const troupeauAMettreBas = activeList.length - videsDefinitivesActives;
   const misesBasRestantes = Math.max(0, troupeauAMettreBas - misesBasActives);
   return { misesBasActives, videsDefinitivesActives, troupeauAMettreBas, misesBasRestantes };
@@ -1118,10 +1154,10 @@ function statsDetailleesParGroupeAge(cohort) {
     if (a === null || a < 1) return;
     const g = groupes[a === 1 ? '1 an' : '2 ans et plus'];
     g.presentes++;
-    const agnelages = s.agnelages || [];
-    if (agnelages.length === 0) return;
+    const agnelageCampagne = agnelageCampagneActuelle(s);
+    if (!agnelageCampagne) return;
     g.misesBas++; // une brebis ne peut avoir qu'un agnelage par campagne (voir renderAddAgnelage)
-    agnelages.forEach(ag => {
+    [agnelageCampagne].forEach(ag => {
       ag.lambs.forEach(l => {
         if (l.sexe === 'Mort-né') { g.mortNes++; g.morts++; }
         else {
@@ -1173,7 +1209,7 @@ function statsDetailleesParGroupeAge(cohort) {
      confirmée (provisoire, contrairement à "Vide définitive" ci-dessus). */
 function statutReproductionCampagne(sheep) {
   try {
-    if (Array.isArray(sheep.agnelages) && sheep.agnelages.length > 0) return 'Mise bas';
+    if (agnelageCampagneActuelleIdx(sheep) !== -1) return 'Mise bas';
     if (estVideDefinitiveCampagne(sheep)) return 'Vide définitive';
     const echos = Array.isArray(sheep.echographies) ? sheep.echographies : [];
     const echosCampagne = echos.filter(e => e && e.campagne === DB.campagneDebut);
@@ -1535,6 +1571,7 @@ function render(view, sheepId) {
     else if (view === 'sanitaire') renderSanitaire();
     else if (view === 'import-echo') renderImportEcho();
     else if (view === 'parametres') renderParametres();
+    else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
     else if (view === 'registre') renderRegistre();
     else if (view === 'bilan-campagne') renderBilanCampagne();
     else if (view === 'gerer-produits') renderGererProduits();
@@ -1588,14 +1625,13 @@ function dashboardKpiHtml() {
   let totalMisesBas = 0, totalAgneaux = 0, totalMortNes = 0, totalMortsApres = 0, totalMales = 0, totalFemelles = 0;
   DB.brebis.forEach(s => {
     (s.agnelages || []).forEach(a => {
-      // Filtre explicite par date plutôt que de compter tel quel : au
-      // changement de campagne (renderParametres, "Démarrer une nouvelle
-      // campagne"), seules les brebis ACTIVES à ce moment-là voient leurs
-      // anciens agnelages archivés puis vidés. Une brebis vendue/morte AVANT
-      // ce clic garde donc indéfiniment ses agnelages d'une campagne passée
-      // dans sa fiche — sans ce filtre, cette vieille mise bas continuerait
-      // à être comptée dans le total de TOUTES les campagnes suivantes.
-      if (DB.campagneDebut != null && campagneAnneeDebutPourDate(a.date) !== DB.campagneDebut) return;
+      // Filtre explicite par campagne plutôt que de compter tel quel :
+      // sheep.agnelages n'est plus jamais remis à zéro (voir "Démarrer une
+      // nouvelle campagne" dans Paramètres — seul le champ `campagne` posé
+      // sur chaque agnelage à sa création permet de savoir à quelle
+      // campagne il appartient), donc sans ce filtre une brebis garderait
+      // pour toujours ses mises bas de campagnes passées dans ce total.
+      if (DB.campagneDebut != null && a.campagne !== DB.campagneDebut) return;
       totalMisesBas++;
       a.lambs.forEach(l => {
         totalAgneaux++;
@@ -1623,6 +1659,10 @@ function dashboardKpiHtml() {
   const controlesParNumero = { 1: [], 2: [], 3: [] };
   DB.brebis.forEach(s => {
     (s.controleLaitier || []).forEach(c => {
+      // Filtré sur la campagne en cours : controleLaitier n'est jamais
+      // remis à zéro (voir renderAddControle), donc sans ce filtre les
+      // moyennes mélangeraient toutes les campagnes entre elles.
+      if (DB.campagneDebut != null && c.campagne !== DB.campagneDebut) return;
       if (controlesParNumero[c.controle]) controlesParNumero[c.controle].push(c.quantite);
     });
   });
@@ -1820,7 +1860,7 @@ function renderList() {
   }
   const sorted = sortByAge(actives);
   sorted.forEach(sheep => {
-    const lastAgnelage = (sheep.agnelages || [])[sheep.agnelages.length - 1];
+    const lastAgnelage = agnelageCampagneActuelle(sheep);
     const badgeHtml = isAttendueTraite(sheep)
       ? `<span class="badge badge-blue">Attendue à la traite</span>`
       : lastAgnelage
@@ -1913,7 +1953,7 @@ function bilanIncoherencesHtml(actives) {
   // pour la même brebis cette campagne. Volontairement non corrigée toute
   // seule (voir marquerVideDefinitive/renderAddAgnelage) — listée ici pour
   // une correction manuelle, en plus du bouton "Annuler" déjà sur la fiche.
-  const incoherentes = actives.filter(s => (s.agnelages && s.agnelages.length > 0) && estVideDefinitiveCampagne(s));
+  const incoherentes = actives.filter(s => agnelageCampagneActuelleIdx(s) !== -1 && estVideDefinitiveCampagne(s));
 
   // "Non suivie" en tête : c'est la liste la plus actionnable (aucune info
   // de reproduction cette campagne — ni écho, ni mise bas, ni vide définitive —
@@ -2165,6 +2205,10 @@ function renderAddSheep() {
       <div id="preview" style="font-size:13px;color:var(--text-muted);margin-bottom:12px;"></div>
       <label>Date d'entrée (facultatif)</label>
       <input type="date" id="input-date-entree">
+      <label>Père (facultatif, ex: issue d'IA)</label>
+      <input type="text" id="f-pere" placeholder="Identifiant ou nom du père">
+      <label>Mère (facultatif, ex: issue d'IA)</label>
+      <input type="text" id="f-mere" placeholder="Identifiant ou nom de la mère">
       <div id="err" class="error-box hidden"></div>
       <button class="btn btn-primary" id="btn-save-sheep">Ajouter la brebis</button>
     </div>
@@ -2198,7 +2242,9 @@ function renderAddSheep() {
       return;
     }
     const dateEntree = document.getElementById('input-date-entree').value || null;
-    const sheep = { id: Date.now().toString(), eid, createdAt: Date.now(), dateEntree, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active' };
+    const pere = document.getElementById('f-pere').value.trim();
+    const mere = document.getElementById('f-mere').value.trim();
+    const sheep = { id: Date.now().toString(), eid, createdAt: Date.now(), dateEntree, pere, mere, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active' };
     sheep.mouvements.push({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || new Date().toISOString().slice(0,10) });
     DB.brebis.push(sheep);
     saveData(DB);
@@ -2471,6 +2517,33 @@ function renderAgneaux() {
   });
 }
 
+/* Regroupe des entrées taguées `campagne` (agnelages, contrôles laitiers)
+   par campagne, de la plus récente à la plus ancienne, en EXCLUANT la
+   campagne en cours (déjà affichée séparément dans la zone haute, éditable)
+   — alimente les zones "Historique par campagne" en lecture seule des
+   fiches brebis (voir renderDetail). `renderItem` transforme une entrée en
+   HTML ; pas de swipe-wrap ici, ces entrées ne sont pas modifiables depuis
+   cette zone. */
+function historiqueParCampagneHtml(items, renderItem, emptyLabel) {
+  const passees = items.filter(it => it.campagne !== DB.campagneDebut);
+  if (passees.length === 0) return `<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">${emptyLabel}</div>`;
+  const groupes = {};
+  passees.forEach(it => {
+    const key = (it.campagne === undefined || it.campagne === null) ? '?' : String(it.campagne);
+    groupes[key] = groupes[key] || [];
+    groupes[key].push(it);
+  });
+  const keys = Object.keys(groupes).sort((a, b) => {
+    if (a === '?') return 1;
+    if (b === '?') return -1;
+    return Number(b) - Number(a);
+  });
+  return keys.map(key => `
+    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin:14px 0 6px;">${key === '?' ? 'Campagne inconnue' : 'Campagne ' + (Number(key) + 1)}</div>
+    ${groupes[key].map(renderItem).join('')}
+  `).join('');
+}
+
 function renderDetail(id) {
   const sheep = findSheep(id);
   if (!sheep) { render('list'); return; }
@@ -2489,19 +2562,33 @@ function renderDetail(id) {
     </div>
   `).join('') || '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune échographie enregistrée.</div>';
 
+  // Zone haute (éditable) : uniquement l'agnelage de la campagne en cours —
+  // sheep.agnelages n'est plus jamais remis à zéro (voir "Démarrer une
+  // nouvelle campagne"), l'historique des campagnes passées est affiché
+  // séparément, en lecture seule, plus bas (voir agnelageHistoriqueHtml).
   const agnelages = sheep.agnelages || [];
-  const agnelageHtml = agnelages.map((a, i) => ({...a, idx: i})).reverse().map(a => `
-    <div class="swipe-wrap" data-kind="agnelages" data-idx="${a.idx}">
+  const agnelagesIndexes = agnelages.map((a, i) => ({...a, idx: i}));
+  const agnelageItemHtml = a => `
+    <div class="content">
+      <div>${a.lambs.length} agneau(x) : ${a.lambs.map(l => l.sexe === 'Mort-né' ? 'Mort-né' : ('n°' + (l.eid ? numeroVisuel(l.eid) : '?') + ' — ' + l.sexe + (l.adopte ? ' (adopté ailleurs)' : ''))).join(', ')}</div>
+      <div class="date">${a.date}</div>
+    </div>
+  `;
+  const agnelageCourantIdx = agnelageCampagneActuelleIdx(sheep);
+  const agnelageHtml = agnelageCourantIdx === -1 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun agnelage enregistré cette campagne.</div>' : `
+    <div class="swipe-wrap" data-kind="agnelages" data-idx="${agnelageCourantIdx}">
       <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
       <div class="swipe-fg history-item">
         ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
-        <div class="content">
-          <div>${a.lambs.length} agneau(x) : ${a.lambs.map(l => l.sexe === 'Mort-né' ? 'Mort-né' : ('n°' + (l.eid ? numeroVisuel(l.eid) : '?') + ' — ' + l.sexe + (l.adopte ? ' (adopté ailleurs)' : ''))).join(', ')}</div>
-          <div class="date">${a.date}</div>
-        </div>
+        ${agnelageItemHtml(sheep.agnelages[agnelageCourantIdx])}
       </div>
     </div>
-  `).join('') || '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun agnelage enregistré.</div>';
+  `;
+  const agnelageHistoriqueHtml = historiqueParCampagneHtml(
+    [...agnelagesIndexes].reverse(),
+    a => `<div class="history-item">${iconCircle(ICON_SHEEP, 'amber', 'sm')}${agnelageItemHtml(a)}</div>`,
+    'Aucun agnelage des campagnes précédentes.'
+  );
 
   const sanitaire = sheep.sanitaire || [];
   const sanitaireHtml = sanitaire.map((s, i) => ({...s, idx: i})).reverse().map(s => `
@@ -2531,19 +2618,32 @@ function renderDetail(id) {
     </div>
   `).join('') || '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun mouvement enregistré.</div>';
 
+  // Zone haute (éditable) : uniquement les contrôles de la campagne en
+  // cours — controleLaitier n'est jamais remis à zéro, l'historique des
+  // campagnes passées est affiché séparément, en lecture seule, plus bas.
   const controleLaitier = sheep.controleLaitier || [];
-  const controleHtml = controleLaitier.map((c, i) => ({...c, idx: i})).reverse().map(c => `
+  const controleIndexes = controleLaitier.map((c, i) => ({...c, idx: i}));
+  const controleItemHtml = c => `
+    <div class="content">
+      <div>Contrôle n°${c.controle} — ${c.quantite} L</div>
+      <div class="date">${c.date}</div>
+    </div>
+  `;
+  const controleCourants = controleIndexes.filter(c => c.campagne === DB.campagneDebut).reverse();
+  const controleHtml = controleCourants.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun contrôle laitier enregistré cette campagne.</div>' : controleCourants.map(c => `
     <div class="swipe-wrap" data-kind="controleLaitier" data-idx="${c.idx}">
       <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
       <div class="swipe-fg history-item">
         ${iconCircle(ICON_LAIT, 'blue', 'sm')}
-        <div class="content">
-          <div>Contrôle n°${c.controle} — ${c.quantite} L</div>
-          <div class="date">${c.date}</div>
-        </div>
+        ${controleItemHtml(c)}
       </div>
     </div>
-  `).join('') || '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun contrôle laitier enregistré.</div>';
+  `).join('');
+  const controleHistoriqueHtml = historiqueParCampagneHtml(
+    [...controleIndexes].reverse(),
+    c => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}${controleItemHtml(c)}</div>`,
+    'Aucun contrôle laitier des campagnes précédentes.'
+  );
 
   const statutBadge = (sheep.statut && sheep.statut !== 'active')
     ? `<div style="background:#f0efe9;color:var(--text-muted);padding:8px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;">Statut actuel : <strong>${sheep.statut}</strong></div>`
@@ -2603,6 +2703,13 @@ function renderDetail(id) {
   const mereBlock = sheep.mereEid
     ? `<button type="button" class="btn btn-secondary" id="btn-voir-mere-sheep" style="margin-bottom:16px;">Voir la fiche de la mère (n°${numeroVisuel(sheep.mereEid)})</button>`
     : '';
+  // Généalogie déclarative (texte libre) : utile pour un animal acheté dont
+  // le père (voire la mère) est connu sans lien de fiche réel (ex: IA) —
+  // distincte de mereEid ci-dessus, qui est le vrai lien biologique vers
+  // une fiche existante de l'appli.
+  const genealogieBlock = (sheep.pere || sheep.mere)
+    ? `<div class="card"><div style="font-size:12px;color:var(--text-muted);">Généalogie</div>${sheep.pere ? `<div style="font-size:13px;">Père : <strong>${sheep.pere}</strong></div>` : ''}${sheep.mere ? `<div style="font-size:13px;">Mère : <strong>${sheep.mere}</strong></div>` : ''}</div>`
+    : '';
 
   // Statut reproduction de la campagne + action "vide définitive" — secours
   // manuel en dehors du flux "dernière écho de la campagne" (voir Écho
@@ -2611,7 +2718,7 @@ function renderDetail(id) {
   // Bilan de campagne) : mieux vaut la montrer que la masquer.
   const campagneAffichage = DB.campagneDebut ? (DB.campagneDebut + 1) : null;
   const videDefCampagne = estVideDefinitiveCampagne(sheep);
-  const dejaMiseBasCampagne = sheep.agnelages && sheep.agnelages.length > 0;
+  const dejaMiseBasCampagne = agnelageCampagneActuelleIdx(sheep) !== -1;
   const reproStatutHtml = `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
@@ -2643,9 +2750,10 @@ function renderDetail(id) {
     ${attendueTraiteBadge}
     ${withdrawalBadge}
     ${mereBlock}
+    ${genealogieBlock}
     <div class="row" style="margin-bottom:10px;">
       <button class="btn btn-primary" id="btn-add-echo" style="flex:1;">+ Échographie</button>
-      ${(sheep.agnelages && sheep.agnelages.length > 0)
+      ${dejaMiseBasCampagne
         ? '<div class="badge badge-muted" style="flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;">Mise bas déjà saisie — modifie-la ci-dessous</div>'
         : '<button class="btn btn-primary" id="btn-add-agnelage" style="flex:1;background:var(--accent);">+ Agnelage</button>'}
     </div>
@@ -2668,9 +2776,13 @@ function renderDetail(id) {
       ${historyHtml}
     </div>
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Historique agnelages</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Agnelage — campagne en cours</div>
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${agnelageHtml}
+    </div>
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Historique agnelages par campagne</div>
+      ${agnelageHistoriqueHtml}
     </div>
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Carnet sanitaire</div>
@@ -2678,9 +2790,13 @@ function renderDetail(id) {
       ${sanitaireHtml}
     </div>
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Contrôle laitier</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Contrôle laitier — campagne en cours</div>
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${controleHtml}
+    </div>
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Historique contrôles laitiers par campagne</div>
+      ${controleHistoriqueHtml}
     </div>
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Mouvements</div>
@@ -2967,23 +3083,26 @@ function renderAddAgnelage(sheepId) {
   const existing = editing ? sheep.agnelages[editContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier l\'agnelage' : 'Nouvel agnelage';
 
-  // Une brebis ne peut avoir qu'un seul agnelage par campagne (sheep.agnelages
-  // est remis à zéro — et archivé dans le registre — à chaque nouvelle
-  // campagne, voir "Nouvelle campagne" dans Paramètres). Si un agnelage
-  // existe déjà et qu'on n'est pas en train de le modifier, on bloque l'ajout
-  // d'un second plutôt que de laisser la fiche en avoir deux.
-  if (!editing && sheep.agnelages.length > 0) {
+  // Une brebis ne peut avoir qu'un seul agnelage par campagne (voir
+  // agnelageCampagneActuelleIdx — sheep.agnelages n'est plus jamais remis à
+  // zéro d'une campagne à l'autre, seul le champ `campagne` de chaque
+  // entrée dit à quelle campagne elle appartient). Si un agnelage existe
+  // déjà pour la campagne en cours et qu'on n'est pas en train de le
+  // modifier, on bloque l'ajout d'un second plutôt que de laisser la fiche
+  // en avoir deux pour la même campagne.
+  const agnelageCourantIdxGuard = !editing ? agnelageCampagneActuelleIdx(sheep) : -1;
+  if (!editing && agnelageCourantIdxGuard !== -1) {
     app.innerHTML = `
       <div class="card">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
           ${iconCircle(ICON_WARNING, 'coral', 'md')}
           <div style="font-weight:700;">Agnelage déjà enregistré cette campagne</div>
         </div>
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Cette brebis a déjà un agnelage enregistré le ${sheep.agnelages[0].date}. Modifie-le plutôt que d'en ajouter un second — une brebis ne peut avoir qu'un agnelage par campagne.</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Cette brebis a déjà un agnelage enregistré le ${sheep.agnelages[agnelageCourantIdxGuard].date}. Modifie-le plutôt que d'en ajouter un second — une brebis ne peut avoir qu'un agnelage par campagne.</div>
         <button type="button" class="btn btn-primary" id="btn-edit-existing-agnelage">Modifier l'agnelage existant</button>
       </div>
     `;
-    document.getElementById('btn-edit-existing-agnelage').onclick = () => editItem('agnelages', 0);
+    document.getElementById('btn-edit-existing-agnelage').onclick = () => editItem('agnelages', agnelageCourantIdxGuard);
     return;
   }
 
@@ -3128,7 +3247,8 @@ function renderAddAgnelage(sheepId) {
     err.classList.add('hidden');
     const agnelage = {
       date: document.getElementById('f-date').value,
-      lambs: ids.map(id => lambs[id])
+      lambs: ids.map(id => lambs[id]),
+      campagne: DB.campagneDebut
     };
     agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
     sheep.agnelages = sheep.agnelages || [];
@@ -3648,7 +3768,8 @@ function renderMiseBasRapide() {
         <button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">Annuler ce scan</button>
       </div>
     ` : '';
-    const dejaAgnelage = currentSheep && currentSheep.agnelages && currentSheep.agnelages.length > 0;
+    const agnelageCourantIdxRapide = currentSheep ? agnelageCampagneActuelleIdx(currentSheep) : -1;
+    const dejaAgnelage = agnelageCourantIdxRapide !== -1;
     const foundHtml = currentSheep ? `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -3667,7 +3788,7 @@ function renderMiseBasRapide() {
     // on bloque ici aussi plutôt que de laisser la boucle rapide en créer un second.
     const dejaAgnelageHtml = dejaAgnelage ? `
       <div class="card">
-        <div style="font-size:13px;color:var(--coral-fg);margin-bottom:12px;">Cette brebis a déjà un agnelage enregistré le ${currentSheep.agnelages[0].date} — une seule mise bas par campagne. Modifie-la depuis sa fiche si besoin, ou scanne la brebis suivante.</div>
+        <div style="font-size:13px;color:var(--coral-fg);margin-bottom:12px;">Cette brebis a déjà un agnelage enregistré le ${currentSheep.agnelages[agnelageCourantIdxRapide].date} — une seule mise bas par campagne. Modifie-la depuis sa fiche si besoin, ou scanne la brebis suivante.</div>
         <button type="button" class="btn btn-secondary" id="btn-edit-existing-agnelage-rapide">Modifier l'agnelage existant</button>
       </div>
     ` : '';
@@ -3701,7 +3822,7 @@ function renderMiseBasRapide() {
     if (dejaAgnelage) {
       document.getElementById('btn-edit-existing-agnelage-rapide').onclick = () => {
         currentSheepId = currentSheep.id;
-        editItem('agnelages', 0);
+        editItem('agnelages', agnelageCourantIdxRapide);
       };
     }
 
@@ -3795,7 +3916,8 @@ function renderMiseBasRapide() {
         btnValiderMb.disabled = true; // évite un double-clic/double-tap qui rejouerait la validation
         const agnelage = {
           date: document.getElementById('f-date-rapide').value,
-          lambs: ids.map(id => lambs[id])
+          lambs: ids.map(id => lambs[id]),
+          campagne: DB.campagneDebut
         };
         agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
         currentSheep.agnelages = currentSheep.agnelages || [];
@@ -4178,7 +4300,8 @@ function renderAddControle(sheepId) {
     const record = {
       controle: parseInt(controle, 10),
       quantite: Math.round(quantite * 10) / 10,
-      date: document.getElementById('f-date').value
+      date: document.getElementById('f-date').value,
+      campagne: DB.campagneDebut
     };
     sheep.controleLaitier = sheep.controleLaitier || [];
     if (editing) sheep.controleLaitier[editContext.idx] = record;
@@ -7048,7 +7171,17 @@ function renderTraitementsCollectifsHistorique() {
    possible à partir d'une tenue informatique. */
 let registreView = 'agnelage'; // 'agnelage' | 'mouvements' | 'sanitaire'
 let registreFiltre = '';
-let registreColFiltres = { agnelage: { sexe: '' }, mouvements: { categorie: '', type: '' }, sanitaire: { categorie: '', type: '' } };
+let registreColFiltres = { agnelage: { sexe: '', campagne: '' }, mouvements: { categorie: '', type: '', campagne: '' }, sanitaire: { categorie: '', type: '', campagne: '' } };
+/* Campagne d'une ligne du registre, calculée à l'affichage à partir de sa
+   date (campagneAnneeDebutPourDate) plutôt que stockée sur chaque entrée —
+   voir le correctif "filtre par campagne du registre". Retourne null pour
+   une date absente/invalide plutôt que de planter ou d'inventer une
+   campagne (bucket "Date inconnue" dans le filtre, voir
+   registreCampagneSelectHtml). */
+function campagneDeDateRegistre(dateStr) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  return campagneAnneeDebutPourDate(dateStr);
+}
 const REGISTRE_CATEGORIES = [
   { key: 'brebis', label: 'Brebis' },
   { key: 'beliers', label: 'Bélier' },
@@ -7088,7 +7221,8 @@ function registreAgnelageRows() {
           mereEid: entry.eid,
           agneauEid: (l.sexe === 'Mort-né' || !l.eid) ? null : l.eid,
           sexe: l.sexe || '?',
-          date: ag.date || ''
+          date: ag.date || '',
+          campagne: campagneDeDateRegistre(ag.date)
         });
       });
     });
@@ -7111,7 +7245,7 @@ function lambMouvementsRows() {
       (ag.lambs || []).forEach(l => {
         if (!l.eid) return; // pas bouclé : pas de traçabilité individuelle possible
         (l.mouvements || []).forEach(m => {
-          rows.push({ eid: l.eid, categorie: 'Agneau', type: m.type || '', detail: m.cause || m.acheteur || '', date: m.date || '' });
+          rows.push({ eid: l.eid, categorie: 'Agneau', type: m.type || '', detail: m.cause || m.acheteur || '', date: m.date || '', campagne: campagneDeDateRegistre(m.date) });
         });
       });
     });
@@ -7124,7 +7258,7 @@ function registreMouvementsRows() {
   REGISTRE_CATEGORIES.forEach(c => {
     registreEntriesFor(c.key).forEach(entry => {
       entry.mouvements.forEach(m => {
-        rows.push({ eid: entry.eid, categorie: c.label, type: m.type || '', detail: m.cause || m.acheteur || '', date: m.date || '' });
+        rows.push({ eid: entry.eid, categorie: c.label, type: m.type || '', detail: m.cause || m.acheteur || '', date: m.date || '', campagne: campagneDeDateRegistre(m.date) });
       });
     });
   });
@@ -7141,7 +7275,8 @@ function registreSanitaireRows() {
         rows.push({
           eid: entry.eid, categorie: c.label,
           type: (s.type || '') + (s.sousType ? ' · ' + s.sousType : ''),
-          produit: s.produit || '', date: s.date || '', dose: s.dose || ''
+          produit: s.produit || '', date: s.date || '', dose: s.dose || '',
+          campagne: campagneDeDateRegistre(s.date)
         });
       });
     });
@@ -7164,6 +7299,30 @@ function registreColSelectHtml(col, label, valeurs, valeurCourante) {
   </select>`;
 }
 
+/* Filtre "Campagne" : valeurs déjà calculées par campagneDeDateRegistre
+   (entier = campagneDebut, ou null pour une date absente/invalide) —
+   contrairement à registreColSelectHtml, trié par année décroissante (la
+   plus récente en premier) et affiché au format "Campagne 2026" déjà
+   utilisé partout ailleurs dans l'appli (campagneDebut + 1). Le bucket
+   "Date inconnue" (valeur "?") est toujours placé en dernier. */
+function registreCampagneSelectHtml(valeurs, valeurCourante) {
+  const hasInconnue = valeurs.some(v => v === null || v === undefined);
+  const distinct = Array.from(new Set(valeurs.filter(v => v !== null && v !== undefined))).sort((a, b) => b - a);
+  return `<select class="registre-col-filter" data-col="campagne" style="margin-right:8px;margin-bottom:8px;">
+    <option value="">Campagne (toutes)</option>
+    ${distinct.map(v => `<option value="${v}"${String(v) === valeurCourante ? ' selected' : ''}>Campagne ${v + 1}</option>`).join('')}
+    ${hasInconnue ? `<option value="?"${valeurCourante === '?' ? ' selected' : ''}>Date inconnue</option>` : ''}
+  </select>`;
+}
+/* Applique le filtre "Campagne" (colFiltres.campagne) à des lignes déjà
+   tagguées `campagne` par campagneDeDateRegistre — partagé par les 3
+   *FilteredRows ci-dessous. */
+function registreFiltrerParCampagne(rows, campagneFiltre) {
+  if (!campagneFiltre) return rows;
+  if (campagneFiltre === '?') return rows.filter(r => r.campagne === null);
+  return rows.filter(r => r.campagne === Number(campagneFiltre));
+}
+
 /* Chacune des 3 fonctions ci-dessous retourne { controlsHtml, tableHtml } :
    controlsHtml (les <select> de filtre par colonne, propres à ce tableau)
    ne doit être injecté qu'une fois par changement d'onglet — pas à chaque
@@ -7180,6 +7339,7 @@ function registreAgnelageFilteredRows(filtreNumero, colFiltres) {
     rows = rows.filter(r => numeroVisuel(r.mereEid).toLowerCase().includes(f) || (r.agneauEid && numeroVisuel(r.agneauEid).toLowerCase().includes(f)));
   }
   if (colFiltres.sexe) rows = rows.filter(r => r.sexe === colFiltres.sexe);
+  rows = registreFiltrerParCampagne(rows, colFiltres.campagne);
   return rows;
 }
 function registreMouvementsFilteredRows(filtreNumero, colFiltres) {
@@ -7190,6 +7350,7 @@ function registreMouvementsFilteredRows(filtreNumero, colFiltres) {
   }
   if (colFiltres.categorie) rows = rows.filter(r => r.categorie === colFiltres.categorie);
   if (colFiltres.type) rows = rows.filter(r => r.type === colFiltres.type);
+  rows = registreFiltrerParCampagne(rows, colFiltres.campagne);
   return rows;
 }
 function registreSanitaireFilteredRows(filtreNumero, colFiltres) {
@@ -7200,21 +7361,30 @@ function registreSanitaireFilteredRows(filtreNumero, colFiltres) {
   }
   if (colFiltres.categorie) rows = rows.filter(r => r.categorie === colFiltres.categorie);
   if (colFiltres.type) rows = rows.filter(r => r.type === colFiltres.type);
+  rows = registreFiltrerParCampagne(rows, colFiltres.campagne);
   return rows;
+}
+
+// Libellé affiché dans la colonne "Campagne" de chaque tableau du registre
+// (r.campagne calculé par campagneDeDateRegistre : entier ou null).
+function registreCampagneLabel(r) {
+  return r.campagne === null ? '<span style="color:var(--text-muted);">—</span>' : 'Campagne ' + (r.campagne + 1);
 }
 
 function registreAgnelageTableHtml(filtreNumero, colFiltres) {
   const allRows = registreAgnelageRows();
-  const controlsHtml = registreColSelectHtml('sexe', 'Sexe', allRows.map(r => r.sexe), colFiltres.sexe);
+  const controlsHtml = registreColSelectHtml('sexe', 'Sexe', allRows.map(r => r.sexe), colFiltres.sexe)
+    + registreCampagneSelectHtml(allRows.map(r => r.campagne), colFiltres.campagne);
   const rows = registreAgnelageFilteredRows(filtreNumero, colFiltres);
   const tableHtml = rows.length === 0 ? '<div class="empty">Aucune mise bas ne correspond aux filtres.</div>' : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
-    <thead><tr><th style="${REGISTRE_TH}">N° mère</th><th style="${REGISTRE_TH}">N° agneau</th><th style="${REGISTRE_TH}">Sexe</th><th style="${REGISTRE_TH}">Date de naissance</th></tr></thead>
+    <thead><tr><th style="${REGISTRE_TH}">N° mère</th><th style="${REGISTRE_TH}">N° agneau</th><th style="${REGISTRE_TH}">Sexe</th><th style="${REGISTRE_TH}">Date de naissance</th><th style="${REGISTRE_TH}">Campagne</th></tr></thead>
     <tbody>${rows.map(r => `
     <tr>
       <td style="${REGISTRE_TD}">n°${numeroVisuel(r.mereEid)}</td>
       <td style="${REGISTRE_TD}">${r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : '<span style="color:var(--text-muted);">Mort-né</span>'}</td>
       <td style="${REGISTRE_TD}">${r.sexe}</td>
       <td style="${REGISTRE_TD}">${r.date}</td>
+      <td style="${REGISTRE_TD}">${registreCampagneLabel(r)}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
   return { controlsHtml, tableHtml };
@@ -7224,10 +7394,11 @@ function registreMouvementsTableHtml(filtreNumero, colFiltres) {
   const allRows = registreMouvementsRows();
   const controlsHtml =
     registreColSelectHtml('categorie', 'Catégorie', allRows.map(r => r.categorie), colFiltres.categorie) +
-    registreColSelectHtml('type', 'Type', allRows.map(r => r.type), colFiltres.type);
+    registreColSelectHtml('type', 'Type', allRows.map(r => r.type), colFiltres.type) +
+    registreCampagneSelectHtml(allRows.map(r => r.campagne), colFiltres.campagne);
   const rows = registreMouvementsFilteredRows(filtreNumero, colFiltres);
   const tableHtml = rows.length === 0 ? '<div class="empty">Aucun mouvement ne correspond aux filtres.</div>' : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
-    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type</th><th style="${REGISTRE_TH}">Cause / détail</th><th style="${REGISTRE_TH}">Date</th></tr></thead>
+    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type</th><th style="${REGISTRE_TH}">Cause / détail</th><th style="${REGISTRE_TH}">Date</th><th style="${REGISTRE_TH}">Campagne</th></tr></thead>
     <tbody>${rows.map(r => `
     <tr>
       <td style="${REGISTRE_TD}">n°${numeroVisuel(r.eid)}</td>
@@ -7235,6 +7406,7 @@ function registreMouvementsTableHtml(filtreNumero, colFiltres) {
       <td style="${REGISTRE_TD}">${r.type}</td>
       <td style="${REGISTRE_TD}">${r.detail}</td>
       <td style="${REGISTRE_TD}">${r.date}</td>
+      <td style="${REGISTRE_TD}">${registreCampagneLabel(r)}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
   return { controlsHtml, tableHtml };
@@ -7244,10 +7416,11 @@ function registreSanitaireTableHtml(filtreNumero, colFiltres) {
   const allRows = registreSanitaireRows();
   const controlsHtml =
     registreColSelectHtml('categorie', 'Catégorie', allRows.map(r => r.categorie), colFiltres.categorie) +
-    registreColSelectHtml('type', 'Type de soin', allRows.map(r => r.type), colFiltres.type);
+    registreColSelectHtml('type', 'Type de soin', allRows.map(r => r.type), colFiltres.type) +
+    registreCampagneSelectHtml(allRows.map(r => r.campagne), colFiltres.campagne);
   const rows = registreSanitaireFilteredRows(filtreNumero, colFiltres);
   const tableHtml = rows.length === 0 ? '<div class="empty">Aucun soin ne correspond aux filtres.</div>' : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
-    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type de soin</th><th style="${REGISTRE_TH}">Produit</th><th style="${REGISTRE_TH}">Date</th><th style="${REGISTRE_TH}">Dose</th></tr></thead>
+    <thead><tr><th style="${REGISTRE_TH}">N°</th><th style="${REGISTRE_TH}">Catégorie</th><th style="${REGISTRE_TH}">Type de soin</th><th style="${REGISTRE_TH}">Produit</th><th style="${REGISTRE_TH}">Date</th><th style="${REGISTRE_TH}">Dose</th><th style="${REGISTRE_TH}">Campagne</th></tr></thead>
     <tbody>${rows.map(r => `
     <tr>
       <td style="${REGISTRE_TD}">n°${numeroVisuel(r.eid)}</td>
@@ -7256,6 +7429,7 @@ function registreSanitaireTableHtml(filtreNumero, colFiltres) {
       <td style="${REGISTRE_TD}">${r.produit}</td>
       <td style="${REGISTRE_TD}">${r.date}</td>
       <td style="${REGISTRE_TD}">${r.dose}</td>
+      <td style="${REGISTRE_TD}">${registreCampagneLabel(r)}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
   return { controlsHtml, tableHtml };
@@ -7466,6 +7640,54 @@ function uint8ToBase64(bytes) {
   return btoa(binary);
 }
 
+/* Sauvegarde JSON silencieuse déclenchée juste avant l'exécution réelle du
+   "changement de campagne" (voir executerChangementCampagne) — filet de
+   sécurité avant une action irréversible, sans AUCUNE interaction
+   utilisateur supplémentaire : contrairement à saveOrShareBinaryFile, pas de
+   modale "Fichier enregistré" à fermer sur l'app installée. Retourne
+   true/false plutôt que de retomber sur une modale ou un partage en cas de
+   souci, pour que l'appelant puisse bloquer le changement de campagne en
+   toute connaissance de cause si l'écriture a réellement échoué (voir
+   correctif "sauvegarde automatique" — pas d'option de secours silencieuse
+   ici, uniquement le repli navigateur classique ci-dessous qui n'est pas un
+   échec en soi, seulement un mode différent hors app installée). */
+async function writeCampagneBackupFile(filename, bytes) {
+  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (Filesystem) {
+    try {
+      try {
+        const perm = await Filesystem.checkPermissions();
+        if (perm && perm.publicStorage && perm.publicStorage !== 'granted') {
+          await Filesystem.requestPermissions();
+        }
+      } catch (e) { /* API non implémentée sur cette plateforme — on tente l'écriture quand même */ }
+      await Filesystem.writeFile({ path: filename, data: uint8ToBase64(bytes), directory: 'DOCUMENTS' });
+      return true;
+    } catch (e) {
+      console.error('Sauvegarde automatique avant changement de campagne : échec Filesystem', e);
+      return false;
+    }
+  }
+  // Pas de plugin natif disponible (navigateur classique, tests) : repli sur
+  // un téléchargement navigateur discret plutôt que de bloquer une action
+  // pour une raison indépendante des données de l'utilisateur.
+  try {
+    const blob = new Blob([bytes], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (e) {
+    console.error('Sauvegarde automatique avant changement de campagne : échec téléchargement navigateur', e);
+    return false;
+  }
+}
+
 /* Confirmation affichée après un enregistrement réussi via le pont natif
    Capacitor (voir saveOrShareBinaryFile) — indique où retrouver le fichier,
    la WebView elle-même n'ayant pas de gestionnaire de téléchargements
@@ -7542,19 +7764,19 @@ async function saveOrShareBinaryFile(filename, bytes, mimeType) {
 async function exportRegistreXlsx() {
   const sheets = [
     { name: 'Agnelage', rows: [
-      ['N° mère', 'N° agneau', 'Sexe', 'Date de naissance'],
+      ['N° mère', 'N° agneau', 'Sexe', 'Date de naissance', 'Campagne'],
       ...registreAgnelageFilteredRows(registreFiltre, registreColFiltres.agnelage).map(r =>
-        ['n°' + numeroVisuel(r.mereEid), r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : 'Mort-né', r.sexe, r.date])
+        ['n°' + numeroVisuel(r.mereEid), r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : 'Mort-né', r.sexe, r.date, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]},
     { name: 'Mouvements', rows: [
-      ['N°', 'Catégorie', 'Type', 'Cause / détail', 'Date'],
+      ['N°', 'Catégorie', 'Type', 'Cause / détail', 'Date', 'Campagne'],
       ...registreMouvementsFilteredRows(registreFiltre, registreColFiltres.mouvements).map(r =>
-        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.detail, r.date])
+        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.detail, r.date, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]},
     { name: 'Sanitaire', rows: [
-      ['N°', 'Catégorie', 'Type de soin', 'Produit', 'Date', 'Dose'],
+      ['N°', 'Catégorie', 'Type de soin', 'Produit', 'Date', 'Dose', 'Campagne'],
       ...registreSanitaireFilteredRows(registreFiltre, registreColFiltres.sanitaire).map(r =>
-        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.produit, r.date, r.dose])
+        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.produit, r.date, r.dose, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]}
   ];
   const bytes = await buildXlsxWorkbook(sheets);
@@ -7892,6 +8114,155 @@ function renderImportEcho() {
 }
 
 
+/* Nom du fichier de sauvegarde automatique silencieuse (voir
+   writeCampagneBackupFile) déclenchée juste avant l'exécution réelle du
+   changement de campagne — horodaté à la seconde pour ne jamais entrer en
+   collision avec une sauvegarde manuelle ou une sauvegarde automatique
+   antérieure. */
+function nomFichierBackupCampagne(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return 'ovilog_backup_' + date.getFullYear() + pad(date.getMonth() + 1) + pad(date.getDate())
+    + '_' + pad(date.getHours()) + pad(date.getMinutes()) + pad(date.getSeconds()) + '.json';
+}
+
+/* Exécution réelle du "changement de campagne", déclenchée UNIQUEMENT depuis
+   le bouton "Valider" de l'écran de vérification (voir
+   renderConfirmationNouvelleCampagne) — plus aucun confirm() natif ici.
+   Ordre des opérations, volontairement strict :
+     1. Sauvegarde JSON automatique et silencieuse de toute la base — voir
+        writeCampagneBackupFile. Si elle échoue, on s'arrête ici : AUCUNE
+        donnée n'est modifiée, l'appelant doit permettre de réessayer.
+     2. Une fois la sauvegarde confirmée, exécution de tout ce qui était
+        auparavant dans le confirm() natif (lutte remise à zéro, mouvements
+        archivés puis vidés, bascule agnelles→brebis avec généalogie
+        recopiée, campagne + flag d'initialisation posés).
+   Retourne true en cas de succès, false si la sauvegarde a échoué (rien
+   n'a alors été modifié dans DB). */
+async function executerChangementCampagne() {
+  const backupBytes = new TextEncoder().encode(JSON.stringify(DB, null, 2));
+  const backupOk = await writeCampagneBackupFile(nomFichierBackupCampagne(new Date()), backupBytes);
+  if (!backupOk) return false;
+
+  // Pense-bête sans valeur d'historique (voir correctif Lutte) : pas
+  // d'archivage, on vide simplement pour la nouvelle campagne.
+  DB.luttes = [];
+
+  // Archive puis vide les mouvements des brebis déjà actives AVANT d'ajouter
+  // les nouvelles (renouvelées depuis les agnelles), pour ne pas effacer le
+  // mouvement d'entrée qu'on vient de créer pour ces dernières. Les
+  // agnelages, eux, ne sont plus jamais archivés/vidés ici : chaque
+  // agnelage porte son propre champ `campagne` et reste sur la fiche pour
+  // toujours (voir agnelageCampagneActuelleIdx et la fiche brebis).
+  DB.brebis.forEach(sheep => {
+    if ((sheep.statut || 'active') === 'active') {
+      archiverDansRegistre('brebis', sheep.eid, { mouvements: sheep.mouvements });
+      sheep.mouvements = [];
+    }
+  });
+
+  const dateRenouvellement = new Date().toISOString().slice(0,10);
+  (DB.agnelles || []).forEach(ag => {
+    DB.brebis.push({
+      id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: ag.eid, mereEid: ag.motherEid || null,
+      // Généalogie déclarative (texte libre, cas achat/IA) recopiée depuis
+      // l'agnelle — sans quoi elle était perdue à la bascule (voir correctif
+      // Généalogie).
+      pere: ag.pere || '', mere: ag.mere || '',
+      createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: ag.sanitaire || [],
+      mouvements: [{ type: 'Entrée', cause: 'Renouvellement (agnelle devenue brebis)', date: dateRenouvellement }],
+      controleLaitier: [], statut: 'active'
+    });
+    archiverDansRegistre('agneaux', ag.eid, { mouvements: ag.mouvements });
+  });
+  DB.agnelles = [];
+
+  DB.campagneDebut = campagneAnneeDebutPourDate(dateRenouvellement);
+  // Date réelle de ce clic, utilisée comme référence pour "brebis présentes"
+  // dans Bilan de reproduction (voir campagneCohortPresente) — plus fidèle
+  // que le 1er octobre calculé, puisque c'est le vrai instant de bascule
+  // agnelles→brebis pour CETTE campagne.
+  DB.campagneDateDemarrage = dateRenouvellement;
+  // Verrouille définitivement le champ rapide "Campagne actuelle" (voir
+  // renderParametres) : à partir d'ici, ce bouton reste l'unique source de
+  // vérité pour campagneDebut et campagneDateDemarrage.
+  DB.campagneInitialisee = true;
+  saveData(DB);
+  return true;
+}
+
+/* Écran de vérification détaillé avant de valider le changement de
+   campagne — remplace l'ancien confirm() natif. Purement informatif : pas
+   de cases à cocher, juste une relecture avant un vrai bouton "Valider"
+   (voir executerChangementCampagne) ou "Annuler". */
+function renderConfirmationNouvelleCampagne() {
+  pageTitle.textContent = 'Vérifier avant de valider';
+
+  const agnelles = DB.agnelles || [];
+  const agnellesHtml = agnelles.length === 0
+    ? '<div class="empty">Aucune agnelle en attente — aucune bascule vers le troupeau de brebis.</div>'
+    : agnelles.map(ag => `<div class="history-item"><div class="content">n°${numeroVisuel(ag.eid)} — ${age(ag.eid) === null ? 'âge inconnu' : age(ag.eid) + ' an(s)'}</div></div>`).join('');
+
+  const activesConcernees = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const agesCount = {};
+  activesConcernees.forEach(s => {
+    const a = age(s.eid);
+    const key = a === null ? '?' : String(a);
+    agesCount[key] = (agesCount[key] || 0) + 1;
+  });
+  const agesKeys = Object.keys(agesCount).sort((a, b) => a === '?' ? 1 : b === '?' ? -1 : Number(a) - Number(b));
+  const brebisParAgeHtml = agesKeys.map(k => `<div class="history-item"><div class="content">${k === '?' ? 'Âge inconnu' : k + ' an(s)'} — ${agesCount[k]} brebis</div></div>`).join('');
+
+  const nbLuttes = (DB.luttes || []).length;
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Agnelles → brebis (${agnelles.length})</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Ces agnelles rejoindront le troupeau de brebis actives.</div>
+      ${agnellesHtml}
+    </div>
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Brebis actives concernées (${activesConcernees.length})</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Répartition par âge.</div>
+      ${brebisParAgeHtml || '<div class="empty">Aucune brebis active.</div>'}
+    </div>
+    <div class="card" style="border-color:var(--danger);">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;color:var(--danger);">Sera remis à zéro</div>
+      <div style="font-size:13px;">${nbLuttes} date(s) de lutte seront effacées (pense-bête, non conservé d'une campagne à l'autre).</div>
+      <div style="font-size:13px;margin-top:6px;">Les mouvements (ventes, morts...) de la campagne écoulée seront retirés des fiches actives — mais conservés dans le registre d'élevage réglementaire.</div>
+    </div>
+    <div class="card" style="border-color:var(--primary);">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Reste consultable</div>
+      <div style="font-size:13px;">Les mises bas et contrôles laitiers de cette campagne resteront visibles dans l'historique de chaque brebis (jamais supprimés), tout comme le carnet sanitaire, les échographies et la généalogie.</div>
+    </div>
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Sauvegarde automatique</div>
+      <div style="font-size:13px;color:var(--text-muted);">Un fichier <code>ovilog_backup_AAAAMMJJ_HHMMSS.json</code> sera automatiquement créé au moment de la validation, avant toute modification — filet de sécurité silencieux.</div>
+    </div>
+    <div id="confirmation-campagne-err" class="error-box hidden" style="margin-bottom:12px;"></div>
+    <button class="btn btn-primary" id="btn-confirmer-nouvelle-campagne" style="background:var(--accent);margin-bottom:10px;">Valider le changement de campagne</button>
+    <button class="btn btn-secondary" id="btn-annuler-nouvelle-campagne">Annuler</button>
+  `;
+
+  document.getElementById('btn-annuler-nouvelle-campagne').onclick = () => render('parametres');
+  document.getElementById('btn-confirmer-nouvelle-campagne').onclick = async () => {
+    const btn = document.getElementById('btn-confirmer-nouvelle-campagne');
+    const errBox = document.getElementById('confirmation-campagne-err');
+    errBox.classList.add('hidden');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Sauvegarde en cours...';
+    const ok = await executerChangementCampagne();
+    if (!ok) {
+      errBox.textContent = "La sauvegarde automatique a échoué — le changement de campagne a été annulé, aucune donnée n'a été modifiée. Réessaie (vérifie l'espace de stockage disponible) ou contacte le support si le problème persiste.";
+      errBox.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+      return;
+    }
+    render('parametres');
+  };
+}
+
 function renderParametres() {
   pageTitle.textContent = 'Paramètres';
   const syncState = window.OvilogSync ? window.OvilogSync.getState() : { loggedIn: false };
@@ -7928,15 +8299,17 @@ function renderParametres() {
 
       <label>Campagne actuelle (année de fin — ex: 2026 pour la campagne du 1er octobre 2025 au 30 septembre 2026)</label>
       <div class="row">
-        <input type="number" id="f-campagne-annee" value="${DB.campagneDebut ? DB.campagneDebut + 1 : ''}" placeholder="ex: 2026">
-        <button type="button" class="btn btn-secondary" id="btn-save-campagne-annee" style="width:auto;padding:0 16px;">OK</button>
+        <input type="number" id="f-campagne-annee" value="${DB.campagneDebut ? DB.campagneDebut + 1 : ''}" placeholder="ex: 2026" ${DB.campagneInitialisee ? 'disabled' : ''}>
+        <button type="button" class="btn btn-secondary" id="btn-save-campagne-annee" style="width:auto;padding:0 16px;" ${DB.campagneInitialisee ? 'disabled' : ''}>OK</button>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Cette valeur sert juste à afficher la bonne campagne dans l'en-tête — elle ne supprime aucune donnée. Utilise le bouton ci-dessous pour le vrai changement de campagne avec bascule des agnelles.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">${DB.campagneInitialisee
+        ? 'Ce réglage n\'est plus disponible : le bouton "Démarrer une nouvelle campagne" ci-dessous est désormais l\'unique façon de changer de campagne.'
+        : 'Réglage de démarrage initial uniquement — utile si tu installes l\'appli en cours de campagne. Cette valeur sera automatiquement remplacée dès ton premier vrai changement de campagne ci-dessous.'}</div>
     </div>
 
     <div class="card" style="border-color:var(--accent);">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Changement de campagne</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? ('Campagne ' + (DB.campagneDebut + 1) + ' (1er octobre ' + DB.campagneDebut + ' au 30 septembre ' + (DB.campagneDebut + 1) + ')') : 'non définie'}. À déclencher au 1er octobre : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis, et les mises bas, agneaux et mouvements de la campagne écoulée sont supprimés des fiches des brebis actives.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? ('Campagne ' + (DB.campagneDebut + 1) + ' (1er octobre ' + DB.campagneDebut + ' au 30 septembre ' + (DB.campagneDebut + 1) + ')') : 'non définie'}. À déclencher au 1er octobre : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis. Un écran de vérification détaillé s'affiche avant toute validation.</div>
       <button class="btn btn-secondary" id="btn-nouvelle-campagne" style="color:var(--accent);border-color:var(--accent);">Démarrer une nouvelle campagne</button>
     </div>
 
@@ -7977,47 +8350,11 @@ function renderParametres() {
     }
   };
 
-  document.getElementById('btn-nouvelle-campagne').onclick = () => {
-    const nbAgnelles = (DB.agnelles || []).length;
-    if (!confirm(
-      'Démarrer une nouvelle campagne ?\n\n' +
-      '- ' + nbAgnelles + ' agnelle(s) rejoindront le troupeau de brebis\n' +
-      '- Les mises bas et mouvements de la campagne précédente seront retirés des fiches actives (mais conservés dans le registre d\'élevage réglementaire)\n\n' +
-      'Cette action est irréversible.'
-    )) return;
-
-    // Archive puis vide les brebis déjà actives AVANT d'ajouter les nouvelles
-    // (renouvelées depuis les agnelles), pour ne pas effacer le mouvement
-    // d'entrée qu'on vient de créer pour ces dernières.
-    DB.brebis.forEach(sheep => {
-      if ((sheep.statut || 'active') === 'active') {
-        archiverDansRegistre('brebis', sheep.eid, { agnelages: sheep.agnelages, mouvements: sheep.mouvements });
-        sheep.agnelages = [];
-        sheep.mouvements = [];
-      }
-    });
-
-    const dateRenouvellement = new Date().toISOString().slice(0,10);
-    (DB.agnelles || []).forEach(ag => {
-      DB.brebis.push({
-        id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: ag.eid, mereEid: ag.motherEid || null,
-        createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: ag.sanitaire || [],
-        mouvements: [{ type: 'Entrée', cause: 'Renouvellement (agnelle devenue brebis)', date: dateRenouvellement }],
-        controleLaitier: [], statut: 'active'
-      });
-      archiverDansRegistre('agneaux', ag.eid, { mouvements: ag.mouvements });
-    });
-    DB.agnelles = [];
-
-    DB.campagneDebut = campagneAnneeDebutPourDate(dateRenouvellement);
-    // Date réelle de ce clic, utilisée comme référence pour "brebis présentes"
-    // dans Bilan de reproduction (voir campagneCohortPresente) — plus fidèle
-    // que le 1er octobre calculé, puisque c'est le vrai instant de bascule
-    // agnelles→brebis pour CETTE campagne.
-    DB.campagneDateDemarrage = dateRenouvellement;
-    saveData(DB);
-    render('parametres');
-  };
+  // Remplacé par un véritable écran de vérification à parcourir avant
+  // validation (voir renderConfirmationNouvelleCampagne) plutôt qu'un
+  // simple confirm() natif — l'exécution réelle est dans
+  // executerChangementCampagne(), déclenchée depuis cet écran.
+  document.getElementById('btn-nouvelle-campagne').onclick = () => render('confirmation-nouvelle-campagne');
 
   document.getElementById('btn-save-exploitation').onclick = () => {
     DB.exploitation = {
@@ -8031,9 +8368,18 @@ function renderParametres() {
     alert('Informations enregistrées.');
   };
   document.getElementById('btn-save-campagne-annee').onclick = () => {
+    // Verrouillé dès le premier vrai "changement de campagne" (voir
+    // DB.campagneInitialisee) — ce champ rapide ne sert plus qu'au tout
+    // premier réglage, avant ce moment-là.
+    if (DB.campagneInitialisee) return;
     const val = parseInt(document.getElementById('f-campagne-annee').value, 10);
     if (isNaN(val)) { alert("Saisis une année valide."); return; }
     DB.campagneDebut = val - 1;
+    // Initialise aussi la date de démarrage (même rôle que celle posée par
+    // le vrai bouton "changement de campagne" — voir campagneRefDate) avec
+    // la date du jour de ce réglage, pour rester cohérent tant qu'aucun vrai
+    // changement de campagne n'a encore eu lieu.
+    DB.campagneDateDemarrage = new Date().toISOString().slice(0,10);
     saveData(DB);
     render('parametres');
   };
