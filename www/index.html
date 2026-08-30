@@ -2517,31 +2517,43 @@ function renderAgneaux() {
   });
 }
 
-/* Regroupe des entrées taguées `campagne` (agnelages, contrôles laitiers)
-   par campagne, de la plus récente à la plus ancienne, en EXCLUANT la
-   campagne en cours (déjà affichée séparément dans la zone haute, éditable)
-   — alimente les zones "Historique par campagne" en lecture seule des
-   fiches brebis (voir renderDetail). `renderItem` transforme une entrée en
-   HTML ; pas de swipe-wrap ici, ces entrées ne sont pas modifiables depuis
-   cette zone. */
-function historiqueParCampagneHtml(items, renderItem, emptyLabel) {
-  const passees = items.filter(it => it.campagne !== DB.campagneDebut);
-  if (passees.length === 0) return `<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">${emptyLabel}</div>`;
-  const groupes = {};
-  passees.forEach(it => {
-    const key = (it.campagne === undefined || it.campagne === null) ? '?' : String(it.campagne);
-    groupes[key] = groupes[key] || [];
-    groupes[key].push(it);
+/* Regroupe PLUSIEURS catégories d'entrées taguées `campagne` (agnelages,
+   contrôles laitiers, ...) ENSEMBLE par campagne, de la plus récente à la
+   plus ancienne, en EXCLUANT la campagne en cours (déjà affichée
+   séparément dans les zones hautes, éditables) — alimente la carte unique
+   "Historique par campagne" en lecture seule de la fiche brebis (voir
+   renderDetail). Un seul regroupement par campagne, pas un par catégorie
+   qu'on sous-diviserait ensuite par campagne : à l'intérieur d'une même
+   campagne, les entrées de toutes les catégories sont mélangées et triées
+   par date (la plus récente en premier).
+   `groupes` : [{ items, renderItem }] — items déjà indexés (voir idx sur
+   chaque entrée pour les swipe-wrap ailleurs, ici on ne fait qu'afficher),
+   renderItem transforme UNE entrée de ce groupe en HTML (pas de
+   swipe-wrap : rien n'est modifiable depuis cette zone). */
+function historiqueParCampagneHtml(groupes, emptyLabel) {
+  const passees = [];
+  groupes.forEach(g => {
+    g.items.filter(it => it.campagne !== DB.campagneDebut).forEach(it => passees.push({ item: it, renderItem: g.renderItem }));
   });
-  const keys = Object.keys(groupes).sort((a, b) => {
+  if (passees.length === 0) return `<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">${emptyLabel}</div>`;
+  const parCampagne = {};
+  passees.forEach(p => {
+    const key = (p.item.campagne === undefined || p.item.campagne === null) ? '?' : String(p.item.campagne);
+    parCampagne[key] = parCampagne[key] || [];
+    parCampagne[key].push(p);
+  });
+  const keys = Object.keys(parCampagne).sort((a, b) => {
     if (a === '?') return 1;
     if (b === '?') return -1;
     return Number(b) - Number(a);
   });
-  return keys.map(key => `
+  return keys.map(key => {
+    const entries = parCampagne[key].sort((a, b) => (b.item.date || '').localeCompare(a.item.date || ''));
+    return `
     <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin:14px 0 6px;">${key === '?' ? 'Campagne inconnue' : 'Campagne ' + (Number(key) + 1)}</div>
-    ${groupes[key].map(renderItem).join('')}
-  `).join('');
+    ${entries.map(p => p.renderItem(p.item)).join('')}
+  `;
+  }).join('');
 }
 
 function renderDetail(id) {
@@ -2584,11 +2596,6 @@ function renderDetail(id) {
       </div>
     </div>
   `;
-  const agnelageHistoriqueHtml = historiqueParCampagneHtml(
-    [...agnelagesIndexes].reverse(),
-    a => `<div class="history-item">${iconCircle(ICON_SHEEP, 'amber', 'sm')}${agnelageItemHtml(a)}</div>`,
-    'Aucun agnelage des campagnes précédentes.'
-  );
 
   const sanitaire = sheep.sanitaire || [];
   const sanitaireHtml = sanitaire.map((s, i) => ({...s, idx: i})).reverse().map(s => `
@@ -2639,10 +2646,15 @@ function renderDetail(id) {
       </div>
     </div>
   `).join('');
-  const controleHistoriqueHtml = historiqueParCampagneHtml(
-    [...controleIndexes].reverse(),
-    c => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}${controleItemHtml(c)}</div>`,
-    'Aucun contrôle laitier des campagnes précédentes.'
+  // Historique combiné : agnelages ET contrôles laitiers des campagnes
+  // précédentes regroupés ENSEMBLE par campagne (pas une sous-liste par
+  // catégorie) — voir historiqueParCampagneHtml.
+  const historiqueCampagnesHtml = historiqueParCampagneHtml(
+    [
+      { items: agnelagesIndexes, renderItem: a => `<div class="history-item">${iconCircle(ICON_SHEEP, 'amber', 'sm')}${agnelageItemHtml(a)}</div>` },
+      { items: controleIndexes, renderItem: c => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}${controleItemHtml(c)}</div>` }
+    ],
+    'Aucun historique des campagnes précédentes.'
   );
 
   const statutBadge = (sheep.statut && sheep.statut !== 'active')
@@ -2781,10 +2793,6 @@ function renderDetail(id) {
       ${agnelageHtml}
     </div>
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Historique agnelages par campagne</div>
-      ${agnelageHistoriqueHtml}
-    </div>
-    <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Carnet sanitaire</div>
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${sanitaireHtml}
@@ -2795,8 +2803,8 @@ function renderDetail(id) {
       ${controleHtml}
     </div>
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Historique contrôles laitiers par campagne</div>
-      ${controleHistoriqueHtml}
+      <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Historique par campagne</div>
+      ${historiqueCampagnesHtml}
     </div>
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:2px;">Mouvements</div>
