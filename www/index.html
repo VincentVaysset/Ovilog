@@ -475,6 +475,19 @@ function migrateData(d) {
   if (!d.traitementsCollectifs) d.traitementsCollectifs = [];
   if (!d.registre) d.registre = { brebis: {}, beliers: {}, agneaux: {} };
   if (d.lecteurBluetooth === undefined) d.lecteurBluetooth = null;
+  // Contrôle laitier : passage de litres à millilitres (30/08/2026). Ne
+  // touche jamais DB.laitTank (tank laitier mensuel, unité déjà en litres,
+  // feature séparée) — uniquement sheep.controleLaitier[].quantite. Flag
+  // one-shot pour ne jamais reconvertir une base déjà migrée (une valeur de
+  // 1800 mL ne doit pas redevenir 1 800 000 au chargement suivant).
+  if (!d.controleLaitierMigreMl) {
+    (d.brebis || []).forEach(s => {
+      (s.controleLaitier || []).forEach(c => {
+        if (typeof c.quantite === 'number') c.quantite = Math.round(c.quantite * 1000);
+      });
+    });
+    d.controleLaitierMigreMl = true;
+  }
   return d;
 }
 
@@ -512,7 +525,8 @@ function loadData() {
     produitsInfo: {},
     traitementsCollectifs: [],
     registre: { brebis: {}, beliers: {}, agneaux: {} },
-    lecteurBluetooth: null // { address, name } — lecteur par défaut, voir bandeau/btEnsureConnectionListener
+    lecteurBluetooth: null, // { address, name } — lecteur par défaut, voir bandeau/btEnsureConnectionListener
+    controleLaitierMigreMl: true // nouvelle installation : jamais de données en litres à convertir
   };
 }
 /* Déclenche le téléchargement d'un fichier JSON de sauvegarde — utilisée à
@@ -1491,7 +1505,7 @@ let declarationAnneeSelectionnee = null; // année civile choisie sur l'écran D
 
 // Vues racines, accessibles directement depuis le menu hamburger : elles
 // affichent le hamburger (pas de flèche retour) dans l'en-tête.
-const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'inventaire-actifs', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'declaration-annuelle', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite', 'liste-serie']);
+const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'inventaire-actifs', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'declaration-annuelle', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite', 'liste-serie', 'controle-laitier']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -1542,6 +1556,7 @@ const NAV_ITEMS = [
   { view: 'inventaire-actifs', label: 'Inventaire', icon: ICON_BOX, color: 'coral' },
   { view: 'inventaire', label: "Mouvements d'animaux", icon: ICON_MOUVEMENT, color: 'coral' },
   { view: 'lots', label: 'Chantier de tri', icon: ICON_SEARCH, color: 'green' },
+  { view: 'controle-laitier', label: 'Contrôle laitier', icon: ICON_LAIT, color: 'blue' },
   { view: 'sanitaire', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
   { view: 'echo-rapide', label: 'Échographies', icon: ICON_ECHO, color: 'green' },
   { view: 'misebas-rapide', label: 'Mises-bas', icon: ICON_SHEEP, color: 'amber' },
@@ -1736,6 +1751,7 @@ function render(view, sheepId) {
     else if (view === 'add-sanitaire-belier') renderAddSanitaireBelier(currentBelierId);
     else if (view === 'add-mouvement-belier') renderAddMouvementBelier(currentBelierId);
     else if (view === 'qualite') renderQualite();
+    else if (view === 'controle-laitier') renderControleLaitier();
     else if (view === 'liste-serie') renderListeSerie();
     else if (view === 'journal') renderJournal();
     else if (view === 'lots') renderLots();
@@ -1844,7 +1860,7 @@ function dashboardKpiHtml() {
     });
   });
   function moyenne(arr) {
-    return arr.length > 0 ? Math.round((arr.reduce((a,b) => a+b, 0) / arr.length) * 100) / 100 : null;
+    return arr.length > 0 ? Math.round(arr.reduce((a,b) => a+b, 0) / arr.length) : null; // mL : arrondi à l'entier, pas de décimale utile
   }
   const moyenne1 = moyenne(controlesParNumero[1]);
   const moyenne2 = moyenne(controlesParNumero[2]);
@@ -1937,15 +1953,15 @@ function dashboardKpiHtml() {
       <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
         <div>
           <div style="font-size:12px;color:var(--text-muted);">1er contrôle</div>
-          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${moyenne1 !== null ? moyenne1 + ' L' : '—'}</div>
+          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${moyenne1 !== null ? moyenne1 + ' mL' : '—'}</div>
         </div>
         <div>
           <div style="font-size:12px;color:var(--text-muted);">2e contrôle</div>
-          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${moyenne2 !== null ? moyenne2 + ' L' : '—'}</div>
+          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${moyenne2 !== null ? moyenne2 + ' mL' : '—'}</div>
         </div>
         <div>
           <div style="font-size:12px;color:var(--text-muted);">3e contrôle</div>
-          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${moyenne3 !== null ? moyenne3 + ' L' : '—'}</div>
+          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${moyenne3 !== null ? moyenne3 + ' mL' : '—'}</div>
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">${totalControles} relevé(s) enregistré(s) au total</div>
@@ -3012,7 +3028,7 @@ function renderDetail(id) {
   const controleIndexes = controleLaitier.map((c, i) => ({...c, idx: i}));
   const controleItemHtml = c => `
     <div class="content">
-      <div>Contrôle n°${c.controle} — ${c.quantite} L</div>
+      <div>Contrôle n°${c.controle} — ${c.quantite} mL</div>
       <div class="date">${c.date}</div>
     </div>
   `;
@@ -4865,8 +4881,8 @@ function renderAddControle(sheepId) {
         <button type="button" class="opt-btn ctrl-opt blue" data-val="3">3e</button>
       </div>
 
-      <label>Quantité de lait (L)</label>
-      <input type="number" step="0.1" id="f-quantite" placeholder="ex: 1.8" value="${existing ? existing.quantite : ''}">
+      <label>Quantité de lait (mL)</label>
+      <input type="number" step="1" id="f-quantite" placeholder="ex: 1800" value="${existing ? existing.quantite : ''}">
 
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
@@ -4903,7 +4919,7 @@ function renderAddControle(sheepId) {
     err.classList.add('hidden');
     const record = {
       controle: parseInt(controle, 10),
-      quantite: Math.round(quantite * 10) / 10,
+      quantite: Math.round(quantite),
       date: document.getElementById('f-date').value,
       campagne: DB.campagneDebut
     };
@@ -4914,6 +4930,179 @@ function renderAddControle(sheepId) {
     saveData(DB);
     render('detail', sheep.id);
   };
+}
+
+/* ---------- Écran "Contrôle laitier" (filtres + vue tableau) ----------
+   Distinct de la saisie (renderAddControle ci-dessus) : s'appuie sur les
+   contrôles déjà en base (C1/C2/C3, taggés par campagne comme partout
+   ailleurs — voir renderAddControle) pour une vue filtrable/triable.
+   Population : toutes les brebis actives (y compris sans mise bas cette
+   campagne, auquel cas MàB/C1/C2/C3 restent vides).
+   Cumul = somme simple de C1+C2+C3 (valeurs manquantes comptées comme 0),
+   lecture seule, jamais triable ni filtrable dans cette V1 — remplacé plus
+   tard par la vraie lactation extrapolée SIEOL 210j sans changer la
+   structure de l'écran (seule cette colonne changera de source). */
+function renderControleLaitier() {
+  pageTitle.textContent = 'Contrôle laitier';
+
+  function controlesCampagne(sheep) {
+    const vals = { 1: null, 2: null, 3: null };
+    (sheep.controleLaitier || []).forEach(c => {
+      if (c.campagne !== DB.campagneDebut) return;
+      if (vals[c.controle] !== undefined) vals[c.controle] = c.quantite;
+    });
+    return vals;
+  }
+
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const rows = actives.map(s => {
+    const c = controlesCampagne(s);
+    const agnelage = agnelageCampagneActuelle(s);
+    return {
+      sheep: s,
+      numero: numeroVisuel(s.eid),
+      c1: c[1], c2: c[2], c3: c[3],
+      dateMab: agnelage ? agnelage.date : null,
+      cumul: (c[1] || 0) + (c[2] || 0) + (c[3] || 0)
+    };
+  });
+
+  // État des filtres/tri, conservé en fermeture (pas dans le DOM) tant que
+  // l'écran reste affiché — perdu en quittant, comme les autres écrans à
+  // filtres de l'appli (ex: renderAddLot) qui ne persistent pas non plus.
+  const state = { controle: null, operateur: null, seuil: '', dateApres: '', sortKey: 'numero', sortDir: 'asc' };
+
+  function passeFiltre(row) {
+    if (state.controle && state.operateur && state.seuil !== '') {
+      const seuilNum = parseFloat(state.seuil);
+      if (!isNaN(seuilNum)) {
+        const val = row['c' + state.controle];
+        if (val === null || val === undefined) return false; // rien à comparer -> exclue
+        if (state.operateur === '<' && !(val < seuilNum)) return false;
+        if (state.operateur === '>' && !(val > seuilNum)) return false;
+      }
+    }
+    if (state.dateApres) {
+      if (!row.dateMab || row.dateMab <= state.dateApres) return false;
+    }
+    return true;
+  }
+
+  function sortRows(list) {
+    const dir = state.sortDir === 'asc' ? 1 : -1;
+    const sorted = [...list];
+    sorted.sort((a, b) => {
+      if (state.sortKey === 'numero') return a.numero.localeCompare(b.numero) * dir;
+      if (state.sortKey === 'mab') {
+        // Vide toujours en fin de liste, quel que soit le sens du tri.
+        if (!a.dateMab) return !b.dateMab ? 0 : 1;
+        if (!b.dateMab) return -1;
+        return a.dateMab.localeCompare(b.dateMab) * dir;
+      }
+      // c1/c2/c3 : idem, valeurs manquantes toujours en fin de liste.
+      const av = a[state.sortKey], bv = b[state.sortKey];
+      if (av === null || av === undefined) return (bv === null || bv === undefined) ? 0 : 1;
+      if (bv === null || bv === undefined) return -1;
+      return (av - bv) * dir;
+    });
+    return sorted;
+  }
+
+  function arrow(key) {
+    if (state.sortKey !== key) return '';
+    return state.sortDir === 'asc' ? ' ▲' : ' ▼';
+  }
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Filtrer par contrôle</div>
+      <label>Contrôle</label>
+      <div class="grid4" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px;">
+        <button type="button" class="opt-btn ctrl-filtre-opt blue" data-val="1">C1</button>
+        <button type="button" class="opt-btn ctrl-filtre-opt blue" data-val="2">C2</button>
+        <button type="button" class="opt-btn ctrl-filtre-opt blue" data-val="3">C3</button>
+      </div>
+      <div class="row" style="margin-bottom:14px;">
+        <div class="grid4" style="grid-template-columns:repeat(2,1fr);flex:1;margin-bottom:0;">
+          <button type="button" class="opt-btn op-filtre-opt blue" data-val="<">&lt; inférieur à</button>
+          <button type="button" class="opt-btn op-filtre-opt blue" data-val=">">&gt; supérieur à</button>
+        </div>
+      </div>
+      <label>Valeur seuil (mL)</label>
+      <input type="number" step="1" id="f-seuil" placeholder="ex: 1000" style="margin-bottom:14px;">
+
+      <label>Mise bas après le (facultatif)</label>
+      <input type="date" id="f-date-apres">
+    </div>
+
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;" id="cl-count"></div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:420px;" id="cl-table"></table>
+      </div>
+    </div>
+  `;
+
+  function drawTable() {
+    const filtered = sortRows(rows.filter(passeFiltre));
+    document.getElementById('cl-count').textContent = filtered.length + ' brebis correspondante(s) sur ' + rows.length + '.';
+    const table = document.getElementById('cl-table');
+    const cell = (v, unite) => v !== null && v !== undefined ? (v + (unite || '')) : '';
+    table.innerHTML = `
+      <tr style="color:var(--text-muted);text-align:left;">
+        <th class="cl-th" data-key="numero" style="padding:4px 4px;font-weight:500;cursor:pointer;">N°${arrow('numero')}</th>
+        <th class="cl-th" data-key="mab" style="padding:4px 4px;font-weight:500;cursor:pointer;">MàB${arrow('mab')}</th>
+        <th class="cl-th" data-key="c1" style="padding:4px 4px;font-weight:500;text-align:right;cursor:pointer;">C1${arrow('c1')}</th>
+        <th class="cl-th" data-key="c2" style="padding:4px 4px;font-weight:500;text-align:right;cursor:pointer;">C2${arrow('c2')}</th>
+        <th class="cl-th" data-key="c3" style="padding:4px 4px;font-weight:500;text-align:right;cursor:pointer;">C3${arrow('c3')}</th>
+        <th style="padding:4px 4px;font-weight:500;text-align:right;">Cumul</th>
+      </tr>
+      ${filtered.map(r => `
+        <tr style="border-top:1px solid var(--border);">
+          <td style="padding:6px 4px;">n°${r.numero}</td>
+          <td style="padding:6px 4px;">${r.dateMab || ''}</td>
+          <td style="padding:6px 4px;text-align:right;">${cell(r.c1, ' mL')}</td>
+          <td style="padding:6px 4px;text-align:right;">${cell(r.c2, ' mL')}</td>
+          <td style="padding:6px 4px;text-align:right;">${cell(r.c3, ' mL')}</td>
+          <td style="padding:6px 4px;text-align:right;">${r.cumul} mL</td>
+        </tr>
+      `).join('') || `<tr><td colspan="6" style="padding:14px 4px;color:var(--text-muted);">Aucune brebis ne correspond aux filtres.</td></tr>`}
+    `;
+    table.querySelectorAll('.cl-th').forEach(th => {
+      th.onclick = () => {
+        const key = th.dataset.key;
+        if (state.sortKey === key) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+        else { state.sortKey = key; state.sortDir = 'asc'; }
+        drawTable();
+      };
+    });
+  }
+
+  document.querySelectorAll('.ctrl-filtre-opt').forEach(btn => {
+    btn.onclick = () => {
+      const val = parseInt(btn.dataset.val, 10);
+      state.controle = state.controle === val ? null : val; // re-clic = désélectionne
+      document.querySelectorAll('.ctrl-filtre-opt').forEach(b => b.classList.toggle('selected', parseInt(b.dataset.val, 10) === state.controle));
+      drawTable();
+    };
+  });
+  document.querySelectorAll('.op-filtre-opt').forEach(btn => {
+    btn.onclick = () => {
+      state.operateur = state.operateur === btn.dataset.val ? null : btn.dataset.val;
+      document.querySelectorAll('.op-filtre-opt').forEach(b => b.classList.toggle('selected', b.dataset.val === state.operateur));
+      drawTable();
+    };
+  });
+  document.getElementById('f-seuil').addEventListener('input', (e) => {
+    state.seuil = e.target.value;
+    drawTable();
+  });
+  document.getElementById('f-date-apres').addEventListener('input', (e) => {
+    state.dateApres = e.target.value;
+    drawTable();
+  });
+
+  drawTable();
 }
 
 
@@ -6979,21 +7168,40 @@ function renderAddLot() {
   pageTitle.textContent = 'Nouveau lot';
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
 
+  // Dernière échographie de chaque brebis — même convention que partout
+  // ailleurs dans l'appli pour "la dernière écho" (voir tauxReussiteGlobal,
+  // Bilan de reproduction) : le dernier élément du tableau, sans filtre de
+  // campagne (une brebis sans écho cette campagne mais avec un historique
+  // plus ancien reste malgré tout caractérisée par sa toute dernière écho).
+  function lastEchoOf(sheep) {
+    const echos = sheep.echographies || [];
+    return echos.length ? echos[echos.length - 1] : null;
+  }
+
   app.innerHTML = `
     <div class="card">
       <label>Nom du lot</label>
       <input type="text" id="f-lot-nom" placeholder="ex: Brebis vides à trier">
 
-      <label>Filtrer par dernier résultat d'échographie (facultatif)</label>
-      <div class="chip-list" id="critere-list">
+      <label>Filtrer par dernière échographie (facultatif) — critères combinables</label>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Stade</div>
+      <div class="chip-list" id="stade-filtre-list">
+        <button type="button" class="chip" data-val="Vide">Vide</button>
         <button type="button" class="chip" data-val="Début">Début</button>
         <button type="button" class="chip" data-val="Milieu">Milieu</button>
         <button type="button" class="chip" data-val="Fin">Fin</button>
-        <button type="button" class="chip" data-val="Vide">Vide</button>
-        <button type="button" class="chip" data-val="Pleine">Pleine (constat)</button>
-        <button type="button" class="chip" data-val="Aucune">Sans échographie</button>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Coche un ou plusieurs critères pour présélectionner des brebis ci-dessous — tu peux ensuite ajuster la sélection à la main ou au bip.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin:12px 0 6px;">Nombre d'agneaux</div>
+      <div class="chip-list" id="agneaux-filtre-list">
+        <button type="button" class="chip" data-val="Simple">Simple</button>
+        <button type="button" class="chip" data-val="Double">Double</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin:12px 0 6px;">Cas particuliers</div>
+      <div class="chip-list" id="cas-filtre-list">
+        <button type="button" class="chip" data-val="__parasitisme">Parasitisme</button>
+        ${DB.casParticuliers.map(cp => `<button type="button" class="chip" data-val="${cp.replace(/"/g,'&quot;')}">${cp}</button>`).join('')}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin:12px 0 14px;">Coche un ou plusieurs critères (combinés en ET) pour présélectionner des brebis ci-dessous — tu peux ensuite ajuster la sélection à la main ou au bip. Sans aucun critère coché, la sélection reste vide et se fait entièrement à la main.</div>
 
       <label>Brebis du lot</label>
       <div id="lot-picker" style="margin-bottom:14px;"></div>
@@ -7004,26 +7212,88 @@ function renderAddLot() {
   `;
 
   const selected = new Set();
-  const criteres = new Set();
+  const stadeSet = new Set();
+  const agneauxSet = new Set();
+  const casSet = new Set(); // valeurs de DB.casParticuliers cochées
+  let parasitismeOn = false;
 
-  function lastStadeOf(sheep) {
-    const last = sheep.echographies[sheep.echographies.length - 1];
-    if (!last) return 'Aucune';
-    return last.stade || 'Aucune';
+  function renderMeta(sheep) {
+    const echo = lastEchoOf(sheep);
+    if (!echo) return 'Aucune écho';
+    if (echo.special) return echo.special + (echo.parasitisme ? ' · parasitisme' : '');
+    return (echo.stade || '?') + (echo.agneaux ? ' — ' + echo.agneaux : '') + (echo.parasitisme ? ' · parasitisme' : '');
+  }
+
+  function matches(sheep) {
+    const echo = lastEchoOf(sheep);
+    if (stadeSet.size > 0 && (!echo || !stadeSet.has(echo.stade))) return false;
+    if (agneauxSet.size > 0 && (!echo || !agneauxSet.has(echo.agneaux))) return false;
+    if (casSet.size > 0 && (!echo || !casSet.has(echo.special))) return false;
+    if (parasitismeOn && (!echo || !echo.parasitisme)) return false;
+    return true;
+  }
+
+  function unFiltreActif() {
+    return stadeSet.size > 0 || agneauxSet.size > 0 || casSet.size > 0 || parasitismeOn;
   }
 
   const picker = document.getElementById('lot-picker');
-  renderSelectionPicker(picker, actives, selected, { renderMeta: lastStadeOf });
+  const agneauxContainer = document.getElementById('agneaux-filtre-list');
 
-  document.querySelectorAll('#critere-list .chip').forEach(chip => {
+  function updateAgneauxDisponibilite() {
+    // "Vide" seul coché -> agneaux non pertinent (une écho "Vide" n'a jamais
+    // de valeur agneaux, voir parseEchoComment) : grisé et vidé pour éviter
+    // une combinaison structurellement impossible.
+    const seulVide = stadeSet.size === 1 && stadeSet.has('Vide');
+    agneauxContainer.querySelectorAll('.chip').forEach(chip => {
+      chip.disabled = seulVide;
+      chip.style.opacity = seulVide ? '0.4' : '';
+      chip.style.pointerEvents = seulVide ? 'none' : '';
+    });
+    if (seulVide && agneauxSet.size > 0) {
+      agneauxSet.clear();
+      agneauxContainer.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+    }
+  }
+
+  // Recalcule ENTIÈREMENT la sélection à partir des critères actifs à
+  // chaque changement de filtre (jamais une simple accumulation) : sinon
+  // décocher un critère ne retirerait jamais les brebis qu'il avait
+  // ajoutées. Aucun critère actif -> sélection vide, purement manuelle.
+  function recomputeSelection() {
+    selected.clear();
+    if (unFiltreActif()) {
+      actives.forEach(s => { if (matches(s)) selected.add(s.id); });
+    }
+    renderSelectionPicker(picker, actives, selected, { renderMeta });
+  }
+
+  renderSelectionPicker(picker, actives, selected, { renderMeta });
+
+  function wireChipGroup(containerId, targetSet, onAfter) {
+    document.querySelectorAll(`#${containerId} .chip`).forEach(chip => {
+      chip.onclick = () => {
+        const val = chip.dataset.val;
+        if (targetSet.has(val)) { targetSet.delete(val); chip.classList.remove('selected'); }
+        else { targetSet.add(val); chip.classList.add('selected'); }
+        if (onAfter) onAfter();
+        recomputeSelection();
+      };
+    });
+  }
+  wireChipGroup('stade-filtre-list', stadeSet, updateAgneauxDisponibilite);
+  wireChipGroup('agneaux-filtre-list', agneauxSet);
+  document.querySelectorAll('#cas-filtre-list .chip').forEach(chip => {
     chip.onclick = () => {
       const val = chip.dataset.val;
-      if (criteres.has(val)) { criteres.delete(val); chip.classList.remove('selected'); }
-      else { criteres.add(val); chip.classList.add('selected'); }
-      actives.forEach(s => {
-        if (criteres.has(lastStadeOf(s))) selected.add(s.id);
-      });
-      renderSelectionPicker(picker, actives, selected, { renderMeta: lastStadeOf });
+      if (val === '__parasitisme') {
+        parasitismeOn = !parasitismeOn;
+        chip.classList.toggle('selected', parasitismeOn);
+      } else {
+        if (casSet.has(val)) { casSet.delete(val); chip.classList.remove('selected'); }
+        else { casSet.add(val); chip.classList.add('selected'); }
+      }
+      recomputeSelection();
     };
   });
 
