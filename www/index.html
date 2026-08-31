@@ -1407,6 +1407,14 @@ let currentView = 'list';
 let currentSheepId = null;
 let detailOrigin = 'list';
 let previousDetailId = null;
+// EID d'un agneau/agnelle à mettre en surbrillance juste après la
+// navigation vers l'écran Agneaux ou Chantier de tri (voir "Agneaux
+// adoptés" sur la fiche brebis) — réutilise le même mécanisme scroll +
+// classe scan-highlight que le scan manuel sur ces écrans, juste déclenché
+// par un clic plutôt qu'un bip. Consommé (remis à null) dès qu'un écran
+// l'utilise, pour ne pas re-déclencher la surbrillance à une navigation
+// ultérieure sans rapport.
+let pendingHighlightLambEid = null;
 // Champ <input> actuellement en attente d'un scan EID (voir onEidScanned,
 // section Bluetooth plus bas) — déclaré explicitement par l'écran affiché,
 // remis à zéro à chaque navigation (voir render()).
@@ -2444,6 +2452,19 @@ function findLambByEid(eid) {
   return null;
 }
 
+/* Bouton "Voir la fiche de la mère adoptive" pour la carte d'un agneau/
+   agnelle individuel (Agneaux, Chantier de tri) — n'affiche rien si
+   l'agneau n'a pas été adopté (adopte !== true ou adoptiveEid absent), pas
+   de section vide dans ce cas. Volontairement distinct visuellement du
+   bouton vers la mère biologique (couleur bleue, comme le badge "Attendue
+   à la traite"). `cssClass` permet à chaque écran d'attacher son propre
+   gestionnaire de clic : la recherche/l'ouverture de fiche est identique
+   partout, seul `detailOrigin` diffère selon l'écran appelant. */
+function htmlLienMereAdoptive(lamb, cssClass) {
+  if (!lamb || !lamb.adopte || !lamb.adoptiveEid) return '';
+  return `<button type="button" class="btn btn-secondary ${cssClass}" data-eid="${lamb.adoptiveEid}" style="margin-top:8px;display:block;width:100%;color:var(--blue-fg);border-color:var(--blue-fg);">Mère adoptive — n°${numeroVisuel(lamb.adoptiveEid)} — Voir sa fiche</button>`;
+}
+
 function isLambResolved(l) {
   if (l.sexe === 'Mort-né') return true;
   if (l.sexe === 'Femelle' && l.triStatut === 'gardée') return true;
@@ -2563,6 +2584,21 @@ function annulerSortieLamb(lamb, onDone) {
    dashboardKpiHtml, campagneBilanChiffres...) continuent de parcourir
    agnelages brut, un agneau adopté restant compté une seule fois, chez sa
    mère biologique. */
+/* Agneaux dont `sheep` est la mère ADOPTIVE (adopte === true, adoptiveEid
+   pointant vers elle), avec la mère biologique de chacun — factorisé pour
+   être réutilisé tel quel par getLambsUnderSheep ci-dessous (calcul
+   "attendue à la traite", qui n'a besoin que des lambs) ET par l'affichage
+   "Agneaux adoptés" sur la fiche brebis (voir renderDetail), qui a en plus
+   besoin de la mère biologique de chaque agneau pour son lien cliquable.
+   Ne filtre volontairement PAS sur le statut actif de `sheep` : c'est
+   getLambsUnderSheep, pas cette fonction, qui applique cette restriction
+   pour son propre besoin (une brebis devenue inactive ne doit plus compter
+   pour la traite, mais son historique d'adoption reste consultable). */
+function getLambsAdoptesPar(sheep, allSheep) {
+  return allSheep.flatMap(s => (s.agnelages || []).flatMap(a => a.lambs.map(l => ({ lamb: l, mereBiologique: s }))))
+    .filter(({ lamb }) => lamb.adopte && cleanEid(lamb.adoptiveEid) === cleanEid(sheep.eid));
+}
+
 function getLambsUnderSheep(sheep, allSheep) {
   const ownLambs = (sheep.agnelages || []).flatMap(a => a.lambs || []);
   const mereAdoptiveActive = (l) => {
@@ -2571,8 +2607,7 @@ function getLambsUnderSheep(sheep, allSheep) {
   };
   const lambsRestesChezBio = ownLambs.filter(l => !(l.adopte && mereAdoptiveActive(l)));
   const lambsAdoptesParElle = ((sheep.statut || 'active') === 'active')
-    ? allSheep.flatMap(s => (s.agnelages || []).flatMap(a => a.lambs || []))
-        .filter(l => l.adopte && cleanEid(l.adoptiveEid) === cleanEid(sheep.eid))
+    ? getLambsAdoptesPar(sheep, allSheep).map(({ lamb }) => lamb)
     : [];
   return [...lambsRestesChezBio, ...lambsAdoptesParElle];
 }
@@ -2681,6 +2716,7 @@ function renderAgneaux() {
                <button type="button" class="btn btn-secondary btn-agneau-mort" data-i="${i}" style="color:var(--coral-fg);border-color:var(--danger);">Mort</button>`}
         </div>
         <button type="button" class="btn btn-secondary btn-voir-mere-agneau" data-eid="${it.mereEid}" style="margin-top:8px;">Voir la fiche de la mère</button>
+        ${htmlLienMereAdoptive(it.lamb, 'btn-voir-mere-adoptive-agneau')}
       </div>
     `;
     }).join('');
@@ -2738,6 +2774,32 @@ function renderAgneaux() {
       render('detail', mother.id);
     };
   });
+  document.querySelectorAll('.btn-voir-mere-adoptive-agneau').forEach(btn => {
+    btn.onclick = () => {
+      const mother = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(btn.dataset.eid));
+      if (!mother) { alert("Fiche de la mère adoptive introuvable (peut-être supprimée)."); return; }
+      detailOrigin = 'agneaux';
+      previousDetailId = null;
+      render('detail', mother.id);
+    };
+  });
+
+  // Arrivée depuis "Agneaux adoptés" sur la fiche d'une mère adoptive (voir
+  // renderDetail) : surligne la carte de l'agneau ciblé, même mécanisme que
+  // le scan manuel ci-dessus.
+  if (pendingHighlightLambEid) {
+    const val = cleanEid(pendingHighlightLambEid);
+    pendingHighlightLambEid = null;
+    const idx = items.findIndex(it => cleanEid(it.lamb.eid) === val);
+    if (idx !== -1) {
+      const card = document.getElementById('agneau-item-' + idx);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('scan-highlight');
+        setTimeout(() => card.classList.remove('scan-highlight'), 2500);
+      }
+    }
+  }
 }
 
 /* Regroupe PLUSIEURS catégories d'entrées taguées `campagne` (agnelages,
@@ -2949,6 +3011,29 @@ function renderDetail(id) {
     ? `<div class="card"><div style="font-size:12px;color:var(--text-muted);">Généalogie</div>${sheep.pere ? `<div style="font-size:13px;">Père : <strong>${sheep.pere}</strong></div>` : ''}${sheep.mere ? `<div style="font-size:13px;">Mère : <strong>${sheep.mere}</strong></div>` : ''}</div>`
     : '';
 
+  // Agneaux dont cette brebis est la mère ADOPTIVE (sens inverse du lien
+  // "Mère adoptive" affiché sur la fiche/carte de l'agneau lui-même — voir
+  // htmlLienMereAdoptive). Rien n'est affiché si elle n'en a aucun. Un
+  // agneau/agnelle n'a pas de fiche dédiée (voir renderAgneaux/
+  // renderAgnelles) : "Voir sa fiche" y navigue et surligne sa carte via
+  // pendingHighlightLambEid, comme le scan manuel sur ces écrans.
+  const lambsAdoptes = getLambsAdoptesPar(sheep, DB.brebis);
+  const agneauxAdoptesBlock = lambsAdoptes.length === 0 ? '' : `
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Agneaux adoptés</div>
+      ${lambsAdoptes.map(({ lamb, mereBiologique }, i) => `
+        <div style="${i > 0 ? 'border-top:1px solid var(--border);padding-top:10px;margin-top:10px;' : ''}">
+          <div style="font-weight:600;">n°${numeroVisuel(lamb.eid)} — ${lamb.sexe}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Mère biologique : n°${numeroVisuel(mereBiologique.eid)}</div>
+          <div class="row">
+            <button type="button" class="btn btn-secondary btn-voir-mere-bio-adopte" data-eid="${mereBiologique.eid}" style="font-size:12px;">Voir la fiche de la mère biologique</button>
+            <button type="button" class="btn btn-secondary btn-voir-agneau-adopte" data-eid="${lamb.eid}" data-target="${(lamb.sexe === 'Femelle' && lamb.triStatut === 'gardée') ? 'agnelles' : 'agneaux'}" style="font-size:12px;">Voir la fiche de l'agneau</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+
   // Statut reproduction de la campagne + action "vide définitive" — secours
   // manuel en dehors du flux "dernière écho de la campagne" (voir Écho
   // rapide). Le bouton "Annuler" reste visible même si un agnelage existe
@@ -2989,6 +3074,7 @@ function renderDetail(id) {
     ${withdrawalBadge}
     ${mereBlock}
     ${genealogieBlock}
+    ${agneauxAdoptesBlock}
     <div class="row" style="margin-bottom:10px;">
       <button class="btn btn-primary" id="btn-add-echo" style="flex:1;">+ Échographie</button>
       ${dejaMiseBasCampagne
@@ -3085,6 +3171,21 @@ function renderDetail(id) {
       render('detail', mother.id);
     };
   }
+  document.querySelectorAll('.btn-voir-mere-bio-adopte').forEach(btn => {
+    btn.onclick = () => {
+      const mereBio = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(btn.dataset.eid));
+      if (!mereBio) { alert('Fiche de la mère biologique introuvable (peut-être supprimée).'); return; }
+      previousDetailId = sheep.id;
+      detailOrigin = 'detail-back';
+      render('detail', mereBio.id);
+    };
+  });
+  document.querySelectorAll('.btn-voir-agneau-adopte').forEach(btn => {
+    btn.onclick = () => {
+      pendingHighlightLambEid = btn.dataset.eid;
+      render(btn.dataset.target);
+    };
+  });
   document.getElementById('btn-delete-sheep').onclick = () => {
     if (!confirm('Supprimer la brebis n°' + numeroVisuel(sheep.eid) + ' de la liste active ? Son carnet sanitaire, ses mises bas et ses mouvements resteront conservés dans le registre d\'élevage réglementaire.')) return;
     archiverDansRegistre('brebis', sheep.eid, { sanitaire: sheep.sanitaire, agnelages: sheep.agnelages, mouvements: sheep.mouvements });
@@ -5017,13 +5118,14 @@ function renderAgnelles() {
           <button type="button" class="btn btn-secondary btn-ecarter" data-i="${i}" style="width:auto;padding:0 14px;">Écarter</button>
         </div>
         <button type="button" class="btn btn-secondary btn-voir-mere" data-eid="${c.motherEid}" style="margin-top:8px;">Voir la fiche de la mère</button>
+        ${htmlLienMereAdoptive(c.lamb, 'btn-voir-mere-adoptive')}
       </div>
     `).join('');
 
   const listHtml = DB.agnelles.length === 0
     ? '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucune agnelle triée ou achetée pour l\'instant.</div>'
     : sortByAge(DB.agnelles).map(ag => `
-      <div class="card">
+      <div class="card" id="agnelle-triee-${ag.id}">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div style="display:flex;align-items:center;gap:12px;">
             ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
@@ -5043,6 +5145,7 @@ function renderAgnelles() {
           ${ag.origine === 'née' ? `<button type="button" class="btn btn-secondary btn-annuler-tri" data-id="${ag.id}">Revenir sur le tri</button>` : ''}
           ${ag.motherEid ? `<button type="button" class="btn btn-secondary btn-voir-mere" data-eid="${ag.motherEid}">Voir la fiche de la mère</button>` : ''}
         </div>
+        ${htmlLienMereAdoptive(findLambByEid(ag.eid), 'btn-voir-mere-adoptive')}
       </div>
     `).join('');
 
@@ -5187,6 +5290,33 @@ function renderAgnelles() {
       render('detail', mother.id);
     };
   });
+  document.querySelectorAll('.btn-voir-mere-adoptive').forEach(btn => {
+    btn.onclick = () => {
+      const mother = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(btn.dataset.eid));
+      if (!mother) { alert("Fiche de la mère adoptive introuvable (peut-être supprimée)."); return; }
+      detailOrigin = 'agnelles';
+      previousDetailId = null;
+      render('detail', mother.id);
+    };
+  });
+
+  // Arrivée depuis "Agneaux adoptés" sur la fiche d'une mère adoptive (voir
+  // renderDetail) : surligne la carte de l'agnelle ciblée, qu'elle soit
+  // encore en attente de tri ou déjà triée/achetée — même mécanisme que le
+  // scan manuel ci-dessus.
+  if (pendingHighlightLambEid) {
+    const val = cleanEid(pendingHighlightLambEid);
+    pendingHighlightLambEid = null;
+    const idx = candidates.findIndex(c => cleanEid(c.lamb.eid) === val);
+    const ag = idx === -1 ? DB.agnelles.find(a => cleanEid(a.eid) === val) : null;
+    const card = idx !== -1 ? document.getElementById('candidate-' + idx) : ag ? document.getElementById('agnelle-triee-' + ag.id) : null;
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.add('scan-highlight');
+      setTimeout(() => card.classList.remove('scan-highlight'), 2500);
+    }
+  }
+
   document.getElementById('btn-add-agnelle').onclick = () => { editingAgnelleId = null; render('add-agnelle'); };
   document.querySelectorAll('.btn-edit-agnelle').forEach(btn => {
     btn.onclick = () => { editingAgnelleId = btn.dataset.id; render('add-agnelle'); };
