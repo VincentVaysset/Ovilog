@@ -697,6 +697,72 @@ function age(eid) {
   if (y === null) return null;
   return new Date().getFullYear() - y;
 }
+
+/* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, tous
+   statuts et catégories confondus : brebis actives, béliers actifs,
+   agnelles actives, agneaux actifs (voir getAgneauxActifsInventaire), et
+   animaux archivés au registre d'élevage (DB.registre.brebis/beliers/
+   agneaux — une agnelle sortie y est archivée sous "agneaux", il n'existe
+   pas de catégorie "agnelles" séparée). Sans cette vérification, rien
+   n'empêchait de saisir/scanner deux fois le même EID pour deux animaux
+   différents.
+   `exclureId` exclut l'animal en cours de modification par son id "métier"
+   (sheep.id / belier.id / agnelle.id) — cas édition, pas création. Les
+   agneaux et le registre n'ont pas d'id propre : on ne les exclut jamais
+   par exclureId (on ne réédite jamais l'EID d'un agneau déjà bouclé — voir
+   les appelants, qui ne relancent la vérification que si la valeur change).
+   Ne corrige/fusionne jamais rien automatiquement : se contente de décrire
+   le conflit pour que l'écran appelant bloque avec un message explicite.
+   Retourne null si l'EID est libre, sinon { categorie, numero, statutLabel,
+   dateLabel }. Les clés du registre sont l'EID brut tel qu'archivé (pas
+   forcément nettoyé des espaces) : on les compare via cleanEid(), jamais
+   par accès direct à la clé. */
+function verifierEidUnique(eid, exclureId = null) {
+  const c = cleanEid(eid);
+  if (!c) return null;
+  const anneeNe = anneeNaissance(c);
+  const dateLabel = anneeNe !== null ? ('née en ' + anneeNe + ', déduit de l\'EID') : null;
+
+  const sheep = DB.brebis.find(s => (s.statut || 'active') === 'active' && s.id !== exclureId && cleanEid(s.eid) === c);
+  if (sheep) return { categorie: 'brebis', numero: numeroVisuel(sheep.eid), statutLabel: 'une brebis active', dateLabel };
+
+  const belier = (DB.beliers || []).find(b => (b.statut || 'actif') === 'actif' && b.id !== exclureId && cleanEid(b.eid) === c);
+  if (belier) return { categorie: 'belier', numero: numeroVisuel(belier.eid), statutLabel: 'un bélier actif', dateLabel };
+
+  const agnelle = (DB.agnelles || []).find(a => a.id !== exclureId && cleanEid(a.eid) === c);
+  if (agnelle) return { categorie: 'agnelle', numero: numeroVisuel(agnelle.eid), statutLabel: 'une agnelle active (' + agnelle.origine + ')', dateLabel };
+
+  const agneau = getAgneauxActifsInventaire().find(it => cleanEid(it.eid) === c);
+  if (agneau) return { categorie: 'agneau', numero: numeroVisuel(agneau.eid), statutLabel: 'un agneau actif (mère n°' + numeroVisuel(agneau.mereEid) + ')', dateLabel };
+
+  const registreCategories = [['brebis', 'une brebis sortie (registre)'], ['beliers', 'un bélier sorti (registre)'], ['agneaux', 'un agneau/une agnelle sorti(e) (registre)']];
+  for (const [cat, label] of registreCategories) {
+    const reg = DB.registre && DB.registre[cat];
+    if (!reg) continue;
+    const key = Object.keys(reg).find(k => cleanEid(k) === c);
+    if (key) return { categorie: 'registre-' + cat, numero: numeroVisuel(key), statutLabel: label, dateLabel };
+  }
+
+  return null;
+}
+/* Message prêt à afficher pour un conflit renvoyé par verifierEidUnique(). */
+function messageEidDejaUtilise(conflit) {
+  return 'Cet EID appartient déjà à ' + conflit.statutLabel + ' (n°' + conflit.numero + (conflit.dateLabel ? ', ' + conflit.dateLabel : '') + ').';
+}
+
+/* Recherche une brebis ACTIVE par EID complet (scan) ou numéro officiel
+   (saisie courte, 5 chiffres) — sert à la sélection contrôlée de la mère
+   adoptive (voir renderAddAgnelage) : contrairement à verifierEidUnique, on
+   veut ici trouver une correspondance, pas signaler son absence. Ignore
+   volontairement les agnelles/béliers/animaux sortis : une mère adoptive
+   doit être une brebis active connue. */
+function trouverBrebisActiveParEidOuNumero(val) {
+  const v = cleanEid(val || '');
+  if (!v) return null;
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  if (v.length >= 11) return actives.find(s => cleanEid(s.eid) === v) || null;
+  return actives.find(s => numeroVisuel(s.eid) === v) || null;
+}
 /* Tri commun à toutes les listes d'animaux : du plus vieux au plus jeune,
    par année de naissance croissante (déduite de l'EID), puis par numéro
    visuel croissant à âge égal (ex: 90059, 90060, 90061 avant 02001, 02002
@@ -1665,7 +1731,7 @@ function dashboardKpiHtml() {
   const { misesBasActives, troupeauAMettreBas, misesBasRestantes } = campagneBilanChiffres(active);
   const pctMisesBasRealisees = troupeauAMettreBas > 0 ? Math.min(100, Math.round((misesBasActives / troupeauAMettreBas) * 100)) : 0;
 
-  const attendueTraiteCount = active.filter(s => isAttendueTraite(s)).length;
+  const attendueTraiteCount = active.filter(s => isAttendueTraite(s, DB.brebis)).length;
 
   const controlesParNumero = { 1: [], 2: [], 3: [] };
   DB.brebis.forEach(s => {
@@ -1824,7 +1890,7 @@ function renderHome() {
   if (kpiAgnelles) kpiAgnelles.onclick = () => render('agnelles');
   const kpiAttendues = document.getElementById('kpi-attendues-traite');
   if (kpiAttendues) kpiAttendues.onclick = () => {
-    openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(isAttendueTraite).map(s => s.eid));
+    openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(s => isAttendueTraite(s, DB.brebis)).map(s => s.eid));
   };
   const kpiBilan = document.getElementById('kpi-bilan-campagne');
   if (kpiBilan) kpiBilan.onclick = () => render('bilan-campagne');
@@ -1876,7 +1942,7 @@ function renderList() {
   const sorted = sortByAge(actives);
   sorted.forEach(sheep => {
     const lastAgnelage = agnelageCampagneActuelle(sheep);
-    const badgeHtml = isAttendueTraite(sheep)
+    const badgeHtml = isAttendueTraite(sheep, DB.brebis)
       ? `<span class="badge badge-blue">Attendue à la traite</span>`
       : lastAgnelage
         ? `<span class="badge badge-amber">${lastAgnelage.date} · ${lastAgnelage.lambs.length} agn.</span>`
@@ -2347,8 +2413,9 @@ function renderAddSheep() {
       err.classList.remove('hidden');
       return;
     }
-    if (DB.brebis.some(s => cleanEid(s.eid) === cleanEid(eid))) {
-      err.textContent = "Cette brebis existe déjà.";
+    const conflit = verifierEidUnique(eid);
+    if (conflit) {
+      err.textContent = messageEidDejaUtilise(conflit);
       err.classList.remove('hidden');
       return;
     }
@@ -2485,11 +2552,35 @@ function annulerSortieLamb(lamb, onDone) {
   onDone();
 }
 
-function isAttendueTraite(sheep) {
-  if (!sheep.agnelages || sheep.agnelages.length === 0) return false;
-  const allLambs = sheep.agnelages.flatMap(a => a.lambs);
-  if (allLambs.length === 0) return false;
-  return allLambs.every(l => isLambResolved(l));
+/* Agneaux dont une brebis a la charge pour le calcul "attendue à la traite" :
+   par défaut ses propres agneaux (nés d'elle), MAIS un agneau adopté (adopte
+   = true, adoptiveEid renseigné) est retiré de chez sa mère BIOLOGIQUE et
+   rattaché à sa mère ADOPTIVE tant que celle-ci est une brebis active
+   connue — sinon (mère adoptive vendue/morte entre-temps, ou adoptiveEid ne
+   correspondant plus à personne) il retombe sous la responsabilité de sa
+   mère biologique, qui reste la seule certaine. N'affecte QUE ce calcul :
+   les stats globales de natalité/prolificité (statsDetailleesParGroupeAge,
+   dashboardKpiHtml, campagneBilanChiffres...) continuent de parcourir
+   agnelages brut, un agneau adopté restant compté une seule fois, chez sa
+   mère biologique. */
+function getLambsUnderSheep(sheep, allSheep) {
+  const ownLambs = (sheep.agnelages || []).flatMap(a => a.lambs || []);
+  const mereAdoptiveActive = (l) => {
+    if (!l.adoptiveEid) return false;
+    return allSheep.some(s => (s.statut || 'active') === 'active' && cleanEid(s.eid) === cleanEid(l.adoptiveEid));
+  };
+  const lambsRestesChezBio = ownLambs.filter(l => !(l.adopte && mereAdoptiveActive(l)));
+  const lambsAdoptesParElle = ((sheep.statut || 'active') === 'active')
+    ? allSheep.flatMap(s => (s.agnelages || []).flatMap(a => a.lambs || []))
+        .filter(l => l.adopte && cleanEid(l.adoptiveEid) === cleanEid(sheep.eid))
+    : [];
+  return [...lambsRestesChezBio, ...lambsAdoptesParElle];
+}
+
+function isAttendueTraite(sheep, allSheep) {
+  const lambs = getLambsUnderSheep(sheep, allSheep);
+  if (lambs.length === 0) return false;
+  return lambs.every(l => isLambResolved(l));
 }
 
 /* ---------- Agneaux (vue agrégée, en attente de devenir) ---------- */
@@ -2796,7 +2887,7 @@ function renderDetail(id) {
     ? `<div style="background:#f0efe9;color:var(--text-muted);padding:8px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;">Statut actuel : <strong>${sheep.statut}</strong></div>`
     : '';
 
-  const attendueTraiteBadge = ((sheep.statut || 'active') === 'active' && isAttendueTraite(sheep))
+  const attendueTraiteBadge = ((sheep.statut || 'active') === 'active' && isAttendueTraite(sheep, DB.brebis))
     ? `<div style="display:flex;align-items:center;gap:10px;background:var(--blue-bg);color:var(--blue-fg);padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">${iconCircle(ICON_LAIT, 'blue', 'sm')}<span>Attendue à la traite — tous ses agneaux sont partis</span></div>`
     : '';
 
@@ -3283,13 +3374,15 @@ function renderAddAgnelage(sheepId) {
       <div class="eid-block" data-id="${id}">
         <label>EID (bip agneau)</label>
         <input type="text" class="eid-input" data-id="${id}" placeholder="Scanner ou saisir l'EID">
+        <div class="eid-preview" data-id="${id}" style="font-size:12px;margin-bottom:10px;"></div>
         <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
           <input type="checkbox" class="adopt-check" data-id="${id}" style="width:16px;height:16px;margin:0;">
           <span style="font-size:14px;color:var(--text);">Adopté par une autre mère</span>
         </label>
         <div class="adopt-field hidden" data-id="${id}">
-          <label>EID mère adoptive</label>
-          <input type="text" class="adopt-eid" data-id="${id}" placeholder="Scanner ou saisir l'EID">
+          <label>Mère adoptive — scanner son EID ou saisir son numéro officiel</label>
+          <input type="text" class="adopt-eid" data-id="${id}" placeholder="Scanner ou saisir le numéro">
+          <div class="adopt-preview" data-id="${id}" style="font-size:12px;margin-bottom:12px;"></div>
         </div>
       </div>
       <div class="mortne-note hidden" data-id="${id}" style="font-size:12px;color:var(--text-muted);">Pas de boucle sur un mort-né — aucun EID à saisir.</div>
@@ -3319,15 +3412,41 @@ function renderAddAgnelage(sheepId) {
       document.querySelector(`.remove-lamb[data-id="${id}"]`).closest('.card').remove();
     };
     const eidInput = document.querySelector(`.eid-input[data-id="${id}"]`);
-    if (eidInput) attachEidBeep(eidInput);
+    const eidPreview = document.querySelector(`.eid-preview[data-id="${id}"]`);
+    if (eidInput) {
+      attachEidBeep(eidInput);
+      eidInput.addEventListener('input', () => {
+        const v = eidInput.value.trim();
+        if (v === (lambs[id].eidOriginal || '')) { eidPreview.textContent = ''; return; } // valeur inchangée (édition) : pas de re-vérification
+        if (!v) { eidPreview.textContent = ''; return; }
+        const conflit = verifierEidUnique(v);
+        if (conflit) { eidPreview.textContent = messageEidDejaUtilise(conflit); eidPreview.style.color = 'var(--danger)'; }
+        else { eidPreview.textContent = 'Numéro officiel : n°' + numeroVisuel(v); eidPreview.style.color = 'var(--text-muted)'; }
+      });
+    }
     const adoptEidInput = document.querySelector(`.adopt-eid[data-id="${id}"]`);
-    if (adoptEidInput) attachEidBeep(adoptEidInput);
+    const adoptPreview = document.querySelector(`.adopt-preview[data-id="${id}"]`);
+    if (adoptEidInput) {
+      attachEidBeep(adoptEidInput);
+      adoptEidInput.addEventListener('input', () => {
+        lambs[id].adoptEidTouched = true;
+        const val = adoptEidInput.value.trim();
+        if (!val) { adoptPreview.textContent = ''; return; }
+        const mere = trouverBrebisActiveParEidOuNumero(val);
+        if (mere) { adoptPreview.textContent = 'Mère adoptive : brebis n°' + numeroVisuel(mere.eid); adoptPreview.style.color = 'var(--success)'; }
+        else { adoptPreview.textContent = "Aucune brebis active ne correspond à ce numéro."; adoptPreview.style.color = 'var(--danger)'; }
+      });
+    }
   }
 
   function addLamb() {
     lambCount++;
     const id = lambCount;
-    lambs[id] = { sexe: null, adopte: false };
+    // eidOriginal/adoptEidTouched : voir la vérification d'unicité EID et le
+    // contrôle de la mère adoptive plus bas — un agneau tout juste ajouté
+    // n'a par définition aucune valeur historique à tolérer, donc les deux
+    // champs sont toujours vérifiés dès la saisie.
+    lambs[id] = { sexe: null, adopte: false, eidOriginal: '', adoptEidTouched: true };
     document.getElementById('lamb-list').appendChild(lambCard(id));
     bindLamb(id);
   }
@@ -3342,12 +3461,26 @@ function renderAddAgnelage(sheepId) {
       if (l.sexe !== 'Mort-né') {
         const eidInput = document.querySelector(`.eid-input[data-id="${id}"]`);
         if (eidInput) eidInput.value = l.eid || '';
+        lambs[id].eidOriginal = l.eid || ''; // valeur de référence : re-vérifiée seulement si modifiée (voir eid-input 'input')
         if (l.adopte) {
           const check = document.querySelector(`.adopt-check[data-id="${id}"]`);
           check.checked = true;
           check.dispatchEvent(new Event('change'));
           const adoptEidInput = document.querySelector(`.adopt-eid[data-id="${id}"]`);
           if (adoptEidInput) adoptEidInput.value = l.adoptiveEid || '';
+          // Valeur historique tolérée telle quelle tant qu'elle n'est pas
+          // modifiée par l'utilisateur (voir btn-save-agnelage) — une brebis
+          // adoptive déjà enregistrée a pu depuis être vendue/renommée, on
+          // ne veut pas bloquer la sauvegarde d'un agnelage par ailleurs
+          // inchangé pour autant.
+          lambs[id].adoptEidTouched = false;
+          lambs[id].adoptiveEid = l.adoptiveEid || '';
+          const adoptPreview = document.querySelector(`.adopt-preview[data-id="${id}"]`);
+          if (adoptPreview) {
+            const mereInit = trouverBrebisActiveParEidOuNumero(l.adoptiveEid);
+            if (mereInit) { adoptPreview.textContent = 'Mère adoptive : brebis n°' + numeroVisuel(mereInit.eid); adoptPreview.style.color = 'var(--success)'; }
+            else { adoptPreview.textContent = 'Valeur historique conservée telle quelle (ne correspond plus à une brebis active).'; adoptPreview.style.color = 'var(--text-muted)'; }
+          }
         }
       }
     });
@@ -3363,6 +3496,20 @@ function renderAddAgnelage(sheepId) {
       err.classList.remove('hidden');
       return;
     }
+    // Doublon entre agneaux de CE MÊME agnelage (deux EID fraîchement saisis
+    // identiques) : verifierEidUnique seul ne le verrait pas puisqu'aucun
+    // des deux n'est encore enregistré dans la base au moment du contrôle.
+    const eidsSaisis = ids
+      .filter(id => lambs[id].sexe !== 'Mort-né')
+      .map(id => (document.querySelector(`.eid-input[data-id="${id}"]`) || {}).value)
+      .map(v => cleanEid((v || '').trim()))
+      .filter(Boolean);
+    const eidsEnDouble = eidsSaisis.filter((v, i) => eidsSaisis.indexOf(v) !== i);
+    if (eidsEnDouble.length > 0) {
+      err.textContent = "Deux agneaux de cet agnelage ont le même EID (n°" + numeroVisuel(eidsEnDouble[0]) + ").";
+      err.classList.remove('hidden');
+      return;
+    }
     for (const id of ids) {
       if (!lambs[id].sexe) {
         err.textContent = "Sélectionne le sexe de chaque agneau.";
@@ -3371,10 +3518,36 @@ function renderAddAgnelage(sheepId) {
       }
       if (lambs[id].sexe !== 'Mort-né') {
         const eidInput = document.querySelector(`.eid-input[data-id="${id}"]`);
-        lambs[id].eid = eidInput.value.trim();
+        const eidVal = eidInput.value.trim();
+        // Unicité de l'EID sur toute la base — seulement si la valeur a
+        // changé depuis le chargement (voir eidOriginal) : re-vérifier une
+        // valeur inchangée en édition ferait à tort remonter l'agneau
+        // lui-même (déjà présent dans la base sous ce même EID).
+        if (eidVal !== (lambs[id].eidOriginal || '')) {
+          const conflitEid = verifierEidUnique(eidVal);
+          if (conflitEid) {
+            err.textContent = messageEidDejaUtilise(conflitEid) + ' (agneau ' + id + ')';
+            err.classList.remove('hidden');
+            return;
+          }
+        }
+        lambs[id].eid = eidVal;
         if (lambs[id].adopte) {
           const adoptEidInput = document.querySelector(`.adopt-eid[data-id="${id}"]`);
-          lambs[id].adoptiveEid = adoptEidInput.value.trim();
+          const adoptVal = adoptEidInput.value.trim();
+          if (lambs[id].adoptEidTouched) {
+            const mereAdoptive = trouverBrebisActiveParEidOuNumero(adoptVal);
+            if (!mereAdoptive) {
+              err.textContent = "Aucune brebis active ne correspond à ce numéro (mère adoptive de l'agneau " + id + ").";
+              err.classList.remove('hidden');
+              return;
+            }
+            lambs[id].adoptiveEid = mereAdoptive.eid;
+          } else {
+            // Non modifié depuis le chargement : valeur historique tolérée
+            // telle quelle (voir la restauration de l'agnelage existant).
+            lambs[id].adoptiveEid = adoptVal;
+          }
         }
         lambs[id].sanitaire = lambs[id].sanitaire || [];
         const dejaSelepherol = lambs[id].sanitaire.some(s => s.produit === 'Selepherol');
@@ -3472,10 +3645,11 @@ function renderEchoRapide() {
   function screenLoop() {
     let currentSheep = null;
     let unknownEid = null;
+    let conflitEid = null; // EID absent de DB.brebis mais déjà utilisé ailleurs (voir verifierEidUnique) : bloque la création plutôt que de créer une brebis fantôme
     let stade = null, agneaux = null, parasit = false, special = null;
 
     function resetResult() {
-      currentSheep = null; unknownEid = null; stade = null; agneaux = null; parasit = false; special = null;
+      currentSheep = null; unknownEid = null; conflitEid = null; stade = null; agneaux = null; parasit = false; special = null;
     }
 
     function clearGroup(sel) {
@@ -3564,7 +3738,18 @@ function renderEchoRapide() {
 
     function draw() {
       pageTitle.textContent = 'Échographies — ' + typeLabel();
-      const unknownHtml = unknownEid ? `
+      const unknownHtml = conflitEid ? `
+        <div style="background:var(--coral-bg);border-radius:var(--radius);padding:16px;margin-bottom:12px;">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+            <span style="width:44px;height:44px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--coral-fg);">${ICON_WARNING.replace('viewBox="0 0 24 24"', 'width="22" height="22" viewBox="0 0 24 24"')}</span>
+            <div>
+              <div style="font-weight:700;color:var(--coral-fg);">EID déjà utilisé</div>
+              <div style="font-size:12px;color:var(--coral-fg);opacity:0.85;">${messageEidDejaUtilise(conflitEid)} Impossible de créer une brebis avec cet EID.</div>
+            </div>
+          </div>
+          <button type="button" class="btn btn-secondary" id="btn-cancel-unknown">OK</button>
+        </div>
+      ` : unknownEid ? `
         <div style="background:var(--coral-bg);border-radius:var(--radius);padding:16px;margin-bottom:12px;">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
             <span style="width:44px;height:44px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--coral-fg);">${ICON_WARNING.replace('viewBox="0 0 24 24"', 'width="22" height="22" viewBox="0 0 24 24"')}</span>
@@ -3624,8 +3809,15 @@ function renderEchoRapide() {
         if (!val) return;
         const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
         if (!sheep) {
-          playBeepRate();
           resetResult();
+          const conflit = verifierEidUnique(val);
+          if (conflit) {
+            playBeepRate();
+            conflitEid = conflit;
+            draw();
+            return;
+          }
+          playBeepRate();
           unknownEid = val;
           draw();
           return;
@@ -3657,8 +3849,11 @@ function renderEchoRapide() {
           currentSheep = newSheep;
           draw();
         };
+      }
+      if (unknownEid || conflitEid) {
         document.getElementById('btn-cancel-unknown').onclick = () => {
           unknownEid = null;
+          conflitEid = null;
           draw();
         };
       }
@@ -3820,11 +4015,12 @@ function resetMisebasRapideSession() { misebasRapideCount = 0; }
 function renderMiseBasRapide() {
   let currentSheep = null;
   let unknownEid = null;
+  let conflitEid = null; // EID absent de DB.brebis mais déjà utilisé ailleurs (voir verifierEidUnique) : bloque la création plutôt que de créer une brebis fantôme
   let lambCount = 0;
   const lambs = {};
 
   function resetForm() {
-    currentSheep = null; unknownEid = null; lambCount = 0;
+    currentSheep = null; unknownEid = null; conflitEid = null; lambCount = 0;
     Object.keys(lambs).forEach(k => delete lambs[k]);
   }
 
@@ -3846,13 +4042,15 @@ function renderMiseBasRapide() {
       <div class="eid-block-rapide" data-id="${id}">
         <label>EID (bip agneau)</label>
         <input type="text" class="eid-input-rapide" data-id="${id}" placeholder="Scanner ou saisir l'EID">
+        <div class="eid-preview-rapide" data-id="${id}" style="font-size:12px;margin-bottom:10px;"></div>
         <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
           <input type="checkbox" class="adopt-check-rapide" data-id="${id}" style="width:16px;height:16px;margin:0;">
           <span style="font-size:14px;color:var(--text);">Adopté par une autre mère</span>
         </label>
         <div class="adopt-field-rapide hidden" data-id="${id}">
-          <label>EID mère adoptive</label>
-          <input type="text" class="adopt-eid-rapide" data-id="${id}" placeholder="Scanner ou saisir l'EID">
+          <label>Mère adoptive — scanner son EID ou saisir son numéro officiel</label>
+          <input type="text" class="adopt-eid-rapide" data-id="${id}" placeholder="Scanner ou saisir le numéro">
+          <div class="adopt-preview-rapide" data-id="${id}" style="font-size:12px;margin-bottom:12px;"></div>
         </div>
         <div class="selepherol-note" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);background:#f0efe9;border-radius:var(--radius);padding:8px 12px;margin-top:10px;">Sélépérol 2 cc appliqué automatiquement</div>
       </div>
@@ -3883,9 +4081,29 @@ function renderMiseBasRapide() {
       document.querySelector(`.remove-lamb-rapide[data-id="${id}"]`).closest('.card').remove();
     };
     const eidInput = document.querySelector(`.eid-input-rapide[data-id="${id}"]`);
-    if (eidInput) attachEidBeep(eidInput);
+    const eidPreview = document.querySelector(`.eid-preview-rapide[data-id="${id}"]`);
+    if (eidInput) {
+      attachEidBeep(eidInput);
+      eidInput.addEventListener('input', () => {
+        const v = eidInput.value.trim();
+        if (!v) { eidPreview.textContent = ''; return; }
+        const conflit = verifierEidUnique(v);
+        if (conflit) { eidPreview.textContent = messageEidDejaUtilise(conflit); eidPreview.style.color = 'var(--danger)'; }
+        else { eidPreview.textContent = 'Numéro officiel : n°' + numeroVisuel(v); eidPreview.style.color = 'var(--text-muted)'; }
+      });
+    }
     const adoptEidInput = document.querySelector(`.adopt-eid-rapide[data-id="${id}"]`);
-    if (adoptEidInput) attachEidBeep(adoptEidInput);
+    const adoptPreview = document.querySelector(`.adopt-preview-rapide[data-id="${id}"]`);
+    if (adoptEidInput) {
+      attachEidBeep(adoptEidInput);
+      adoptEidInput.addEventListener('input', () => {
+        const val = adoptEidInput.value.trim();
+        if (!val) { adoptPreview.textContent = ''; return; }
+        const mere = trouverBrebisActiveParEidOuNumero(val);
+        if (mere) { adoptPreview.textContent = 'Mère adoptive : brebis n°' + numeroVisuel(mere.eid); adoptPreview.style.color = 'var(--success)'; }
+        else { adoptPreview.textContent = "Aucune brebis active ne correspond à ce numéro."; adoptPreview.style.color = 'var(--danger)'; }
+      });
+    }
   }
 
   function addLamb() {
@@ -3898,7 +4116,18 @@ function renderMiseBasRapide() {
 
   function draw() {
     pageTitle.textContent = 'Saisie de mises bas';
-    const unknownHtml = unknownEid ? `
+    const unknownHtml = conflitEid ? `
+      <div style="background:var(--coral-bg);border-radius:var(--radius);padding:16px;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+          <span style="width:44px;height:44px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--coral-fg);">${ICON_WARNING.replace('viewBox="0 0 24 24"', 'width="22" height="22" viewBox="0 0 24 24"')}</span>
+          <div>
+            <div style="font-weight:700;color:var(--coral-fg);">EID déjà utilisé</div>
+            <div style="font-size:12px;color:var(--coral-fg);opacity:0.85;">${messageEidDejaUtilise(conflitEid)} Impossible de créer une brebis avec cet EID.</div>
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">OK</button>
+      </div>
+    ` : unknownEid ? `
       <div style="background:var(--coral-bg);border-radius:var(--radius);padding:16px;margin-bottom:12px;">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
           <span style="width:44px;height:44px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--coral-fg);">${ICON_WARNING.replace('viewBox="0 0 24 24"', 'width="22" height="22" viewBox="0 0 24 24"')}</span>
@@ -3979,8 +4208,15 @@ function renderMiseBasRapide() {
       if (!val) return;
       const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
       if (!sheep) {
-        playBeepRate();
         resetForm();
+        const conflit = verifierEidUnique(val);
+        if (conflit) {
+          playBeepRate();
+          conflitEid = conflit;
+          draw();
+          return;
+        }
+        playBeepRate();
         unknownEid = val;
         draw();
         return;
@@ -4011,8 +4247,11 @@ function renderMiseBasRapide() {
         draw();
         addLamb();
       };
+    }
+    if (unknownEid || conflitEid) {
       document.getElementById('btn-cancel-unknown-mb').onclick = () => {
         unknownEid = null;
+        conflitEid = null;
         draw();
       };
     }
@@ -4030,6 +4269,21 @@ function renderMiseBasRapide() {
           err.classList.remove('hidden');
           return;
         }
+        // Doublon entre agneaux de CE MÊME agnelage (voir renderAddAgnelage,
+        // même logique) : deux EID fraîchement saisis identiques ne seraient
+        // pas détectés par verifierEidUnique seul, aucun des deux n'étant
+        // encore enregistré au moment du contrôle.
+        const eidsSaisis = ids
+          .filter(id => lambs[id].sexe !== 'Mort-né')
+          .map(id => (document.querySelector(`.eid-input-rapide[data-id="${id}"]`) || {}).value)
+          .map(v => cleanEid((v || '').trim()))
+          .filter(Boolean);
+        const eidsEnDouble = eidsSaisis.filter((v, i) => eidsSaisis.indexOf(v) !== i);
+        if (eidsEnDouble.length > 0) {
+          err.textContent = "Deux agneaux de cet agnelage ont le même EID (n°" + numeroVisuel(eidsEnDouble[0]) + ").";
+          err.classList.remove('hidden');
+          return;
+        }
         for (const id of ids) {
           if (!lambs[id].sexe) {
             err.textContent = "Sélectionne le sexe de chaque agneau.";
@@ -4038,10 +4292,24 @@ function renderMiseBasRapide() {
           }
           if (lambs[id].sexe !== 'Mort-né') {
             const eidInput = document.querySelector(`.eid-input-rapide[data-id="${id}"]`);
-            lambs[id].eid = eidInput.value.trim();
+            const eidVal = eidInput.value.trim();
+            const conflitEidLamb = verifierEidUnique(eidVal);
+            if (conflitEidLamb) {
+              err.textContent = messageEidDejaUtilise(conflitEidLamb) + ' (agneau ' + id + ')';
+              err.classList.remove('hidden');
+              return;
+            }
+            lambs[id].eid = eidVal;
             if (lambs[id].adopte) {
               const adoptEidInput = document.querySelector(`.adopt-eid-rapide[data-id="${id}"]`);
-              lambs[id].adoptiveEid = adoptEidInput.value.trim();
+              const adoptVal = adoptEidInput.value.trim();
+              const mereAdoptive = trouverBrebisActiveParEidOuNumero(adoptVal);
+              if (!mereAdoptive) {
+                err.textContent = "Aucune brebis active ne correspond à ce numéro (mère adoptive de l'agneau " + id + ").";
+                err.classList.remove('hidden');
+                return;
+              }
+              lambs[id].adoptiveEid = mereAdoptive.eid;
             }
             lambs[id].sanitaire = lambs[id].sanitaire || [];
             const dateNaissance = document.getElementById('f-date-rapide').value;
@@ -5013,10 +5281,9 @@ function renderAddAgnelle() {
       err.classList.remove('hidden');
       return;
     }
-    const eidTakenElsewhere = DB.agnelles.some(a => cleanEid(a.eid) === cleanEid(eid) && a.id !== editingAgnelleId)
-      || DB.brebis.some(s => cleanEid(s.eid) === cleanEid(eid));
-    if (eidTakenElsewhere) {
-      err.textContent = "Cet animal existe déjà.";
+    const conflit = verifierEidUnique(eid, editingAgnelleId);
+    if (conflit) {
+      err.textContent = messageEidDejaUtilise(conflit);
       err.classList.remove('hidden');
       return;
     }
@@ -5124,7 +5391,8 @@ function renderAddBelier() {
     const eid = inputEid.value.trim();
     const err = document.getElementById('err');
     if (cleanEid(eid).length < 11) { err.textContent = "Numéro EID incomplet."; err.classList.remove('hidden'); return; }
-    if (DB.beliers.some(b => cleanEid(b.eid) === cleanEid(eid))) { err.textContent = "Ce bélier existe déjà."; err.classList.remove('hidden'); return; }
+    const conflit = verifierEidUnique(eid);
+    if (conflit) { err.textContent = messageEidDejaUtilise(conflit); err.classList.remove('hidden'); return; }
     err.classList.add('hidden');
     const dateEntree = document.getElementById('input-date-entree').value || null;
     const belier = { id: Date.now().toString(), eid, createdAt: Date.now(), dateEntree, sanitaire: [], mouvements: [], statut: 'actif' };
@@ -8662,7 +8930,15 @@ function renderImportEcho() {
       const parsed = parseEchoComment(comment);
       if (!parsed) { erreurs.push('Ligne ' + (i+2) + ' : commentaire non reconnu (' + comment + ')'); return; }
       const existe = DB.brebis.some(s => cleanEid(s.eid) === cleanEid(eid));
-      if (!existe) nouvellesBrebis++;
+      if (!existe) {
+        // L'EID ne correspond à aucune brebis connue : avant de le compter comme
+        // "nouvelle brebis" à créer, vérifie qu'il n'appartient pas déjà à un
+        // autre animal (bélier, agnelle, agneau actif, registre...). Ne bloque
+        // que CETTE ligne, jamais tout le fichier (voir chantier "unicité EID").
+        const conflit = verifierEidUnique(eid);
+        if (conflit) { erreurs.push('Ligne ' + (i+2) + ' : ' + messageEidDejaUtilise(conflit)); return; }
+        nouvellesBrebis++;
+      }
       rows.push({ eid, ...parsed });
     });
     parsedRows = rows;
@@ -8723,9 +8999,16 @@ function renderImportEcho() {
     if (!confirm('Importer ' + parsedRows.length + ' échographie(s) ? Cette action ajoute des données, elle ne supprime rien.')) return;
     const date = document.getElementById('import-echo-date').value;
     let skipped = 0;
-    parsedRows.forEach(row => {
+    const rejetsDoublonEid = [];
+    parsedRows.forEach((row, i) => {
       let sheep = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(row.eid));
       if (!sheep) {
+        // Re-vérifié au moment de l'import (pas seulement à l'aperçu) : entre la
+        // prévisualisation et le clic "Confirmer", l'EID a pu être utilisé
+        // ailleurs (ex: import CSV lancé deux fois de suite). Ne rejette que
+        // cette ligne, le reste du fichier continue d'être traité normalement.
+        const conflit = verifierEidUnique(row.eid);
+        if (conflit) { rejetsDoublonEid.push('Ligne ' + (i+2) + ' : ' + messageEidDejaUtilise(conflit)); return; }
         sheep = { id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: row.eid, createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Import (fichier CSV/Excel)', date: date }], controleLaitier: [], statut: 'active' };
         DB.brebis.push(sheep);
       }
@@ -8742,7 +9025,13 @@ function renderImportEcho() {
       });
     });
     saveData(DB);
-    alert((parsedRows.length - skipped) + ' échographie(s) importée(s) avec succès.' + (skipped > 0 ? ' ' + skipped + ' ignorée(s) car une échographie existait déjà à cette date pour ces brebis.' : ''));
+    const nbImportees = parsedRows.length - skipped - rejetsDoublonEid.length;
+    let msg = nbImportees + ' échographie(s) importée(s) avec succès.';
+    if (skipped > 0) msg += ' ' + skipped + ' ignorée(s) car une échographie existait déjà à cette date pour ces brebis.';
+    if (rejetsDoublonEid.length > 0) {
+      msg += '\n\n' + rejetsDoublonEid.length + ' ligne(s) rejetée(s) (EID déjà utilisé par un autre animal) :\n' + rejetsDoublonEid.slice(0, 10).join('\n') + (rejetsDoublonEid.length > 10 ? '\n... (' + (rejetsDoublonEid.length - 10) + ' de plus)' : '');
+    }
+    alert(msg);
     render('parametres');
   };
 }
