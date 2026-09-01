@@ -4219,15 +4219,36 @@ function renderHistoriqueEcho() {
    pour l'explication (une ré-entrée sur cet écran, ex: via le menu
    hamburger, reprend le compteur au lieu de le remettre à zéro). */
 let misebasRapideCount = 0;
-// Trace, pour la durée de la session de saisie en cours seulement, chaque
-// agnelage créé via Mise bas rapide -- affichée en tableau de consultation
-// sous le formulaire (voir renderMiseBasRapide), annulable ligne par ligne.
-// { sheepId, agnelageIdx } suffit à retrouver et retirer l'agnelage exact :
-// dejaAgnelage bloque une 2e saisie pour la même brebis dans la session, donc
-// l'index stocké au moment du push reste valide tant qu'aucune autre
-// opération ne touche entre-temps le tableau agnelages de cette brebis.
-let misebasRapideSession = [];
-function resetMisebasRapideSession() { misebasRapideCount = 0; misebasRapideSession = []; }
+function resetMisebasRapideSession() { misebasRapideCount = 0; }
+
+/* Tableau de consultation permanent (pas limité à la session de saisie en
+   cours) des mises bas de la campagne active -- affiché sous le formulaire
+   de renderMiseBasRapide. Recalculé à chaque affichage directement depuis
+   DB.brebis : une brebis n'a jamais qu'un seul agnelage par campagne (voir
+   dejaAgnelage/renderAddAgnelage), donc { sheepId, agnelageIdx } retrouvé
+   ici retire toujours le bon agnelage, qu'il ait été saisi cette session ou
+   une session précédente. */
+function misebasCampagneRows() {
+  const out = [];
+  DB.brebis.forEach(sheep => {
+    const agnelageIdx = (sheep.agnelages || []).findIndex(a => a.campagne === DB.campagneDebut);
+    if (agnelageIdx === -1) return;
+    const ag = sheep.agnelages[agnelageIdx];
+    out.push({
+      sheepId: sheep.id,
+      agnelageIdx,
+      numero: numeroVisuel(sheep.eid),
+      date: ag.date,
+      male: ag.lambs.some(l => l.sexe === 'Mâle'),
+      femelle: ag.lambs.some(l => l.sexe === 'Femelle'),
+      mortNe: ag.lambs.some(l => l.sexe === 'Mort-né'),
+      total: ag.lambs.length
+    });
+  });
+  // Plus récente en premier ; n° croissant en tie-break (même jour).
+  out.sort((a, b) => (b.date || '').localeCompare(a.date || '') || a.numero.localeCompare(b.numero));
+  return out;
+}
 
 function renderMiseBasRapide() {
   let currentSheep = null;
@@ -4393,27 +4414,15 @@ function renderMiseBasRapide() {
     ` : '';
 
     const count = misebasRapideCount;
-    // Tableau de consultation des mises bas déjà enregistrées cette session
-    // (voir misebasRapideSession ci-dessus) -- indépendant du formulaire,
-    // affiché même quand aucune brebis n'est en cours de saisie.
-    const sessionRows = misebasRapideSession.map((rec, idx) => {
-      const sheep = findSheep(rec.sheepId);
-      const ag = sheep && sheep.agnelages && sheep.agnelages[rec.agnelageIdx];
-      if (!sheep || !ag) return null;
-      return {
-        idx,
-        numero: numeroVisuel(sheep.eid),
-        date: ag.date,
-        male: ag.lambs.some(l => l.sexe === 'Mâle'),
-        femelle: ag.lambs.some(l => l.sexe === 'Femelle'),
-        mortNe: ag.lambs.some(l => l.sexe === 'Mort-né'),
-        total: ag.lambs.length
-      };
-    }).filter(Boolean);
+    // Tableau de consultation PERMANENT des mises bas de la campagne active
+    // (voir misebasCampagneRows ci-dessus) -- pas limité à la session de
+    // saisie en cours, affiché même quand aucune brebis n'est en cours de
+    // saisie ou après avoir quitté puis rouvert l'écran.
+    const campagneRows = misebasCampagneRows();
     const mark = (v) => v ? '<span style="color:var(--primary);font-weight:700;">✕</span>' : '';
-    const sessionTableHtml = sessionRows.length > 0 ? `
+    const campagneTableHtml = campagneRows.length > 0 ? `
       <div class="card">
-        <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Mises bas enregistrées cette session (${sessionRows.length})</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Mises bas de la campagne (${campagneRows.length})</div>
         <div style="overflow-x:auto;">
           <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:420px;">
             <tr style="color:var(--text-muted);text-align:left;">
@@ -4425,7 +4434,7 @@ function renderMiseBasRapide() {
               <th style="padding:4px 4px;font-weight:500;text-align:right;">Total</th>
               <th></th>
             </tr>
-            ${sessionRows.map(r => `
+            ${campagneRows.map(r => `
               <tr style="border-top:1px solid var(--border);">
                 <td style="padding:6px 4px;">n°${r.numero}</td>
                 <td style="padding:6px 4px;">${r.date}</td>
@@ -4433,7 +4442,7 @@ function renderMiseBasRapide() {
                 <td style="padding:6px 4px;text-align:center;">${mark(r.femelle)}</td>
                 <td style="padding:6px 4px;text-align:center;">${mark(r.mortNe)}</td>
                 <td style="padding:6px 4px;text-align:right;">${r.total}</td>
-                <td style="padding:6px 4px;text-align:right;"><button type="button" class="btn btn-secondary btn-annuler-session-mb" data-idx="${r.idx}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Annuler</button></td>
+                <td style="padding:6px 4px;text-align:right;"><button type="button" class="btn btn-secondary btn-annuler-mb-campagne" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Annuler</button></td>
               </tr>
             `).join('')}
           </table>
@@ -4452,24 +4461,20 @@ function renderMiseBasRapide() {
       ${foundHtml}
       ${dejaAgnelageHtml}
       ${formHtml}
-      ${sessionTableHtml}
+      ${campagneTableHtml}
       <button type="button" class="btn btn-secondary" id="btn-fin-session-mb" style="margin-top:14px;">Terminer la session</button>
     `;
 
-    document.querySelectorAll('.btn-annuler-session-mb').forEach(btn => {
+    document.querySelectorAll('.btn-annuler-mb-campagne').forEach(btn => {
       btn.onclick = () => {
-        const idx = parseInt(btn.dataset.idx, 10);
-        const rec = misebasRapideSession[idx];
-        if (!rec) return;
-        const sheep = findSheep(rec.sheepId);
+        const sheep = findSheep(btn.dataset.sheepId);
+        const agnelageIdx = parseInt(btn.dataset.agnelageIdx, 10);
         const numeroConfirm = sheep ? numeroVisuel(sheep.eid) : '?';
         if (!confirm('Annuler la mise bas enregistrée pour la brebis n°' + numeroConfirm + ' ? Cette action est irréversible.')) return;
         if (sheep && sheep.agnelages) {
-          sheep.agnelages.splice(rec.agnelageIdx, 1);
+          sheep.agnelages.splice(agnelageIdx, 1);
           saveData(DB);
         }
-        misebasRapideSession.splice(idx, 1);
-        misebasRapideCount = Math.max(0, misebasRapideCount - 1);
         draw();
       };
     });
@@ -4618,7 +4623,6 @@ function renderMiseBasRapide() {
         currentSheep.agnelages.push(agnelage);
         saveData(DB);
         misebasRapideCount++;
-        misebasRapideSession.push({ sheepId: currentSheep.id, agnelageIdx: currentSheep.agnelages.length - 1 });
         resetForm();
         draw();
       };
