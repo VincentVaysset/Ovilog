@@ -4219,7 +4219,15 @@ function renderHistoriqueEcho() {
    pour l'explication (une ré-entrée sur cet écran, ex: via le menu
    hamburger, reprend le compteur au lieu de le remettre à zéro). */
 let misebasRapideCount = 0;
-function resetMisebasRapideSession() { misebasRapideCount = 0; }
+// Trace, pour la durée de la session de saisie en cours seulement, chaque
+// agnelage créé via Mise bas rapide -- affichée en tableau de consultation
+// sous le formulaire (voir renderMiseBasRapide), annulable ligne par ligne.
+// { sheepId, agnelageIdx } suffit à retrouver et retirer l'agnelage exact :
+// dejaAgnelage bloque une 2e saisie pour la même brebis dans la session, donc
+// l'index stocké au moment du push reste valide tant qu'aucune autre
+// opération ne touche entre-temps le tableau agnelages de cette brebis.
+let misebasRapideSession = [];
+function resetMisebasRapideSession() { misebasRapideCount = 0; misebasRapideSession = []; }
 
 function renderMiseBasRapide() {
   let currentSheep = null;
@@ -4385,6 +4393,53 @@ function renderMiseBasRapide() {
     ` : '';
 
     const count = misebasRapideCount;
+    // Tableau de consultation des mises bas déjà enregistrées cette session
+    // (voir misebasRapideSession ci-dessus) -- indépendant du formulaire,
+    // affiché même quand aucune brebis n'est en cours de saisie.
+    const sessionRows = misebasRapideSession.map((rec, idx) => {
+      const sheep = findSheep(rec.sheepId);
+      const ag = sheep && sheep.agnelages && sheep.agnelages[rec.agnelageIdx];
+      if (!sheep || !ag) return null;
+      return {
+        idx,
+        numero: numeroVisuel(sheep.eid),
+        date: ag.date,
+        male: ag.lambs.some(l => l.sexe === 'Mâle'),
+        femelle: ag.lambs.some(l => l.sexe === 'Femelle'),
+        mortNe: ag.lambs.some(l => l.sexe === 'Mort-né'),
+        total: ag.lambs.length
+      };
+    }).filter(Boolean);
+    const mark = (v) => v ? '<span style="color:var(--primary);font-weight:700;">✕</span>' : '';
+    const sessionTableHtml = sessionRows.length > 0 ? `
+      <div class="card">
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Mises bas enregistrées cette session (${sessionRows.length})</div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:420px;">
+            <tr style="color:var(--text-muted);text-align:left;">
+              <th style="padding:4px 4px;font-weight:500;">N°</th>
+              <th style="padding:4px 4px;font-weight:500;">Date</th>
+              <th style="padding:4px 4px;font-weight:500;text-align:center;">Mâle</th>
+              <th style="padding:4px 4px;font-weight:500;text-align:center;">Femelle</th>
+              <th style="padding:4px 4px;font-weight:500;text-align:center;">Mort-né</th>
+              <th style="padding:4px 4px;font-weight:500;text-align:right;">Total</th>
+              <th></th>
+            </tr>
+            ${sessionRows.map(r => `
+              <tr style="border-top:1px solid var(--border);">
+                <td style="padding:6px 4px;">n°${r.numero}</td>
+                <td style="padding:6px 4px;">${r.date}</td>
+                <td style="padding:6px 4px;text-align:center;">${mark(r.male)}</td>
+                <td style="padding:6px 4px;text-align:center;">${mark(r.femelle)}</td>
+                <td style="padding:6px 4px;text-align:center;">${mark(r.mortNe)}</td>
+                <td style="padding:6px 4px;text-align:right;">${r.total}</td>
+                <td style="padding:6px 4px;text-align:right;"><button type="button" class="btn btn-secondary btn-annuler-session-mb" data-idx="${r.idx}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Annuler</button></td>
+              </tr>
+            `).join('')}
+          </table>
+        </div>
+      </div>
+    ` : '';
     app.innerHTML = `
       <div style="display:flex;justify-content:center;margin-bottom:16px;">
         <div class="session-counter sc-amber">${ICON_SHEEP}${count} mise${count > 1 ? 's' : ''} bas saisie${count > 1 ? 's' : ''}</div>
@@ -4397,8 +4452,27 @@ function renderMiseBasRapide() {
       ${foundHtml}
       ${dejaAgnelageHtml}
       ${formHtml}
+      ${sessionTableHtml}
       <button type="button" class="btn btn-secondary" id="btn-fin-session-mb" style="margin-top:14px;">Terminer la session</button>
     `;
+
+    document.querySelectorAll('.btn-annuler-session-mb').forEach(btn => {
+      btn.onclick = () => {
+        const idx = parseInt(btn.dataset.idx, 10);
+        const rec = misebasRapideSession[idx];
+        if (!rec) return;
+        const sheep = findSheep(rec.sheepId);
+        const numeroConfirm = sheep ? numeroVisuel(sheep.eid) : '?';
+        if (!confirm('Annuler la mise bas enregistrée pour la brebis n°' + numeroConfirm + ' ? Cette action est irréversible.')) return;
+        if (sheep && sheep.agnelages) {
+          sheep.agnelages.splice(rec.agnelageIdx, 1);
+          saveData(DB);
+        }
+        misebasRapideSession.splice(idx, 1);
+        misebasRapideCount = Math.max(0, misebasRapideCount - 1);
+        draw();
+      };
+    });
 
     if (dejaAgnelage) {
       document.getElementById('btn-edit-existing-agnelage-rapide').onclick = () => {
@@ -4544,6 +4618,7 @@ function renderMiseBasRapide() {
         currentSheep.agnelages.push(agnelage);
         saveData(DB);
         misebasRapideCount++;
+        misebasRapideSession.push({ sheepId: currentSheep.id, agnelageIdx: currentSheep.agnelages.length - 1 });
         resetForm();
         draw();
       };
@@ -4960,6 +5035,7 @@ function renderControleLaitier() {
     const agnelage = agnelageCampagneActuelle(s);
     return {
       sheep: s,
+      eid: cleanEid(s.eid),
       numero: numeroVisuel(s.eid),
       c1: c[1], c2: c[2], c3: c[3],
       dateMab: agnelage ? agnelage.date : null,
@@ -4971,6 +5047,10 @@ function renderControleLaitier() {
   // l'écran reste affiché — perdu en quittant, comme les autres écrans à
   // filtres de l'appli (ex: renderAddLot) qui ne persistent pas non plus.
   const state = { controle: null, operateur: null, seuil: '', dateApres: '', sortKey: 'numero', sortDir: 'asc' };
+  // Sélection pour "Créer un lot de recherche" : volontairement indépendante
+  // des filtres/tri (jamais recalculée ni vidée par un changement de filtre)
+  // -- resserrer le filtre après avoir coché une brebis ne la décoche pas.
+  const selection = new Set();
 
   function passeFiltre(row) {
     if (state.controle && state.operateur && state.seuil !== '') {
@@ -5037,19 +5117,49 @@ function renderControleLaitier() {
 
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:10px;" id="cl-count"></div>
-      <div style="overflow-x:auto;">
-        <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:420px;" id="cl-table"></table>
+      <div class="row" style="margin-bottom:10px;">
+        <button type="button" class="btn btn-secondary" id="btn-cl-toggle-all" style="width:auto;padding:6px 14px;font-size:13px;">Tout cocher</button>
       </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:460px;" id="cl-table"></table>
+      </div>
+    </div>
+
+    <button type="button" class="btn btn-primary" id="btn-cl-create-lot" disabled>Créer un lot de recherche</button>
+
+    <div class="row" style="margin-top:10px;margin-bottom:10px;">
+      <button type="button" class="btn btn-secondary" id="btn-cl-export-pdf" style="flex:1;">Export PDF</button>
+      <button type="button" class="btn btn-secondary" id="btn-cl-export-xlsx" style="flex:1;">Excel (.xlsx)</button>
     </div>
   `;
 
+  // Lignes triées + filtrées telles qu'affichées à l'écran à cet instant --
+  // partagée par le tableau, "Tout cocher" et les deux exports, pour que ces
+  // derniers respectent toujours exactement ce qui est visible au moment du clic.
+  function currentFiltered() {
+    return sortRows(rows.filter(passeFiltre));
+  }
+
+  function updateActionBar() {
+    const btnLot = document.getElementById('btn-cl-create-lot');
+    btnLot.disabled = selection.size === 0;
+    btnLot.textContent = selection.size > 0 ? `Créer un lot de recherche (${selection.size})` : 'Créer un lot de recherche';
+  }
+
+  function updateToggleAllLabel(filtered) {
+    const btn = document.getElementById('btn-cl-toggle-all');
+    const toutCoche = filtered.length > 0 && filtered.every(r => selection.has(r.eid));
+    btn.textContent = toutCoche ? 'Tout décocher' : 'Tout cocher';
+  }
+
   function drawTable() {
-    const filtered = sortRows(rows.filter(passeFiltre));
+    const filtered = currentFiltered();
     document.getElementById('cl-count').textContent = filtered.length + ' brebis correspondante(s) sur ' + rows.length + '.';
     const table = document.getElementById('cl-table');
     const cell = (v, unite) => v !== null && v !== undefined ? (v + (unite || '')) : '';
     table.innerHTML = `
       <tr style="color:var(--text-muted);text-align:left;">
+        <th style="padding:4px 4px;width:26px;"></th>
         <th class="cl-th" data-key="numero" style="padding:4px 4px;font-weight:500;cursor:pointer;">N°${arrow('numero')}</th>
         <th class="cl-th" data-key="mab" style="padding:4px 4px;font-weight:500;cursor:pointer;">MàB${arrow('mab')}</th>
         <th class="cl-th" data-key="c1" style="padding:4px 4px;font-weight:500;text-align:right;cursor:pointer;">C1${arrow('c1')}</th>
@@ -5059,6 +5169,7 @@ function renderControleLaitier() {
       </tr>
       ${filtered.map(r => `
         <tr style="border-top:1px solid var(--border);">
+          <td style="padding:6px 4px;"><input type="checkbox" class="cl-check" data-eid="${r.eid}" style="width:16px;height:16px;margin:0;"${selection.has(r.eid) ? ' checked' : ''}></td>
           <td style="padding:6px 4px;">n°${r.numero}</td>
           <td style="padding:6px 4px;">${r.dateMab || ''}</td>
           <td style="padding:6px 4px;text-align:right;">${cell(r.c1, ' mL')}</td>
@@ -5066,7 +5177,7 @@ function renderControleLaitier() {
           <td style="padding:6px 4px;text-align:right;">${cell(r.c3, ' mL')}</td>
           <td style="padding:6px 4px;text-align:right;">${r.cumul} mL</td>
         </tr>
-      `).join('') || `<tr><td colspan="6" style="padding:14px 4px;color:var(--text-muted);">Aucune brebis ne correspond aux filtres.</td></tr>`}
+      `).join('') || `<tr><td colspan="7" style="padding:14px 4px;color:var(--text-muted);">Aucune brebis ne correspond aux filtres.</td></tr>`}
     `;
     table.querySelectorAll('.cl-th').forEach(th => {
       th.onclick = () => {
@@ -5076,7 +5187,42 @@ function renderControleLaitier() {
         drawTable();
       };
     });
+    table.querySelectorAll('.cl-check').forEach(chk => {
+      chk.onclick = () => {
+        if (chk.checked) selection.add(chk.dataset.eid);
+        else selection.delete(chk.dataset.eid);
+        updateToggleAllLabel(filtered);
+        updateActionBar();
+      };
+    });
+    updateToggleAllLabel(filtered);
+    updateActionBar();
   }
+
+  document.getElementById('btn-cl-toggle-all').onclick = () => {
+    const filtered = currentFiltered();
+    const toutCoche = filtered.length > 0 && filtered.every(r => selection.has(r.eid));
+    filtered.forEach(r => { if (toutCoche) selection.delete(r.eid); else selection.add(r.eid); });
+    drawTable();
+  };
+
+  document.getElementById('btn-cl-create-lot').onclick = () => {
+    if (selection.size === 0) return;
+    showCreerLotControleLaitierModal([...selection]);
+  };
+
+  document.getElementById('btn-cl-export-pdf').onclick = () => {
+    const btn = document.getElementById('btn-cl-export-pdf');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Export...';
+    Promise.resolve(exportControleLaitierPdf(currentFiltered())).finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
+  document.getElementById('btn-cl-export-xlsx').onclick = () => {
+    const btn = document.getElementById('btn-cl-export-xlsx');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Export...';
+    exportControleLaitierXlsx(currentFiltered()).finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
 
   document.querySelectorAll('.ctrl-filtre-opt').forEach(btn => {
     btn.onclick = () => {
@@ -5103,6 +5249,50 @@ function renderControleLaitier() {
   });
 
   drawTable();
+}
+
+/* Modale de nommage avant la création du lot de recherche depuis Contrôle
+   laitier (voir renderControleLaitier) -- même gabarit que
+   showRenommerProduitModal. Réutilise ensuite tel quel le flux de recherche
+   en bergerie (renderLotSearch) déjà utilisé par les lots d'échographie. */
+function showCreerLotControleLaitierModal(eids) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const d = new Date();
+  const jjmm = String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0');
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <div style="font-weight:700;font-size:15px;margin-bottom:12px;">Créer un lot de recherche</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">${eids.length} brebis sélectionnée(s).</div>
+      <label>Nom du lot</label>
+      <input type="text" id="cl-lot-nom" value="Contrôle laitier ${jjmm}" style="margin-bottom:14px;">
+      <div id="cl-lot-err" class="error-box hidden"></div>
+      <button type="button" class="btn btn-primary" id="cl-lot-confirm" style="margin-bottom:8px;">Créer et chercher en bergerie</button>
+      <button type="button" class="btn btn-secondary" id="cl-lot-cancel">Annuler</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector('#cl-lot-nom');
+  input.focus();
+  input.select();
+  overlay.querySelector('#cl-lot-cancel').onclick = () => document.body.removeChild(overlay);
+  overlay.querySelector('#cl-lot-confirm').onclick = () => {
+    const nom = input.value.trim();
+    if (!nom) {
+      const err = overlay.querySelector('#cl-lot-err');
+      err.textContent = 'Le nom du lot est obligatoire.';
+      err.classList.remove('hidden');
+      return;
+    }
+    DB.lots = DB.lots || [];
+    const lot = { id: Date.now().toString(), nom, dateCreation: new Date().toISOString().slice(0, 10), membres: eids };
+    DB.lots.push(lot);
+    saveData(DB);
+    if (window.__lotSessions) delete window.__lotSessions['trouvees_' + lot.id];
+    document.body.removeChild(overlay);
+    currentLotId = lot.id;
+    render('lot-search');
+  };
 }
 
 
@@ -8959,6 +9149,51 @@ async function saveOrShareBinaryFile(filename, bytes, mimeType) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+/* Exports Contrôle laitier (PDF + .xlsx) -- reçoivent directement les lignes
+   déjà triées/filtrées telles qu'affichées à l'écran (voir currentFiltered()
+   dans renderControleLaitier) : contrairement à l'Excel du registre
+   d'élevage ci-dessous (qui exporte ses 3 onglets en entier, filtres
+   ignorés, car il y a plusieurs onglets distincts à combiner), Contrôle
+   laitier n'a qu'une seule vue -- les deux exports respectent donc le tri
+   et les filtres actifs, comme demandé. */
+async function exportControleLaitierPdf(filtered) {
+  const columns = [
+    { label: 'N°', x: 0 }, { label: 'C1 (mL)', x: 90 }, { label: 'C2 (mL)', x: 170 },
+    { label: 'C3 (mL)', x: 250 }, { label: 'Date de mise bas', x: 330 }, { label: 'Cumul campagne (mL)', x: 440 }
+  ];
+  const rows = filtered.map(r => [
+    'n°' + r.numero,
+    r.c1 !== null && r.c1 !== undefined ? String(r.c1) : '',
+    r.c2 !== null && r.c2 !== undefined ? String(r.c2) : '',
+    r.c3 !== null && r.c3 !== undefined ? String(r.c3) : '',
+    r.dateMab || '',
+    String(r.cumul)
+  ]);
+  const bytes = buildPdfTable({ title: 'Contrôle laitier', columns, rows, landscape: true });
+  const filename = 'controle-laitier_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
+async function exportControleLaitierXlsx(filtered) {
+  const sheets = [{
+    name: 'Contrôle laitier',
+    rows: [
+      ['N°', 'C1 (mL)', 'C2 (mL)', 'C3 (mL)', 'Date de mise bas', 'Cumul campagne (mL)'],
+      ...filtered.map(r => [
+        'n°' + r.numero,
+        r.c1 !== null && r.c1 !== undefined ? r.c1 : '',
+        r.c2 !== null && r.c2 !== undefined ? r.c2 : '',
+        r.c3 !== null && r.c3 !== undefined ? r.c3 : '',
+        r.dateMab || '',
+        r.cumul
+      ])
+    ]
+  }];
+  const bytes = await buildXlsxWorkbook(sheets);
+  const filename = 'controle-laitier_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+  await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
 /* Génère le classeur .xlsx du registre (3 feuilles) en respectant
