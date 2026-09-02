@@ -474,6 +474,21 @@ function migrateData(d) {
   }
   if (!d.traitementsCollectifs) d.traitementsCollectifs = [];
   if (!d.registre) d.registre = { brebis: {}, beliers: {}, agneaux: {} };
+  // Purge exceptionnelle et unique du registre (02/09/2026), demandée par
+  // l'éleveur : avant le correctif ci-dessus qui a arrêté d'y archiver les
+  // suppressions (voir "Supprimer" brebis/agnelle/bélier), une fiche créée
+  // par erreur ou pour un test y restait bloquée pour toujours, rendant son
+  // EID définitivement inutilisable ailleurs dans l'appli (verifierEidUnique
+  // le trouvant dans DB.registre). Repart d'un registre vide une bonne fois
+  // pour toutes ; les ventes/morts/renouvellements de campagne déjà
+  // archivés légitimement avant cette date sont perdus, mais resteront
+  // recréés naturellement dès le prochain évènement de ce type. Flag
+  // one-shot : ne rejoue jamais une 2e fois, y compris sur une base restaurée
+  // depuis une sauvegarde antérieure à cette purge.
+  if (!d.registrePurgeExceptionnelle20260902) {
+    d.registre = { brebis: {}, beliers: {}, agneaux: {} };
+    d.registrePurgeExceptionnelle20260902 = true;
+  }
   if (d.lecteurBluetooth === undefined) d.lecteurBluetooth = null;
   // Contrôle laitier : passage de litres à millilitres (30/08/2026). Ne
   // touche jamais DB.laitTank (tank laitier mensuel, unité déjà en litres,
@@ -488,6 +503,13 @@ function migrateData(d) {
     });
     d.controleLaitierMigreMl = true;
   }
+  // Pénalités bactério (Listéria/Salmonelles) infligées par la laiterie —
+  // { id, dateDebut, dateFin, cause: 'listeria'|'salmonelles'|'autre',
+  // litrageL, commentaire }, voir montantPenaliteBacterio. Rattachée au
+  // MOIS de dateDebut (calculerPrixLaitMois/bilanCampagneQualite) : un cas
+  // à cheval sur 2 mois est saisi par l'éleveur en 2 entrées distinctes,
+  // jamais splitté automatiquement.
+  if (!d.penalitesBacterio) d.penalitesBacterio = [];
   return d;
 }
 
@@ -505,6 +527,7 @@ function loadData() {
     typesJournal: ['Lutte', 'Tonte', 'Vermifuge collectif', 'Visite vétérinaire'],
     laitTank: [],
     prelevementsQualite: [],
+    penalitesBacterio: [],
     listeSerie: [],
     parametresPrixLait: [
       { campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null },
@@ -525,6 +548,7 @@ function loadData() {
     produitsInfo: {},
     traitementsCollectifs: [],
     registre: { brebis: {}, beliers: {}, agneaux: {} },
+    registrePurgeExceptionnelle20260902: true, // nouvelle installation : registre déjà vide, rien à purger
     lecteurBluetooth: null, // { address, name } — lecteur par défaut, voir bandeau/btEnsureConnectionListener
     controleLaitierMigreMl: true // nouvelle installation : jamais de données en litres à convertir
   };
@@ -1068,9 +1092,16 @@ function calculerGradesQualiteMois(list) {
 // déclassement hygiène — non trackés dans Ovilog : le statut "obtenu" reste
 // donc sous réserve de ces 3 critères externes (mention affichée à l'écran),
 // jamais présenté comme une certification définitive.
-function calculerSuperA(grades, list) {
+// `penalites` (pénalités bactério du mois, voir penalitesPourMois) annule
+// aussi le bonus : une laiterie qui pénalise un volume pour Listéria ou
+// Salmonelles ce mois-là exclut le Super A même sans prélèvement Ovilog
+// marqué positif (ex. résultat transmis directement par la laiterie, jamais
+// ressaisi dans la fiche prélèvement).
+function calculerSuperA(grades, list, penalites) {
   const grades4A = grades.cellules.grade === 'A' && grades.coliformes.grade === 'A' && grades.floreTotale.grade === 'A' && grades.butyriques.grade === 'A';
-  const positif = list.some(p => p.listeria === 'positif' || p.salmonelles === 'positif');
+  const positifPrelevement = list.some(p => p.listeria === 'positif' || p.salmonelles === 'positif');
+  const positifPenalite = (penalites || []).some(p => p.cause === 'listeria' || p.cause === 'salmonelles');
+  const positif = positifPrelevement || positifPenalite;
   const eligible = grades4A && !positif;
   let raison = null;
   if (!eligible) {
@@ -1096,14 +1127,36 @@ function volumeTankMois(moisKey) {
   return DB.laitTank.filter(l => l.date.slice(0, 7) === moisKey).reduce((s, l) => s + l.quantite, 0);
 }
 
-function calculerPrixLaitMois(list, volumeTotalMoisL, coefficientMsu) {
+// Pénalité bactério fixe négociée avec la laiterie : -200 €/1000L du
+// litrage pénalisé, saisi directement par l'éleveur (pas de calcul depuis
+// une durée — voir DB.penalitesBacterio). Retourne un montant POSITIF (une
+// déduction), à soustraire explicitement là où il s'applique.
+function montantPenaliteBacterio(p) {
+  return 200 * ((p.litrageL || 0) / 1000);
+}
+// Pénalités rattachées à un mois donné (moisKey 'YYYY-MM') -- une pénalité
+// est rattachée au mois de sa dateDebut, jamais splittée automatiquement
+// sur plusieurs mois (voir migrateData) : un cas à cheval sur 2 mois est
+// saisi par l'éleveur en 2 entrées distinctes.
+function penalitesPourMois(moisKey) {
+  return (DB.penalitesBacterio || []).filter(p => (p.dateDebut || '').slice(0, 7) === moisKey);
+}
+
+function calculerPrixLaitMois(list, volumeTotalMoisL, coefficientMsu, penalites) {
   const grades = calculerGradesQualiteMois(list);
-  const superA = calculerSuperA(grades, list);
+  const superA = calculerSuperA(grades, list, penalites);
   const prixHorsQualite = grades.moyennes.msu !== null ? grades.moyennes.msu * coefficientMsu : null;
   const incidenceQualite = grades.cellules.incidence + grades.coliformes.incidence + grades.floreTotale.incidence + grades.butyriques.incidence + (superA.eligible ? 70 : 0);
   const prixAvecQualite = prixHorsQualite !== null ? prixHorsQualite + incidenceQualite : null;
-  const totalMois = prixAvecQualite !== null ? prixAvecQualite * (volumeTotalMoisL / 1000) : null;
-  return { grades, superA, prixHorsQualite, incidenceQualite, prixAvecQualite, totalMois, volumeTotalMoisL };
+  // Pénalité(s) bactério : montant fixe en €, déduit du TOTAL du mois --
+  // jamais d'un taux/1000L appliqué à tout le volume du mois, contrairement
+  // au Super A/aux grades (voir spec : "l'éleveur saisit directement le
+  // litrage total pénalisé").
+  const montantPenalites = (penalites || []).reduce((s, p) => s + montantPenaliteBacterio(p), 0);
+  const totalMoisAvantPenalites = prixAvecQualite !== null ? prixAvecQualite * (volumeTotalMoisL / 1000) : null;
+  const totalMois = totalMoisAvantPenalites !== null ? (totalMoisAvantPenalites - montantPenalites)
+    : (montantPenalites > 0 ? -montantPenalites : null);
+  return { grades, superA, prixHorsQualite, incidenceQualite, prixAvecQualite, montantPenalites, totalMois, volumeTotalMoisL };
 }
 
 /* Bilan complet d'une campagne pour l'écran Qualité (bloc "Moyennes /
@@ -1127,6 +1180,10 @@ function calculerPrixLaitMois(list, volumeTotalMoisL, coefficientMsu) {
      70 €/1000L × volume livré ce mois -- indépendant de la présence de
      MSU (le Super A ne dépend que des 4 grades bactério + Listéria/
      Salmonelles, voir calculerSuperA).
+   - Montant pénalités : somme, sur TOUS les mois de la campagne, du montant
+     de chaque pénalité bactério (voir montantPenaliteBacterio) -- indépendant
+     lui aussi de la présence de MSU/prix calculable ce mois-là (une pénalité
+     réellement infligée compte toujours, même un mois sans donnée qualité).
    - superAParMois : { moisKey: eligible } -- réutilisé tel quel par le
      récapitulatif PDF pour la colonne "Super A" de chaque ligne (statut
      du mois du prélèvement, jamais recalculé par prélèvement individuel). */
@@ -1135,14 +1192,16 @@ function bilanCampagneQualite(campagne) {
   const moy = moyennesQualitePonderees(listCampagne);
   const productionTotaleL = DB.laitTank.filter(l => campagneAnneeDebutPourDate(l.date) === campagne).reduce((s, l) => s + l.quantite, 0);
   const coef = coefficientMsuPourCampagne(campagne);
+  const penalitesCampagne = (DB.penalitesBacterio || []).filter(p => campagneAnneeDebutPourDate(p.dateDebut) === campagne);
 
-  let sommeHorsQualite = 0, sommeAvecQualite = 0, volumePrixPondere = 0, montantSuperA = 0;
+  let sommeHorsQualite = 0, sommeAvecQualite = 0, volumePrixPondere = 0, montantSuperA = 0, montantPenalitesCampagne = 0;
   const superAParMois = {};
   for (let i = 0; i < 12; i++) {
     const info = moisInfoPourIndex(campagne, i);
     const volumeMois = volumeTankMois(info.key);
     const listMois = listCampagne.filter(p => p.date.slice(0, 7) === info.key);
-    const res = calculerPrixLaitMois(listMois, volumeMois, coef);
+    const penalitesMois = penalitesCampagne.filter(p => (p.dateDebut || '').slice(0, 7) === info.key);
+    const res = calculerPrixLaitMois(listMois, volumeMois, coef, penalitesMois);
     superAParMois[info.key] = res.superA.eligible;
     if (res.prixHorsQualite !== null) {
       sommeHorsQualite += res.prixHorsQualite * (volumeMois / 1000);
@@ -1150,6 +1209,7 @@ function bilanCampagneQualite(campagne) {
       volumePrixPondere += volumeMois;
     }
     if (res.superA.eligible) montantSuperA += 70 * (volumeMois / 1000);
+    montantPenalitesCampagne += res.montantPenalites;
   }
   const prixMoyenHorsQualite = volumePrixPondere > 0 ? (sommeHorsQualite * 1000) / volumePrixPondere : null;
   const prixMoyenAvecQualite = volumePrixPondere > 0 ? (sommeAvecQualite * 1000) / volumePrixPondere : null;
@@ -1161,6 +1221,7 @@ function bilanCampagneQualite(campagne) {
     montantAvecQualite: volumePrixPondere > 0 ? sommeAvecQualite : null,
     gainQualite: volumePrixPondere > 0 ? (sommeAvecQualite - sommeHorsQualite) : null,
     montantSuperA,
+    montantPenalitesCampagne,
     superAParMois
   };
 }
@@ -1174,7 +1235,7 @@ function superAPourMois(moisKey) {
   const coef = coefficientMsuPourCampagne(campagne);
   const listMois = DB.prelevementsQualite.filter(p => p.date.slice(0, 7) === moisKey);
   const volumeMois = volumeTankMois(moisKey);
-  return calculerPrixLaitMois(listMois, volumeMois, coef).superA.eligible;
+  return calculerPrixLaitMois(listMois, volumeMois, coef, penalitesPourMois(moisKey)).superA.eligible;
 }
 
 // Formatage euros à la française, avec signe explicite pour les incidences
@@ -1198,15 +1259,17 @@ function fmtDecimal(n, dec) {
   if (n === null || n === undefined || isNaN(n)) return '—';
   return n.toFixed(dec).replace('.', ',');
 }
-// Affichage jj/mm/aaaa d'une date ISO 'YYYY-MM-DD' -- l'app affiche cette
-// date brute (ISO) presque partout ailleurs ; ce formatage n'est appliqué
-// qu'aux nouveaux affichages/exports qui le demandent explicitement (suivi
-// qualité du lait : récapitulatif imprimé, relevés enrichis de l'Agenda),
-// jamais en remplacement global des dates ISO déjà affichées ailleurs.
+// Affichage jj-mm-aaaa d'une date ISO 'YYYY-MM-DD' -- utilisé partout dans
+// l'appli pour tout affichage EN LECTURE SEULE d'une date (fiches, tableaux,
+// PDF/Excel, Agenda...). Ne touche jamais : les <input type="date"> (la
+// valeur ISO reste requise par le composant natif du navigateur), la
+// logique de tri/comparaison de dates (toujours sur la chaîne ISO brute,
+// qui se compare lexicographiquement dans le bon ordre), ni les attributs
+// data-* utilisés pour retrouver un enregistrement en JS (ex: data-date).
 function formatDateFr(dateStr) {
   if (!dateStr) return '';
   const [y, m, d] = dateStr.split('-');
-  return d + '/' + m + '/' + y;
+  return d + '-' + m + '-' + y;
 }
 
 // Petit composant à 3 états (Négatif/Positif/Non analysé) réutilisé pour
@@ -2144,7 +2207,7 @@ function renderList() {
     const badgeHtml = isAttendueTraite(sheep, DB.brebis)
       ? `<span class="badge badge-blue">Attendue à la traite</span>`
       : lastAgnelage
-        ? `<span class="badge badge-amber">${lastAgnelage.date} · ${lastAgnelage.lambs.length} agn.</span>`
+        ? `<span class="badge badge-amber">${formatDateFr(lastAgnelage.date)} · ${lastAgnelage.lambs.length} agn.</span>`
         : `<span class="badge badge-muted">Aucun agnelage</span>`;
     // Statut de reproduction de la campagne : redondant avec badgeHtml pour
     // "Mise bas" (déjà visible ci-dessus) et sans intérêt pour "Non suivie"
@@ -2418,7 +2481,7 @@ function inventaireAgneauxHtml() {
         ${iconCircle(ICON_SHEEP, 'coral')}
         <div>
           <div class="num">n°${it.lamb.eid ? numeroVisuel(it.lamb.eid) : '?'} — ${it.lamb.sexe}</div>
-          <div class="sub">Né le ${it.date} de la brebis n°${numeroVisuel(it.mereEid)}</div>
+          <div class="sub">Né le ${formatDateFr(it.date)} de la brebis n°${numeroVisuel(it.mereEid)}</div>
         </div>
       </div>
       <span class="badge badge-muted">${it.lamb.statutFinal === 'vendu' ? 'Vendu' : 'Mort'}</span>
@@ -2554,13 +2617,14 @@ function renderInventaireActifs() {
   });
 
   document.getElementById('btn-export-inventaire-pdf').onclick = () => {
+    const todayIso = new Date().toISOString().slice(0,10);
     const bytes = buildPdfTable({
       title: 'Inventaire — ' + cat.label,
-      subtitle: items.length + ' animal(aux) — ' + new Date().toISOString().slice(0,10),
+      subtitle: items.length + ' animal(aux) — ' + formatDateFr(todayIso),
       columns: [{ label: 'Numéro officiel', x: 0 }, { label: 'EID complet', x: 170 }],
       rows: items.map(it => ['n°' + numeroVisuel(it.eid), it.eid])
     });
-    saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + new Date().toISOString().slice(0,10) + '.pdf', bytes, 'application/pdf');
+    saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + todayIso + '.pdf', bytes, 'application/pdf');
   };
   document.getElementById('btn-export-inventaire-xlsx').onclick = async () => {
     const bytes = await buildXlsxWorkbook([{ name: cat.label, rows: [
@@ -2886,7 +2950,7 @@ function renderAgneaux() {
       const sortieDecidee = it.lamb.statutFinal === 'vendu' || it.lamb.statutFinal === 'mort';
       const badge = it.lamb.statutFinal === 'vendu' ? 'Vendu' : it.lamb.statutFinal === 'mort' ? 'Mort' : 'En attente';
       const mvts = (it.lamb.mouvements || []).slice().reverse();
-      const mvtHtml = mvts.length === 0 ? '' : `<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">${mvts.map(m => `${m.type}${m.acheteur ? ' — ' + m.acheteur : ''} · ${m.date}`).join('<br>')}</div>`;
+      const mvtHtml = mvts.length === 0 ? '' : `<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">${mvts.map(m => `${m.type}${m.acheteur ? ' — ' + m.acheteur : ''} · ${formatDateFr(m.date)}`).join('<br>')}</div>`;
       return `
       <div class="card" id="agneau-item-${i}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -2894,7 +2958,7 @@ function renderAgneaux() {
             ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
             <div>
               <div style="font-weight:600;">n°${numeroVisuel(it.lamb.eid)} — ${it.lamb.sexe}</div>
-              <div style="font-size:12px;color:var(--text-muted);">Né le ${it.date} de la brebis n°${numeroVisuel(it.mereEid)}</div>
+              <div style="font-size:12px;color:var(--text-muted);">Né le ${formatDateFr(it.date)} de la brebis n°${numeroVisuel(it.mereEid)}</div>
             </div>
           </div>
           <span class="badge ${resolved ? 'badge-muted' : 'badge-amber'}">${badge}</span>
@@ -3044,7 +3108,7 @@ function renderDetail(id) {
         ${iconCircle(ICON_ECHO, 'green', 'sm')}
         <div class="content">
           <div>${e.special ? e.special : (e.stade + (e.agneaux ? ' — ' + (e.agneaux === 'Double' ? '2 et plus' : '1 agneau') : ''))}${e.parasitisme ? ' · parasitisme observé' : ''}</div>
-          <div class="date">${e.date}</div>
+          <div class="date">${formatDateFr(e.date)}</div>
         </div>
       </div>
     </div>
@@ -3062,7 +3126,7 @@ function renderDetail(id) {
   const agnelageItemHtml = (a, avecNumero = true) => `
     <div class="content">
       <div>${a.lambs.length} agneau(x) : ${a.lambs.map(l => l.sexe === 'Mort-né' ? 'Mort-né' : ((avecNumero ? 'n°' + (l.eid ? numeroVisuel(l.eid) : '?') + ' — ' : '') + l.sexe + (l.adopte ? ' (adopté par n°' + numeroVisuel(l.adoptiveEid) + ')' : ''))).join(', ')}</div>
-      <div class="date">${a.date}</div>
+      <div class="date">${formatDateFr(a.date)}</div>
     </div>
   `;
   const agnelageCourantIdx = agnelageCampagneActuelleIdx(sheep);
@@ -3084,7 +3148,7 @@ function renderDetail(id) {
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
         <div class="content">
           <div>${s.type}${s.sousType ? ' — ' + s.sousType : ''}${s.produit ? ' — ' + s.produit : ''}${s.dose ? ' (' + s.dose + ')' : ''}${s.collectif ? ' · collectif' : ''}</div>
-          <div class="date">${s.date}${s.commentaire ? ' · ' + s.commentaire : ''}</div>
+          <div class="date">${formatDateFr(s.date)}${s.commentaire ? ' · ' + s.commentaire : ''}</div>
         </div>
       </div>
     </div>
@@ -3098,7 +3162,7 @@ function renderDetail(id) {
         ${iconCircle(ICON_MOUVEMENT, 'coral', 'sm')}
         <div class="content">
           <div>${m.type}${m.acheteur ? ' — ' + m.acheteur : ''}${m.cause ? ' — ' + m.cause : ''}</div>
-          <div class="date">${m.date}</div>
+          <div class="date">${formatDateFr(m.date)}</div>
         </div>
       </div>
     </div>
@@ -3112,7 +3176,7 @@ function renderDetail(id) {
   const controleItemHtml = c => `
     <div class="content">
       <div>Contrôle n°${c.controle} — ${c.quantite} mL</div>
-      <div class="date">${c.date}</div>
+      <div class="date">${formatDateFr(c.date)}</div>
     </div>
   `;
   const controleCourants = controleIndexes.filter(c => c.campagne === DB.campagneDebut).reverse();
@@ -3146,8 +3210,8 @@ function renderDetail(id) {
 
   const withdrawal = computeWithdrawalAlerts(sheep);
   const withdrawalLines = [
-    withdrawal.laitFin ? `Délai d'attente lait jusqu'au ${withdrawal.laitFin}` : null,
-    withdrawal.viandeFin ? `Délai d'attente viande jusqu'au ${withdrawal.viandeFin}` : null
+    withdrawal.laitFin ? `Délai d'attente lait jusqu'au ${formatDateFr(withdrawal.laitFin)}` : null,
+    withdrawal.viandeFin ? `Délai d'attente viande jusqu'au ${formatDateFr(withdrawal.viandeFin)}` : null
   ].filter(Boolean);
   const withdrawalBadge = withdrawalLines.length
     ? `<div style="display:flex;align-items:center;gap:10px;background:var(--coral-bg);color:var(--coral-fg);padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">${iconCircle(ICON_SANTE, 'coral', 'sm')}<div>${withdrawalLines.join('<br>')}</div></div>`
@@ -3257,7 +3321,7 @@ function renderDetail(id) {
         <div><div style="font-size:12px;color:var(--text-muted);">Âge</div><div style="font-weight:600;">${age(sheep.eid)} an(s) (${anneeNaissance(sheep.eid)})</div></div>
         <div><div style="font-size:12px;color:var(--text-muted);">Numéro officiel</div><div style="font-weight:600;">n°${numeroVisuel(sheep.eid)}</div></div>
       </div>
-      ${sheep.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${sheep.dateEntree}</strong></div>` : ''}
+      ${sheep.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(sheep.dateEntree)}</strong></div>` : ''}
     </div>
     ${statutBadge}
     ${reproStatutHtml}
@@ -4246,7 +4310,7 @@ function renderHistoriqueEchoBody() {
       <tbody>${rows.map(r => `
         <tr>
           <td style="${REGISTRE_TD}">n°${numeroVisuel(r.eid)}</td>
-          <td style="${REGISTRE_TD}">${r.date}</td>
+          <td style="${REGISTRE_TD}">${formatDateFr(r.date)}</td>
           <td style="${REGISTRE_TD}">${r.resultLabel}</td>
           <td style="${REGISTRE_TD}">
             <button type="button" class="btn btn-secondary btn-edit-histo-echo" data-sheep-id="${r.sheepId}" data-idx="${r.idx}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px;">Modifier</button>
@@ -4519,7 +4583,7 @@ function renderMiseBasRapide() {
             ${campagneRows.map(r => `
               <tr style="border-top:1px solid var(--border);">
                 <td style="padding:6px 4px;">n°${r.numero}</td>
-                <td style="padding:6px 4px;">${r.date}</td>
+                <td style="padding:6px 4px;">${formatDateFr(r.date)}</td>
                 <td style="padding:6px 4px;text-align:center;">${mark(r.male)}</td>
                 <td style="padding:6px 4px;text-align:center;">${mark(r.femelle)}</td>
                 <td style="padding:6px 4px;text-align:center;">${mark(r.mortNe)}</td>
@@ -5269,7 +5333,7 @@ function renderControleLaitier() {
         <tr style="border-top:1px solid var(--border);">
           <td style="padding:6px 4px;"><input type="checkbox" class="cl-check" data-eid="${r.eid}" style="width:16px;height:16px;margin:0;"${selection.has(r.eid) ? ' checked' : ''}></td>
           <td style="padding:6px 4px;">n°${r.numero}</td>
-          <td style="padding:6px 4px;">${r.dateMab || ''}</td>
+          <td style="padding:6px 4px;">${r.dateMab ? formatDateFr(r.dateMab) : ''}</td>
           <td style="padding:6px 4px;text-align:right;">${cell(r.c1, ' mL')}</td>
           <td style="padding:6px 4px;text-align:right;">${cell(r.c2, ' mL')}</td>
           <td style="padding:6px 4px;text-align:right;">${cell(r.c3, ' mL')}</td>
@@ -5679,7 +5743,7 @@ function renderAgnelles() {
           ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
           <div>
             <div style="font-weight:600;">n°${numeroVisuel(c.lamb.eid)}</div>
-            <div style="font-size:12px;color:var(--text-muted);">Née le ${c.date} de la brebis n°${numeroVisuel(c.motherEid)}</div>
+            <div style="font-size:12px;color:var(--text-muted);">Née le ${formatDateFr(c.date)} de la brebis n°${numeroVisuel(c.motherEid)}</div>
           </div>
         </div>
         <div class="row">
@@ -5700,7 +5764,7 @@ function renderAgnelles() {
             ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
             <div>
               <div style="font-weight:600;">n°${numeroVisuel(ag.eid)}</div>
-              <div style="font-size:12px;color:var(--text-muted);">${ag.origine === 'née' ? 'Née sur l\'exploitation' : 'Achetée'} · triée/entrée le ${ag.dateEntree}</div>
+              <div style="font-size:12px;color:var(--text-muted);">${ag.origine === 'née' ? 'Née sur l\'exploitation' : 'Achetée'} · triée/entrée le ${formatDateFr(ag.dateEntree)}</div>
               ${ag.origine === 'achetée' && (ag.pere || ag.mere) ? `<div style="font-size:11px;color:var(--text-muted);">${ag.pere ? 'Père : ' + ag.pere + ' ' : ''}${ag.mere ? '· Mère : ' + ag.mere : ''}</div>` : ''}
             </div>
           </div>
@@ -5727,7 +5791,7 @@ function renderAgnelles() {
           ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
           <div>
             <div style="font-weight:600;">n°${numeroVisuel(c.lamb.eid)}</div>
-            <div style="font-size:12px;color:var(--text-muted);">Née le ${c.date} de la brebis n°${numeroVisuel(c.motherEid)}</div>
+            <div style="font-size:12px;color:var(--text-muted);">Née le ${formatDateFr(c.date)} de la brebis n°${numeroVisuel(c.motherEid)}</div>
           </div>
         </div>
         <button type="button" class="btn btn-secondary btn-reconsiderer" data-i="${i}">Reconsidérer (remettre à trier)</button>
@@ -6115,7 +6179,7 @@ function renderBelierDetail() {
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
         <div class="content">
           <div>${s.type}${s.sousType ? ' — ' + s.sousType : ''}${s.produit ? ' — ' + s.produit : ''}${s.dose ? ' (' + s.dose + ')' : ''}</div>
-          <div class="date">${s.date}${s.commentaire ? ' · ' + s.commentaire : ''}</div>
+          <div class="date">${formatDateFr(s.date)}${s.commentaire ? ' · ' + s.commentaire : ''}</div>
         </div>
       </div>
     </div>
@@ -6129,7 +6193,7 @@ function renderBelierDetail() {
         ${iconCircle(ICON_MOUVEMENT, 'coral', 'sm')}
         <div class="content">
           <div>${m.type}${m.acheteur ? ' — ' + m.acheteur : ''}${m.cause ? ' — ' + m.cause : ''}</div>
-          <div class="date">${m.date}</div>
+          <div class="date">${formatDateFr(m.date)}</div>
         </div>
       </div>
     </div>
@@ -6147,7 +6211,7 @@ function renderBelierDetail() {
         <div><div style="font-size:12px;color:var(--text-muted);">Âge</div><div style="font-weight:600;">${age(belier.eid)} an(s) (${anneeNaissance(belier.eid)})</div></div>
         <div><div style="font-size:12px;color:var(--text-muted);">Numéro officiel</div><div style="font-weight:600;">n°${numeroVisuel(belier.eid)}</div></div>
       </div>
-      ${belier.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${belier.dateEntree}</strong></div>` : ''}
+      ${belier.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(belier.dateEntree)}</strong></div>` : ''}
     </div>
     ${statutBadge}
     <div class="row" style="margin-bottom:16px;">
@@ -6494,7 +6558,7 @@ function renderJournal() {
               ${iconCircle(ICON_JOURNAL, 'green', 'sm')}
               <div>
                 <div style="font-weight:600;">${e.type}</div>
-                <div style="font-size:12px;color:var(--text-muted);">${e.date}${e.note ? ' · ' + e.note : ''}</div>
+                <div style="font-size:12px;color:var(--text-muted);">${formatDateFr(e.date)}${e.note ? ' · ' + e.note : ''}</div>
               </div>
             </div>
             <button type="button" class="btn btn-secondary btn-del-journal" data-idx="${realIdx}" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
@@ -6521,7 +6585,7 @@ function renderJournal() {
         <input type="date" id="f-lait-date" value="${dateDuJour}" style="flex:1;">
         <input type="number" step="0.1" id="f-lait-qte" placeholder="Litres" value="${laitIdxPourDateDuJour !== -1 ? DB.laitTank[laitIdxPourDateDuJour].quantite : ''}" style="flex:1;">
       </div>
-      <div id="lait-doublon-note" class="${laitIdxPourDateDuJour === -1 ? 'hidden' : ''}" style="font-size:12px;color:var(--warning);margin-top:6px;">${laitIdxPourDateDuJour !== -1 ? `Une saisie existe déjà pour le ${dateDuJour} (${DB.laitTank[laitIdxPourDateDuJour].quantite} L) — elle sera mise à jour.` : ''}</div>
+      <div id="lait-doublon-note" class="${laitIdxPourDateDuJour === -1 ? 'hidden' : ''}" style="font-size:12px;color:var(--warning);margin-top:6px;">${laitIdxPourDateDuJour !== -1 ? `Une saisie existe déjà pour le ${formatDateFr(dateDuJour)} (${DB.laitTank[laitIdxPourDateDuJour].quantite} L) — elle sera mise à jour.` : ''}</div>
 
       <label class="row" style="align-items:center;gap:10px;cursor:pointer;margin:10px 0 4px;">
         <input type="checkbox" id="q-checkbox" style="width:19px;height:19px;margin:0;flex-shrink:0;">
@@ -6601,11 +6665,11 @@ function renderJournal() {
       <div class="grid2" style="margin-bottom:6px;">
         <div>
           <div style="font-size:12px;color:var(--text-muted);">Brebis</div>
-          <div style="font-weight:600;">${lastLutteBrebis ? lastLutteBrebis.date : 'Non renseignée'}</div>
+          <div style="font-weight:600;">${lastLutteBrebis ? formatDateFr(lastLutteBrebis.date) : 'Non renseignée'}</div>
         </div>
         <div>
           <div style="font-size:12px;color:var(--text-muted);">Agnelles</div>
-          <div style="font-weight:600;">${lastLutteAgnelles ? lastLutteAgnelles.date : 'Non renseignée'}</div>
+          <div style="font-weight:600;">${lastLutteAgnelles ? formatDateFr(lastLutteAgnelles.date) : 'Non renseignée'}</div>
         </div>
       </div>
       <label style="margin-top:10px;">Nouvelle date de lutte</label>
@@ -6620,7 +6684,7 @@ function renderJournal() {
       <div id="lutte-history">
         ${[...DB.luttes].reverse().map((l, i) => `
           <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px;">
-            <span>${l.cible} — ${l.date}</span>
+            <span>${l.cible} — ${formatDateFr(l.date)}</span>
             <button type="button" class="btn btn-secondary btn-del-lutte" data-idx="${DB.luttes.length - 1 - i}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
           </div>
         `).join('')}
@@ -6654,7 +6718,7 @@ function renderJournal() {
     const idx = DB.laitTank.findIndex(l => l.date === laitDateInput.value);
     if (idx !== -1) {
       laitQteInput.value = DB.laitTank[idx].quantite;
-      laitDoublonNote.textContent = `Une saisie existe déjà pour le ${laitDateInput.value} (${DB.laitTank[idx].quantite} L) — elle sera mise à jour.`;
+      laitDoublonNote.textContent = `Une saisie existe déjà pour le ${formatDateFr(laitDateInput.value)} (${DB.laitTank[idx].quantite} L) — elle sera mise à jour.`;
       laitDoublonNote.classList.remove('hidden');
     } else {
       laitQteInput.value = '';
@@ -6708,7 +6772,7 @@ function renderJournal() {
     if (existing) {
       const tbTxt = (existing.tb !== null && existing.tb !== undefined) ? existing.tb : '—';
       const tpTxt = (existing.tp !== null && existing.tp !== undefined) ? existing.tp : '—';
-      qDoublonNote.textContent = `Un prélèvement qualité existe déjà pour le ${existing.date} (TB ${tbTxt} g/L, TP ${tpTxt} g/L) — cochez la case pour le compléter.`;
+      qDoublonNote.textContent = `Un prélèvement qualité existe déjà pour le ${formatDateFr(existing.date)} (TB ${tbTxt} g/L, TP ${tpTxt} g/L) — cochez la case pour le compléter.`;
       qDoublonNote.classList.remove('hidden');
     } else {
       qDoublonNote.classList.add('hidden');
@@ -6873,6 +6937,7 @@ function moisInfoPourIndex(campagneDebut, idx) {
 
 function renderQualite() {
   DB.prelevementsQualite = DB.prelevementsQualite || [];
+  DB.penalitesBacterio = DB.penalitesBacterio || [];
   if (!DB.parametresPrixLait || !Array.isArray(DB.parametresPrixLait)) DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null }];
   pageTitle.textContent = 'Qualité';
 
@@ -6919,6 +6984,13 @@ function renderQualite() {
       <div id="qualite-prix-body"></div>
     </div>
 
+    <div class="card" id="qualite-penalites-card">
+      <div style="font-size:14px;font-weight:700;margin-bottom:10px;">🚫 Pénalités bactério</div>
+      <div id="qualite-penalites-list"></div>
+      <div id="qualite-penalites-empty" class="empty hidden" style="margin-bottom:0;">Aucune pénalité enregistrée ce mois-ci.</div>
+      <button type="button" class="btn btn-secondary" id="btn-penalite-add" style="margin-top:12px;">+ Nouvelle pénalité</button>
+    </div>
+
     <button type="button" class="btn btn-secondary" id="btn-qualite-add" style="margin-bottom:16px;">+ Nouveau prélèvement qualité</button>
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Prélèvements du mois</div>
@@ -6938,20 +7010,20 @@ function renderQualite() {
       <div class="stat-card sc-blue"><div class="stat-card-label">Prix moy. hors qualité</div><div class="stat-card-value" id="qc-stat-prix-hors">—</div><div class="stat-card-sub">/1000L, pondéré volume</div></div>
       <div class="stat-card sc-blue"><div class="stat-card-label">Prix moy. avec qualité</div><div class="stat-card-value" id="qc-stat-prix-avec">—</div><div class="stat-card-sub">/1000L, pondéré volume</div></div>
       <div class="stat-card sc-blue"><div class="stat-card-label">Montant total hors qualité</div><div class="stat-card-value" id="qc-stat-montant-hors">—</div><div class="stat-card-sub">au prix MSU seul</div></div>
-      <div class="stat-card sc-blue"><div class="stat-card-label">Montant total avec qualité</div><div class="stat-card-value" id="qc-stat-montant-avec">—</div><div class="stat-card-sub">bactério + Super A inclus</div></div>
+      <div class="stat-card sc-blue"><div class="stat-card-label">Montant total avec qualité</div><div class="stat-card-value" id="qc-stat-montant-avec">—</div><div class="stat-card-sub">grades + Super A + pénalités bactério</div></div>
     </div>
-    <div class="stat-card sc-green" style="margin-bottom:10px;">
-      <div class="stat-card-label">Gain lié à la qualité (bactério + Super A)</div>
+    <div class="stat-grid">
+      <div class="stat-card sc-green"><div class="stat-card-label">Montant total Super A</div><div class="stat-card-value" id="qc-stat-super-a">—</div><div class="stat-card-sub">part positive du gain</div></div>
+      <div class="stat-card sc-coral"><div class="stat-card-label">Montant total pénalités</div><div class="stat-card-value" id="qc-stat-penalites">—</div><div class="stat-card-sub">part négative du gain</div></div>
+    </div>
+    <div class="stat-card sc-green" style="margin-bottom:16px;">
+      <div class="stat-card-label">Gain lié à la qualité (bactério + Super A + pénalités)</div>
       <div class="stat-card-value" id="qc-stat-gain">—</div>
       <div class="stat-card-sub">= montant avec qualité − montant hors qualité</div>
     </div>
-    <div class="stat-card sc-green" style="margin-bottom:16px;">
-      <div class="stat-card-label">Montant total Super A</div>
-      <div class="stat-card-value" id="qc-stat-super-a">—</div>
-      <div class="stat-card-sub">dont bonus Super A, part du gain ci-dessus</div>
-    </div>
 
-    <button type="button" class="btn btn-secondary" id="btn-qualite-print" style="margin-bottom:16px;">🖨️ Imprimer le récapitulatif (PDF)</button>
+    <button type="button" class="btn btn-secondary" id="btn-qualite-print" style="margin-bottom:10px;">🖨️ Imprimer le récapitulatif (PDF)</button>
+    <button type="button" class="btn btn-secondary" id="btn-rapport-campagne-print" style="margin-bottom:16px;">🖨️ Rapport de campagne (PDF)</button>
   `;
 
   function moisKeyFromDate(dateStr) { return dateStr.slice(0, 7); }
@@ -6990,11 +7062,11 @@ function renderQualite() {
     </div>`;
   }
 
-  function renderPrixLait(list) {
+  function renderPrixLait(list, penalites) {
     const coef = coefficientMsuPourCampagne(state.campagne);
     document.getElementById('prix-coef-value').textContent = fmtDecimal(coef, 4);
     const volumeMois = state.mois ? volumeTankMois(state.mois) : 0;
-    const res = calculerPrixLaitMois(list, volumeMois, coef);
+    const res = calculerPrixLaitMois(list, volumeMois, coef, penalites);
     const g = res.grades;
     const superABadge = res.superA.eligible
       ? '<span class="badge badge-green" style="margin-left:6px;">Obtenu</span>'
@@ -7021,6 +7093,10 @@ function renderQualite() {
       <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-muted);margin-top:4px;">
         <div>Volume livré ce mois (tank)</div><div>${volumeMois} L</div>
       </div>
+      ${res.montantPenalites > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;margin:8px 0;background:var(--coral-bg);border-radius:var(--radius);">
+        <span style="color:var(--coral-fg);font-size:13px;">Pénalité(s) bactério (${(penalites || []).length})</span>
+        <span style="font-weight:700;color:var(--coral-fg);">-${fmtEuro(res.montantPenalites)}</span>
+      </div>` : ''}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
         <div style="font-weight:700;font-size:15px;">Total du mois</div>
         <div style="font-weight:700;font-size:18px;color:var(--primary);">${res.totalMois !== null ? fmtEuro(res.totalMois) : '—'}</div>
@@ -7067,22 +7143,28 @@ function renderQualite() {
 
   function renderStatsAndList() {
     const list = state.mois ? DB.prelevementsQualite.filter(p => moisKeyFromDate(p.date) === state.mois) : [];
+    const penalitesMois = state.mois ? penalitesPourMois(state.mois) : [];
     const m = moyennesQualitePonderees(list);
     document.getElementById('qualite-stat-tb').textContent = m.tb === null ? '—' : fmtDecimal(m.tb, 2) + ' g/L';
     document.getElementById('qualite-stat-tp').textContent = m.tp === null ? '—' : fmtDecimal(m.tp, 2) + ' g/L';
     document.getElementById('qualite-stat-msu').textContent = m.msu === null ? '—' : fmtDecimal(m.msu, 2) + ' g/L';
     document.getElementById('qualite-stat-cellules').textContent = m.cellules === null ? '—' : fmtDecimal(m.cellules, 0);
-    renderPrixLait(list);
+    renderPrixLait(list, penalitesMois);
+    renderPenalites(penalitesMois);
 
     const positifDates = [];
     const positifs = [];
     list.forEach(p => {
-      if (p.listeria === 'positif') { positifs.push('Listéria (' + p.date + ')'); positifDates.push(p.date); }
-      if (p.salmonelles === 'positif') { positifs.push('Salmonelles (' + p.date + ')'); if (!positifDates.includes(p.date)) positifDates.push(p.date); }
+      if (p.listeria === 'positif') { positifs.push('Listéria (' + formatDateFr(p.date) + ')'); positifDates.push(p.date); }
+      if (p.salmonelles === 'positif') { positifs.push('Salmonelles (' + formatDateFr(p.date) + ')'); if (!positifDates.includes(p.date)) positifDates.push(p.date); }
     });
     const banner = document.getElementById('qualite-banner');
     if (positifs.length > 0) {
-      banner.innerHTML = '<span>⚠️</span><span><b>Résultat positif ce mois : ' + positifs.join(', ') + '</b>Bonus « Super A » annulé pour ce mois. Pénalité financière à définir en phase 2.<span class="see-link">Voir le(s) prélèvement(s) concerné(s) ↓</span></span>';
+      const montantPenalitesMois = penalitesMois.reduce((s, p) => s + montantPenaliteBacterio(p), 0);
+      const lignePenalite = penalitesMois.length > 0
+        ? '<span style="color:var(--coral-fg);font-weight:600;display:block;margin-top:4px;">' + penalitesMois.length + ' pénalité(s) enregistrée(s) : -' + fmtEuro(montantPenalitesMois) + '</span>'
+        : '<span style="display:block;margin-top:4px;">Si la laiterie applique une pénalité, renseigne-la dans le bloc « Pénalités bactério » ci-dessous.</span>';
+      banner.innerHTML = '<span>⚠️</span><span><b>Résultat positif ce mois : ' + positifs.join(', ') + '</b>Bonus « Super A » annulé pour ce mois.' + lignePenalite + '<span class="see-link">Voir le(s) prélèvement(s) concerné(s) ↓</span></span>';
       banner.classList.remove('hidden');
       banner.classList.add('clickable');
       banner.onclick = () => highlightRows(positifDates);
@@ -7101,12 +7183,37 @@ function renderQualite() {
       row.className = 'qualite-row';
       row.dataset.date = p.date;
       row.innerHTML = `
-        <div><div style="font-weight:600;">${p.date}${flagged ? '<span class="flag-dot" title="Résultat positif"></span>' : ''}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${p.volumeLait} L</div></div>
+        <div><div style="font-weight:600;">${formatDateFr(p.date)}${flagged ? '<span class="flag-dot" title="Résultat positif"></span>' : ''}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${p.volumeLait} L</div></div>
         <div style="display:flex;align-items:center;">
           <div class="metrics">TB ${fmtDecimal(p.tb, 2)} · TP ${fmtDecimal(p.tp, 2)}<br>Cellules ${fmtDecimal(p.cellules, 0)}</div>
           <span style="color:var(--text-muted);margin-left:8px;">›</span>
         </div>`;
       row.onclick = () => openQualiteSheet(p);
+      listEl.appendChild(row);
+    });
+  }
+
+  // Carte "Pénalités bactério" -- indépendante des prélèvements qualité
+  // (DB.penalitesBacterio est une collection à part, voir migrateData) :
+  // une pénalité peut exister sans prélèvement positif ce mois-là (résultat
+  // transmis directement par la laiterie) et inversement.
+  function renderPenalites(penalitesMois) {
+    const listEl = document.getElementById('qualite-penalites-list'), emptyEl = document.getElementById('qualite-penalites-empty');
+    listEl.innerHTML = '';
+    emptyEl.classList.toggle('hidden', penalitesMois.length > 0);
+    [...penalitesMois].sort((a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '')).forEach(p => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--border);cursor:pointer;';
+      const periode = p.dateFin && p.dateFin !== p.dateDebut ? formatDateFr(p.dateDebut) + ' → ' + formatDateFr(p.dateFin) : formatDateFr(p.dateDebut);
+      const causeLabel = p.cause === 'listeria' ? 'Listéria' : p.cause === 'salmonelles' ? 'Salmonelles' : 'Autre';
+      row.innerHTML = `
+        <div>
+          <div style="font-weight:600;font-size:13px;">${periode}</div>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${causeLabel} · ${p.litrageL} L${p.commentaire ? ' · « ' + p.commentaire + ' »' : ''}</div>
+        </div>
+        <span style="font-weight:700;color:var(--coral-fg);">-${fmtEuro(montantPenaliteBacterio(p))}</span>
+      `;
+      row.onclick = () => openPenaliteSheet(p);
       listEl.appendChild(row);
     });
   }
@@ -7135,6 +7242,7 @@ function renderQualite() {
     document.getElementById('qc-stat-montant-avec').textContent = bilan.montantAvecQualite !== null ? fmtEuro(bilan.montantAvecQualite) : '—';
     document.getElementById('qc-stat-gain').textContent = bilan.gainQualite !== null ? fmtEuro(bilan.gainQualite, true) : '—';
     document.getElementById('qc-stat-super-a').textContent = fmtEuro(bilan.montantSuperA);
+    document.getElementById('qc-stat-penalites').textContent = bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : fmtEuro(0);
   }
 
   function renderAll() { renderMonths(); renderStatsAndList(); renderCampagneBilan(); }
@@ -7150,12 +7258,20 @@ function renderQualite() {
   });
 
   document.getElementById('btn-qualite-add').onclick = () => openQualiteSheet(null);
+  document.getElementById('btn-penalite-add').onclick = () => openPenaliteSheet(null, state.mois);
 
   document.getElementById('btn-qualite-print').onclick = () => {
     const btn = document.getElementById('btn-qualite-print');
     const original = btn.textContent;
     btn.disabled = true; btn.textContent = 'Génération...';
     Promise.resolve(exportQualiteCampagnePdf(state.campagne)).finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
+
+  document.getElementById('btn-rapport-campagne-print').onclick = () => {
+    const btn = document.getElementById('btn-rapport-campagne-print');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Génération...';
+    Promise.resolve(exportRapportCampagnePdf(state.campagne)).finally(() => { btn.disabled = false; btn.textContent = original; });
   };
 
   renderAll();
@@ -7211,7 +7327,7 @@ function openQualiteSheet(record, returnView) {
         <button type="button" class="opt-btn" data-val="positif">Positif</button>
         <button type="button" class="opt-btn" data-val="non_analyse">Non analysé</button>
       </div>
-      <div class="alert-banner small hidden" id="qs-banner">⚠️ Résultat positif sur ce prélèvement — bonus « Super A » annulé pour ce mois. Pénalité financière à définir en phase 2.</div>
+      <div class="alert-banner small hidden" id="qs-banner">⚠️ Résultat positif sur ce prélèvement — bonus « Super A » annulé pour ce mois. Si la laiterie applique une pénalité financière, renseigne-la depuis le bloc « Pénalités bactério » de l'onglet Qualité.</div>
       <div id="qs-err" class="error-box hidden"></div>
       <button type="button" class="btn btn-primary" id="qs-save" style="margin-top:2px;">${isCreating ? 'Créer le prélèvement' : 'Mettre à jour'}</button>
       <button type="button" class="btn btn-secondary hidden" id="qs-delete" style="margin-top:10px;color:var(--danger);border-color:var(--danger);">Supprimer ce prélèvement</button>
@@ -7252,7 +7368,7 @@ function openQualiteSheet(record, returnView) {
 
   function headerEdit(rec) {
     overlay.querySelector('#qs-header').innerHTML = `
-      <h3 style="margin:0 0 2px;">${rec.date}</h3>
+      <h3 style="margin:0 0 2px;">${formatDateFr(rec.date)}</h3>
       <p style="font-size:12.5px;color:var(--text-muted);margin:0 0 16px;">${rec.volumeLait} L le jour du prélèvement · Campagne ${campagneAnneeDebutPourDate(rec.date) + 1}</p>
     `;
     deleteBtn.classList.remove('hidden'); // toujours un enregistrement existant ici (édition directe, ou bascule sur doublon)
@@ -7277,7 +7393,7 @@ function openQualiteSheet(record, returnView) {
         fillFields(existing);
         saveBtn.textContent = 'Mettre à jour';
         const err = overlay.querySelector('#qs-err');
-        err.textContent = `Un prélèvement existe déjà pour le ${date} — vous le modifiez plutôt que d'en créer un second.`;
+        err.textContent = `Un prélèvement existe déjà pour le ${formatDateFr(date)} — vous le modifiez plutôt que d'en créer un second.`;
         err.classList.remove('hidden');
         err.style.color = 'var(--warning)';
         saveBtn.disabled = false;
@@ -7285,7 +7401,7 @@ function openQualiteSheet(record, returnView) {
       }
       pendingVolume = findTankVolumeForDate(date);
       if (pendingVolume !== null) {
-        foundEl.textContent = `Quantité tank du ${date} : ${pendingVolume} L (récupérée automatiquement — aucune saisie de volume nécessaire).`;
+        foundEl.textContent = `Quantité tank du ${formatDateFr(date)} : ${pendingVolume} L (récupérée automatiquement — aucune saisie de volume nécessaire).`;
         foundEl.classList.remove('hidden');
         missingEl.classList.add('hidden');
         saveBtn.disabled = false;
@@ -7333,12 +7449,130 @@ function openQualiteSheet(record, returnView) {
 
   deleteBtn.onclick = () => {
     if (!currentRecord) return; // bouton masqué en création pure, garde-fou
-    if (!confirm('Supprimer ce prélèvement qualité du ' + currentRecord.date + ' ? Cette action est irréversible.')) return;
+    if (!confirm('Supprimer ce prélèvement qualité du ' + formatDateFr(currentRecord.date) + ' ? Cette action est irréversible.')) return;
     const idx = DB.prelevementsQualite.indexOf(currentRecord);
     if (idx !== -1) DB.prelevementsQualite.splice(idx, 1);
     saveData(DB);
     document.body.removeChild(overlay);
     render(returnView);
+  };
+}
+
+/* Fiche en feuille remontant du bas -- même gabarit que openQualiteSheet --
+   pour créer/éditer une pénalité bactério (DB.penalitesBacterio). Toujours
+   accessible depuis l'onglet Qualité uniquement (pas d'équivalent Agenda,
+   contrairement aux prélèvements), donc pas de returnView : referme
+   toujours sur render('qualite'). `defaultMoisKey` ne pré-remplit rien
+   d'autre que le mois initialement affiché à l'écran (aucune date n'est
+   déduite automatiquement -- l'éleveur choisit toujours la date exacte de
+   début de pénalité). */
+function openPenaliteSheet(record, defaultMoisKey) {
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  const isCreating = !record;
+  overlay.innerHTML = `
+    <div class="sheet-card">
+      <button type="button" class="sheet-close-btn" id="ps-close">✕</button>
+      <div style="font-weight:700;font-size:15px;margin-bottom:14px;">${isCreating ? 'Nouvelle pénalité bactério' : 'Modifier la pénalité bactério'}</div>
+
+      <div class="row">
+        <div style="flex:1;"><label>Date de début</label><input type="date" id="ps-date-debut"></div>
+        <div style="flex:1;"><label>Date de fin</label><input type="date" id="ps-date-fin"></div>
+      </div>
+
+      <label>Cause</label>
+      <div class="grid4" id="ps-cause" style="grid-template-columns:repeat(3,1fr);margin-bottom:4px;">
+        <button type="button" class="opt-btn cause-opt" data-val="listeria">Listéria</button>
+        <button type="button" class="opt-btn cause-opt" data-val="salmonelles">Salmonelles</button>
+        <button type="button" class="opt-btn cause-opt" data-val="autre">Autre</button>
+      </div>
+      <div class="note-warn hidden" id="ps-note-supera" style="margin-top:8px;">Listéria ou Salmonelles annule aussi le bonus Super A du mois de la pénalité (même sans prélèvement marqué positif ce mois-là).</div>
+
+      <label style="margin-top:8px;">Litrage pénalisé (L)</label>
+      <input type="number" step="1" min="0" id="ps-litrage" placeholder="ex: 1200">
+      <div class="note-warn" id="ps-montant-preview" style="margin-top:8px;">Pénalité : -200 €/1000L × 0 L = -0,00 €</div>
+
+      <label>Commentaire (facultatif)</label>
+      <input type="text" id="ps-commentaire" placeholder="ex: analyse labo confirmée le..." style="margin-bottom:16px;">
+
+      <div id="ps-err" class="error-box hidden"></div>
+      <button type="button" class="btn btn-primary" id="ps-save" style="margin-bottom:8px;">${isCreating ? 'Enregistrer la pénalité' : 'Enregistrer les modifications'}</button>
+      <button type="button" class="btn btn-secondary hidden" id="ps-delete" style="color:var(--danger);border-color:var(--danger);">Supprimer cette pénalité</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#ps-close').onclick = () => document.body.removeChild(overlay);
+
+  const dateDebut = overlay.querySelector('#ps-date-debut'), dateFin = overlay.querySelector('#ps-date-fin');
+  const litrage = overlay.querySelector('#ps-litrage'), commentaire = overlay.querySelector('#ps-commentaire');
+  const noteSuperA = overlay.querySelector('#ps-note-supera'), montantPreview = overlay.querySelector('#ps-montant-preview');
+  const saveBtn = overlay.querySelector('#ps-save'), deleteBtn = overlay.querySelector('#ps-delete');
+
+  let cause = (record && record.cause) || null;
+  overlay.querySelectorAll('.cause-opt').forEach(btn => {
+    if (btn.dataset.val === cause) btn.classList.add('selected');
+    btn.onclick = () => {
+      cause = btn.dataset.val;
+      overlay.querySelectorAll('.cause-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      noteSuperA.classList.toggle('hidden', cause !== 'listeria' && cause !== 'salmonelles');
+      overlay.querySelector('#ps-err').classList.add('hidden');
+    };
+  });
+  noteSuperA.classList.toggle('hidden', cause !== 'listeria' && cause !== 'salmonelles');
+
+  function updateMontantPreview() {
+    const l = parseFloat(litrage.value);
+    const montant = montantPenaliteBacterio({ litrageL: isNaN(l) ? 0 : l });
+    montantPreview.textContent = 'Pénalité : -200 €/1000L × ' + (isNaN(l) ? 0 : l) + ' L = -' + fmtEuro(montant);
+  }
+  litrage.addEventListener('input', updateMontantPreview);
+
+  if (record) {
+    dateDebut.value = record.dateDebut || '';
+    dateFin.value = record.dateFin || '';
+    litrage.value = record.litrageL != null ? record.litrageL : '';
+    commentaire.value = record.commentaire || '';
+    deleteBtn.classList.remove('hidden');
+  } else if (defaultMoisKey) {
+    // Aucune date déduite automatiquement (voir commentaire ci-dessus) --
+    // seul le mois affiché sert de repère visuel, jamais posé dans le champ.
+  }
+  updateMontantPreview();
+
+  saveBtn.onclick = () => {
+    const err = overlay.querySelector('#ps-err');
+    const vDebut = dateDebut.value;
+    const vFin = dateFin.value || vDebut;
+    const vLitrage = parseFloat(litrage.value);
+    if (!vDebut) { err.textContent = 'Choisis la date de début de la pénalité.'; err.classList.remove('hidden'); return; }
+    if (vFin < vDebut) { err.textContent = 'La date de fin ne peut pas être avant la date de début.'; err.classList.remove('hidden'); return; }
+    if (!cause) { err.textContent = 'Choisis la cause de la pénalité.'; err.classList.remove('hidden'); return; }
+    if (isNaN(vLitrage) || vLitrage <= 0) { err.textContent = 'Saisis un litrage pénalisé valide.'; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    if (isCreating) {
+      DB.penalitesBacterio.push({
+        id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+        dateDebut: vDebut, dateFin: vFin, cause, litrageL: Math.round(vLitrage),
+        commentaire: commentaire.value.trim()
+      });
+    } else {
+      record.dateDebut = vDebut; record.dateFin = vFin; record.cause = cause;
+      record.litrageL = Math.round(vLitrage); record.commentaire = commentaire.value.trim();
+    }
+    saveData(DB);
+    document.body.removeChild(overlay);
+    render('qualite');
+  };
+
+  deleteBtn.onclick = () => {
+    if (!record) return; // bouton masqué en création pure, garde-fou
+    if (!confirm('Supprimer cette pénalité bactério ? Cette action est irréversible.')) return;
+    const idx = DB.penalitesBacterio.indexOf(record);
+    if (idx !== -1) DB.penalitesBacterio.splice(idx, 1);
+    saveData(DB);
+    document.body.removeChild(overlay);
+    render('qualite');
   };
 }
 
@@ -7393,7 +7627,7 @@ function renderLots() {
             ${iconCircle(ICON_SEARCH, lot.type === 'reforme' ? 'coral' : 'green', 'sm')}
             <div>
               <div style="font-weight:600;">${lot.nom}${lot.type === 'reforme' ? ' <span class="badge badge-coral" style="margin-left:6px;">Réforme</span>' : ''}</div>
-              <div style="font-size:12px;color:var(--text-muted);">${lot.membres.length} brebis · créé le ${lot.dateCreation}</div>
+              <div style="font-size:12px;color:var(--text-muted);">${lot.membres.length} brebis · créé le ${formatDateFr(lot.dateCreation)}</div>
             </div>
           </div>
           <button type="button" class="btn btn-secondary btn-del-lot" data-id="${lot.id}" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
@@ -7704,7 +7938,7 @@ function renderAddLotReforme() {
     <div class="card">
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Sélectionne les brebis à réformer — le lot sera ensuite disponible pour une recherche en bergerie, comme n'importe quel autre lot.</div>
       <label>Nom du lot</label>
-      <input type="text" id="f-lot-nom" value="Réforme du ${today}">
+      <input type="text" id="f-lot-nom" value="Réforme du ${formatDateFr(today)}">
 
       <label>Brebis à réformer</label>
       <div id="reforme-picker" style="margin-bottom:14px;"></div>
@@ -8372,8 +8606,8 @@ function renderTraitementsCollectifsHistorique() {
 
   function dateRangeLabel(dates) {
     if (dates.length === 0) return 'date inconnue';
-    if (dates.length === 1) return dates[0];
-    return dates[0] + ' → ' + dates[dates.length - 1] + ' (' + dates.length + ' dates)';
+    if (dates.length === 1) return formatDateFr(dates[0]);
+    return formatDateFr(dates[0]) + ' → ' + formatDateFr(dates[dates.length - 1]) + ' (' + dates.length + ' dates)';
   }
   function catLabel(cat) { return CATEGORIE_ANIMAL_CONFIG[cat || 'brebis'].label; }
 
@@ -8383,7 +8617,7 @@ function renderTraitementsCollectifsHistorique() {
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
         <div>
           <div style="font-weight:600;">${catLabel(t.categorie)} · ${t.produit || t.type}${t.sousType ? ' · ' + t.sousType : ''}</div>
-          <div style="font-size:12px;color:var(--text-muted);">${t.date || 'date inconnue'} · ${t.membres.length} ${catLabel(t.categorie).toLowerCase()}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${t.date ? formatDateFr(t.date) : 'date inconnue'} · ${t.membres.length} ${catLabel(t.categorie).toLowerCase()}</div>
         </div>
       </div>
       <button type="button" class="btn btn-secondary btn-del-collectif" data-key="id:${t.id}" style="color:var(--danger);border-color:var(--danger);">Supprimer ce traitement collectif</button>
@@ -8825,7 +9059,7 @@ function registreAgnelageTableHtml(filtreNumero, colFiltres) {
       <td style="${REGISTRE_TD}">n°${numeroVisuel(r.mereEid)}</td>
       <td style="${REGISTRE_TD}">${r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : '<span style="color:var(--text-muted);">Mort-né</span>'}</td>
       <td style="${REGISTRE_TD}">${r.sexe}</td>
-      <td style="${REGISTRE_TD}">${r.date}</td>
+      <td style="${REGISTRE_TD}">${formatDateFr(r.date)}</td>
       <td style="${REGISTRE_TD}">${registreCampagneLabel(r)}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
@@ -8847,7 +9081,7 @@ function registreMouvementsTableHtml(filtreNumero, colFiltres) {
       <td style="${REGISTRE_TD}">${r.categorie}</td>
       <td style="${REGISTRE_TD}">${r.type}</td>
       <td style="${REGISTRE_TD}">${r.detail}</td>
-      <td style="${REGISTRE_TD}">${r.date}</td>
+      <td style="${REGISTRE_TD}">${formatDateFr(r.date)}</td>
       <td style="${REGISTRE_TD}">${registreCampagneLabel(r)}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
@@ -8869,7 +9103,7 @@ function registreSanitaireTableHtml(filtreNumero, colFiltres) {
       <td style="${REGISTRE_TD}">${r.categorie}</td>
       <td style="${REGISTRE_TD}">${r.type}</td>
       <td style="${REGISTRE_TD}">${r.produit}</td>
-      <td style="${REGISTRE_TD}">${r.date}</td>
+      <td style="${REGISTRE_TD}">${formatDateFr(r.date)}</td>
       <td style="${REGISTRE_TD}">${r.dose}</td>
       <td style="${REGISTRE_TD}">${registreCampagneLabel(r)}</td>
     </tr>`).join('')}</tbody>
@@ -9375,6 +9609,277 @@ async function exportQualiteCampagnePdf(campagne) {
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
+/* ---------- Rapport de campagne (PDF, recto/verso) ----------
+   Distinct du récapitulatif "1 ligne par prélèvement" ci-dessus : un
+   document de synthèse en 2 pages paysage fixes, pensé comme le ferait un
+   organisme technique (moyennes + bilans financiers), pas une liste brute.
+   Assemblé directement avec les primitives bas niveau de buildPdfTable
+   (pdfTextOp, PDF_MARGIN...) plutôt qu'avec buildPdfTable lui-même : la
+   mise en page mélange plusieurs blocs (KPI, tableau, texte libre) sur
+   chaque page, pas un simple tableau paginé automatiquement. */
+// Trace un rectangle non rempli (contour seul) -- (x, y) = coin BAS-GAUCHE
+// en coordonnées PDF (origine en bas de page), comme l'exige l'opérateur
+// PDF natif `re`.
+function pdfRectOp(x, y, w, h) {
+  return x + ' ' + y + ' ' + w + ' ' + h + ' re S\n';
+}
+function pdfLineOp(x1, y1, x2, y2) {
+  return x1 + ' ' + y1 + ' m ' + x2 + ' ' + y2 + ' l S\n';
+}
+// Découpe un texte en lignes d'au plus `maxChars` caractères, sur des
+// limites de mots -- approximation grossière (pas de vraie mesure de
+// largeur de police, comme le reste des primitives PDF de l'appli) mais
+// suffisante pour les notes de bas de page en Helvetica taille 8.
+function pdfWrapLines(text, maxChars) {
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  words.forEach(w => {
+    const candidate = current ? current + ' ' + w : w;
+    if (candidate.length > maxChars && current) { lines.push(current); current = w; }
+    else current = candidate;
+  });
+  if (current) lines.push(current);
+  return lines;
+}
+function causeBacterioLabel(cause) {
+  return cause === 'listeria' ? 'Listéria' : cause === 'salmonelles' ? 'Salmonelles' : 'Autre';
+}
+function periodeBacterioLabel(p) {
+  return (p.dateFin && p.dateFin !== p.dateDebut) ? formatDateFr(p.dateDebut) + ' -> ' + formatDateFr(p.dateFin) : formatDateFr(p.dateDebut);
+}
+
+function buildRapportCampagnePdfBytes(campagne) {
+  const bilan = bilanCampagneQualite(campagne);
+  const coef = coefficientMsuPourCampagne(campagne);
+  const penalitesCampagne = (DB.penalitesBacterio || [])
+    .filter(p => campagneAnneeDebutPourDate(p.dateDebut) === campagne)
+    .sort((a, b) => (a.dateDebut || '').localeCompare(b.dateDebut || ''));
+  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
+  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+
+  // "Prix du lait final" = masse d'argent totale ÷ production totale de LA
+  // CAMPAGNE ENTIÈRE (mois sans prélèvement inclus au dénominateur) --
+  // volontairement distinct de bilan.prixMoyenAvecQualite, qui ne pondère
+  // que les mois où un prix a pu être calculé (voir footnote page 2).
+  const prixLaitFinal = bilan.productionTotaleL > 0 && bilan.montantAvecQualite !== null
+    ? (bilan.montantAvecQualite / bilan.productionTotaleL) * 1000
+    : null;
+
+  const pageW = PDF_PAGE_H, pageH = PDF_PAGE_W; // paysage
+  const rightEdge = pageW - PDF_MARGIN;
+
+  function lettrehead(farmSub, docTitle) {
+    let y = pageH - PDF_MARGIN;
+    let content = pdfTextOp(PDF_MARGIN, y, exploitationNom, 'FB', 14);
+    content += pdfTextOp(PDF_MARGIN + 420, y, docTitle, 'FB', 10);
+    y -= 14;
+    content += pdfTextOp(PDF_MARGIN, y, farmSub, 'F1', 9);
+    content += pdfTextOp(PDF_MARGIN + 420, y, 'Édité le ' + aujourdhui, 'F1', 9);
+    y -= 10;
+    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+    return { content, y: y - 20 };
+  }
+  function sectionHeader(content0, y0, titre) {
+    let content = pdfTextOp(PDF_MARGIN, y0, titre.toUpperCase(), 'FB', 10.5);
+    let y = y0 - 5;
+    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+    return { content: content0 + content, y: y - 16 };
+  }
+  function footerBloc(pageIndex) {
+    let content = pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — Rapport généré automatiquement', 'F1', 8);
+    content += pdfTextOp(rightEdge - 40, PDF_MARGIN / 2, 'Page ' + pageIndex + '/2', 'F1', 8);
+    return content;
+  }
+
+  // ---------- Page 1 (recto) : KPI + suivi mensuel ----------
+  let p1 = lettrehead(
+    'Campagne ' + (campagne + 1) + ' — 1er octobre ' + campagne + ' au 30 septembre ' + (campagne + 1),
+    'Rapport de synthèse — Qualité du lait'
+  );
+  let content1 = p1.content, y = p1.y;
+
+  // 3 cartes KPI, comme demandé : production totale, masse d'argent totale
+  // TOUT INCLUS, prix du lait final (= les 2 précédents divisés l'un par
+  // l'autre) -- jamais un 4e chiffre qui romprait cette lecture directe.
+  const kpiGap = 14, kpiW = (rightEdge - PDF_MARGIN - 2 * kpiGap) / 3, kpiH = 46;
+  const kpiTopY = y, kpiBotY = y - kpiH;
+  const kpis = [
+    { label: 'PRODUCTION TOTALE', value: fmtDecimal(bilan.productionTotaleL, 0) + ' L' },
+    { label: "MASSE D'ARGENT TOTALE (TOUT INCLUS)", value: bilan.montantAvecQualite !== null ? fmtEuro(bilan.montantAvecQualite) : '—' },
+    { label: 'PRIX DU LAIT FINAL', value: prixLaitFinal !== null ? fmtEuro(prixLaitFinal) + '/1000L' : '—' }
+  ];
+  kpis.forEach((k, i) => {
+    const x = PDF_MARGIN + i * (kpiW + kpiGap);
+    content1 += pdfRectOp(x, kpiBotY, kpiW, kpiH);
+    content1 += pdfTextOp(x + 10, kpiTopY - 16, k.label, 'F1', 8);
+    content1 += pdfTextOp(x + 10, kpiTopY - 34, k.value, 'FB', 15);
+  });
+  y = kpiBotY - 24;
+
+  const s1 = sectionHeader(content1, y, 'Suivi mensuel');
+  content1 = s1.content; y = s1.y;
+
+  const colsMois = [
+    { label: 'Mois', x: 0 }, { label: 'Volume', x: 92 }, { label: 'TB', x: 152 }, { label: 'TP', x: 187 },
+    { label: 'MSU', x: 222 }, { label: 'Cellules', x: 260 }, { label: 'Prix HQ', x: 317 }, { label: 'Prix AQ', x: 377 },
+    { label: 'Pénalité', x: 437 }, { label: 'Total mois', x: 507 }, { label: 'Super A', x: 582 }
+  ];
+  colsMois.forEach(c => { content1 += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9); });
+  y -= 5;
+  content1 += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+  y -= 14;
+
+  let sommeVolumeCampagne = 0;
+  for (let i = 0; i < 12; i++) {
+    const info = moisInfoPourIndex(campagne, i);
+    const volumeMois = volumeTankMois(info.key);
+    sommeVolumeCampagne += volumeMois;
+    const listMois = DB.prelevementsQualite.filter(p => campagneAnneeDebutPourDate(p.date) === campagne && p.date.slice(0, 7) === info.key);
+    const penalitesMois = penalitesCampagne.filter(p => (p.dateDebut || '').slice(0, 7) === info.key);
+    const res = calculerPrixLaitMois(listMois, volumeMois, coef, penalitesMois);
+    const cells = listMois.length === 0
+      ? [info.label, fmtDecimal(volumeMois, 0) + ' L', 'Aucun prélèvement ce mois-ci', '', '', '', '', '',
+         res.montantPenalites > 0 ? '-' + fmtEuro(res.montantPenalites) : '—',
+         res.totalMois !== null ? fmtEuro(res.totalMois) : (res.montantPenalites > 0 ? '-' + fmtEuro(res.montantPenalites) : '—'),
+         res.superA.eligible ? 'Oui' : 'Non']
+      : [info.label, fmtDecimal(volumeMois, 0) + ' L',
+         fmtDecimal(res.grades.moyennes.tb, 2), fmtDecimal(res.grades.moyennes.tp, 2), fmtDecimal(res.grades.moyennes.msu, 2),
+         fmtDecimal(res.grades.moyennes.cellules, 0),
+         res.prixHorsQualite !== null ? fmtEuro(res.prixHorsQualite) : '—',
+         res.prixAvecQualite !== null ? fmtEuro(res.prixAvecQualite) : '—',
+         res.montantPenalites > 0 ? '-' + fmtEuro(res.montantPenalites) : '—',
+         res.totalMois !== null ? fmtEuro(res.totalMois) : '—',
+         res.superA.eligible ? 'Oui' : 'Non'];
+    colsMois.forEach((c, ci) => { content1 += pdfTextOp(PDF_MARGIN + c.x, y, cells[ci] || '', 'F1', 8.5); });
+    y -= PDF_ROW_HEIGHT;
+  }
+  // Ligne "Campagne" -- mêmes totaux que le bloc "Bilan financier de la
+  // campagne" de l'écran Qualité (bilanCampagneQualite), jamais recalculés
+  // autrement ici.
+  y -= 2;
+  content1 += pdfLineOp(PDF_MARGIN, y + 12, rightEdge, y + 12);
+  const nbMoisSuperA = Array.from({ length: 12 }, (_, i) => moisInfoPourIndex(campagne, i).key).filter(k => bilan.superAParMois[k]).length;
+  const totalRow = [
+    'Campagne ' + (campagne + 1), fmtDecimal(sommeVolumeCampagne, 0) + ' L',
+    fmtDecimal(bilan.tb, 2), fmtDecimal(bilan.tp, 2), fmtDecimal(bilan.msu, 2), '—',
+    bilan.prixMoyenHorsQualite !== null ? fmtEuro(bilan.prixMoyenHorsQualite) : '—',
+    bilan.prixMoyenAvecQualite !== null ? fmtEuro(bilan.prixMoyenAvecQualite) : '—',
+    bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : '—',
+    bilan.montantAvecQualite !== null ? fmtEuro(bilan.montantAvecQualite) : '—',
+    nbMoisSuperA + '/12'
+  ];
+  colsMois.forEach((c, ci) => { content1 += pdfTextOp(PDF_MARGIN + c.x, y, totalRow[ci] || '', 'FB', 8.5); });
+  y -= 24;
+
+  pdfWrapLines("Lecture du tableau : les mois sans prélèvement apparaissent explicitement (\"Aucun prélèvement ce mois-ci\") plutôt que d'être masqués ou comptés comme 0, pour que le trou de suivi soit visible d'un coup d'oeil. TB/TP/MSU en g/L, moyennes pondérées par le volume livré. La ligne \"Campagne " + (campagne + 1) + "\" reprend les mêmes totaux que l'écran Qualité de l'application.", 150)
+    .forEach(line => { content1 += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
+
+  content1 += footerBloc(1);
+
+  // ---------- Page 2 (verso) : bilan financier détaillé + pénalités + notes ----------
+  let p2 = lettrehead('Campagne ' + (campagne + 1) + ' — suite du rapport de synthèse', 'Bilan financier détaillé');
+  let content2 = p2.content; y = p2.y;
+
+  const s2 = sectionHeader(content2, y, 'Bilan financier de campagne');
+  content2 = s2.content; y = s2.y;
+
+  const colGap = 40, colW = (rightEdge - PDF_MARGIN - colGap) / 2;
+  const xLeft = PDF_MARGIN, xRight = PDF_MARGIN + colW + colGap;
+  const finRowsLeft = [
+    ['Prix moyen hors qualité (€/1000L)', bilan.prixMoyenHorsQualite !== null ? fmtEuro(bilan.prixMoyenHorsQualite) : '—'],
+    ['Prix moyen avec qualité (€/1000L)', bilan.prixMoyenAvecQualite !== null ? fmtEuro(bilan.prixMoyenAvecQualite) : '—'],
+    ['Montant total hors qualité', bilan.montantHorsQualite !== null ? fmtEuro(bilan.montantHorsQualite) : '—'],
+    ['Montant total avec qualité', bilan.montantAvecQualite !== null ? fmtEuro(bilan.montantAvecQualite) : '—']
+  ];
+  const finRowsRight = [
+    ['Montant total Super A', '+' + fmtEuro(bilan.montantSuperA)],
+    ['Montant total pénalités', bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : fmtEuro(0)],
+    ['Gain lié à la qualité', bilan.gainQualite !== null ? fmtEuro(bilan.gainQualite, true) : '—']
+  ];
+  const yFinStart = y;
+  finRowsLeft.forEach((row, i) => {
+    const ry = yFinStart - i * 18;
+    content2 += pdfTextOp(xLeft, ry, row[0], 'F1', 9.5);
+    content2 += pdfTextOp(xLeft + colW - 70, ry, row[1], 'FB', 9.5);
+  });
+  finRowsRight.forEach((row, i) => {
+    const ry = yFinStart - i * 18;
+    const isGain = i === finRowsRight.length - 1;
+    content2 += pdfTextOp(xRight, ry, row[0], isGain ? 'FB' : 'F1', isGain ? 10.5 : 9.5);
+    content2 += pdfTextOp(xRight + colW - 70, ry, row[1], 'FB', isGain ? 12 : 9.5);
+  });
+  y = yFinStart - Math.max(finRowsLeft.length, finRowsRight.length) * 18 - 16;
+
+  const s3 = sectionHeader(content2, y, 'Détail des pénalités bactério de la campagne');
+  content2 = s3.content; y = s3.y;
+
+  const colsPenalites = [
+    { label: 'Période', x: 0 }, { label: 'Cause', x: 160 }, { label: 'Litrage pénalisé', x: 240 },
+    { label: 'Commentaire', x: 330 }, { label: 'Montant', x: 560 }
+  ];
+  colsPenalites.forEach(c => { content2 += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9); });
+  y -= 5;
+  content2 += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+  y -= 14;
+  if (penalitesCampagne.length === 0) {
+    content2 += pdfTextOp(PDF_MARGIN, y, 'Aucune pénalité enregistrée pour cette campagne.', 'F1', 9);
+    y -= PDF_ROW_HEIGHT;
+  } else {
+    penalitesCampagne.forEach(p => {
+      const row = [periodeBacterioLabel(p), causeBacterioLabel(p.cause), fmtDecimal(p.litrageL, 0) + ' L', p.commentaire || '', '-' + fmtEuro(montantPenaliteBacterio(p))];
+      colsPenalites.forEach((c, ci) => { content2 += pdfTextOp(PDF_MARGIN + c.x, y, row[ci] || '', 'F1', 8.5); });
+      y -= PDF_ROW_HEIGHT;
+    });
+  }
+  y -= 10;
+
+  const footnote2Paragraphs = [
+    "Prix du lait final vs prix moyen avec qualité : le \"prix du lait final\" en tête du rapport (page 1) est la masse d'argent totale divisée par la production totale de la campagne, mois sans prélèvement inclus au dénominateur" + (prixLaitFinal !== null ? ' (' + fmtEuro(prixLaitFinal) + '/1000L)' : '') + ". Le \"prix moyen avec qualité\" ci-dessus ne pondère que les mois où un prix a pu être calculé, donc exclut les mois sans MSU renseigné" + (bilan.prixMoyenAvecQualite !== null ? ' (' + fmtEuro(bilan.prixMoyenAvecQualite) + '/1000L)' : '') + " — les deux chiffres sont proches mais mesurent des choses légèrement différentes, tous deux affichés pour transparence.",
+    "Bonus Super A : calculé sur les critères suivis par Ovilog (4 grades bactério + Listéria/Salmonelles). La grille laiterie exige aussi l'absence d'antibiotiques, de virage résazurine et de déclassement pour conditions d'hygiène insuffisantes — à vérifier hors Ovilog avant application. Un mois avec une pénalité Listéria ou Salmonelles perd automatiquement le bonus Super A, même sans prélèvement marqué positif ce mois-là.",
+    "Pénalités : rattachées au mois de leur date de début ; une période à cheval sur deux mois doit être saisie comme deux pénalités distinctes, une par mois."
+  ];
+  footnote2Paragraphs.forEach(para => {
+    pdfWrapLines(para, 150).forEach(line => { content2 += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
+    y -= 6;
+  });
+
+  content2 += footerBloc(2);
+
+  // ---------- Assemblage du document (2 pages fixes) ----------
+  const objects = [];
+  let nextNum = 1;
+  const alloc = () => nextNum++;
+  const catalogNum = alloc(), pagesNum = alloc(), fontNum = alloc(), fontBoldNum = alloc();
+  const pageNums = [alloc(), alloc()], contentNums = [alloc(), alloc()];
+  const contents = [content1, content2];
+  contents.forEach((content, i) => {
+    objects.push({ num: contentNums[i], body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
+    objects.push({ num: pageNums[i], body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + pageW + ' ' + pageH + '] /Contents ' + contentNums[i] + ' 0 R >>' });
+  });
+  objects.push({ num: catalogNum, body: '<< /Type /Catalog /Pages ' + pagesNum + ' 0 R >>' });
+  objects.push({ num: pagesNum, body: '<< /Type /Pages /Kids [' + pageNums.map(n => n + ' 0 R').join(' ') + '] /Count ' + pageNums.length + ' >>' });
+  objects.push({ num: fontNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>' });
+  objects.push({ num: fontBoldNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>' });
+  objects.sort((a, b) => a.num - b.num);
+
+  let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
+  const offsets = [0];
+  objects.forEach(obj => { offsets[obj.num] = pdf.length; pdf += obj.num + ' 0 obj\n' + obj.body + '\nendobj\n'; });
+  const xrefStart = pdf.length;
+  pdf += 'xref\n0 ' + nextNum + '\n0000000000 65535 f \n';
+  for (let i = 1; i < nextNum; i++) pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  pdf += 'trailer\n<< /Size ' + nextNum + ' /Root ' + catalogNum + ' 0 R >>\nstartxref\n' + xrefStart + '\n%%EOF';
+
+  return pdfLatin1ToBytes(pdf);
+}
+
+async function exportRapportCampagnePdf(campagne) {
+  const bytes = buildRapportCampagnePdfBytes(campagne);
+  const filename = 'rapport-campagne_' + (campagne + 1) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
 /* Exports Contrôle laitier (PDF + .xlsx) -- reçoivent directement les lignes
    déjà triées/filtrées telles qu'affichées à l'écran (voir currentFiltered()
    dans renderControleLaitier) : contrairement à l'Excel du registre
@@ -9392,7 +9897,7 @@ async function exportControleLaitierPdf(filtered) {
     r.c1 !== null && r.c1 !== undefined ? String(r.c1) : '',
     r.c2 !== null && r.c2 !== undefined ? String(r.c2) : '',
     r.c3 !== null && r.c3 !== undefined ? String(r.c3) : '',
-    r.dateMab || '',
+    r.dateMab ? formatDateFr(r.dateMab) : '',
     String(r.cumul)
   ]);
   const bytes = buildPdfTable({ title: 'Contrôle laitier', columns, rows, landscape: true });
@@ -9410,7 +9915,7 @@ async function exportControleLaitierXlsx(filtered) {
         r.c1 !== null && r.c1 !== undefined ? r.c1 : '',
         r.c2 !== null && r.c2 !== undefined ? r.c2 : '',
         r.c3 !== null && r.c3 !== undefined ? r.c3 : '',
-        r.dateMab || '',
+        r.dateMab ? formatDateFr(r.dateMab) : '',
         r.cumul
       ])
     ]
@@ -9428,17 +9933,17 @@ async function exportRegistreXlsx() {
     { name: 'Agnelage', rows: [
       ['N° mère', 'N° agneau', 'Sexe', 'Date de naissance', 'Campagne'],
       ...registreAgnelageFilteredRows(registreFiltre, registreColFiltres.agnelage).map(r =>
-        ['n°' + numeroVisuel(r.mereEid), r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : 'Mort-né', r.sexe, r.date, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
+        ['n°' + numeroVisuel(r.mereEid), r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : 'Mort-né', r.sexe, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]},
     { name: 'Mouvements', rows: [
       ['N°', 'Catégorie', 'Type', 'Cause / détail', 'Date', 'Campagne'],
       ...registreMouvementsFilteredRows(registreFiltre, registreColFiltres.mouvements).map(r =>
-        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.detail, r.date, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
+        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.detail, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]},
     { name: 'Sanitaire', rows: [
       ['N°', 'Catégorie', 'Type de soin', 'Produit', 'Date', 'Dose', 'Campagne'],
       ...registreSanitaireFilteredRows(registreFiltre, registreColFiltres.sanitaire).map(r =>
-        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.produit, r.date, r.dose, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
+        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]}
   ];
   const bytes = await buildXlsxWorkbook(sheets);
@@ -9483,7 +9988,7 @@ async function exportRegistrePdf() {
       { label: 'Date de naissance', x: 250 }, { label: 'Campagne', x: 380 }
     ];
     rows = registreAgnelageFilteredRows(filtreNumero, colFiltres).map(r => [
-      'n°' + numeroVisuel(r.mereEid), r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : 'Mort-né', r.sexe, r.date, registreCampagneLabelTexte(r)
+      'n°' + numeroVisuel(r.mereEid), r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : 'Mort-né', r.sexe, formatDateFr(r.date), registreCampagneLabelTexte(r)
     ]);
   } else if (registreView === 'mouvements') {
     title = "Registre d'élevage — Mouvements";
@@ -9492,7 +9997,7 @@ async function exportRegistrePdf() {
       { label: 'Cause / détail', x: 230 }, { label: 'Date', x: 440 }, { label: 'Campagne', x: 500 }
     ];
     rows = registreMouvementsFilteredRows(filtreNumero, colFiltres).map(r => [
-      'n°' + numeroVisuel(r.eid), r.categorie, r.type, r.detail, r.date, registreCampagneLabelTexte(r)
+      'n°' + numeroVisuel(r.eid), r.categorie, r.type, r.detail, formatDateFr(r.date), registreCampagneLabelTexte(r)
     ]);
   } else {
     title = "Registre d'élevage — Sanitaire";
@@ -9501,12 +10006,12 @@ async function exportRegistrePdf() {
       { label: 'Produit', x: 320 }, { label: 'Date', x: 480 }, { label: 'Dose', x: 550 }, { label: 'Campagne', x: 620 }
     ];
     rows = registreSanitaireFilteredRows(filtreNumero, colFiltres).map(r => [
-      'n°' + numeroVisuel(r.eid), r.categorie, r.type, r.produit, r.date, r.dose, registreCampagneLabelTexte(r)
+      'n°' + numeroVisuel(r.eid), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, registreCampagneLabelTexte(r)
     ]);
   }
   const bytes = buildPdfTable({
     title,
-    subtitle: rows.length + ' ligne(s) — ' + new Date().toISOString().slice(0,10),
+    subtitle: rows.length + ' ligne(s) — ' + formatDateFr(new Date().toISOString().slice(0,10)),
     columns, rows,
     landscape: true
   });
@@ -9686,7 +10191,7 @@ async function exportDeclarationAnnuellePdf(annee, c) {
   }
   const bytes = buildPdfTable({
     title: 'Déclaration annuelle — ' + annee,
-    subtitle: 'Registre PAC, recensement au 1er janvier — ' + new Date().toISOString().slice(0, 10),
+    subtitle: 'Registre PAC, recensement au 1er janvier — ' + formatDateFr(new Date().toISOString().slice(0, 10)),
     columns: [{ label: 'Libellé', x: 0 }, { label: 'Valeur', x: 320 }],
     rows
   });
