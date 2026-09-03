@@ -570,8 +570,28 @@ function exportBackupFile(data, filenamePrefix) {
   URL.revokeObjectURL(url);
 }
 
+/* Point de passage unique pour toute écriture des données (~100 appelants
+   dans toute l'appli). localStorage.setItem peut échouer (quota dépassé,
+   stockage plein/corrompu) : sans ce garde-fou, l'exception remontait de
+   façon non gérée dans le gestionnaire de clic qui a appelé saveData -- hors
+   du filet de sécurité render()/renderCrashScreen(), qui ne couvre que
+   l'affichage des écrans, jamais les actions. L'éleveur pouvait alors croire
+   sa saisie enregistrée alors qu'elle ne l'était pas, sans le moindre
+   message. alert() est bloquant (le thread JS est suspendu tant qu'il n'est
+   pas fermé) : ça suffit à empêcher de continuer sans voir l'échec, sans
+   avoir à modifier les ~100 appelants existants. Retourne true/false pour
+   les futurs appelants qui voudraient réagir (ex: ne pas fermer une fiche de
+   saisie si l'enregistrement a échoué) -- les appelants actuels ignorent
+   cette valeur de retour, comportement inchangé pour eux. */
 function saveData(data) {
-  localStorage.setItem(DB_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(DB_KEY, JSON.stringify(data));
+    return true;
+  } catch (e) {
+    console.error('Échec de saveData (localStorage.setItem)', e);
+    alert('Échec de l\'enregistrement — vérifiez l\'espace de stockage de l\'appareil — réessayez ou exportez immédiatement vos données.');
+    return false;
+  }
 }
 let DB = loadData();
 
@@ -778,14 +798,19 @@ function age(eid) {
   return new Date().getFullYear() - y;
 }
 
-/* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, tous
-   statuts et catégories confondus : brebis actives, béliers actifs,
-   agnelles actives, agneaux actifs (voir getAgneauxActifsInventaire), et
-   animaux archivés au registre d'élevage (DB.registre.brebis/beliers/
-   agneaux — une agnelle sortie y est archivée sous "agneaux", il n'existe
-   pas de catégorie "agnelles" séparée). Sans cette vérification, rien
-   n'empêchait de saisir/scanner deux fois le même EID pour deux animaux
-   différents.
+/* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, TOUS
+   statuts et catégories confondus : brebis (actives, vendues ou mortes),
+   béliers (actifs, vendus ou morts), agnelles actives, agneaux (bouclés,
+   qu'ils soient encore en attente de devenir ou déjà vendus/morts — voir
+   getAgneauxInventaire), et animaux archivés au registre d'élevage
+   (DB.registre.brebis/beliers/agneaux — une agnelle sortie y est archivée
+   sous "agneaux", il n'existe pas de catégorie "agnelles" séparée). Un EID
+   est un identifiant physique unique par nature (boucle électronique) :
+   aucune réutilisation légitime n'existe, donc AUCUNE exception de statut
+   n'est faite ici (un animal vendu ou mort reste dans DB.brebis/DB.beliers
+   pour toujours — voir Registre — et son EID doit rester bloqué pour
+   toujours lui aussi). Sans cette vérification, rien n'empêchait de
+   saisir/scanner deux fois le même EID pour deux animaux différents.
    `exclureId` exclut l'animal en cours de modification par son id "métier"
    (sheep.id / belier.id / agnelle.id) — cas édition, pas création. Les
    agneaux et le registre n'ont pas d'id propre : on ne les exclut jamais
@@ -794,7 +819,9 @@ function age(eid) {
    Ne corrige/fusionne jamais rien automatiquement : se contente de décrire
    le conflit pour que l'écran appelant bloque avec un message explicite.
    Retourne null si l'EID est libre, sinon { categorie, numero, statutLabel,
-   dateLabel }. Les clés du registre sont l'EID brut tel qu'archivé (pas
+   dateLabel } — dateLabel précise la date de sortie (vente/mort) pour un
+   animal inactif, ou l'année de naissance déduite de l'EID pour un animal
+   actif. Les clés du registre sont l'EID brut tel qu'archivé (pas
    forcément nettoyé des espaces) : on les compare via cleanEid(), jamais
    par accès direct à la clé. */
 function verifierEidUnique(eid, exclureId = null) {
@@ -803,17 +830,49 @@ function verifierEidUnique(eid, exclureId = null) {
   const anneeNe = anneeNaissance(c);
   const dateLabel = anneeNe !== null ? ('née en ' + anneeNe + ', déduit de l\'EID') : null;
 
-  const sheep = DB.brebis.find(s => (s.statut || 'active') === 'active' && s.id !== exclureId && cleanEid(s.eid) === c);
-  if (sheep) return { categorie: 'brebis', numero: numeroVisuel(sheep.eid), statutLabel: 'une brebis active', dateLabel };
+  const sheep = DB.brebis.find(s => s.id !== exclureId && cleanEid(s.eid) === c);
+  if (sheep) {
+    const active = (sheep.statut || 'active') === 'active';
+    const dateSortie = active ? null : dernierMouvementDate(sheep.mouvements, CATEGORIE_ANIMAL_CONFIG.brebis.typeSortie);
+    return {
+      categorie: 'brebis', numero: numeroVisuel(sheep.eid),
+      statutLabel: active ? 'une brebis active' : 'une brebis ' + sheep.statut,
+      dateLabel: active ? dateLabel : (dateSortie ? 'sortie le ' + formatDateFr(dateSortie) : dateLabel)
+    };
+  }
 
-  const belier = (DB.beliers || []).find(b => (b.statut || 'actif') === 'actif' && b.id !== exclureId && cleanEid(b.eid) === c);
-  if (belier) return { categorie: 'belier', numero: numeroVisuel(belier.eid), statutLabel: 'un bélier actif', dateLabel };
+  const belier = (DB.beliers || []).find(b => b.id !== exclureId && cleanEid(b.eid) === c);
+  if (belier) {
+    const actif = (belier.statut || 'actif') === 'actif';
+    const dateSortie = actif ? null : dernierMouvementDate(belier.mouvements, CATEGORIE_ANIMAL_CONFIG.beliers.typeSortie);
+    return {
+      categorie: 'belier', numero: numeroVisuel(belier.eid),
+      statutLabel: actif ? 'un bélier actif' : 'un bélier ' + belier.statut,
+      dateLabel: actif ? dateLabel : (dateSortie ? 'sortie le ' + formatDateFr(dateSortie) : dateLabel)
+    };
+  }
 
+  // Les agnelles vendues/supprimées sont retirées de DB.agnelles (voir
+  // showVendreAgnelleModal/btn-remove-agnelle) : celles encore présentes
+  // ici sont donc, par construction, toujours "en jeu" -- pas d'exception
+  // de statut à gérer, contrairement à brebis/béliers ci-dessus.
   const agnelle = (DB.agnelles || []).find(a => a.id !== exclureId && cleanEid(a.eid) === c);
   if (agnelle) return { categorie: 'agnelle', numero: numeroVisuel(agnelle.eid), statutLabel: 'une agnelle active (' + agnelle.origine + ')', dateLabel };
 
-  const agneau = getAgneauxActifsInventaire().find(it => cleanEid(it.eid) === c);
-  if (agneau) return { categorie: 'agneau', numero: numeroVisuel(agneau.eid), statutLabel: 'un agneau actif (mère n°' + numeroVisuel(agneau.mereEid) + ')', dateLabel };
+  // getAgneauxInventaire() (pas getAgneauxActifsInventaire()) : couvre
+  // aussi les agneaux déjà vendus/morts, qui restent pour toujours dans
+  // sheep.agnelages[].lambs même une fois leur devenir réglé.
+  const agneauInfo = getAgneauxInventaire().find(it => cleanEid(it.lamb.eid) === c);
+  if (agneauInfo) {
+    const { lamb, mereEid } = agneauInfo;
+    const sorti = lamb.statutFinal === 'vendu' || lamb.statutFinal === 'mort';
+    const dateSortie = sorti ? dernierMouvementDate(lamb.mouvements, ['Vendu', 'Mort']) : null;
+    return {
+      categorie: 'agneau', numero: numeroVisuel(lamb.eid),
+      statutLabel: 'un agneau ' + (sorti ? lamb.statutFinal : 'actif') + ' (mère n°' + numeroVisuel(mereEid) + ')',
+      dateLabel: sorti ? (dateSortie ? 'sortie le ' + formatDateFr(dateSortie) : dateLabel) : dateLabel
+    };
+  }
 
   const registreCategories = [['brebis', 'une brebis sortie (registre)'], ['beliers', 'un bélier sorti (registre)'], ['agneaux', 'un agneau/une agnelle sorti(e) (registre)']];
   for (const [cat, label] of registreCategories) {
@@ -830,18 +889,142 @@ function messageEidDejaUtilise(conflit) {
   return 'Cet EID appartient déjà à ' + conflit.statutLabel + ' (n°' + conflit.numero + (conflit.dateLabel ? ', ' + conflit.dateLabel : '') + ').';
 }
 
+/* "Aucun historique" pour la brebis/le bélier -- condition d'affichage du
+   bouton "Corriger l'EID" (voir openCorrigerEidSheet) : ignore le(s)
+   mouvement(s) de type "Entrée" (toujours présents dès la création de la
+   fiche, qu'elle soit manuelle, importée ou issue d'un renouvellement de
+   campagne -- pure bookkeeping technique, jamais un événement métier dont
+   la correction d'EID romprait la cohérence). Au-delà de ce stade (une
+   échographie, un agnelage, un soin, un contrôle laitier, ou un mouvement
+   de sortie), l'EID n'est plus corrigeable ici : seule la suppression puis
+   recréation de la fiche reste possible, avec perte de l'historique. */
+function brebisSansHistorique(sheep) {
+  return sheep.echographies.length === 0
+    && (sheep.agnelages || []).length === 0
+    && (sheep.sanitaire || []).length === 0
+    && (sheep.controleLaitier || []).length === 0
+    && (sheep.mouvements || []).every(m => m.type === 'Entrée');
+}
+function belierSansHistorique(belier) {
+  return (belier.sanitaire || []).length === 0
+    && (belier.mouvements || []).every(m => m.type === 'Entrée');
+}
+
+/* Fiche "Corriger l'EID" (sheet-overlay, même gabarit que openQualiteSheet)
+   -- réservée aux brebis/béliers sans historique (voir brebisSansHistorique/
+   belierSansHistorique ci-dessus). `animal` est directement l'objet sheep
+   ou belier (mutable, on le modifie en place) ; `onSaved()` referme la
+   fiche et laisse l'appelant décider comment se ré-afficher. */
+function openCorrigerEidSheet(animal, onSaved) {
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.innerHTML = `
+    <div class="sheet-card">
+      <button type="button" class="sheet-close-btn" id="ce-close">✕</button>
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px;">Corriger l'EID</div>
+      <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">EID actuel : n°${numeroVisuel(animal.eid)} (${animal.eid})</div>
+      <label>Nouvel EID — scanner ou saisir</label>
+      <input type="text" id="ce-eid" placeholder="ex: 250 016299131098">
+      <div id="ce-preview" style="font-size:12px;color:var(--text-muted);margin-bottom:12px;"></div>
+      <div id="ce-err" class="error-box hidden"></div>
+      <button type="button" class="btn btn-primary" id="ce-save">Enregistrer le nouvel EID</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#ce-close').onclick = () => document.body.removeChild(overlay);
+
+  const eidInput = overlay.querySelector('#ce-eid');
+  setActiveScanTarget(eidInput);
+  attachEidBeep(eidInput);
+  const preview = overlay.querySelector('#ce-preview');
+  eidInput.addEventListener('input', () => {
+    const v = eidInput.value;
+    preview.textContent = cleanEid(v).length >= 11 ? `Numéro officiel : n°${numeroVisuel(v)} — Âge estimé : ${age(v)} an(s)` : '';
+  });
+
+  overlay.querySelector('#ce-save').onclick = () => {
+    const err = overlay.querySelector('#ce-err');
+    const nouvel = eidInput.value.trim();
+    if (cleanEid(nouvel).length < 11) { err.textContent = 'Numéro EID incomplet.'; err.classList.remove('hidden'); return; }
+    if (cleanEid(nouvel) === cleanEid(animal.eid)) { err.textContent = "C'est déjà l'EID actuel."; err.classList.remove('hidden'); return; }
+    const conflit = verifierEidUnique(nouvel, animal.id);
+    if (conflit) { err.textContent = messageEidDejaUtilise(conflit); err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    if (!confirm('Remplacer l\'EID n°' + numeroVisuel(animal.eid) + ' par le n°' + numeroVisuel(nouvel) + ' ?')) return;
+    animal.eid = nouvel;
+    if (!saveData(DB)) return; // échec d'enregistrement déjà signalé par saveData (alerte bloquante) -- on reste sur la fiche, rien n'est perdu
+    document.body.removeChild(overlay);
+    onSaved();
+  };
+}
+
+/* Toutes les brebis ACTIVES dont le numéro visuel (5 derniers chiffres)
+   correspond — peut en retourner PLUSIEURS : le numéro officiel court se
+   recycle naturellement entre deux brebis nées des années différentes
+   (l'année de naissance vient d'un chiffre séparé de l'EID, voir
+   anneeNaissance). Utilisé par wireMereAdoptiveField ci-dessous pour
+   détecter une ambiguïté plutôt que de la masquer. Retourne toujours un
+   tableau (vide si `numero` est en fait un EID complet ou ne correspond à
+   rien). */
+function trouverBrebisActivesParNumero(numero) {
+  const v = cleanEid(numero || '');
+  if (!v || v.length >= 11) return [];
+  return DB.brebis.filter(s => (s.statut || 'active') === 'active' && numeroVisuel(s.eid) === v);
+}
 /* Recherche une brebis ACTIVE par EID complet (scan) ou numéro officiel
    (saisie courte, 5 chiffres) — sert à la sélection contrôlée de la mère
    adoptive (voir renderAddAgnelage) : contrairement à verifierEidUnique, on
    veut ici trouver une correspondance, pas signaler son absence. Ignore
    volontairement les agnelles/béliers/animaux sortis : une mère adoptive
-   doit être une brebis active connue. */
+   doit être une brebis active connue. Un numéro court AMBIGU (plusieurs
+   brebis actives correspondantes, voir trouverBrebisActivesParNumero)
+   retourne null comme une absence de correspondance : ne devine JAMAIS
+   laquelle choisir — c'est wireMereAdoptiveField qui gère ce cas en
+   proposant explicitement le choix à l'éleveur. */
 function trouverBrebisActiveParEidOuNumero(val) {
   const v = cleanEid(val || '');
   if (!v) return null;
-  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  if (v.length >= 11) return actives.find(s => cleanEid(s.eid) === v) || null;
-  return actives.find(s => numeroVisuel(s.eid) === v) || null;
+  if (v.length >= 11) return DB.brebis.find(s => (s.statut || 'active') === 'active' && cleanEid(s.eid) === v) || null;
+  const candidates = trouverBrebisActivesParNumero(v);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+/* Aperçu en direct + résolution du champ "Mère adoptive" (EID complet ou
+   numéro officiel court) — partagé par renderAddAgnelage et
+   renderMiseBasRapide (mêmes règles, même comportement) :
+   - EID complet ou numéro sans ambiguïté -> résolution directe, comme
+     avant.
+   - numéro court correspondant à PLUSIEURS brebis actives -> pas de
+     sélection automatique (c'était le bug corrigé ici) : liste des
+     candidates cliquables (numéro + année de naissance déduite de l'EID),
+     l'éleveur choisit explicitement. Cliquer une candidate réécrit le
+     champ avec son EID complet (donc un match unique dès l'aperçu
+     suivant) et déclenche l'aperçu positif.
+   `onInput`, optionnel, est appelé à chaque frappe AVANT toute résolution
+   (utilisé par renderAddAgnelage pour marquer adoptEidTouched). */
+function wireMereAdoptiveField(inputEl, previewEl, onInput) {
+  function draw() {
+    if (onInput) onInput();
+    const val = inputEl.value.trim();
+    if (!val) { previewEl.innerHTML = ''; return; }
+    const candidates = trouverBrebisActivesParNumero(val);
+    if (candidates.length > 1) {
+      previewEl.innerHTML = 'Plusieurs brebis actives correspondent à ce numéro — précise en scannant l\'EID complet, ou choisis :<br>' +
+        // EID complet affiché (pas seulement le numéro déjà identique pour
+        // toutes les candidates) : deux brebis de cheptels différents
+        // peuvent partager le même numéro individuel ET la même année de
+        // naissance -- seul l'EID complet les distingue vraiment.
+        candidates.map(s => `<button type="button" class="chip mere-adoptive-candidate" data-eid="${s.eid}" style="margin:4px 4px 0 0;">${s.eid} — née en ${anneeNaissance(s.eid)}</button>`).join('');
+      previewEl.style.color = 'var(--warning)';
+      previewEl.querySelectorAll('.mere-adoptive-candidate').forEach(btn => {
+        btn.onclick = () => { inputEl.value = btn.dataset.eid; draw(); };
+      });
+      return;
+    }
+    const mere = trouverBrebisActiveParEidOuNumero(val);
+    if (mere) { previewEl.textContent = 'Mère adoptive : brebis n°' + numeroVisuel(mere.eid); previewEl.style.color = 'var(--success)'; }
+    else { previewEl.textContent = "Aucune brebis active ne correspond à ce numéro."; previewEl.style.color = 'var(--danger)'; }
+  }
+  inputEl.addEventListener('input', draw);
 }
 /* Tri commun à toutes les listes d'animaux : du plus vieux au plus jeune,
    par année de naissance croissante (déduite de l'EID), puis par numéro
@@ -1031,6 +1214,52 @@ function gradeCellules(moyenne) {
 function noteColiforme(v) { if (v < 100) return 3; if (v <= 500) return 2; if (v <= 2500) return 1; return 0; }
 function noteFlore(v) { if (v <= 100000) return 3; if (v <= 250000) return 2; return 1; }
 function noteButyrique(v) { if (v <= 1300) return 3; if (v <= 2400) return 2; return 1; }
+
+/* Bornes de vraisemblance (NON bloquantes) sur les champs qualité du lait,
+   saisis dans openQualiteSheet et dans le sous-formulaire qualité de
+   renderJournal (Agenda) -- une valeur hors de cette plage n'empêche
+   jamais l'enregistrement (une vraie mammite sévère peut produire des
+   chiffres extrêmes), mais demande une confirmation explicite pour écarter
+   une simple faute de frappe (chiffre en trop, virgule mal placée...).
+   Cellules et Flore totale sont bien en valeur BRUTE (confirmé avec
+   l'éleveur, 29/08/2026) -- la même échelle que celle déjà utilisée par
+   gradeCellules/noteFlore ci-dessus, qui n'ont donc jamais été fausses :
+   seul le libellé affiché à la saisie était trompeur ("milliers/mL"),
+   corrigé au même moment que l'ajout de ces bornes. */
+const QUALITE_BORNES = {
+  tb:          { label: 'TB',            min: 0, max: 100 },
+  tp:          { label: 'TP',            min: 0, max: 100 },
+  cellules:    { label: 'Cellules',      min: 0, max: 10000000 },
+  floreTotale: { label: 'Flore totale',  min: 0, max: 2000000 },
+  coliformes:  { label: 'Coliformes',    min: 0, max: 10000 },
+  butyriques:  { label: 'Butyriques',    min: 0, max: 10000 }
+};
+/* Repère, parmi `valeurs` ({ tb, tp, cellules, floreTotale, coliformes,
+   butyriques }), les champs dont la valeur saisie sort de sa plage de
+   vraisemblance -- ignore les champs vides/null (rien à signaler pour une
+   valeur non renseignée). Ne bloque jamais : sert uniquement à construire
+   un avertissement de confirmation avant enregistrement. */
+function champsQualiteHorsPlage(valeurs) {
+  const anomalies = [];
+  Object.keys(QUALITE_BORNES).forEach(key => {
+    const v = valeurs[key];
+    if (v === null || v === undefined || isNaN(v)) return;
+    const b = QUALITE_BORNES[key];
+    if (v < b.min || v > b.max) anomalies.push({ label: b.label, valeur: v, min: b.min, max: b.max });
+  });
+  return anomalies;
+}
+/* Un seul confirm() groupant toutes les anomalies détectées (plutôt qu'un
+   confirm() par champ, pour éviter d'enchaîner jusqu'à 6 boîtes de dialogue
+   successives). Retourne true si l'enregistrement peut continuer (aucune
+   anomalie, ou anomalies confirmées explicitement), false si l'éleveur
+   préfère annuler pour corriger sa saisie. */
+function confirmerValeursQualiteInhabituelles(valeurs) {
+  const anomalies = champsQualiteHorsPlage(valeurs);
+  if (anomalies.length === 0) return true;
+  const detail = anomalies.map(a => a.label + ' = ' + a.valeur + ' (plage réaliste ' + a.min + '–' + a.max + ')').join('\n');
+  return confirm('Valeur(s) inhabituelle(s) détectée(s) :\n' + detail + '\nConfirmez-vous ces saisies ?');
+}
 
 // Grade à partir de la somme des notes du mois — dépend du nombre de
 // prélèvements où l'indicateur est renseigné ce mois-ci (1, 2 ou 3 sur la
@@ -1772,11 +2001,41 @@ fabAdd.onclick = () => render('add-sheep');
 
 let editContext = null; // { kind, idx }
 
+/* Message de confirmation spécifique à la suppression d'un agnelage --
+   contrairement aux autres kinds (échographie, soin, mouvement, contrôle
+   laitier), un agnelage embarque directement ses agneaux (EID, sexe,
+   adoption, statut vendu/mort, mouvements) : il n'existe pas de fiche
+   agneau séparée (voir getAgneauxInventaire). Le supprimer élimine tout ça
+   d'un coup, sans qu'un message générique ne le laisse deviner -- d'où ce
+   message détaillé, listant chaque agneau et signalant explicitement ceux
+   qui ont déjà un mouvement de sortie enregistré (vendu/mort), dont
+   l'historique serait perdu aussi. La suppression reste autorisée dans
+   tous les cas : ce message informe, il ne bloque rien. */
+function messageSuppressionAgnelage(agnelage) {
+  if (!agnelage) return 'Supprimer cet élément ? Cette action est irréversible.';
+  const vivants = (agnelage.lambs || []).filter(l => l.sexe !== 'Mort-né');
+  if (vivants.length === 0) {
+    return 'Supprimer cet agnelage du ' + formatDateFr(agnelage.date) + ' (aucun agneau bouclé) ? Cette action est irréversible.';
+  }
+  const lignes = vivants.map(l => {
+    const num = l.eid ? 'n°' + numeroVisuel(l.eid) : 'non bouclé';
+    if (l.statutFinal === 'vendu' || l.statutFinal === 'mort') {
+      const mvts = (l.mouvements || []).slice().reverse();
+      const dateSortie = mvts[0] && mvts[0].date ? ' le ' + formatDateFr(mvts[0].date) : '';
+      const label = (l.statutFinal === 'vendu' ? 'déjà vendu' : 'déjà mort') + dateSortie;
+      return num + ' (' + l.sexe + ', ' + label + ' — cet historique sera perdu aussi)';
+    }
+    return num + ' (' + l.sexe + ')';
+  });
+  return 'Supprimer cet agnelage du ' + formatDateFr(agnelage.date) + ' ? ' + vivants.length + ' agneau(x) seront supprimés avec : ' + lignes.join(', ') + '. Cette action est irréversible.';
+}
+
 function deleteItem(kind, idx) {
   if (kind.startsWith('belier-')) return deleteBelierItem(kind.slice(7), idx);
-  if (!confirm('Supprimer cet élément ? Cette action est irréversible.')) return;
   const sheep = findSheep(currentSheepId);
   if (!sheep) return;
+  const message = kind === 'agnelages' ? messageSuppressionAgnelage((sheep.agnelages || [])[idx]) : 'Supprimer cet élément ? Cette action est irréversible.';
+  if (!confirm(message)) return;
   sheep[kind] = sheep[kind] || [];
   sheep[kind].splice(idx, 1);
   if (kind === 'mouvements') {
@@ -3322,6 +3581,9 @@ function renderDetail(id) {
         <div><div style="font-size:12px;color:var(--text-muted);">Numéro officiel</div><div style="font-weight:600;">n°${numeroVisuel(sheep.eid)}</div></div>
       </div>
       ${sheep.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(sheep.dateEntree)}</strong></div>` : ''}
+      ${brebisSansHistorique(sheep)
+        ? `<button type="button" class="btn btn-secondary" id="btn-corriger-eid" style="margin-top:10px;">Corriger l'EID</button>`
+        : `<div style="margin-top:10px;font-size:11.5px;color:var(--text-muted);">Modification de l'EID impossible : cet animal a déjà un historique enregistré.</div>`}
     </div>
     ${statutBadge}
     ${reproStatutHtml}
@@ -3399,6 +3661,8 @@ function renderDetail(id) {
   document.getElementById('btn-add-sanitaire').onclick = () => { editContext = null; render('add-sanitaire', sheep.id); };
   if (document.getElementById('btn-add-mouvement')) document.getElementById('btn-add-mouvement').onclick = () => { editContext = null; render('add-mouvement', sheep.id); };
   document.getElementById('btn-add-controle').onclick = () => { editContext = null; render('add-controle', sheep.id); };
+  const btnCorrigerEid = document.getElementById('btn-corriger-eid');
+  if (btnCorrigerEid) btnCorrigerEid.onclick = () => openCorrigerEidSheet(sheep, () => render('detail', sheep.id));
   document.querySelectorAll('.btn-lamb-vendu').forEach(btn => {
     btn.onclick = () => {
       const lamb = allLiveLambs[parseInt(btn.dataset.i, 10)];
@@ -3783,14 +4047,7 @@ function renderAddAgnelage(sheepId) {
     const adoptPreview = document.querySelector(`.adopt-preview[data-id="${id}"]`);
     if (adoptEidInput) {
       attachEidBeep(adoptEidInput);
-      adoptEidInput.addEventListener('input', () => {
-        lambs[id].adoptEidTouched = true;
-        const val = adoptEidInput.value.trim();
-        if (!val) { adoptPreview.textContent = ''; return; }
-        const mere = trouverBrebisActiveParEidOuNumero(val);
-        if (mere) { adoptPreview.textContent = 'Mère adoptive : brebis n°' + numeroVisuel(mere.eid); adoptPreview.style.color = 'var(--success)'; }
-        else { adoptPreview.textContent = "Aucune brebis active ne correspond à ce numéro."; adoptPreview.style.color = 'var(--danger)'; }
-      });
+      wireMereAdoptiveField(adoptEidInput, adoptPreview, () => { lambs[id].adoptEidTouched = true; });
     }
   }
 
@@ -3893,7 +4150,9 @@ function renderAddAgnelage(sheepId) {
           if (lambs[id].adoptEidTouched) {
             const mereAdoptive = trouverBrebisActiveParEidOuNumero(adoptVal);
             if (!mereAdoptive) {
-              err.textContent = "Aucune brebis active ne correspond à ce numéro (mère adoptive de l'agneau " + id + ").";
+              err.textContent = trouverBrebisActivesParNumero(adoptVal).length > 1
+                ? "Plusieurs brebis actives correspondent à ce numéro (mère adoptive de l'agneau " + id + ") — choisis dans la liste affichée ou scanne l'EID complet."
+                : "Aucune brebis active ne correspond à ce numéro (mère adoptive de l'agneau " + id + ").";
               err.classList.remove('hidden');
               return;
             }
@@ -4480,13 +4739,7 @@ function renderMiseBasRapide() {
     const adoptPreview = document.querySelector(`.adopt-preview-rapide[data-id="${id}"]`);
     if (adoptEidInput) {
       attachEidBeep(adoptEidInput);
-      adoptEidInput.addEventListener('input', () => {
-        const val = adoptEidInput.value.trim();
-        if (!val) { adoptPreview.textContent = ''; return; }
-        const mere = trouverBrebisActiveParEidOuNumero(val);
-        if (mere) { adoptPreview.textContent = 'Mère adoptive : brebis n°' + numeroVisuel(mere.eid); adoptPreview.style.color = 'var(--success)'; }
-        else { adoptPreview.textContent = "Aucune brebis active ne correspond à ce numéro."; adoptPreview.style.color = 'var(--danger)'; }
-      });
+      wireMereAdoptiveField(adoptEidInput, adoptPreview);
     }
   }
 
@@ -4739,7 +4992,9 @@ function renderMiseBasRapide() {
               const adoptVal = adoptEidInput.value.trim();
               const mereAdoptive = trouverBrebisActiveParEidOuNumero(adoptVal);
               if (!mereAdoptive) {
-                err.textContent = "Aucune brebis active ne correspond à ce numéro (mère adoptive de l'agneau " + id + ").";
+                err.textContent = trouverBrebisActivesParNumero(adoptVal).length > 1
+                  ? "Plusieurs brebis actives correspondent à ce numéro (mère adoptive de l'agneau " + id + ") — choisis dans la liste affichée ou scanne l'EID complet."
+                  : "Aucune brebis active ne correspond à ce numéro (mère adoptive de l'agneau " + id + ").";
                 err.classList.remove('hidden');
                 return;
               }
@@ -6212,6 +6467,9 @@ function renderBelierDetail() {
         <div><div style="font-size:12px;color:var(--text-muted);">Numéro officiel</div><div style="font-weight:600;">n°${numeroVisuel(belier.eid)}</div></div>
       </div>
       ${belier.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(belier.dateEntree)}</strong></div>` : ''}
+      ${belierSansHistorique(belier)
+        ? `<button type="button" class="btn btn-secondary" id="btn-corriger-eid-belier" style="margin-top:10px;">Corriger l'EID</button>`
+        : `<div style="margin-top:10px;font-size:11.5px;color:var(--text-muted);">Modification de l'EID impossible : cet animal a déjà un historique enregistré.</div>`}
     </div>
     ${statutBadge}
     <div class="row" style="margin-bottom:16px;">
@@ -6232,6 +6490,8 @@ function renderBelierDetail() {
   `;
   document.getElementById('btn-add-sanitaire-belier').onclick = () => { editBelierContext = null; render('add-sanitaire-belier'); };
   document.getElementById('btn-add-mouvement-belier').onclick = () => { editBelierContext = null; render('add-mouvement-belier'); };
+  const btnCorrigerEidBelier = document.getElementById('btn-corriger-eid-belier');
+  if (btnCorrigerEidBelier) btnCorrigerEidBelier.onclick = () => openCorrigerEidSheet(belier, () => render('belier-detail'));
   document.getElementById('btn-delete-belier').onclick = () => {
     if (!confirm('Supprimer le bélier n°' + numeroVisuel(belier.eid) + ' ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
     DB.beliers = DB.beliers.filter(b => b.id !== belier.id);
@@ -6601,9 +6861,9 @@ function renderJournal() {
           <span class="msu-label">MSU (calculé = TB + TP)</span>
           <span class="msu-value" id="q-msu">—</span>
         </div>
-        <label>Cellules (milliers/mL) <span class="badge badge-muted" style="font-size:10px;">unité à confirmer</span></label>
+        <label>Cellules (cellules/mL)</label>
         <input type="number" id="q-cellules">
-        <label>Flore totale (milliers UFC/mL) <span class="badge badge-muted" style="font-size:10px;">unité à confirmer</span></label>
+        <label>Flore totale (UFC/mL)</label>
         <input type="number" id="q-flore">
         <div class="row">
           <div style="flex:1;"><label>Coliformes (milliers/mL)</label><input type="number" id="q-colif"></div>
@@ -6796,6 +7056,11 @@ function renderJournal() {
       return;
     }
     err.classList.add('hidden');
+    if (qCheckbox.checked && !confirmerValeursQualiteInhabituelles({
+      tb: numOrNull(qTb), tp: numOrNull(qTp),
+      cellules: numOrNull(qCellules), floreTotale: numOrNull(qFlore),
+      coliformes: numOrNull(qColif), butyriques: numOrNull(qButy)
+    })) return;
     const date = laitDateInput.value;
     const quantite = Math.round(qte * 10) / 10;
     // Anti-doublon : une saisie par date. Recalculé ici indépendamment de
@@ -7307,9 +7572,9 @@ function openQualiteSheet(record, returnView) {
         <span class="msu-label">MSU (calculé)</span>
         <span class="msu-value" id="qs-msu">—</span>
       </div>
-      <label>Cellules (milliers/mL)</label>
+      <label>Cellules (cellules/mL)</label>
       <input type="number" id="qs-cellules" placeholder="En attente du labo">
-      <label>Flore totale (milliers UFC/mL)</label>
+      <label>Flore totale (UFC/mL)</label>
       <input type="number" id="qs-flore" placeholder="En attente du labo">
       <div class="row">
         <div style="flex:1;"><label>Coliformes (milliers/mL)</label><input type="number" id="qs-colif" placeholder="En attente"></div>
@@ -7423,6 +7688,11 @@ function openQualiteSheet(record, returnView) {
   }
 
   saveBtn.onclick = () => {
+    if (!confirmerValeursQualiteInhabituelles({
+      tb: numOrNull(tb), tp: numOrNull(tp),
+      cellules: numOrNull(cellules), floreTotale: numOrNull(flore),
+      coliformes: numOrNull(colif), butyriques: numOrNull(buty)
+    })) return;
     if (isCreating && currentRecord === record) { // toujours en mode création pure (pas basculé sur un doublon)
       if (pendingVolume === null) return;
       const date = overlay.querySelector('#qs-date').value;
@@ -11437,13 +11707,24 @@ async function syncAllToCloud(data) {
 
 // Remplace la sauvegarde locale-uniquement par une version qui écrit aussi
 // vers Firestore quand la synchro est active — sans toucher aux dizaines
-// d'endroits de l'appli qui appellent déjà saveData(DB).
+// d'endroits de l'appli qui appellent déjà saveData(DB). Reprend le même
+// garde-fou que la version de base (voir plus haut dans le fichier) : cette
+// réaffectation écrasait entièrement le try/catch d'origine, ce qui aurait
+// rendu ce correctif inopérant pour toute installation ayant la synchro
+// cloud activée -- corrigé ici plutôt que dans la fonction de base.
 saveData = function(data) {
-  localStorage.setItem(DB_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(DB_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.error('Échec de saveData (localStorage.setItem)', e);
+    alert('Échec de l\'enregistrement — vérifiez l\'espace de stockage de l\'appareil — réessayez ou exportez immédiatement vos données.');
+    return false;
+  }
   DB = data;
   if (sync.uid && !sync.applyingRemote) {
     syncAllToCloud(data).catch(e => console.error('Erreur de synchronisation cloud :', e));
   }
+  return true;
 };
 
 /* Applique un changement reçu depuis Firestore (un autre appareil, ou notre
