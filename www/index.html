@@ -797,6 +797,17 @@ function age(eid) {
   if (y === null) return null;
   return new Date().getFullYear() - y;
 }
+/* Format d'affichage compact d'un EID, utilisé pour lister des candidats en
+   cas de numéro officiel ambigu : n'affiche que les 11 derniers chiffres (6
+   chiffres différenciateurs + les 5 du numéro officiel), en coupant le
+   préfixe pays/exploitation (les tout premiers chiffres) qui est identique
+   pour tous les animaux du cheptel et n'aide donc pas à distinguer les
+   candidats. Un EID plus court que 11 caractères (saisie manuelle) est
+   affiché tel quel, sans rien couper. */
+function eidAffichageCourt(eid) {
+  const c = cleanEid(eid || '');
+  return c.length > 11 ? c.slice(-11) : c;
+}
 
 /* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, TOUS
    statuts et catégories confondus : brebis (actives, vendues ou mortes),
@@ -958,35 +969,111 @@ function openCorrigerEidSheet(animal, onSaved) {
   };
 }
 
-/* Toutes les brebis ACTIVES dont le numéro visuel (5 derniers chiffres)
-   correspond — peut en retourner PLUSIEURS : le numéro officiel court se
-   recycle naturellement entre deux brebis nées des années différentes
-   (l'année de naissance vient d'un chiffre séparé de l'EID, voir
-   anneeNaissance). Utilisé par wireMereAdoptiveField ci-dessous pour
-   détecter une ambiguïté plutôt que de la masquer. Retourne toujours un
-   tableau (vide si `numero` est en fait un EID complet ou ne correspond à
-   rien). */
-function trouverBrebisActivesParNumero(numero) {
+/* ---------- Résolution générique EID complet / numéro officiel court ----------
+   Base commune à TOUS les champs de saisie manuelle d'EID de l'application
+   (recherche de fiche, cible de mouvement/soin groupé, mère adoptive...) :
+   l'éleveur peut taper l'EID complet (scan) ou seulement le numéro officiel
+   court (5 derniers chiffres). `pool` est le tableau des candidats
+   possibles (brebis actives, béliers, agneaux, membres d'un lot...) ;
+   `getEid` en extrait l'EID (par défaut it.eid — ex. `m => m` pour un pool
+   de simples chaînes d'EID comme lot.membres). Ne devine JAMAIS
+   automatiquement en cas de numéro ambigu : à charge de l'appelant de
+   proposer le choix (voir renderCandidatsEidChips / wireEidLookupField). */
+function trouverParNumero(pool, numero, getEid) {
+  getEid = getEid || (it => it.eid);
   const v = cleanEid(numero || '');
   if (!v || v.length >= 11) return [];
-  return DB.brebis.filter(s => (s.statut || 'active') === 'active' && numeroVisuel(s.eid) === v);
+  return pool.filter(it => numeroVisuel(getEid(it)) === v);
+}
+function trouverUnParEidOuNumero(pool, val, getEid) {
+  getEid = getEid || (it => it.eid);
+  const v = cleanEid(val || '');
+  if (!v) return { statut: 'absent' };
+  if (v.length >= 11) {
+    const item = pool.find(it => cleanEid(getEid(it)) === v);
+    return item ? { statut: 'trouve', item } : { statut: 'absent' };
+  }
+  const candidats = trouverParNumero(pool, v, getEid);
+  if (candidats.length === 1) return { statut: 'trouve', item: candidats[0] };
+  if (candidats.length > 1) return { statut: 'ambigu', candidats };
+  return { statut: 'absent' };
+}
+/* Affiche la liste cliquable des candidats en cas de numéro officiel
+   ambigu (plusieurs animaux du pool partagent le même numéro court) —
+   réutilisé par tous les champs de saisie manuelle d'EID. N'affiche
+   JAMAIS l'EID complet à 15 chiffres : seuls les 11 derniers chiffres (6
+   chiffres différenciateurs + les 5 du numéro officiel) sont montrés, le
+   préfixe pays/exploitation étant identique pour tout le cheptel et
+   n'aidant donc pas l'éleveur à distinguer les candidats (voir
+   eidAffichageCourt). `onPick(item)` est appelé au clic sur une candidate. */
+function renderCandidatsEidChips(candidats, containerEl, onPick, getEid) {
+  getEid = getEid || (it => it.eid);
+  containerEl.innerHTML = 'Plusieurs animaux correspondent à ce numéro — précise en scannant l\'EID complet, ou choisis :<br>' +
+    candidats.map((c, i) => `<button type="button" class="chip eid-candidate-chip" data-i="${i}" style="margin:4px 4px 0 0;">${eidAffichageCourt(getEid(c))} — né(e) en ${anneeNaissance(getEid(c))}</button>`).join('');
+  containerEl.style.color = 'var(--warning)';
+  containerEl.querySelectorAll('.eid-candidate-chip').forEach(btn => {
+    btn.onclick = () => onPick(candidats[parseInt(btn.dataset.i, 10)]);
+  });
+}
+/* Câblage générique d'un champ "Scanner ou saisir l'EID" validé par
+   Entrée/scan (recherche de fiche, cible d'un lot, sélecteur bipé...) :
+   résout un EID complet ou un numéro officiel court contre `pool`, sans
+   jamais choisir automatiquement en cas d'ambiguïté — propose alors le
+   choix explicite via renderCandidatsEidChips, avec un bip dédié
+   (playBeepAmbigu) bien distinct du bip "introuvable". Chaque écran garde
+   son message "introuvable" (`notFoundMessage`, chaîne fixe ou fonction
+   `(val) => texte` quand le message reprend le numéro tapé) et son action
+   propre (`onFound`) — navigation, surlignage, ajout à une sélection... —
+   la mécanique de résolution EID/numéro-court/ambiguïté est seule
+   mutualisée ici. */
+function wireEidLookupField(inputEl, opts) {
+  const pool = opts.pool;
+  const getEid = opts.getEid || (it => it.eid);
+  const feedbackEl = opts.feedbackEl;
+  const notFoundMessage = opts.notFoundMessage;
+  const onFound = opts.onFound;
+  const clearBeforeResolve = opts.clearBeforeResolve !== false;
+  function resoudre(val) {
+    const r = trouverUnParEidOuNumero(pool, val, getEid);
+    if (r.statut === 'ambigu') {
+      playBeepAmbigu();
+      renderCandidatsEidChips(r.candidats, feedbackEl, (item) => resoudre(cleanEid(getEid(item))), getEid);
+      feedbackEl.classList.remove('hidden');
+      return;
+    }
+    if (r.statut === 'absent') {
+      playBeepRate();
+      feedbackEl.textContent = typeof notFoundMessage === 'function' ? notFoundMessage(val) : notFoundMessage;
+      feedbackEl.style.color = 'var(--danger)';
+      feedbackEl.classList.remove('hidden');
+      return;
+    }
+    feedbackEl.innerHTML = '';
+    feedbackEl.style.color = '';
+    feedbackEl.classList.add('hidden');
+    playBeepTrouve();
+    onFound(r.item);
+  }
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.keyCode !== 13) return;
+    const val = cleanEid(inputEl.value);
+    if (clearBeforeResolve) inputEl.value = '';
+    if (!val) return;
+    resoudre(val);
+  });
 }
 /* Recherche une brebis ACTIVE par EID complet (scan) ou numéro officiel
-   (saisie courte, 5 chiffres) — sert à la sélection contrôlée de la mère
-   adoptive (voir renderAddAgnelage) : contrairement à verifierEidUnique, on
-   veut ici trouver une correspondance, pas signaler son absence. Ignore
-   volontairement les agnelles/béliers/animaux sortis : une mère adoptive
-   doit être une brebis active connue. Un numéro court AMBIGU (plusieurs
-   brebis actives correspondantes, voir trouverBrebisActivesParNumero)
-   retourne null comme une absence de correspondance : ne devine JAMAIS
-   laquelle choisir — c'est wireMereAdoptiveField qui gère ce cas en
-   proposant explicitement le choix à l'éleveur. */
+   (saisie courte, 5 chiffres) — fins wrappers du résolveur générique
+   ci-dessus (pool = brebis actives) ; conservés sous leur nom d'origine,
+   utilisés par wireMereAdoptiveField et par la validation à
+   l'enregistrement de renderAddAgnelage/renderMiseBasRapide. */
+function trouverBrebisActivesParNumero(numero) {
+  return trouverParNumero(DB.brebis.filter(s => (s.statut || 'active') === 'active'), numero);
+}
 function trouverBrebisActiveParEidOuNumero(val) {
-  const v = cleanEid(val || '');
-  if (!v) return null;
-  if (v.length >= 11) return DB.brebis.find(s => (s.statut || 'active') === 'active' && cleanEid(s.eid) === v) || null;
-  const candidates = trouverBrebisActivesParNumero(v);
-  return candidates.length === 1 ? candidates[0] : null;
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const r = trouverUnParEidOuNumero(actives, val);
+  return r.statut === 'trouve' ? r.item : null;
 }
 /* Aperçu en direct + résolution du champ "Mère adoptive" (EID complet ou
    numéro officiel court) — partagé par renderAddAgnelage et
@@ -995,10 +1082,10 @@ function trouverBrebisActiveParEidOuNumero(val) {
      avant.
    - numéro court correspondant à PLUSIEURS brebis actives -> pas de
      sélection automatique (c'était le bug corrigé ici) : liste des
-     candidates cliquables (numéro + année de naissance déduite de l'EID),
-     l'éleveur choisit explicitement. Cliquer une candidate réécrit le
-     champ avec son EID complet (donc un match unique dès l'aperçu
-     suivant) et déclenche l'aperçu positif.
+     candidates cliquables (EID tronqué + année de naissance déduite de
+     l'EID, voir renderCandidatsEidChips), l'éleveur choisit explicitement.
+     Cliquer une candidate réécrit le champ avec son EID complet (donc un
+     match unique dès l'aperçu suivant) et déclenche l'aperçu positif.
    `onInput`, optionnel, est appelé à chaque frappe AVANT toute résolution
    (utilisé par renderAddAgnelage pour marquer adoptEidTouched). */
 function wireMereAdoptiveField(inputEl, previewEl, onInput) {
@@ -1008,16 +1095,7 @@ function wireMereAdoptiveField(inputEl, previewEl, onInput) {
     if (!val) { previewEl.innerHTML = ''; return; }
     const candidates = trouverBrebisActivesParNumero(val);
     if (candidates.length > 1) {
-      previewEl.innerHTML = 'Plusieurs brebis actives correspondent à ce numéro — précise en scannant l\'EID complet, ou choisis :<br>' +
-        // EID complet affiché (pas seulement le numéro déjà identique pour
-        // toutes les candidates) : deux brebis de cheptels différents
-        // peuvent partager le même numéro individuel ET la même année de
-        // naissance -- seul l'EID complet les distingue vraiment.
-        candidates.map(s => `<button type="button" class="chip mere-adoptive-candidate" data-eid="${s.eid}" style="margin:4px 4px 0 0;">${s.eid} — née en ${anneeNaissance(s.eid)}</button>`).join('');
-      previewEl.style.color = 'var(--warning)';
-      previewEl.querySelectorAll('.mere-adoptive-candidate').forEach(btn => {
-        btn.onclick = () => { inputEl.value = btn.dataset.eid; draw(); };
-      });
+      renderCandidatsEidChips(candidates, previewEl, (s) => { inputEl.value = s.eid; draw(); });
       return;
     }
     const mere = trouverBrebisActiveParEidOuNumero(val);
@@ -1757,6 +1835,15 @@ function playBeepRate() {
 function playBeepDejaTrouve() {
   playBeep(440, 0.2, 'triangle');
 }
+// Numéro officiel ambigu (plusieurs animaux correspondent, l'éleveur doit
+// choisir) : un double bip bref au même timbre/hauteur, pour être
+// reconnaissable à l'oreille sans regarder l'écran et bien distinct des
+// deux autres cas ("absent" = un seul bip long grave, "trouvé" = deux
+// notes qui montent).
+function playBeepAmbigu() {
+  playBeep(700, 0.09, 'triangle');
+  setTimeout(() => playBeep(700, 0.09, 'triangle'), 130);
+}
 
 function attachEidBeep(inputEl) {
   let wasValid = false;
@@ -2435,22 +2522,16 @@ function renderList() {
   app.appendChild(scanCard);
   const scanOpen = document.getElementById('scan-open');
   setActiveScanTarget(scanOpen);
-  scanOpen.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    const val = cleanEid(scanOpen.value);
-    const err = document.getElementById('scan-open-err');
-    if (!val) return;
-    const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
-    if (!sheep) {
-      playBeepRate();
-      err.textContent = "Aucune brebis trouvée avec cet EID.";
-      err.classList.remove('hidden');
-      return;
+  wireEidLookupField(scanOpen, {
+    pool: DB.brebis,
+    feedbackEl: document.getElementById('scan-open-err'),
+    notFoundMessage: "Aucune brebis trouvée avec cet EID.",
+    clearBeforeResolve: false,
+    onFound: (sheep) => {
+      detailOrigin = 'list';
+      previousDetailId = null;
+      render('detail', sheep.id);
     }
-    playBeepTrouve();
-    detailOrigin = 'list';
-    previousDetailId = null;
-    render('detail', sheep.id);
   });
 
   if (actives.length === 0) {
@@ -3239,25 +3320,20 @@ function renderAgneaux() {
 
   const scanOpenAgneau = document.getElementById('scan-open-agneau');
   setActiveScanTarget(scanOpenAgneau);
-  scanOpenAgneau.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    const val = cleanEid(scanOpenAgneau.value);
-    const err = document.getElementById('scan-open-agneau-err');
-    if (!val) return;
-    const idx = items.findIndex(it => cleanEid(it.lamb.eid) === val);
-    if (idx === -1) {
-      playBeepRate();
-      err.textContent = "Aucun agneau trouvé avec cet EID dans l'inventaire.";
-      err.classList.remove('hidden');
-      return;
-    }
-    err.classList.add('hidden');
-    playBeepTrouve();
-    const card = document.getElementById('agneau-item-' + idx);
-    if (card) {
-      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      card.classList.add('scan-highlight');
-      setTimeout(() => card.classList.remove('scan-highlight'), 2500);
+  wireEidLookupField(scanOpenAgneau, {
+    pool: items,
+    getEid: it => it.lamb.eid,
+    feedbackEl: document.getElementById('scan-open-agneau-err'),
+    notFoundMessage: "Aucun agneau trouvé avec cet EID dans l'inventaire.",
+    clearBeforeResolve: false,
+    onFound: (it) => {
+      const idx = items.indexOf(it);
+      const card = document.getElementById('agneau-item-' + idx);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('scan-highlight');
+        setTimeout(() => card.classList.remove('scan-highlight'), 2500);
+      }
     }
   });
 
@@ -4260,10 +4336,11 @@ function renderEchoRapide() {
     let currentSheep = null;
     let unknownEid = null;
     let conflitEid = null; // EID absent de DB.brebis mais déjà utilisé ailleurs (voir verifierEidUnique) : bloque la création plutôt que de créer une brebis fantôme
+    let candidatsAmbigus = null; // numéro officiel court partagé par plusieurs brebis : l'éleveur doit choisir (voir trouverUnParEidOuNumero)
     let stade = null, agneaux = null, parasit = false, special = null;
 
     function resetResult() {
-      currentSheep = null; unknownEid = null; conflitEid = null; stade = null; agneaux = null; parasit = false; special = null;
+      currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null; stade = null; agneaux = null; parasit = false; special = null;
     }
 
     function clearGroup(sel) {
@@ -4376,6 +4453,12 @@ function renderEchoRapide() {
           <button type="button" class="btn btn-secondary" id="btn-cancel-unknown">Annuler ce scan</button>
         </div>
       ` : '';
+      const ambiguHtml = candidatsAmbigus ? `
+        <div class="card">
+          <div style="font-weight:600;margin-bottom:8px;">Plusieurs brebis correspondent à ce numéro</div>
+          <div id="echo-ambigu-candidats" style="font-size:13px;"></div>
+        </div>
+      ` : '';
       const foundHtml = currentSheep ? `
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -4402,6 +4485,7 @@ function renderEchoRapide() {
           <input type="text" id="scan-echo" placeholder="Scanner ou saisir l'EID" autofocus>
         </div>
         ${unknownHtml}
+        ${ambiguHtml}
         ${foundHtml}
         ${currentSheep ? resultFieldsHtml() : ''}
         <button type="button" class="btn btn-secondary" id="btn-fin-session-echo" style="margin-top:14px;">Terminer la session</button>
@@ -4414,6 +4498,14 @@ function renderEchoRapide() {
       // WebView mobile (le clavier virtuel n'a pas encore de quoi s'accrocher
       // tant que le reflow n'a pas eu lieu) — on le reporte d'une frame.
       requestAnimationFrame(() => scanInput.focus());
+      if (candidatsAmbigus) {
+        renderCandidatsEidChips(candidatsAmbigus, document.getElementById('echo-ambigu-candidats'), (sheep) => {
+          playBeepTrouve();
+          resetResult();
+          currentSheep = sheep;
+          draw();
+        });
+      }
       scanInput.addEventListener('keydown', (e) => {
         // e.keyCode en secours : certains claviers/WebView Android ne
         // renseignent pas e.key de façon fiable pour la touche Entrée.
@@ -4421,8 +4513,15 @@ function renderEchoRapide() {
         e.preventDefault();
         const val = cleanEid(scanInput.value);
         if (!val) return;
-        const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
-        if (!sheep) {
+        const r = trouverUnParEidOuNumero(DB.brebis, val);
+        if (r.statut === 'ambigu') {
+          playBeepAmbigu();
+          resetResult();
+          candidatsAmbigus = r.candidats;
+          draw();
+          return;
+        }
+        if (r.statut === 'absent') {
           resetResult();
           const conflit = verifierEidUnique(val);
           if (conflit) {
@@ -4438,7 +4537,7 @@ function renderEchoRapide() {
         }
         playBeepTrouve();
         resetResult();
-        currentSheep = sheep;
+        currentSheep = r.item;
         draw();
       });
       document.getElementById('btn-fin-session-echo').onclick = () => {
@@ -4659,11 +4758,12 @@ function renderMiseBasRapide() {
   let currentSheep = null;
   let unknownEid = null;
   let conflitEid = null; // EID absent de DB.brebis mais déjà utilisé ailleurs (voir verifierEidUnique) : bloque la création plutôt que de créer une brebis fantôme
+  let candidatsAmbigus = null; // numéro officiel court partagé par plusieurs brebis : l'éleveur doit choisir (voir trouverUnParEidOuNumero)
   let lambCount = 0;
   const lambs = {};
 
   function resetForm() {
-    currentSheep = null; unknownEid = null; conflitEid = null; lambCount = 0;
+    currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null; lambCount = 0;
     Object.keys(lambs).forEach(k => delete lambs[k]);
   }
 
@@ -4777,6 +4877,12 @@ function renderMiseBasRapide() {
         <button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">Annuler ce scan</button>
       </div>
     ` : '';
+    const ambiguHtml = candidatsAmbigus ? `
+      <div class="card">
+        <div style="font-weight:600;margin-bottom:8px;">Plusieurs brebis correspondent à ce numéro</div>
+        <div id="mb-ambigu-candidats" style="font-size:13px;"></div>
+      </div>
+    ` : '';
     const agnelageCourantIdxRapide = currentSheep ? agnelageCampagneActuelleIdx(currentSheep) : -1;
     const dejaAgnelage = agnelageCourantIdxRapide !== -1;
     const foundHtml = currentSheep ? `
@@ -4857,6 +4963,7 @@ function renderMiseBasRapide() {
         <input type="text" id="scan-misebas" placeholder="Scanner ou saisir l'EID" autofocus>
       </div>
       ${unknownHtml}
+      ${ambiguHtml}
       ${foundHtml}
       ${dejaAgnelageHtml}
       ${formHtml}
@@ -4888,13 +4995,28 @@ function renderMiseBasRapide() {
     const scanInput = document.getElementById('scan-misebas');
     setActiveScanTarget(scanInput);
     requestAnimationFrame(() => scanInput.focus());
+    if (candidatsAmbigus) {
+      renderCandidatsEidChips(candidatsAmbigus, document.getElementById('mb-ambigu-candidats'), (sheep) => {
+        playBeepTrouve();
+        resetForm();
+        currentSheep = sheep;
+        draw();
+      });
+    }
     scanInput.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.keyCode !== 13) return;
       e.preventDefault();
       const val = cleanEid(scanInput.value);
       if (!val) return;
-      const sheep = DB.brebis.find(s => cleanEid(s.eid) === val);
-      if (!sheep) {
+      const r = trouverUnParEidOuNumero(DB.brebis, val);
+      if (r.statut === 'ambigu') {
+        playBeepAmbigu();
+        resetForm();
+        candidatsAmbigus = r.candidats;
+        draw();
+        return;
+      }
+      if (r.statut === 'absent') {
         resetForm();
         const conflit = verifierEidUnique(val);
         if (conflit) {
@@ -4910,7 +5032,7 @@ function renderMiseBasRapide() {
       }
       playBeepTrouve();
       resetForm();
-      currentSheep = sheep;
+      currentSheep = r.item;
       draw();
     });
     document.getElementById('btn-fin-session-mb').onclick = () => {
@@ -6073,29 +6195,22 @@ function renderAgnelles() {
   const scanInput = document.getElementById('scan-tri');
   setActiveScanTarget(scanInput);
   attachEidBeep(scanInput);
-  scanInput.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    const val = cleanEid(scanInput.value);
-    const err = document.getElementById('scan-err');
-    scanInput.value = '';
-    if (!val) return;
-    const idx = candidates.findIndex(c => cleanEid(c.lamb.eid) === val);
-    if (idx === -1) {
-      playBeepRate();
-      err.textContent = "Aucune agnelle correspondante en attente de tri.";
-      err.classList.remove('hidden');
-      return;
-    }
-    err.classList.add('hidden');
-    playBeepTrouve();
-    // On amène l'utilisateur sur la fiche correspondante pour qu'il voie de
-    // quel animal il s'agit, sans valider quoi que ce soit à sa place —
-    // c'est lui qui choisit ensuite Garder ou Écarter.
-    const card = document.getElementById('candidate-' + idx);
-    if (card) {
-      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      card.classList.add('scan-highlight');
-      setTimeout(() => card.classList.remove('scan-highlight'), 2500);
+  wireEidLookupField(scanInput, {
+    pool: candidates,
+    getEid: c => c.lamb.eid,
+    feedbackEl: document.getElementById('scan-err'),
+    notFoundMessage: "Aucune agnelle correspondante en attente de tri.",
+    onFound: (c) => {
+      // On amène l'utilisateur sur la fiche correspondante pour qu'il voie
+      // de quel animal il s'agit, sans valider quoi que ce soit à sa place
+      // — c'est lui qui choisit ensuite Garder ou Écarter.
+      const idx = candidates.indexOf(c);
+      const card = document.getElementById('candidate-' + idx);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('scan-highlight');
+        setTimeout(() => card.classList.remove('scan-highlight'), 2500);
+      }
     }
   });
 
@@ -6357,22 +6472,16 @@ function renderBeliers() {
 
   const scanOpenBelier = document.getElementById('scan-open-belier');
   setActiveScanTarget(scanOpenBelier);
-  scanOpenBelier.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    const val = cleanEid(scanOpenBelier.value);
-    const err = document.getElementById('scan-open-belier-err');
-    if (!val) return;
-    const belier = DB.beliers.find(b => cleanEid(b.eid) === val);
-    if (!belier) {
-      playBeepRate();
-      err.textContent = "Aucun bélier trouvé avec cet EID.";
-      err.classList.remove('hidden');
-      return;
+  wireEidLookupField(scanOpenBelier, {
+    pool: DB.beliers,
+    feedbackEl: document.getElementById('scan-open-belier-err'),
+    notFoundMessage: "Aucun bélier trouvé avec cet EID.",
+    clearBeforeResolve: false,
+    onFound: (belier) => {
+      currentBelierId = belier.id;
+      belierDetailOrigin = 'beliers';
+      render('belier-detail');
     }
-    playBeepTrouve();
-    currentBelierId = belier.id;
-    belierDetailOrigin = 'beliers';
-    render('belier-detail');
   });
 
   document.querySelectorAll('.sheep-item').forEach(el => {
@@ -7946,10 +8055,6 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
   const onChange = opts.onChange || (() => {});
   const state = { mode: opts.initialMode || 'liste', filtre: '' };
 
-  function findByEid(val) {
-    return pool.find(it => cleanEid(it.eid) === val);
-  }
-
   function renderCounter() {
     const el = containerEl.querySelector('.sp-counter');
     if (el) el.textContent = selectedIds.size + ' sélectionnée(s) sur ' + pool.length + '.';
@@ -8005,30 +8110,24 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
       setActiveScanTarget(scan);
       const feedback = containerEl.querySelector('.sp-scan-feedback');
       scan.focus();
-      scan.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter') return;
-        const val = cleanEid(scan.value);
-        scan.value = '';
-        if (!val) return;
-        const item = findByEid(val);
-        if (!item) {
-          playBeepRate();
-          feedback.textContent = 'n°' + numeroVisuel(val) + ' introuvable dans cette liste.';
-          feedback.style.color = 'var(--danger)';
-          return;
+      wireEidLookupField(scan, {
+        pool,
+        feedbackEl: feedback,
+        notFoundMessage: (val) => 'n°' + numeroVisuel(val) + ' introuvable dans cette liste.',
+        onFound: (item) => {
+          feedback.classList.remove('hidden');
+          if (selectedIds.has(item.id)) {
+            playBeepDejaTrouve();
+            feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' déjà sélectionnée.';
+            feedback.style.color = 'var(--warning)';
+            return;
+          }
+          feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' ajoutée.';
+          feedback.style.color = 'var(--green-fg)';
+          selectedIds.add(item.id);
+          renderCounter();
+          onChange();
         }
-        if (selectedIds.has(item.id)) {
-          playBeepDejaTrouve();
-          feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' déjà sélectionnée.';
-          feedback.style.color = 'var(--warning)';
-          return;
-        }
-        playBeepTrouve();
-        feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' ajoutée.';
-        feedback.style.color = 'var(--green-fg)';
-        selectedIds.add(item.id);
-        renderCounter();
-        onChange();
       });
     } else {
       const filtre = containerEl.querySelector('.sp-filtre');
@@ -8271,29 +8370,23 @@ function renderLotSearch(lotId) {
     const scanInput = document.getElementById('scan-lot');
     setActiveScanTarget(scanInput);
     scanInput.focus();
-    scanInput.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      const val = cleanEid(scanInput.value);
-      const feedback = document.getElementById('scan-feedback');
-      scanInput.value = '';
-      if (!val) return;
-      const isMember = lot.membres.some(m => cleanEid(m) === val);
-      if (!isMember) {
-        playBeepRate();
-        feedback.textContent = 'n°' + numeroVisuel(val) + " n'est pas dans ce lot.";
-        feedback.style.color = 'var(--danger)';
-        return;
+    const feedback = document.getElementById('scan-feedback');
+    wireEidLookupField(scanInput, {
+      pool: lot.membres,
+      getEid: m => m,
+      feedbackEl: feedback,
+      notFoundMessage: (val) => 'n°' + numeroVisuel(val) + " n'est pas dans ce lot.",
+      onFound: (eid) => {
+        const clean = cleanEid(eid);
+        if (trouvees.has(clean)) {
+          feedback.classList.remove('hidden');
+          feedback.textContent = 'n°' + numeroVisuel(clean) + ' déjà trouvée.';
+          feedback.style.color = 'var(--warning)';
+          return;
+        }
+        trouvees.add(clean);
+        render_();
       }
-      if (trouvees.has(val)) {
-        playBeepDejaTrouve();
-        feedback.textContent = 'n°' + numeroVisuel(val) + ' déjà trouvée.';
-        feedback.style.color = 'var(--warning)';
-        return;
-      }
-      playBeepTrouve();
-      feedback.textContent = '';
-      trouvees.add(val);
-      render_();
     });
   }
   render_();
