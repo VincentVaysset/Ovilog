@@ -826,46 +826,6 @@ function eidAffichageCourt(eid) {
   return c.length > 11 ? c.slice(-11) : c;
 }
 
-/* Ensemble des numéros officiels courts (5 chiffres) partagés par au moins
-   DEUX EID distincts, tous statuts et catégories confondus (mêmes réservoirs
-   que verifierEidUnique ci-dessous : brebis, béliers, agnelles, agneaux
-   bouclés via getAgneauxInventaire, et animaux archivés au registre) --
-   réutilisé par les exports PDF du registre d'élevage (Agnelage, Mouvements,
-   Sanitaire) : à l'écran on peut toujours ouvrir une fiche pour lever le
-   doute, sur un document imprimé ce n'est plus possible, d'où le besoin
-   d'afficher l'EID tronqué (voir numeroAffichagePdf) dès qu'une ambiguïté
-   existe. Calculé une seule fois par export, jamais par ligne. */
-function numerosCourtAmbigus() {
-  const vus = new Map(); // numeroVisuel -> Set des EID complets (nettoyés) distincts déjà vus
-  function noter(eid) {
-    if (!eid) return;
-    const clean = cleanEid(eid);
-    if (!clean) return;
-    const numero = numeroVisuel(clean);
-    if (!vus.has(numero)) vus.set(numero, new Set());
-    vus.get(numero).add(clean);
-  }
-  DB.brebis.forEach(s => noter(s.eid));
-  (DB.beliers || []).forEach(b => noter(b.eid));
-  (DB.agnelles || []).forEach(a => noter(a.eid));
-  getAgneauxInventaire().forEach(it => noter(it.lamb.eid));
-  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
-    const reg = DB.registre && DB.registre[cat];
-    if (!reg) return;
-    Object.keys(reg).forEach(noter);
-  });
-  const ambigus = new Set();
-  vus.forEach((set, numero) => { if (set.size > 1) ambigus.add(numero); });
-  return ambigus;
-}
-/* Numéro à afficher pour un EID dans un export PDF du registre : le numéro
-   court habituel (5 chiffres), sauf s'il est dans l'ensemble ambigus
-   (voir numerosCourtAmbigus) -- dans ce cas, l'EID tronqué à 11 chiffres
-   pour lever le doute, jamais l'EID complet à 15 chiffres. */
-function numeroAffichagePdf(eid, ambigus) {
-  return ambigus.has(numeroVisuel(eid)) ? eidAffichageCourt(eid) : numeroVisuel(eid);
-}
-
 /* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, TOUS
    statuts et catégories confondus : brebis (actives, vendues ou mortes),
    béliers (actifs, vendus ou morts), agnelles actives, agneaux (bouclés,
@@ -9841,7 +9801,13 @@ function xlsxColLetter(idx) {
   while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
   return s;
 }
-function xlsxSheetXml(rows) {
+/* colWidths (optionnel) : largeurs en "caractères" Excel, une par colonne,
+   dans l'ordre -- voir exportRegistreXlsx() pour un exemple d'usage. Sans
+   ce paramètre (undefined), aucun <cols> n'est émis et Excel applique sa
+   largeur par défaut, comme avant l'ajout de ce paramètre : les autres
+   appelants (exportListeSerieXlsx, exportControleLaitierXlsx, etc.) ne sont
+   donc pas affectés. */
+function xlsxSheetXml(rows, colWidths) {
   const rowsXml = rows.map((row, r) => {
     const cellsXml = row.map((val, c) => {
       const ref = xlsxColLetter(c) + (r + 1);
@@ -9851,8 +9817,11 @@ function xlsxSheetXml(rows) {
     }).join('');
     return `<row r="${r + 1}">${cellsXml}</row>`;
   }).join('');
+  const colsXml = colWidths && colWidths.length
+    ? `<cols>${colWidths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>`
+    : '';
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowsXml}</sheetData></worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${colsXml}<sheetData>${rowsXml}</sheetData></worksheet>`;
 }
 // Thème Office par défaut (identique à celui que d'autres logiciels
 // embarquent) — évite qu'Excel affiche un avertissement de fichier abîmé
@@ -9871,8 +9840,9 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>
 </styleSheet>`;
 
-/* sheets : [{name, rows: [[...], ...]}] (1re ligne = en-têtes). Retourne les
-   octets du classeur .xlsx complet. */
+/* sheets : [{name, rows: [[...], ...], colWidths?}] (1re ligne des rows =
+   en-têtes ; colWidths optionnel, voir xlsxSheetXml). Retourne les octets
+   du classeur .xlsx complet. */
 async function buildXlsxWorkbook(sheets) {
   const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -9923,7 +9893,7 @@ async function buildXlsxWorkbook(sheets) {
     { name: 'xl/_rels/workbook.xml.rels', data: workbookRels },
     { name: 'xl/styles.xml', data: XLSX_STYLES_XML },
     { name: 'xl/theme/theme1.xml', data: XLSX_THEME1_XML },
-    ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i+1}.xml`, data: xlsxSheetXml(s.rows) }))
+    ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i+1}.xml`, data: xlsxSheetXml(s.rows, s.colWidths) }))
   ];
   return xlsxBuildZip(entries);
 }
@@ -10550,23 +10520,30 @@ async function exportControleLaitierXlsx(filtered) {
 
 /* Génère le classeur .xlsx du registre (3 feuilles) en respectant
    exactement les filtres actifs à l'instant de l'export — voir
-   registre*FilteredRows(), partagées avec l'affichage à l'écran. */
+   registre*FilteredRows(), partagées avec l'affichage à l'écran. Les
+   colonnes N° affichent l'EID tronqué à 11 chiffres (eidAffichageCourt),
+   jamais le seul numéro officiel à 5 chiffres ni l'EID complet à 15 —
+   même règle que exportRegistrePdf() ci-dessous, toujours appliquée, qu'il
+   y ait ambiguïté ou non : un numéro officiel court partagé par deux
+   animaux distincts (numéro de cheptel différent) resterait indistinguable
+   sur un document exporté sinon. colWidths élargit les colonnes N° pour
+   que ce format à 11 chiffres ne soit jamais tronqué à l'affichage. */
 async function exportRegistreXlsx() {
   const sheets = [
-    { name: 'Agnelage', rows: [
+    { name: 'Agnelage', colWidths: [16, 16, 10, 18, 14], rows: [
       ['N° mère', 'N° agneau', 'Sexe', 'Date de naissance', 'Campagne'],
       ...registreAgnelageFilteredRows(registreFiltre, registreColFiltres.agnelage).map(r =>
-        ['n°' + numeroVisuel(r.mereEid), r.agneauEid ? 'n°' + numeroVisuel(r.agneauEid) : 'Mort-né', r.sexe, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
+        ['n°' + eidAffichageCourt(r.mereEid), r.agneauEid ? 'n°' + eidAffichageCourt(r.agneauEid) : 'Mort-né', r.sexe, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]},
-    { name: 'Mouvements', rows: [
+    { name: 'Mouvements', colWidths: [16, 14, 14, 24, 12, 14], rows: [
       ['N°', 'Catégorie', 'Type', 'Cause / détail', 'Date', 'Campagne'],
       ...registreMouvementsFilteredRows(registreFiltre, registreColFiltres.mouvements).map(r =>
-        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.detail, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
+        ['n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.detail, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]},
-    { name: 'Sanitaire', rows: [
+    { name: 'Sanitaire', colWidths: [16, 14, 16, 20, 12, 12, 14], rows: [
       ['N°', 'Catégorie', 'Type de soin', 'Produit', 'Date', 'Dose', 'Campagne'],
       ...registreSanitaireFilteredRows(registreFiltre, registreColFiltres.sanitaire).map(r =>
-        ['n°' + numeroVisuel(r.eid), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
+        ['n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]}
   ];
   const bytes = await buildXlsxWorkbook(sheets);
@@ -10599,29 +10576,24 @@ function registreResumeFiltresFichier(filtreNumero, colFiltres) {
    registreView) avec exactement les lignes filtrées à l'écran — jamais les
    3 onglets combinés, contrairement à exportRegistreXlsx() ci-dessus.
    Réutilise buildPdfTable() (même template que les exports Inventaire),
-   en paysage : le registre a jusqu'à 7 colonnes, trop serré en portrait. */
+   en paysage : le registre a jusqu'à 7 colonnes, trop serré en portrait.
+   Colonnes N° : EID tronqué à 11 chiffres (eidAffichageCourt), toujours,
+   même règle et même raison que exportRegistreXlsx() ci-dessus. */
 async function exportRegistrePdf() {
   const filtreNumero = registreFiltre;
   const colFiltres = registreColFiltres[registreView];
-  // Calculé une seule fois pour tout l'export (voir numerosCourtAmbigus) :
-  // dès qu'un numéro court est partagé par au moins deux EID distincts,
-  // tous statuts/catégories confondus, la ligne l'affiche tronqué à 11
-  // chiffres plutôt qu'à 5 -- un document imprimé ne permet pas de rouvrir
-  // la fiche pour lever le doute comme à l'écran.
-  const ambigus = numerosCourtAmbigus();
   let title, columns, rows;
   if (registreView === 'agnelage') {
     title = "Registre d'élevage — Agnelage";
     // Colonnes N° élargies (voir plus bas pour Mouvements/Sanitaire) pour
     // laisser la place au format tronqué à 11 chiffres (13 caractères avec
-    // le préfixe "n°") sans jamais chevaucher la colonne suivante, y compris
-    // dans le cas rare où N° mère ET N° agneau sont ambigus sur la même ligne.
+    // le préfixe "n°") sans jamais chevaucher la colonne suivante.
     columns = [
       { label: 'N° mère', x: 0 }, { label: 'N° agneau', x: 110 }, { label: 'Sexe', x: 200 },
       { label: 'Date de naissance', x: 270 }, { label: 'Campagne', x: 400 }
     ];
     rows = registreAgnelageFilteredRows(filtreNumero, colFiltres).map(r => [
-      'n°' + numeroAffichagePdf(r.mereEid, ambigus), r.agneauEid ? 'n°' + numeroAffichagePdf(r.agneauEid, ambigus) : 'Mort-né', r.sexe, formatDateFr(r.date), registreCampagneLabelTexte(r)
+      'n°' + eidAffichageCourt(r.mereEid), r.agneauEid ? 'n°' + eidAffichageCourt(r.agneauEid) : 'Mort-né', r.sexe, formatDateFr(r.date), registreCampagneLabelTexte(r)
     ]);
   } else if (registreView === 'mouvements') {
     title = "Registre d'élevage — Mouvements";
@@ -10630,7 +10602,7 @@ async function exportRegistrePdf() {
       { label: 'Cause / détail', x: 270 }, { label: 'Date', x: 480 }, { label: 'Campagne', x: 540 }
     ];
     rows = registreMouvementsFilteredRows(filtreNumero, colFiltres).map(r => [
-      'n°' + numeroAffichagePdf(r.eid, ambigus), r.categorie, r.type, r.detail, formatDateFr(r.date), registreCampagneLabelTexte(r)
+      'n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.detail, formatDateFr(r.date), registreCampagneLabelTexte(r)
     ]);
   } else {
     title = "Registre d'élevage — Sanitaire";
@@ -10639,7 +10611,7 @@ async function exportRegistrePdf() {
       { label: 'Produit', x: 360 }, { label: 'Date', x: 520 }, { label: 'Dose', x: 590 }, { label: 'Campagne', x: 660 }
     ];
     rows = registreSanitaireFilteredRows(filtreNumero, colFiltres).map(r => [
-      'n°' + numeroAffichagePdf(r.eid, ambigus), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, registreCampagneLabelTexte(r)
+      'n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, registreCampagneLabelTexte(r)
     ]);
   }
   const bytes = buildPdfTable({
