@@ -473,6 +473,7 @@ function migrateData(d) {
     d.parametresPrixLait.push({ campagne: 2025, coefficientMsu: 12.1538, prixReference: 1580, msuReference: 130 });
   }
   if (!d.traitementsCollectifs) d.traitementsCollectifs = [];
+  if (!d.mouvementsCollectifs) d.mouvementsCollectifs = [];
   if (!d.registre) d.registre = { brebis: {}, beliers: {}, agneaux: {} };
   // Purge exceptionnelle et unique du registre (02/09/2026), demandée par
   // l'éleveur : avant le correctif ci-dessus qui a arrêté d'y archiver les
@@ -547,6 +548,7 @@ function loadData() {
     causesMortalite: [],
     produitsInfo: {},
     traitementsCollectifs: [],
+    mouvementsCollectifs: [],
     registre: { brebis: {}, beliers: {}, agneaux: {} },
     registrePurgeExceptionnelle20260902: true, // nouvelle installation : registre déjà vide, rien à purger
     lecteurBluetooth: null, // { address, name } — lecteur par défaut, voir bandeau/btEnsureConnectionListener
@@ -1641,6 +1643,60 @@ function agnelageCampagneActuelle(sheep) {
   const idx = agnelageCampagneActuelleIdx(sheep);
   return idx === -1 ? null : sheep.agnelages[idx];
 }
+/* Anti-doublon contrôle laitier (voir renderAddControle) : une brebis ne
+   devrait avoir qu'un seul contrôle n°`controle` (1er/2e/3e) par campagne —
+   retourne l'index d'un contrôle déjà enregistré avec ce même numéro pour
+   la campagne en cours, hors `excludeIdx` (l'enregistrement en cours de
+   modification, le cas échéant), ou -1 s'il n'y en a pas. Non bloquant,
+   comme les autres anti-doublons de l'appli (tank laitier, qualité) :
+   ré-enregistrer remplace le contrôle existant plutôt que d'en créer un
+   second. */
+function controleLaitierCampagneIdx(sheep, controle, excludeIdx) {
+  const list = sheep.controleLaitier || [];
+  return list.findIndex((c, i) => i !== excludeIdx && c && c.controle === controle && c.campagne === DB.campagneDebut);
+}
+
+/* Mouvement le plus RÉCENT par DATE (pas par position dans le tableau) --
+   utilisé pour déterminer le statut courant d'une brebis/d'un bélier (voir
+   recalculerStatutBrebis/recalculerStatutBelier ci-dessous). Se fier au
+   dernier élément du tableau serait faux dès que les mouvements ne sont
+   plus en ordre chronologique strict (correction de la date d'un
+   mouvement existant -- voir bouton "Corriger la date" sur un mouvement --
+   ou suppression d'un mouvement intermédiaire) : c'est la date la plus
+   récente qui doit décider, jamais la position d'insertion. En cas
+   d'égalité de date, le dernier du tableau parmi les mouvements à égalité
+   l'emporte (ordre de saisie comme départage, à défaut d'heure précise). */
+function dernierMouvementParDate(mouvements) {
+  const list = mouvements || [];
+  let best = null;
+  list.forEach(m => {
+    if (!m || !m.date) return;
+    if (!best || m.date >= best.date) best = m;
+  });
+  return best;
+}
+/* Recalcule sheep.statut/belier.statut à partir de TOUS les mouvements
+   (triés par date, voir dernierMouvementParDate ci-dessus), plutôt que de
+   dupliquer cette logique à chaque endroit qui ajoute/modifie/supprime un
+   mouvement (ajout, édition, suppression). Couvre aussi un cas
+   auparavant non géré : supprimer le seul mouvement de sortie d'un animal
+   (pour "annuler" une vente/mort) ne laissait alors plus que son mouvement
+   d'Entrée -- un type ignoré par l'ancien code, qui laissait donc le
+   statut figé sur "vendue"/"morte" au lieu de revenir à "active". */
+function recalculerStatutBrebis(sheep) {
+  const last = dernierMouvementParDate(sheep.mouvements);
+  if (last && last.type === 'Morte') sheep.statut = 'morte';
+  else if (last && last.type === 'Vendue') sheep.statut = 'vendue';
+  else if (last && last.type === 'Vendue reproduction') sheep.statut = 'vendue reproduction';
+  else sheep.statut = 'active';
+}
+function recalculerStatutBelier(belier) {
+  const last = dernierMouvementParDate(belier.mouvements);
+  if (last && last.type === 'Mort') belier.statut = 'mort';
+  else if (last && last.type === 'Vendu') belier.statut = 'vendu';
+  else if (last && last.type === 'Vendu reproduction') belier.statut = 'vendu reproduction';
+  else belier.statut = 'actif';
+}
 
 /* Chiffres-clé de la campagne en cours, partagés par l'écran d'accueil et
    le Bilan de campagne :
@@ -2070,6 +2126,7 @@ btnBack.onclick = () => {
   else if (currentView === 'add-lot' || currentView === 'add-lot-reforme') render('lots');
   else if (currentView === 'lot-search') render('lots');
   else if (currentView === 'mouvement-groupe') render('inventaire');
+  else if (currentView === 'mouvements-collectifs') render('inventaire');
   else if (currentView === 'traitement-collectif') render('sanitaire');
   else if (currentView === 'traitements-collectifs') render('sanitaire');
   else if (currentView === 'import-echo') render('parametres');
@@ -2125,13 +2182,7 @@ function deleteItem(kind, idx) {
   if (!confirm(message)) return;
   sheep[kind] = sheep[kind] || [];
   sheep[kind].splice(idx, 1);
-  if (kind === 'mouvements') {
-    const last = sheep.mouvements[sheep.mouvements.length - 1];
-    if (!last) sheep.statut = 'active';
-    else if (last.type === 'Morte') sheep.statut = 'morte';
-    else if (last.type === 'Vendue') sheep.statut = 'vendue';
-    else if (last.type === 'Vendue reproduction') sheep.statut = 'vendue reproduction';
-  }
+  if (kind === 'mouvements') recalculerStatutBrebis(sheep);
   saveData(DB);
   render('detail', sheep.id);
 }
@@ -2149,13 +2200,7 @@ function deleteBelierItem(kind, idx) {
   if (!belier) return;
   belier[kind] = belier[kind] || [];
   belier[kind].splice(idx, 1);
-  if (kind === 'mouvements') {
-    const last = belier.mouvements[belier.mouvements.length - 1];
-    if (!last) belier.statut = 'actif';
-    else if (last.type === 'Mort') belier.statut = 'mort';
-    else if (last.type === 'Vendu') belier.statut = 'vendu';
-    else if (last.type === 'Vendu reproduction') belier.statut = 'vendu reproduction';
-  }
+  if (kind === 'mouvements') recalculerStatutBelier(belier);
   saveData(DB);
   render('belier-detail');
 }
@@ -2251,6 +2296,7 @@ function render(view, sheepId) {
     else if (view === 'add-lot-reforme') renderAddLotReforme();
     else if (view === 'lot-search') renderLotSearch(currentLotId);
     else if (view === 'mouvement-groupe') renderMouvementGroupe();
+    else if (view === 'mouvements-collectifs') renderMouvementsCollectifsHistorique();
     else if (view === 'traitement-collectif') renderTraitementCollectif();
     else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
     else if (view === 'sanitaire') renderSanitaire();
@@ -2863,12 +2909,14 @@ function renderInventaire() {
   // effet sur lui. Les montrer juste au-dessus du bouton laissait croire
   // le contraire.
   app.innerHTML = `
-    <button class="btn btn-secondary" id="btn-mouvement-groupe" style="border-color:var(--danger);color:var(--danger);margin-bottom:14px;">Mouvement groupé (vente / sortie multiple)</button>
+    <button class="btn btn-secondary" id="btn-mouvement-groupe" style="border-color:var(--danger);color:var(--danger);margin-bottom:10px;">Mouvement groupé (vente / sortie multiple)</button>
+    <button class="btn btn-secondary" id="btn-historique-mouvement-groupe" style="margin-bottom:14px;">Gérer / annuler un mouvement groupé</button>
     ${tabBarHtml}
     ${bodyHtml}
   `;
 
   document.getElementById('btn-mouvement-groupe').onclick = () => render('mouvement-groupe');
+  document.getElementById('btn-historique-mouvement-groupe').onclick = () => render('mouvements-collectifs');
   document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
     btn.onclick = () => { inventaireTab = btn.dataset.tab; render('inventaire'); };
   });
@@ -5489,10 +5537,27 @@ function renderAddControle(sheepId) {
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
 
+      <div id="controle-doublon-note" class="hidden" style="font-size:12px;color:var(--warning);margin-bottom:10px;"></div>
       <div id="err" class="error-box hidden"></div>
       <button class="btn btn-primary" id="btn-save-controle">${editing ? 'Enregistrer les modifications' : 'Enregistrer le contrôle'}</button>
     </div>
   `;
+
+  const labelControle = v => v === '1' ? '1er' : v + 'e';
+  // Une brebis ne devrait avoir qu'un contrôle n°X par campagne (voir
+  // controleLaitierCampagneIdx) : note non bloquante dès qu'un doublon
+  // potentiel apparaît, même principe que pour le tank laitier et les
+  // prélèvements qualité — enregistrer remplacera l'existant plutôt que
+  // d'en créer un second.
+  function updateDoublonNote() {
+    const note = document.getElementById('controle-doublon-note');
+    if (!controle) { note.classList.add('hidden'); return; }
+    const idx = controleLaitierCampagneIdx(sheep, parseInt(controle, 10), editing ? editContext.idx : undefined);
+    if (idx === -1) { note.classList.add('hidden'); return; }
+    const rec = sheep.controleLaitier[idx];
+    note.textContent = 'Le ' + labelControle(controle) + ' contrôle de cette campagne existe déjà (' + formatDateFr(rec.date) + ', ' + rec.quantite + ' mL) — l\'enregistrer le remplacera.';
+    note.classList.remove('hidden');
+  }
 
   let controle = existing ? String(existing.controle) : null;
   document.querySelectorAll('.ctrl-opt').forEach(btn => {
@@ -5502,8 +5567,10 @@ function renderAddControle(sheepId) {
       document.querySelectorAll('.ctrl-opt').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       document.getElementById('err').classList.add('hidden');
+      updateDoublonNote();
     };
   });
+  updateDoublonNote();
 
   document.getElementById('btn-save-controle').onclick = () => {
     const err = document.getElementById('err');
@@ -5526,8 +5593,19 @@ function renderAddControle(sheepId) {
       campagne: DB.campagneDebut
     };
     sheep.controleLaitier = sheep.controleLaitier || [];
-    if (editing) sheep.controleLaitier[editContext.idx] = record;
-    else sheep.controleLaitier.push(record);
+    const doublonIdx = controleLaitierCampagneIdx(sheep, record.controle, editing ? editContext.idx : undefined);
+    if (doublonIdx !== -1) {
+      // Remplace l'enregistrement en doublon plutôt que d'en créer un
+      // second ; si on modifiait un AUTRE enregistrement que celui-ci
+      // (numéro de contrôle changé vers un numéro déjà pris), l'original
+      // est retiré pour ne pas se retrouver avec deux lignes après coup.
+      sheep.controleLaitier[doublonIdx] = record;
+      if (editing && editContext.idx !== doublonIdx) sheep.controleLaitier.splice(editContext.idx, 1);
+    } else if (editing) {
+      sheep.controleLaitier[editContext.idx] = record;
+    } else {
+      sheep.controleLaitier.push(record);
+    }
     editContext = null;
     saveData(DB);
     render('detail', sheep.id);
@@ -5978,14 +6056,24 @@ function renderAddMouvement(sheepId) {
       date: document.getElementById('f-date').value
     };
     sheep.mouvements = sheep.mouvements || [];
+    const statutAvant = sheep.statut || 'active';
+    const ancienMouvement = editing ? sheep.mouvements[editContext.idx] : null;
     if (editing) sheep.mouvements[editContext.idx] = mouvement;
     else sheep.mouvements.push(mouvement);
+    recalculerStatutBrebis(sheep);
+    // Confirm() ciblé : uniquement si MODIFIER un mouvement existant change
+    // réellement le statut qui en découle (ex: date corrigée qui fait
+    // qu'une autre sortie devient la plus récente, type changé) -- jamais à
+    // l'ajout d'un nouveau mouvement, ni sur une simple correction de cause
+    // ou d'acheteur qui ne change rien au statut.
+    if (editing && sheep.statut !== statutAvant) {
+      if (!confirm('Modifier ce mouvement va faire passer le statut de la brebis n°' + numeroVisuel(sheep.eid) + ' de "' + statutAvant + '" à "' + sheep.statut + '". Confirmer ?')) {
+        sheep.mouvements[editContext.idx] = ancienMouvement;
+        sheep.statut = statutAvant;
+        return;
+      }
+    }
     editContext = null;
-    const last = sheep.mouvements[sheep.mouvements.length - 1];
-    if (!last) sheep.statut = 'active';
-    else if (last.type === 'Morte') sheep.statut = 'morte';
-    else if (last.type === 'Vendue') sheep.statut = 'vendue';
-    else if (last.type === 'Vendue reproduction') sheep.statut = 'vendue reproduction';
     saveData(DB);
     render('detail', sheep.id);
   };
@@ -6876,14 +6964,21 @@ function renderAddMouvementBelier() {
     err.classList.add('hidden');
     const mouvement = { type: type, cause: type === 'Mort' ? cause : null, acheteur: acheteur, date: document.getElementById('f-date').value };
     belier.mouvements = belier.mouvements || [];
+    const statutAvant = belier.statut || 'actif';
+    const ancienMouvement = editing ? belier.mouvements[editBelierContext.idx] : null;
     if (editing) belier.mouvements[editBelierContext.idx] = mouvement;
     else belier.mouvements.push(mouvement);
+    recalculerStatutBelier(belier);
+    // Confirm() ciblé : voir renderAddMouvement (brebis) pour la logique
+    // identique -- uniquement si modifier ce mouvement change le statut.
+    if (editing && belier.statut !== statutAvant) {
+      if (!confirm('Modifier ce mouvement va faire passer le statut du bélier n°' + numeroVisuel(belier.eid) + ' de "' + statutAvant + '" à "' + belier.statut + '". Confirmer ?')) {
+        belier.mouvements[editBelierContext.idx] = ancienMouvement;
+        belier.statut = statutAvant;
+        return;
+      }
+    }
     editBelierContext = null;
-    const last = belier.mouvements[belier.mouvements.length - 1];
-    if (!last) belier.statut = 'actif';
-    else if (last.type === 'Mort') belier.statut = 'mort';
-    else if (last.type === 'Vendu') belier.statut = 'vendu';
-    else if (last.type === 'Vendu reproduction') belier.statut = 'vendu reproduction';
     saveData(DB);
     render('belier-detail');
   };
@@ -8404,10 +8499,16 @@ const CATEGORIE_ANIMAL_CONFIG = {
     pool: () => DB.brebis,
     isActive: s => (s.statut || 'active') === 'active',
     typeSortie: ['Morte', 'Vendue', 'Vendue reproduction'],
-    applySortie: (s, type, cause, acheteur, date) => {
+    // annulable indique si un mouvement groupé appliqué à cette catégorie
+    // peut être défait automatiquement (voir renderMouvementsCollectifsHistorique) :
+    // vrai pour brebis/béliers (mouvement retiré + statut recalculé), pas
+    // pour les agnelles (archivées + retirées du roster, reconstruction de
+    // l'archive du registre reportée à un chantier séparé après octobre 2026).
+    annulable: true,
+    applySortie: (s, type, cause, acheteur, date, collectifId) => {
       s.mouvements = s.mouvements || [];
-      s.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date });
-      s.statut = type === 'Morte' ? 'morte' : type === 'Vendue' ? 'vendue' : 'vendue reproduction';
+      s.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date, collectifId });
+      recalculerStatutBrebis(s);
     }
   },
   beliers: {
@@ -8415,10 +8516,11 @@ const CATEGORIE_ANIMAL_CONFIG = {
     pool: () => DB.beliers || [],
     isActive: b => (b.statut || 'actif') === 'actif',
     typeSortie: ['Mort', 'Vendu', 'Vendu reproduction'],
-    applySortie: (b, type, cause, acheteur, date) => {
+    annulable: true,
+    applySortie: (b, type, cause, acheteur, date, collectifId) => {
       b.mouvements = b.mouvements || [];
-      b.mouvements.push({ type, cause: type === 'Mort' ? cause : null, acheteur, date });
-      b.statut = type === 'Mort' ? 'mort' : type === 'Vendu' ? 'vendu' : 'vendu reproduction';
+      b.mouvements.push({ type, cause: type === 'Mort' ? cause : null, acheteur, date, collectifId });
+      recalculerStatutBelier(b);
     }
   },
   agneaux: {
@@ -8426,13 +8528,14 @@ const CATEGORIE_ANIMAL_CONFIG = {
     pool: () => DB.agnelles || [],
     isActive: a => (a.statut || 'active') === 'active',
     typeSortie: ['Morte', 'Vendue', 'Vendue reproduction'],
+    annulable: false,
     // Contrairement à brebis/béliers, il n'existe pas d'onglet "sorties" pour
     // les agnelles dans Inventaire : une sortie les archive dans le registre
     // et les retire directement du roster de renouvellement (Chantier de
     // tri), comme le bouton "Vendre" individuel (voir showVendreAgnelleModal).
-    applySortie: (ag, type, cause, acheteur, date) => {
+    applySortie: (ag, type, cause, acheteur, date, collectifId) => {
       ag.mouvements = ag.mouvements || [];
-      ag.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date });
+      ag.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date, collectifId });
       ag.statut = type === 'Morte' ? 'morte' : type === 'Vendue' ? 'vendue' : 'vendue reproduction';
       archiverDansRegistre('agneaux', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
       DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
@@ -8566,7 +8669,22 @@ function renderMouvementGroupe() {
       if (!confirm('Appliquer "' + type + '" à ' + selected.size + ' ' + cfg.label.toLowerCase() + ' ?')) return;
       const date = document.getElementById('f-date').value;
       const concernees = actives.filter(s => selected.has(s.id));
-      concernees.forEach(animal => cfg.applySortie(animal, type, cause, acheteur, date));
+      const collectifId = 'MC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+      concernees.forEach(animal => cfg.applySortie(animal, type, cause, acheteur, date, collectifId));
+      // Voir renderMouvementsCollectifsHistorique : permet de retrouver ce
+      // mouvement groupé et, pour brebis/béliers (cfg.annulable), de
+      // l'annuler automatiquement en un geste plutôt que de devoir corriger
+      // chaque fiche individuellement.
+      DB.mouvementsCollectifs = DB.mouvementsCollectifs || [];
+      DB.mouvementsCollectifs.push({
+        id: collectifId,
+        categorie: mouvementGroupeTab,
+        annulable: cfg.annulable,
+        type: type, cause: cause, acheteur: acheteur,
+        date: date,
+        membres: concernees.map(s => s.eid),
+        createdAt: Date.now()
+      });
       saveData(DB);
       selected.clear();
       alert(concernees.length + ' mouvement(s) enregistré(s).');
@@ -8574,6 +8692,68 @@ function renderMouvementGroupe() {
     };
   }
   render_();
+}
+
+/* ---------- Historique des mouvements groupés (annulation en masse) ----------
+   Chaque mouvement groupé (voir renderMouvementGroupe) est identifié par un
+   collectifId posé sur le mouvement ajouté à chaque animal, et résumé dans
+   DB.mouvementsCollectifs. Pour brebis/béliers (annulable=true), les objets
+   restent vivants dans DB.brebis/DB.beliers : annuler retire simplement le
+   mouvement marqué de ce collectifId sur chacun et recalcule son statut --
+   annulation automatique et complète, chaque animal retrouve exactement son
+   état précédent. Pour les agnelles (annulable=false), la sortie les a déjà
+   archivées dans le registre ET retirées du roster de renouvellement : les
+   restaurer nécessiterait de reconstruire leur fiche depuis l'archive du
+   registre, chantier séparé volontairement reporté après octobre 2026 (voir
+   plan validé) -- ici, seule la traçabilité est assurée (le mouvement
+   groupé reste consultable), sans bouton d'annulation automatique. */
+function renderMouvementsCollectifsHistorique() {
+  pageTitle.textContent = 'Mouvements groupés';
+  DB.mouvementsCollectifs = DB.mouvementsCollectifs || [];
+
+  function catLabel(cat) { return CATEGORIE_ANIMAL_CONFIG[cat || 'brebis'].label; }
+
+  const itemHtml = (m) => `
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+        ${iconCircle(ICON_WARNING, 'coral', 'sm')}
+        <div>
+          <div style="font-weight:600;">${catLabel(m.categorie)} · ${m.type}${m.acheteur ? ' · ' + m.acheteur : ''}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${formatDateFr(m.date)} · ${m.membres.length} ${catLabel(m.categorie).toLowerCase()}</div>
+        </div>
+      </div>
+      ${m.annulable
+        ? `<button type="button" class="btn btn-secondary btn-annuler-mvt-collectif" data-id="${m.id}" style="color:var(--danger);border-color:var(--danger);">Annuler ce mouvement groupé</button>`
+        : `<div style="font-size:12px;color:var(--text-muted);">Agnelles déjà archivées dans le registre d'élevage et retirées du roster de renouvellement — l'annulation automatique n'est pas disponible pour cette catégorie (à restaurer manuellement si besoin).</div>`}
+    </div>
+  `;
+
+  app.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Retrouve un mouvement (vente/sortie) appliqué à plusieurs animaux en une fois, et annule-le d'un coup si besoin.</div>
+    ${DB.mouvementsCollectifs.length === 0
+      ? '<div class="empty">Aucun mouvement groupé enregistré pour l\'instant.</div>'
+      : [...DB.mouvementsCollectifs].reverse().map(itemHtml).join('')}
+  `;
+
+  document.querySelectorAll('.btn-annuler-mvt-collectif').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.id;
+      const m = DB.mouvementsCollectifs.find(x => x.id === id);
+      if (!m) return;
+      if (!confirm('Annuler ce mouvement groupé (' + m.membres.length + ' ' + catLabel(m.categorie).toLowerCase() + ') ? Chaque animal retrouvera son statut précédent.')) return;
+      const cfg = CATEGORIE_ANIMAL_CONFIG[m.categorie || 'brebis'];
+      cfg.pool().forEach(animal => {
+        if (!animal.mouvements) return;
+        const idx = animal.mouvements.findIndex(mv => mv.collectifId === id);
+        if (idx === -1) return;
+        animal.mouvements.splice(idx, 1);
+        if (m.categorie === 'beliers') recalculerStatutBelier(animal); else recalculerStatutBrebis(animal);
+      });
+      DB.mouvementsCollectifs = DB.mouvementsCollectifs.filter(x => x.id !== id);
+      saveData(DB);
+      render('mouvements-collectifs');
+    };
+  });
 }
 
 /* ---------- Sanitaire (accueil des actions sanitaires collectives) ---------- */
@@ -9811,18 +9991,20 @@ function uint8ToBase64(bytes) {
   return btoa(binary);
 }
 
-/* Sauvegarde JSON silencieuse déclenchée juste avant l'exécution réelle du
-   "changement de campagne" (voir executerChangementCampagne) — filet de
-   sécurité avant une action irréversible, sans AUCUNE interaction
-   utilisateur supplémentaire : contrairement à saveOrShareBinaryFile, pas de
-   modale "Fichier enregistré" à fermer sur l'app installée. Retourne
-   true/false plutôt que de retomber sur une modale ou un partage en cas de
-   souci, pour que l'appelant puisse bloquer le changement de campagne en
-   toute connaissance de cause si l'écriture a réellement échoué (voir
-   correctif "sauvegarde automatique" — pas d'option de secours silencieuse
-   ici, uniquement le repli navigateur classique ci-dessous qui n'est pas un
-   échec en soi, seulement un mode différent hors app installée). */
-async function writeCampagneBackupFile(filename, bytes) {
+/* Sauvegarde JSON silencieuse déclenchée juste avant l'exécution réelle
+   d'une action irréversible qui remplace ou reconstruit une partie de la
+   base (changement de campagne — voir executerChangementCampagne — et
+   import d'une sauvegarde JSON, voir renderParametres) — filet de sécurité
+   sans AUCUNE interaction utilisateur supplémentaire : contrairement à
+   saveOrShareBinaryFile, pas de modale "Fichier enregistré" à fermer sur
+   l'app installée. Retourne true/false plutôt que de retomber sur une
+   modale ou un partage en cas de souci, pour que l'appelant puisse bloquer
+   l'action en toute connaissance de cause si l'écriture a réellement
+   échoué (voir correctif "sauvegarde automatique" — pas d'option de
+   secours silencieuse ici, uniquement le repli navigateur classique
+   ci-dessous qui n'est pas un échec en soi, seulement un mode différent
+   hors app installée). */
+async function writeAutoBackupFile(filename, bytes) {
   const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (Filesystem) {
     try {
@@ -9835,7 +10017,7 @@ async function writeCampagneBackupFile(filename, bytes) {
       await Filesystem.writeFile({ path: filename, data: uint8ToBase64(bytes), directory: 'DOCUMENTS' });
       return true;
     } catch (e) {
-      console.error('Sauvegarde automatique avant changement de campagne : échec Filesystem', e);
+      console.error('Sauvegarde automatique : échec Filesystem', e);
       return false;
     }
   }
@@ -9854,7 +10036,7 @@ async function writeCampagneBackupFile(filename, bytes) {
     URL.revokeObjectURL(url);
     return true;
   } catch (e) {
-    console.error('Sauvegarde automatique avant changement de campagne : échec téléchargement navigateur', e);
+    console.error('Sauvegarde automatique : échec téléchargement navigateur', e);
     return false;
   }
 }
@@ -10740,7 +10922,7 @@ function renderImportEcho() {
     }
     const rows = [];
     const erreurs = [];
-    let nouvellesBrebis = 0;
+    const nouvellesBrebisEids = [];
     dataRows.forEach((parts, i) => {
       if (!parts || parts.length < 2 || (!parts[0] && !parts[1])) return;
       const eid = String(parts[0] || '').trim();
@@ -10756,7 +10938,7 @@ function renderImportEcho() {
         // que CETTE ligne, jamais tout le fichier (voir chantier "unicité EID").
         const conflit = verifierEidUnique(eid);
         if (conflit) { erreurs.push('Ligne ' + (i+2) + ' : ' + messageEidDejaUtilise(conflit)); return; }
-        nouvellesBrebis++;
+        nouvellesBrebisEids.push(eid);
       }
       rows.push({ eid, ...parsed });
     });
@@ -10764,7 +10946,12 @@ function renderImportEcho() {
     const err = document.getElementById('import-echo-err');
     err.classList.add('hidden');
     const preview = document.getElementById('import-echo-preview');
-      preview.innerHTML = `
+    // Liste détaillée des numéros (pas seulement des compteurs) : les
+    // nouvelles brebis notamment sont créées silencieusement à la
+    // confirmation, l'éleveur doit pouvoir les identifier une par une avant
+    // de valider, pas seulement en connaître le nombre.
+    const listeNumeros = (eids) => eids.slice(0, 15).map(e => 'n°' + numeroVisuel(e)).join(', ') + (eids.length > 15 ? ', ... (' + (eids.length - 15) + ' de plus)' : '');
+    preview.innerHTML = `
         <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
           <div class="stat-card sc-green">
             <div class="stat-card-label">Reconnues</div>
@@ -10772,13 +10959,15 @@ function renderImportEcho() {
           </div>
           <div class="stat-card sc-amber">
             <div class="stat-card-label">Nouvelles brebis</div>
-            <div class="stat-card-value" style="font-size:20px;">${nouvellesBrebis}</div>
+            <div class="stat-card-value" style="font-size:20px;">${nouvellesBrebisEids.length}</div>
           </div>
           <div class="stat-card ${erreurs.length ? 'sc-coral' : ''}" style="${erreurs.length ? '' : 'background:#f0efe9;color:var(--text-muted);'}">
             <div class="stat-card-label">Ignorées</div>
             <div class="stat-card-value" style="font-size:20px;">${erreurs.length}</div>
           </div>
         </div>
+        ${nouvellesBrebisEids.length ? '<div style="font-size:12px;color:var(--warning);margin-top:10px;"><strong>Nouvelles brebis qui seront créées :</strong> ' + listeNumeros(nouvellesBrebisEids) + '</div>' : ''}
+        ${rows.length ? '<div style="font-size:12px;color:var(--text-muted);margin-top:8px;"><strong>Échographies reconnues :</strong> ' + listeNumeros(rows.map(r => r.eid)) + '</div>' : ''}
         ${erreurs.length ? '<div style="font-size:12px;color:var(--coral-fg);margin-top:8px;">' + erreurs.slice(0,10).join('<br>') + (erreurs.length > 10 ? '<br>... (' + (erreurs.length-10) + ' de plus)' : '') + '</div>' : ''}
       `;
     document.getElementById('btn-confirm-import').classList.toggle('hidden', rows.length === 0);
@@ -10856,15 +11045,29 @@ function renderImportEcho() {
 }
 
 
-/* Nom du fichier de sauvegarde automatique silencieuse (voir
-   writeCampagneBackupFile) déclenchée juste avant l'exécution réelle du
-   changement de campagne — horodaté à la seconde pour ne jamais entrer en
-   collision avec une sauvegarde manuelle ou une sauvegarde automatique
-   antérieure. */
-function nomFichierBackupCampagne(date) {
+/* Nom + contenu d'un fichier de sauvegarde automatique silencieuse (voir
+   writeAutoBackupFile), utilisés avant le changement de campagne ET avant
+   l'import d'une sauvegarde JSON (voir renderParametres) — horodaté à la
+   seconde pour ne jamais entrer en collision avec une sauvegarde manuelle
+   ou une sauvegarde automatique antérieure. Le champ exportedAt, ajouté au
+   contenu, permet de retrouver le moment exact de la sauvegarde en
+   rouvrant directement le fichier, sans dépendre de sa date de fichier sur
+   le disque (qui peut être perdue selon la façon dont il est ensuite
+   partagé/déplacé). */
+function nomFichierBackupAuto(date) {
   const pad = n => String(n).padStart(2, '0');
   return 'ovilog_backup_' + date.getFullYear() + pad(date.getMonth() + 1) + pad(date.getDate())
     + '_' + pad(date.getHours()) + pad(date.getMinutes()) + pad(date.getSeconds()) + '.json';
+}
+function bytesBackupAuto(data, date) {
+  return new TextEncoder().encode(JSON.stringify(Object.assign({}, data, { exportedAt: date.toISOString() }), null, 2));
+}
+/* Résumé en une ligne du contenu d'une sauvegarde, affiché à l'éleveur pour
+   confirmer ce qui a bien été mis à l'abri (voir import d'une sauvegarde
+   JSON, renderParametres). */
+function resumeContenuSauvegarde(data) {
+  const n = arr => (arr || []).length;
+  return n(data.brebis) + ' brebis, ' + n(data.beliers) + ' bélier(s), ' + n(data.agnelles) + ' agnelle(s)';
 }
 
 /* Exécution réelle du "changement de campagne", déclenchée UNIQUEMENT depuis
@@ -10872,7 +11075,7 @@ function nomFichierBackupCampagne(date) {
    renderConfirmationNouvelleCampagne) — plus aucun confirm() natif ici.
    Ordre des opérations, volontairement strict :
      1. Sauvegarde JSON automatique et silencieuse de toute la base — voir
-        writeCampagneBackupFile. Si elle échoue, on s'arrête ici : AUCUNE
+        writeAutoBackupFile. Si elle échoue, on s'arrête ici : AUCUNE
         donnée n'est modifiée, l'appelant doit permettre de réessayer.
      2. Une fois la sauvegarde confirmée, exécution de tout ce qui était
         auparavant dans le confirm() natif (lutte remise à zéro, mouvements
@@ -10881,8 +11084,8 @@ function nomFichierBackupCampagne(date) {
    Retourne true en cas de succès, false si la sauvegarde a échoué (rien
    n'a alors été modifié dans DB). */
 async function executerChangementCampagne() {
-  const backupBytes = new TextEncoder().encode(JSON.stringify(DB, null, 2));
-  const backupOk = await writeCampagneBackupFile(nomFichierBackupCampagne(new Date()), backupBytes);
+  const backupDate = new Date();
+  const backupOk = await writeAutoBackupFile(nomFichierBackupAuto(backupDate), bytesBackupAuto(DB, backupDate));
   if (!backupOk) return false;
 
   // Pense-bête sans valeur d'historique (voir correctif Lutte) : pas
@@ -11135,16 +11338,31 @@ function renderParametres() {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const parsed = JSON.parse(reader.result);
         if (!Array.isArray(parsed.brebis)) throw new Error('format invalide');
         if (!confirm('Remplacer toutes les données actuelles par cette sauvegarde ? Cette action est irréversible.')) return;
+        // Sauvegarde automatique et silencieuse des données ACTUELLES (celles
+        // que l'import va remplacer) avant d'y toucher -- même filet de
+        // sécurité que le changement de campagne (voir
+        // executerChangementCampagne) : si elle échoue, l'import est
+        // bloqué plutôt que de risquer d'écraser des données sans aucun
+        // filet.
+        const backupDate = new Date();
+        const backupFilename = nomFichierBackupAuto(backupDate);
+        const backupResume = resumeContenuSauvegarde(DB);
+        const backupOk = await writeAutoBackupFile(backupFilename, bytesBackupAuto(DB, backupDate));
+        if (!backupOk) {
+          alert("Import annulé : la sauvegarde automatique de tes données actuelles a échoué (avant de les remplacer). Réessaie, ou exporte-les manuellement d'abord.");
+          return;
+        }
         // migrateData comble les champs qui n'existaient pas encore dans une
         // sauvegarde plus ancienne, pour éviter toute erreur sur un champ
         // manquant juste après la restauration.
         DB = migrateData(parsed);
         saveData(DB);
+        alert('Import réussi.\n\nPar sécurité, tes données précédentes (' + backupResume + ') ont été sauvegardées automatiquement dans le fichier ' + backupFilename + ' avant d\'être remplacées.');
         render('home');
       } catch (err) {
         alert("Ce fichier ne semble pas être une sauvegarde valide.");
