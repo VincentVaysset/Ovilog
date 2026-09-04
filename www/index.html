@@ -12812,9 +12812,22 @@ const fbDb = initializeFirestore(fbApp, {
 // Champs regroupés dans un unique document 'meta' par compte (petits,
 // bornés, pas besoin d'un document par enregistrement comme pour les
 // animaux).
-const META_FIELDS = ['exploitation', 'campagneDebut', 'produits', 'acheteurs',
-  'causesMortalite', 'casParticuliers', 'typesJournal', 'lots', 'journal',
-  'laitTank', 'luttes', 'produitsInfo', 'parametresPrixLait'];
+// Correctif synchro (05/09/2026) : bilanLactation, sieolSansMiseBas,
+// registre, traitementsCollectifs, mouvementsCollectifs, penalitesBacterio,
+// campagneDateDemarrage et campagneInitialisee avaient chacun leur propre
+// collection DB.* ajoutée au fil des chantiers sans jamais être ajoutés
+// ici -- ces données restaient donc bloquées sur l'appareil où elles
+// avaient été créées, jamais transmises à un autre appareil connecté au
+// même compte (signalé en usage réel : Bilan de lactation absent du
+// téléphone alors qu'importé sur la tablette). lecteurBluetooth reste
+// volontairement exclu : propre à l'appareil (appairage physique), il n'a
+// pas de sens partagé entre deux téléphones.
+const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
+  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite',
+  'casParticuliers', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
+  'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
+  'registre', 'traitementsCollectifs', 'mouvementsCollectifs', 'penalitesBacterio',
+  'listeSerie'];
 const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
 const BOOTSTRAP_FLAG_KEY = 'ovilog_sync_bootstrapped_uid';
 
@@ -12846,6 +12859,19 @@ function deepClean(value) {
   return out;
 }
 
+/* Vrai si `value` ne contient aucune donnée réelle, en creusant récursivement
+   dans les objets (un DB.registre = {brebis:{}, beliers:{}, agneaux:{}}
+   n'a AUCUNE clé de premier niveau vide, mais ne contient pourtant rien --
+   voir buildUpdatePayload). Une chaîne ou un nombre non nul/non vide n'est
+   jamais considéré vide : seule une collection sans le moindre contenu
+   l'est. */
+function estVideRecursif(value) {
+  if (value === null || value === undefined) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.values(value).every(estVideRecursif);
+  return false;
+}
+
 /* Calcule un payload de mise à jour Firestore entre un ancien et un nouvel
    enregistrement : arrayUnion pour un simple ajout en fin de tableau (les
    ajouts concurrents depuis 2 appareils se combinent alors sans s'écraser),
@@ -12858,6 +12884,18 @@ function buildUpdatePayload(oldRec, newRec) {
     const oldVal = oldRec ? oldRec[key] : undefined;
     const newVal = newRec[key];
     if (JSON.stringify(oldVal) === JSON.stringify(newVal)) return;
+    // Un champ que Firestore n'a JAMAIS reçu (absent de oldRec, pas
+    // seulement vide) ET vide localement : ne rien pousser plutôt que
+    // d'écraser une éventuelle vraie donnée déjà envoyée par un autre
+    // appareil qui n'aurait pas encore eu l'occasion de synchroniser ce
+    // même champ tout juste ajouté à META_FIELDS (voir correctif synchro
+    // Bilan de lactation du 05/09/2026) -- sans ce garde-fou, l'appareil le
+    // plus lent à se connecter après une mise à jour pouvait écraser les
+    // vraies données de l'autre avec sa valeur locale par défaut, encore
+    // jamais renseignée sur cet appareil. Dès que CE champ a une vraie
+    // valeur ici, il se pousse normalement (et tout appareil recevra alors
+    // cette valeur comme "ancien état" pour ses futurs envois).
+    if (oldVal === undefined && estVideRecursif(newVal)) return;
     if (Array.isArray(oldVal) && Array.isArray(newVal) && newVal.length > oldVal.length &&
         JSON.stringify(newVal.slice(0, oldVal.length)) === JSON.stringify(oldVal)) {
       updates[key] = arrayUnion(...newVal.slice(oldVal.length));
