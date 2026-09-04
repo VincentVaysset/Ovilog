@@ -13001,11 +13001,28 @@ function startListeners() {
     sync.unsubscribers.push(unsub);
   });
   const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
+  // Une seule poussée proactive de l'état local actuel, juste après avoir
+  // reçu le tout premier instantané distant (voir correctif synchro du
+  // 05/09/2026) -- sans ça, un appareil déjà connecté qui n'effectue aucune
+  // saisie après une mise à jour (ex: ouvrir l'appli pour vérifier un champ
+  // tout juste ajouté à META_FIELDS) ne pousse jamais ses données déjà
+  // présentes localement : saveData() n'est appelé que par une vraie action
+  // de saisie, jamais automatiquement à l'ouverture. Volontairement APRÈS
+  // le 1er instantané (jamais avant) : tant que sync.lastSynced.meta n'a
+  // pas encore la vraie valeur distante, syncMeta prendrait la branche
+  // setDoc (remplacement intégral) au lieu du diff protégé par
+  // estVideRecursif -- exactement le risque d'écrasement que ce correctif
+  // cherche à éviter.
+  let premierInstantaneMetaRecu = false;
   const unsubMeta = onSnapshot(metaRef, snap => {
     if (!snap.exists()) return;
     const meta = snap.data();
     sync.lastSynced.meta = deepClean(meta);
     applyRemoteUpdate(() => { Object.assign(DB, meta); });
+    if (!premierInstantaneMetaRecu) {
+      premierInstantaneMetaRecu = true;
+      syncAllToCloud(DB).catch(e => console.error('Erreur de synchronisation initiale :', e));
+    }
   }, err => console.error('Erreur d\'écoute Firestore (meta) :', err));
   sync.unsubscribers.push(unsubMeta);
 }
