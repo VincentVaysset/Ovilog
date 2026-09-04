@@ -427,6 +427,27 @@ function migrateData(d) {
   // considérée comme déjà initialisée, pour ne pas déverrouiller le champ
   // rapide chez des utilisateurs déjà en cours de route.
   if (d.campagneInitialisee === undefined) d.campagneInitialisee = !!d.campagneDateDemarrage;
+  // Correctif exceptionnel et unique (04/09/2026) : tant que campagneInitialisee
+  // vaut false, seul le champ rapide "Campagne actuelle" (voir
+  // btn-save-campagne-annee) a pu écrire campagneDateDemarrage -- avant ce
+  // correctif, il la reposait à AUJOURD'HUI à chaque nouvel enregistrement,
+  // pas seulement au tout premier réglage comme prévu, l'écrasant
+  // silencieusement d'une saison à l'autre (ex: "01/09/2026" affiché comme
+  // "date du changement de campagne" dans Bilan de reproduction, alors que
+  // la vraie campagne en cours a démarré le 1er octobre calculé). Le vrai
+  // bouton "Démarrer une nouvelle campagne" pose TOUJOURS campagneDateDemarrage
+  // et campagneInitialisee=true ensemble (voir executerChangementCampagne) :
+  // campagneInitialisee=false + campagneDateDemarrage non nulle ne peut donc
+  // provenir que du champ rapide, jamais d'un vrai changement de campagne --
+  // on l'efface pour retomber sur le 1er octobre calculé (voir
+  // campagneRefDate), sans toucher aux installs déjà verrouillées (vrai
+  // changement de campagne déjà effectué). Flag one-shot : ne rejoue jamais
+  // une 2e fois, y compris sur une base restaurée depuis une sauvegarde
+  // antérieure à ce correctif.
+  if (!d.campagneDateDemarrageCorrigee20260904) {
+    if (!d.campagneInitialisee) d.campagneDateDemarrage = null;
+    d.campagneDateDemarrageCorrigee20260904 = true;
+  }
   if (!d.beliers) d.beliers = [];
   if (!d.luttes) d.luttes = [];
   if (!d.journal) d.journal = [];
@@ -566,6 +587,7 @@ function loadData() {
     mouvementsCollectifs: [],
     registre: { brebis: {}, beliers: {}, agneaux: {} },
     registrePurgeExceptionnelle20260902: true, // nouvelle installation : registre déjà vide, rien à purger
+    campagneDateDemarrageCorrigee20260904: true, // nouvelle installation : campagneDateDemarrage encore vide, rien à corriger
     lecteurBluetooth: null, // { address, name } — lecteur par défaut, voir bandeau/btEnsureConnectionListener
     controleLaitierMigreMl: true // nouvelle installation : jamais de données en litres à convertir
   };
@@ -11403,11 +11425,17 @@ function renderParametres() {
     const val = parseInt(document.getElementById('f-campagne-annee').value, 10);
     if (isNaN(val)) { alert("Saisis une année valide."); return; }
     DB.campagneDebut = val - 1;
-    // Initialise aussi la date de démarrage (même rôle que celle posée par
-    // le vrai bouton "changement de campagne" — voir campagneRefDate) avec
-    // la date du jour de ce réglage, pour rester cohérent tant qu'aucun vrai
-    // changement de campagne n'a encore eu lieu.
-    DB.campagneDateDemarrage = new Date().toISOString().slice(0,10);
+    // Ne pose la date de démarrage qu'au tout premier réglage (jamais posée
+    // encore) — pas à chaque réenregistrement de ce champ rapide, sans quoi
+    // un éleveur qui l'utilise saison après saison pour avancer l'année
+    // (au lieu du vrai bouton "changement de campagne") écraserait
+    // silencieusement cette date à AUJOURD'HUI à chaque fois, la rendant
+    // inutilisable comme référence dans Bilan de reproduction (voir le
+    // correctif exceptionnel 20260904 dans migrateData, qui répare les
+    // installs déjà touchées). Une fois posée, campagneRefDate() retombe de
+    // toute façon proprement sur le 1er octobre calculé de campagneDebut si
+    // elle reste nulle : rien ne casse en ne la posant pas ici.
+    if (!DB.campagneDateDemarrage) DB.campagneDateDemarrage = new Date().toISOString().slice(0,10);
     saveData(DB);
     render('parametres');
   };
