@@ -901,6 +901,45 @@ function suggererOfficielDepuisSieol(numeroSieol) {
   return prefix + reste.padStart(3, '0');
 }
 
+/* Reconstruit l'EID complet Ovilog (15 chiffres) à partir du "Numéro
+   officiel" (11 chiffres : cheptel sur 6 + individuel sur 5) tel qu'exporté
+   par UNOTEC -- voir chantier "Import agnelles (généalogie UNOTEC)". Le
+   préfixe "2500" (pays + bourrage) a été confirmé par l'éleveur sur un
+   exemple réel connu (250016299180133 -> officiel 16299180133). Zero-pad à
+   11 chiffres au cas où un cheptel commençant par 0 perdrait son zéro
+   initial dans un export Excel/PDF (jamais observé dans nos fichiers
+   réels, mais ne coûte rien à couvrir). */
+function eidDepuisNumeroOfficiel(numeroOfficiel) {
+  const c = String(numeroOfficiel || '').replace(/\D/g, '');
+  if (!c) return null;
+  return '2500' + c.padStart(11, '0');
+}
+
+/* Numéro visuel SIEOL/UNOTEC calculé depuis le numéro officiel individuel
+   (5 derniers chiffres du numéro officiel) -- voir chantier "Import
+   agnelles". Vérifié sur un exemple réel fourni par l'éleveur (officiel
+   individuel 62001 -> numéro visuel 601, cohorte 2025) et cohérent avec le
+   format des numéros historiques (2 chiffres minimum après le chiffre de
+   cohorte, ex: 808, 855 dans le Bilan de lactation). Table volontairement
+   limitée au seul préfixe vérifié : une cohorte non couverte ici retourne
+   null plutôt que de deviner. Ne couvre pas non plus un "reste" >= 212
+   (branche haute jamais rencontrée dans nos fichiers réels, valeur alors
+   inconnue -- voir suggererOfficielDepuisSieol pour ce même seuil côté
+   SIEOL -> officiel). TOUJOURS affiché pour validation manuelle avant
+   écriture (voir renderImportAgnelles), jamais utilisé pour retrouver une
+   fiche automatiquement. */
+function numeroVisuelDepuisOfficielIndividuel(numeroOfficiel) {
+  const c = String(numeroOfficiel || '').replace(/\D/g, '');
+  if (c.length < 5) return null;
+  const individuel = c.slice(-5);
+  const prefixe = individuel.slice(0, 2);
+  const reste = parseInt(individuel.slice(2), 10);
+  const table = { '62': '6' };
+  const chiffreCohorte = table[prefixe];
+  if (!chiffreCohorte || isNaN(reste) || reste >= 212) return null;
+  return chiffreCohorte + String(reste).padStart(2, '0');
+}
+
 /* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, TOUS
    statuts et catégories confondus : brebis (actives, vendues ou mortes),
    béliers (actifs, vendus ou morts), agnelles actives, agneaux (bouclés,
@@ -2315,6 +2354,7 @@ btnBack.onclick = () => {
   else if (currentView === 'import-numero-sieol') render('parametres');
   else if (currentView === 'import-bilan-lactation') { bilanCampagneTab = 'lactation'; render('bilan-campagne'); }
   else if (currentView === 'recoupement-sieol') render('bilan-campagne');
+  else if (currentView === 'import-agnelles') render('parametres');
   else if (currentView === 'sync-login') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render(belierDetailOrigin);
@@ -2489,6 +2529,7 @@ function render(view, sheepId) {
     else if (view === 'import-numero-sieol') renderImportNumeroSieol();
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
     else if (view === 'recoupement-sieol') renderRecoupementSieol();
+    else if (view === 'import-agnelles') renderImportAgnelles();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
     else if (view === 'registre') renderRegistre();
@@ -6616,7 +6657,7 @@ function renderAgnelles() {
             <div>
               <div style="font-weight:600;">n°${numeroVisuel(ag.eid)}</div>
               <div style="font-size:12px;color:var(--text-muted);">${ag.origine === 'née' ? 'Née sur l\'exploitation' : 'Achetée'} · triée/entrée le ${formatDateFr(ag.dateEntree)}</div>
-              ${ag.origine === 'achetée' && (ag.pere || ag.mere) ? `<div style="font-size:11px;color:var(--text-muted);">${ag.pere ? 'Père : ' + ag.pere + ' ' : ''}${ag.mere ? '· Mère : ' + ag.mere : ''}</div>` : ''}
+              ${(ag.pere || ag.mere) ? `<div style="font-size:11px;color:var(--text-muted);">${ag.pere ? 'Père : ' + ag.pere + ' ' : ''}${ag.mere ? '· Mère : ' + ag.mere : ''}</div>` : ''}
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;">
@@ -11795,8 +11836,10 @@ async function executerChangementCampagne() {
       id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: ag.eid, mereEid: ag.motherEid || null,
       // Généalogie déclarative (texte libre, cas achat/IA) recopiée depuis
       // l'agnelle — sans quoi elle était perdue à la bascule (voir correctif
-      // Généalogie).
-      pere: ag.pere || '', mere: ag.mere || '',
+      // Généalogie). numeroSieol : idem pour les agnelles importées via le
+      // fichier généalogie UNOTEC (voir renderImportAgnelles), sans quoi le
+      // numéro visuel calculé à l'import était perdu à la bascule.
+      pere: ag.pere || '', mere: ag.mere || '', numeroSieol: ag.numeroSieol || null,
       createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: ag.sanitaire || [],
       mouvements: [{ type: 'Entrée', cause: 'Renouvellement (agnelle devenue brebis)', date: dateRenouvellement }],
       controleLaitier: [], statut: 'active'
@@ -11892,6 +11935,139 @@ function renderConfirmationNouvelleCampagne() {
   };
 }
 
+/* Écran d'import des agnelles gardées de l'année depuis un CSV dérivé du
+   rapport UNOTEC "Généalogies" -- voir chantier "Import agnelles". Le
+   fichier UNOTEC lui-même est un PDF (mise en page fixe, pas d'export
+   CSV/Excel côté UNOTEC) : chaque année, l'éleveur transmet le PDF, qui est
+   converti en CSV à 3 colonnes (numero_officiel;date_naissance;
+   numero_officiel_mere) avant d'être importé ici -- voir commit initial
+   pour le script de conversion. Interactif comme les autres imports SIEOL :
+   rien n'est écrit dans DB.agnelles avant "Confirmer l'import". Chaque
+   agnelle est ajoutée à DB.agnelles (jamais directement à DB.brebis) --
+   elle ne rejoindra le troupeau qu'au prochain "changement de campagne",
+   exactement comme une agnelle gardée via le Chantier de tri normal (voir
+   garderAgnelle). */
+function renderImportAgnelles() {
+  pageTitle.textContent = 'Import agnelles (généalogie UNOTEC)';
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Fichier CSV avec 3 colonnes : numéro officiel (11 chiffres), date de naissance (jj/mm/aaaa), numéro officiel de la mère (facultatif). La 1re ligne peut être un en-tête ou déjà une donnée.</div>
+      <label>Fichier CSV</label>
+      <input type="file" id="import-agnelles-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
+      <div id="import-agnelles-err" class="error-box hidden"></div>
+      <div id="import-agnelles-preview" style="margin-top:14px;"></div>
+      <button class="btn btn-primary hidden" id="btn-confirm-import-agnelles" style="margin-top:14px;">Confirmer l'import</button>
+    </div>
+  `;
+
+  let parsedRows = null; // [{ eid, dateNaissance, numeroVisuelCalcule, motherEid, mereLibre }]
+
+  function processTableRows(tableRows) {
+    let dataRows = tableRows;
+    if (tableRows.length > 0 && !/^\d+$/.test(String((tableRows[0][0] || '')).replace(/\D/g, ''))) {
+      dataRows = tableRows.slice(1);
+    }
+    const rows = [];
+    const problemes = [];
+    let dejaPresentes = 0;
+    let meresLiees = 0;
+    let meresInconnues = 0;
+    dataRows.forEach((parts, i) => {
+      if (!parts || parts.length < 1 || !parts.some(Boolean)) return;
+      const numeroOfficiel = String(parts[0] || '').trim();
+      const dateNaissanceStr = String(parts[1] || '').trim();
+      const numeroOfficielMere = String(parts[2] || '').trim();
+      const ligneLabel = 'Ligne ' + (i + 2);
+      if (!numeroOfficiel) { problemes.push(ligneLabel + ' : numéro officiel manquant, ignorée.'); return; }
+      const eid = eidDepuisNumeroOfficiel(numeroOfficiel);
+      const dateNaissance = parseDateFrSlash(dateNaissanceStr);
+      if (!dateNaissance) { problemes.push(ligneLabel + ' (n°' + numeroVisuel(eid) + ') : date de naissance invalide ou manquante, ignorée.'); return; }
+      const conflit = verifierEidUnique(eid);
+      if (conflit) { problemes.push(ligneLabel + ' (n°' + numeroVisuel(eid) + ') : déjà présente dans Ovilog (' + conflit.statutLabel + '), ignorée.'); dejaPresentes++; return; }
+      const numeroVisuelCalcule = numeroVisuelDepuisOfficielIndividuel(numeroOfficiel);
+      let motherEid = null, mereLibre = '';
+      if (numeroOfficielMere) {
+        const eidMere = eidDepuisNumeroOfficiel(numeroOfficielMere);
+        const mere = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eidMere));
+        if (mere) { motherEid = mere.eid; meresLiees++; }
+        else { mereLibre = 'n°' + numeroVisuel(eidMere) + ' (généalogie UNOTEC, hors Ovilog)'; meresInconnues++; }
+      }
+      rows.push({ eid, dateNaissance, dateNaissanceLabel: dateNaissanceStr, numeroVisuelCalcule, motherEid, mereLibre });
+    });
+    parsedRows = rows;
+    const err = document.getElementById('import-agnelles-err');
+    err.classList.add('hidden');
+    const preview = document.getElementById('import-agnelles-preview');
+    const lignesHtml = rows.map(r => `
+      <div class="history-item">
+        <div class="content">
+          n°${numeroVisuel(r.eid)} — né(e) le ${formatDateFr(r.dateNaissance)}
+          <div style="font-size:12px;color:var(--text-muted);">Numéro visuel SIEOL/UNOTEC calculé : ${r.numeroVisuelCalcule ? r.numeroVisuelCalcule : '(non calculable, à compléter manuellement)'}${r.motherEid ? ' — Mère : n°' + numeroVisuel(r.motherEid) + ' (fiche trouvée)' : r.mereLibre ? ' — Mère : ' + r.mereLibre : ''}</div>
+        </div>
+      </div>
+    `).join('');
+    preview.innerHTML = `
+      <div class="grid2">
+        <div class="stat-card sc-green">
+          <div class="stat-card-label">Agnelles à créer</div>
+          <div class="stat-card-value" style="font-size:20px;">${rows.length}</div>
+        </div>
+        <div class="stat-card sc-amber">
+          <div class="stat-card-label">Ignorées</div>
+          <div class="stat-card-value" style="font-size:20px;">${problemes.length}</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Mères retrouvées dans Ovilog : ${meresLiees} — mères hors Ovilog (généalogie en texte libre) : ${meresInconnues}${dejaPresentes > 0 ? ' — déjà présentes (ignorées) : ' + dejaPresentes : ''}.</div>
+      ${problemes.length > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;white-space:pre-line;">${problemes.slice(0, 15).join('\n')}${problemes.length > 15 ? '\n... (' + (problemes.length - 15) + ' de plus)' : ''}</div>` : ''}
+      <div style="margin-top:12px;max-height:340px;overflow-y:auto;">${lignesHtml}</div>
+    `;
+    document.getElementById('btn-confirm-import-agnelles').classList.toggle('hidden', rows.length === 0);
+  }
+
+  document.getElementById('import-agnelles-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-agnelles-err');
+    err.classList.add('hidden');
+    document.getElementById('import-agnelles-preview').innerHTML = '';
+    document.getElementById('btn-confirm-import-agnelles').classList.add('hidden');
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        processTableRows(decodeCsvBuffer(reader.result));
+      } catch (ex) {
+        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import-agnelles').onclick = () => {
+    if (!parsedRows || parsedRows.length === 0) return;
+    const dateEntree = new Date().toISOString().slice(0,10);
+    parsedRows.forEach(r => {
+      DB.agnelles.push({
+        id: Date.now().toString() + Math.random().toString(36).slice(2,6),
+        eid: r.eid, origine: 'née', motherEid: r.motherEid, mere: r.mereLibre, pere: '',
+        numeroSieol: r.numeroVisuelCalcule || null,
+        dateEntree, sanitaire: [],
+        mouvements: [
+          { type: 'Naissance', cause: null, date: r.dateNaissance },
+          { type: 'Entrée', cause: 'Import (fichier généalogie UNOTEC)', date: dateEntree }
+        ]
+      });
+    });
+    saveData(DB);
+    alert(parsedRows.length + ' agnelle(s) ajoutée(s) à l\'inventaire.');
+    render('parametres');
+  };
+}
+
 function renderParametres() {
   pageTitle.textContent = 'Paramètres';
   const syncState = window.OvilogSync ? window.OvilogSync.getState() : { loggedIn: false };
@@ -11961,6 +12137,15 @@ function renderParametres() {
     </div>
 
     <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+        ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
+        <div style="font-size:14px;font-weight:600;">Import agnelles (généalogie UNOTEC)</div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Importe un fichier CSV dérivé du rapport UNOTEC "Généalogies" (numéro officiel, date de naissance, numéro officiel de la mère) pour ajouter en une fois les agnelles gardées de l'année à l'inventaire.</div>
+      <button class="btn btn-secondary" id="btn-goto-import-agnelles">Importer le fichier</button>
+    </div>
+
+    <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Diagnostic Bluetooth (bâton Allflex)</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID.</div>
       <button class="btn btn-secondary" id="btn-goto-diag-bluetooth">Ouvrir le diagnostic</button>
@@ -11979,6 +12164,7 @@ function renderParametres() {
 
   document.getElementById('btn-goto-import').onclick = () => render('import-echo');
   document.getElementById('btn-goto-import-numero-sieol').onclick = () => render('import-numero-sieol');
+  document.getElementById('btn-goto-import-agnelles').onclick = () => render('import-agnelles');
   document.getElementById('btn-goto-diag-bluetooth').onclick = () => render('diag-bluetooth');
 
   document.getElementById('btn-sync-action').onclick = () => {
