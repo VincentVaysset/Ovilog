@@ -470,6 +470,18 @@ function migrateData(d) {
     });
   });
   if (!d.prelevementsQualite) d.prelevementsQualite = [];
+  // Bilan de lactation SIEOL/UNOTEC (voir importBilanLactation) : une entrée
+  // par brebis ET par campagne -- { eid, campagne, dateMiseBas, lactTotale,
+  // dureeTraite, classeParQuart }. Référencée par EID (voir
+  // brebisSansHistorique ci-dessus) plutôt qu'embarquée sur sheep.* comme
+  // controleLaitier : demande explicite (collection à part, pour permettre
+  // une vue d'ensemble troupeau par campagne sans parcourir DB.brebis).
+  if (!d.bilanLactation) d.bilanLactation = [];
+  // Lignes SIEOL "sans mise-bas" (ano_repro rempli, date_mise_bas vide)
+  // résolues à une brebis connue -- jamais des lactations, seulement de quoi
+  // alimenter le recoupement "Vides définitives SIEOL vs Ovilog" (voir
+  // renderRecoupementSieol) : { eid, campagne }.
+  if (!d.sieolSansMiseBas) d.sieolSansMiseBas = [];
   // Liste en série (onglet du Chantier de tri) : tableau {eid, espece} de
   // travail, persisté pour survivre à une fermeture de l'appli, mais jamais
   // relié aux fiches brebis/béliers/agnelles (espece n'est qu'une étiquette
@@ -565,6 +577,8 @@ function loadData() {
     laitTank: [],
     prelevementsQualite: [],
     penalitesBacterio: [],
+    bilanLactation: [],
+    sieolSansMiseBas: [],
     listeSerie: [],
     parametresPrixLait: [
       { campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null },
@@ -860,6 +874,33 @@ function eidAffichageCourt(eid) {
   return c.length > 11 ? c.slice(-11) : c;
 }
 
+/* Suggestion (jamais une écriture automatique) d'un numéro officiel Ovilog
+   à 5 chiffres à partir d'un numéro visuel SIEOL/UNOTEC -- règle de cohorte
+   établie manuellement par l'éleveur (voir chantier "Bilan de lactation
+   SIEOL"), avec des bascules connues sur les cohortes 9 et 0 au-delà de 212.
+   Ne sert QUE de secours quand aucune fiche ne porte déjà ce numeroSieol
+   exact (voir résolution dans importBilanLactation) : la règle comporte des
+   exceptions non prévisibles (numéros hors cohorte), donc TOUJOURS proposée
+   à validation manuelle, jamais court-circuitée. Retourne null si le numéro
+   visuel est vide ou ne commence par aucun chiffre reconnu. */
+function suggererOfficielDepuisSieol(numeroSieol) {
+  const v = String(numeroSieol || '').trim();
+  if (!v) return null;
+  if (v.length === 5) return v.startsWith('55') ? '51' + v.slice(2) : v;
+  const d0 = v.charAt(0);
+  const reste = v.slice(1);
+  const resteNum = parseInt(reste || '0', 10);
+  const prefixes = {
+    '8': '80',
+    '9': resteNum >= 212 ? '91' : '90',
+    '0': resteNum >= 212 ? '03' : '02',
+    '1': '11', '2': '21', '3': '31', '4': '41', '5': '51'
+  };
+  const prefix = prefixes[d0];
+  if (!prefix) return null;
+  return prefix + reste.padStart(3, '0');
+}
+
 /* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, TOUS
    statuts et catégories confondus : brebis (actives, vendues ou mortes),
    béliers (actifs, vendus ou morts), agnelles actives, agneaux (bouclés,
@@ -965,7 +1006,11 @@ function brebisSansHistorique(sheep) {
     && (sheep.agnelages || []).length === 0
     && (sheep.sanitaire || []).length === 0
     && (sheep.controleLaitier || []).length === 0
-    && (sheep.mouvements || []).every(m => m.type === 'Entrée');
+    && (sheep.mouvements || []).every(m => m.type === 'Entrée')
+    // DB.bilanLactation référence les brebis par EID (voir chantier "Bilan de
+    // lactation SIEOL") : corriger l'EID après un import de lactation
+    // orphelinerait silencieusement ces entrées.
+    && !(DB.bilanLactation || []).some(l => cleanEid(l.eid) === cleanEid(sheep.eid));
 }
 function belierSansHistorique(belier) {
   return (belier.sanitaire || []).length === 0
@@ -1015,6 +1060,35 @@ function openCorrigerEidSheet(animal, onSaved) {
     if (!confirm('Remplacer l\'EID n°' + numeroVisuel(animal.eid) + ' par le n°' + numeroVisuel(nouvel) + ' ?')) return;
     animal.eid = nouvel;
     if (!saveData(DB)) return; // échec d'enregistrement déjà signalé par saveData (alerte bloquante) -- on reste sur la fiche, rien n'est perdu
+    document.body.removeChild(overlay);
+    onSaved();
+  };
+}
+
+/* Fiche "Numéro visuel SIEOL/UNOTEC" (même gabarit sheet-overlay) -- champ
+   texte libre, sans contrainte d'unicité (voir chantier "Bilan de
+   lactation SIEOL") : contrairement à l'EID, aucune vérification de
+   conflit ni confirm() ici, delibérément simple. Un champ vidé retire le
+   numéro (sheep.numeroSieol = null), jamais une chaîne vide stockée. */
+function openCorrigerNumeroSieolSheet(sheep, onSaved) {
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.innerHTML = `
+    <div class="sheet-card">
+      <button type="button" class="sheet-close-btn" id="cns-close">✕</button>
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px;">Numéro visuel SIEOL/UNOTEC</div>
+      <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">Numéro de boucle utilisé par le rapport SIEOL/UNOTEC, distinct du numéro officiel Ovilog (n°${numeroVisuel(sheep.eid)}).</div>
+      <label>Numéro visuel SIEOL</label>
+      <input type="text" id="cns-valeur" value="${sheep.numeroSieol || ''}" placeholder="ex: 540, 9213, 033">
+      <button type="button" class="btn btn-primary" id="cns-save" style="margin-top:12px;">Enregistrer</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#cns-close').onclick = () => document.body.removeChild(overlay);
+  overlay.querySelector('#cns-save').onclick = () => {
+    const valeur = overlay.querySelector('#cns-valeur').value.trim();
+    sheep.numeroSieol = valeur || null;
+    if (!saveData(DB)) return;
     document.body.removeChild(overlay);
     onSaved();
   };
@@ -1666,6 +1740,15 @@ function estVideDefinitiveCampagne(sheep) {
   const list = Array.isArray(sheep.videesDefinitives) ? sheep.videesDefinitives : [];
   return list.some(v => v && v.campagne === DB.campagneDebut);
 }
+/* Variante paramétrée par campagne explicite (voir renderRecoupementSieol) :
+   sheep.videesDefinitives n'est jamais remis à zéro d'une campagne à
+   l'autre, donc l'historique complet reste consultable pour une campagne
+   CLOSE, pas seulement la campagne en cours comme estVideDefinitiveCampagne
+   ci-dessus (qui reste inchangée, toujours basée sur DB.campagneDebut). */
+function estVideDefinitiveCampagneN(sheep, campagne) {
+  const list = Array.isArray(sheep.videesDefinitives) ? sheep.videesDefinitives : [];
+  return list.some(v => v && v.campagne === campagne);
+}
 function marquerVideDefinitive(sheep) {
   if (estVideDefinitiveCampagne(sheep)) return; // idempotent : pas de doublon si déjà marquée cette campagne
   sheep.videesDefinitives = sheep.videesDefinitives || [];
@@ -1675,6 +1758,51 @@ function annulerVideDefinitive(sheep) {
   if (!Array.isArray(sheep.videesDefinitives)) return;
   const idx = sheep.videesDefinitives.findIndex(v => v && v.campagne === DB.campagneDebut);
   if (idx !== -1) sheep.videesDefinitives.splice(idx, 1);
+}
+
+/* ---------- Bilan de lactation SIEOL/UNOTEC (voir renderImportBilanLactation) ---------- */
+// Décimales à virgule (format CSV français) -> Number, null si vide/invalide.
+function parseDecimalVirgule(str) {
+  const s = String(str || '').trim().replace(',', '.');
+  if (!s) return null;
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+// Date JJ/MM/AAAA (format CSV) -> ISO AAAA-MM-JJ (format de stockage interne
+// partout ailleurs dans l'appli, voir formatDateFr) ; null si vide/invalide.
+function parseDateFrSlash(str) {
+  const s = String(str || '').trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+}
+/* Écrit ou remplace (jamais de doublon) l'entrée DB.bilanLactation d'une
+   brebis pour une campagne donnée -- voir résolution dans
+   renderImportBilanLactation. */
+function upsertBilanLactation(eid, campagne, champs) {
+  const idx = DB.bilanLactation.findIndex(l => cleanEid(l.eid) === cleanEid(eid) && l.campagne === campagne);
+  if (idx !== -1) DB.bilanLactation[idx] = { eid, campagne, ...champs };
+  else DB.bilanLactation.push({ eid, campagne, ...champs });
+}
+/* Écrit une ligne SIEOL "sans mise-bas" résolue à une brebis, pour le
+   recoupement (voir renderRecoupementSieol) -- jamais de doublon sur un
+   ré-import (même brebis, même campagne). */
+function upsertSieolSansMiseBas(eid, campagne) {
+  const existe = DB.sieolSansMiseBas.some(l => cleanEid(l.eid) === cleanEid(eid) && l.campagne === campagne);
+  if (!existe) DB.sieolSansMiseBas.push({ eid, campagne });
+}
+/* Campagnes proposées au sélecteur (import et vue d'ensemble) : les 6
+   dernières campagnes autour de la campagne en cours, complétées par toute
+   campagne plus ancienne déjà présente dans les données (import agressif
+   d'un vieux bilan, cas rare mais à ne pas bloquer). Toujours triées de la
+   plus récente à la plus ancienne. */
+function campagnesDisponiblesSieol() {
+  const base = DB.campagneDebut !== null && DB.campagneDebut !== undefined ? DB.campagneDebut : campagneAnneeDebutPourDate(new Date().toISOString().slice(0,10));
+  const set = new Set();
+  for (let i = 0; i <= 5; i++) set.add(base - i);
+  DB.bilanLactation.forEach(l => set.add(l.campagne));
+  DB.sieolSansMiseBas.forEach(l => set.add(l.campagne));
+  return Array.from(set).sort((a, b) => b - a);
 }
 
 /* Index (dans sheep.agnelages, jamais remis à zéro d'une campagne à l'autre
@@ -2071,6 +2199,7 @@ let editBelierContext = null; // { kind, idx }
 let currentLotId = null;
 let inventaireTab = 'brebis';
 let bilanCampagneTab = 'incoherences';
+let bilanLactationCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan de lactation, voir bilanLactationHtml
 let inventaireActifsTab = 'brebis'; // 'brebis' | 'agnelles' | 'beliers' | 'agneaux' — voir renderInventaireActifs
 let declarationAnneeSelectionnee = null; // année civile choisie sur l'écran Déclaration annuelle (voir renderDeclarationAnnuelle), initialisée à l'année en cours au premier rendu
 
@@ -2183,6 +2312,9 @@ btnBack.onclick = () => {
   else if (currentView === 'traitement-collectif') render('sanitaire');
   else if (currentView === 'traitements-collectifs') render('sanitaire');
   else if (currentView === 'import-echo') render('parametres');
+  else if (currentView === 'import-numero-sieol') render('parametres');
+  else if (currentView === 'import-bilan-lactation') { bilanCampagneTab = 'lactation'; render('bilan-campagne'); }
+  else if (currentView === 'recoupement-sieol') render('bilan-campagne');
   else if (currentView === 'sync-login') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render(belierDetailOrigin);
@@ -2354,6 +2486,9 @@ function render(view, sheepId) {
     else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
     else if (view === 'sanitaire') renderSanitaire();
     else if (view === 'import-echo') renderImportEcho();
+    else if (view === 'import-numero-sieol') renderImportNumeroSieol();
+    else if (view === 'import-bilan-lactation') renderImportBilanLactation();
+    else if (view === 'recoupement-sieol') renderRecoupementSieol();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
     else if (view === 'registre') renderRegistre();
@@ -2706,13 +2841,16 @@ function renderBilanCampagne() {
 
   const tabs = [
     { key: 'incoherences', label: 'Incohérences fin de campagne' },
-    { key: 'reproduction', label: 'Bilan de reproduction' }
+    { key: 'reproduction', label: 'Bilan de reproduction' },
+    { key: 'lactation', label: 'Bilan de lactation' }
   ];
   const tabBarHtml = `<div class="tab-bar">${tabs.map(t =>
     `<button type="button" class="tab-btn${bilanCampagneTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
   ).join('')}</div>`;
 
-  const bodyHtml = bilanCampagneTab === 'incoherences' ? bilanIncoherencesHtml(actives) : bilanReproductionHtml(actives);
+  const bodyHtml = bilanCampagneTab === 'incoherences' ? bilanIncoherencesHtml(actives)
+    : bilanCampagneTab === 'reproduction' ? bilanReproductionHtml(actives)
+    : bilanLactationHtml();
 
   app.innerHTML = tabBarHtml + bodyHtml;
 
@@ -2721,6 +2859,141 @@ function renderBilanCampagne() {
   });
   document.querySelectorAll('.bilan-eid-link').forEach(el => {
     el.onclick = () => { detailOrigin = 'bilan-campagne'; previousDetailId = null; render('detail', el.dataset.id); };
+  });
+  if (bilanCampagneTab === 'lactation') {
+    const select = document.getElementById('bilan-lactation-campagne-select');
+    if (select) select.onchange = () => { bilanLactationCampagneAffichee = parseInt(select.value, 10); render('bilan-campagne'); };
+    const btnImporter = document.getElementById('btn-importer-bilan-lactation');
+    if (btnImporter) btnImporter.onclick = () => render('import-bilan-lactation');
+    const btnRecoupement = document.getElementById('btn-voir-recoupement-sieol');
+    if (btnRecoupement) btnRecoupement.onclick = () => render('recoupement-sieol');
+  }
+}
+
+/* Sous-onglet "Bilan de lactation" de Bilan de campagne : vue d'ensemble
+   troupeau (moyennes, répartition par classe) pour une campagne choisie
+   explicitement (jamais présumée = campagne en cours, voir
+   renderImportBilanLactation pour la même exigence à l'import) + accès à
+   l'import et au recoupement des vides définitives. */
+function bilanLactationHtml() {
+  const campagnes = campagnesDisponiblesSieol();
+  if (bilanLactationCampagneAffichee === null || !campagnes.includes(bilanLactationCampagneAffichee)) {
+    // Par défaut, la campagne qui vient de se clôturer (campagneDebut - 1) :
+    // c'est systématiquement celle que porte un bilan SIEOL fraîchement reçu.
+    bilanLactationCampagneAffichee = campagnes.length > 1 ? campagnes[1] : campagnes[0];
+  }
+  const campagne = bilanLactationCampagneAffichee;
+  const entrees = DB.bilanLactation.filter(l => l.campagne === campagne);
+
+  const moyenne = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const lactTotales = entrees.map(e => e.lactTotale).filter(v => v !== null && v !== undefined);
+  const dureesTraite = entrees.map(e => e.dureeTraite).filter(v => v !== null && v !== undefined);
+  const moyenneLact = moyenne(lactTotales);
+  const moyenneDuree = moyenne(dureesTraite);
+  const repartitionClasse = {};
+  entrees.forEach(e => {
+    if (e.classeParQuart === null || e.classeParQuart === undefined) return;
+    repartitionClasse[e.classeParQuart] = (repartitionClasse[e.classeParQuart] || 0) + 1;
+  });
+  const classesTriees = Object.keys(repartitionClasse).sort((a, b) => Number(a) - Number(b));
+
+  return `
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Bilan de lactation SIEOL/UNOTEC, campagne sélectionnée explicitement — jamais présumée être la campagne en cours d'Ovilog (voir import).</div>
+
+    <div class="card" style="margin-bottom:10px;">
+      <label>Campagne consultée</label>
+      <select id="bilan-lactation-campagne-select">
+        ${campagnes.map(c => `<option value="${c}" ${c === campagne ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}
+      </select>
+      <div class="row" style="margin-top:12px;">
+        <button type="button" class="btn btn-secondary" id="btn-importer-bilan-lactation" style="flex:1;">Importer un bilan de lactation</button>
+        <button type="button" class="btn btn-secondary" id="btn-voir-recoupement-sieol" style="flex:1;">Recoupement vides définitives</button>
+      </div>
+    </div>
+
+    ${entrees.length === 0 ? `<div class="empty">Aucune donnée de lactation importée pour la campagne ${campagne + 1}.</div>` : `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Vue d'ensemble troupeau — campagne ${campagne + 1}</div>
+      <div class="grid2">
+        <div><div style="font-size:12px;color:var(--text-muted);">Brebis avec lactation</div><div style="font-size:20px;font-weight:600;">${entrees.length}</div></div>
+        <div><div style="font-size:12px;color:var(--text-muted);">Lactation moyenne</div><div style="font-size:20px;font-weight:600;">${moyenneLact !== null ? fmtDecimal(moyenneLact, 1) + ' L' : '—'}</div></div>
+        <div><div style="font-size:12px;color:var(--text-muted);">Durée de traite moyenne</div><div style="font-size:20px;font-weight:600;">${moyenneDuree !== null ? fmtDecimal(moyenneDuree, 0) + ' j' : '—'}</div></div>
+      </div>
+      ${classesTriees.length > 0 ? `
+      <div style="font-size:12px;color:var(--text-muted);margin-top:14px;margin-bottom:6px;">Répartition par classe par quart</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        ${classesTriees.map(c => `<span class="badge badge-muted">Classe ${c} : ${repartitionClasse[c]}</span>`).join('')}
+      </div>
+      ` : ''}
+    </div>
+    `}
+  `;
+}
+
+/* Recoupement "Vides définitives SIEOL vs Ovilog" -- voir chantier "Bilan de
+   lactation SIEOL". Compare, pour UNE campagne explicitement choisie
+   (jamais la campagne en cours) :
+   - les vides définitives Ovilog de cette campagne (estVideDefinitiveCampagneN,
+     sur TOUTES les brebis, actives ou non -- une brebis vendue/morte depuis
+     reste pertinente pour une campagne passée) ;
+   - les lignes SIEOL "sans mise-bas" résolues de cette même campagne
+     (DB.sieolSansMiseBas, voir renderImportBilanLactation).
+   Aucune correction automatique : chaque écart renvoie vers la fiche
+   brebis concernée pour trancher à la main. */
+function renderRecoupementSieol() {
+  pageTitle.textContent = 'Recoupement vides définitives SIEOL';
+  const campagnesOptions = campagnesDisponiblesSieol();
+  if (bilanLactationCampagneAffichee === null || !campagnesOptions.includes(bilanLactationCampagneAffichee)) {
+    bilanLactationCampagneAffichee = campagnesOptions.length > 1 ? campagnesOptions[1] : campagnesOptions[0];
+  }
+  const campagne = bilanLactationCampagneAffichee;
+
+  const sieolEids = new Set((DB.sieolSansMiseBas || []).filter(l => l.campagne === campagne).map(l => cleanEid(l.eid)));
+  const videsOvilog = DB.brebis.filter(s => estVideDefinitiveCampagneN(s, campagne));
+  const videsOvilogEids = new Set(videsOvilog.map(s => cleanEid(s.eid)));
+
+  const concordance = videsOvilog.filter(s => sieolEids.has(cleanEid(s.eid)));
+  const ecart1 = videsOvilog.filter(s => !sieolEids.has(cleanEid(s.eid)));
+  const ecart2 = Array.from(sieolEids).filter(eid => !videsOvilogEids.has(eid)).map(eid => DB.brebis.find(s => cleanEid(s.eid) === eid)).filter(Boolean);
+
+  app.innerHTML = `
+    <div class="card">
+      <label>Campagne</label>
+      <select id="recoupement-campagne-select">
+        ${campagnesOptions.map(c => `<option value="${c}" ${c === campagne ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="card" style="margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:14px;font-weight:600;">Concordance</span>
+        <span class="badge badge-green">${concordance.length}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Vide définitive dans les deux systèmes, campagne ${campagne + 1}.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-size:14px;font-weight:600;">Écart type 1</span>
+        <span class="badge badge-amber">${ecart1.length}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Vide définitive Ovilog (campagne ${campagne + 1}), absente de la liste "sans mise-bas" SIEOL de cette même campagne.</div>
+      ${ecart1.length > 0 ? bilanBrebisRowsHtml(ecart1) : '<div style="font-size:13px;color:var(--text-muted);">Aucun écart.</div>'}
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-size:14px;font-weight:600;">Écart type 2</span>
+        <span class="badge badge-amber">${ecart2.length}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">"Sans mise-bas" côté SIEOL (campagne ${campagne + 1}), mais pas marquée vide définitive dans Ovilog pour cette même campagne.</div>
+      ${ecart2.length > 0 ? bilanBrebisRowsHtml(ecart2) : '<div style="font-size:13px;color:var(--text-muted);">Aucun écart.</div>'}
+    </div>
+  `;
+
+  document.getElementById('recoupement-campagne-select').onchange = (e) => { bilanLactationCampagneAffichee = parseInt(e.target.value, 10); render('recoupement-sieol'); };
+  document.querySelectorAll('.bilan-eid-link').forEach(el => {
+    el.onclick = () => { detailOrigin = 'recoupement-sieol'; previousDetailId = null; render('detail', el.dataset.id); };
   });
 }
 
@@ -3633,10 +3906,18 @@ function renderDetail(id) {
   // Historique combiné : agnelages ET contrôles laitiers des campagnes
   // précédentes regroupés ENSEMBLE par campagne (pas une sous-liste par
   // catégorie) — voir historiqueParCampagneHtml.
+  // Bilan de lactation SIEOL/UNOTEC (voir importBilanLactation) : toujours
+  // une campagne déjà close, jamais la campagne en cours (contrairement au
+  // contrôle laitier ci-dessus) -- va donc directement dans l'historique
+  // combiné par campagne plutôt qu'une zone haute éditable séparée.
+  const bilanLactationSheep = (DB.bilanLactation || [])
+    .filter(l => cleanEid(l.eid) === cleanEid(sheep.eid))
+    .map(l => ({ ...l, date: l.dateMiseBas }));
   const historiqueCampagnesHtml = historiqueParCampagneHtml(
     [
       { items: agnelagesIndexes, renderItem: a => `<div class="history-item">${iconCircle(ICON_SHEEP, 'amber', 'sm')}${agnelageItemHtml(a, false)}</div>` },
-      { items: controleIndexes, renderItem: c => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}${controleItemHtml(c)}</div>` }
+      { items: controleIndexes, renderItem: c => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}${controleItemHtml(c)}</div>` },
+      { items: bilanLactationSheep, renderItem: l => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}<div class="content"><div>Bilan de lactation — ${fmtDecimal(l.lactTotale, 1)} L, ${l.dureeTraite != null ? l.dureeTraite + ' j de traite' : 'durée inconnue'}${l.classeParQuart != null ? ', classe ' + l.classeParQuart : ''}</div><div class="date">Mise bas le ${formatDateFr(l.dateMiseBas)}</div></div></div>` }
     ],
     'Aucun historique des campagnes précédentes.'
   );
@@ -3763,6 +4044,13 @@ function renderDetail(id) {
         <div><div style="font-size:12px;color:var(--text-muted);">Numéro officiel</div><div style="font-weight:600;">n°${numeroVisuel(sheep.eid)}</div></div>
       </div>
       ${sheep.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(sheep.dateEntree)}</strong></div>` : ''}
+      <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div>
+          <div style="font-size:12px;color:var(--text-muted);">Numéro visuel SIEOL/UNOTEC</div>
+          <div style="font-weight:600;">${sheep.numeroSieol ? sheep.numeroSieol : '<span style="color:var(--text-muted);font-weight:400;">Non renseigné</span>'}</div>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btn-modifier-numero-sieol" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">${sheep.numeroSieol ? 'Modifier' : 'Ajouter'}</button>
+      </div>
       ${brebisSansHistorique(sheep)
         ? `<button type="button" class="btn btn-secondary" id="btn-corriger-eid" style="margin-top:10px;">Corriger l'EID</button>`
         : `<div style="margin-top:10px;font-size:11.5px;color:var(--text-muted);">Modification de l'EID impossible : cet animal a déjà un historique enregistré.</div>`}
@@ -3845,6 +4133,7 @@ function renderDetail(id) {
   document.getElementById('btn-add-controle').onclick = () => { editContext = null; render('add-controle', sheep.id); };
   const btnCorrigerEid = document.getElementById('btn-corriger-eid');
   if (btnCorrigerEid) btnCorrigerEid.onclick = () => openCorrigerEidSheet(sheep, () => render('detail', sheep.id));
+  document.getElementById('btn-modifier-numero-sieol').onclick = () => openCorrigerNumeroSieolSheet(sheep, () => render('detail', sheep.id));
   document.querySelectorAll('.btn-lamb-vendu').forEach(btn => {
     btn.onclick = () => {
       const lamb = allLiveLambs[parseInt(btn.dataset.i, 10)];
@@ -11147,6 +11436,267 @@ function renderImportEcho() {
   };
 }
 
+/* Import ponctuel (mais réutilisable à volonté, voir renderParametres) du
+   fichier de correspondance numéro visuel SIEOL, vérifié manuellement par
+   l'éleveur : numero_visuel_sieol;numero_officiel_ovilog;eid_complet.
+   Résolution par EID complet (le plus fiable, colonne 3) -- le numéro
+   officiel Ovilog (colonne 2) n'est là que pour référence humaine, jamais
+   utilisé pour la résolution (voir chantier "Bilan de lactation SIEOL" :
+   deux brebis différentes peuvent partager le même numéro officiel court).
+   Une fiche non trouvée ne bloque jamais le reste de l'import. */
+function renderImportNumeroSieol() {
+  pageTitle.textContent = 'Correspondance numéro visuel SIEOL';
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Fichier CSV avec 3 colonnes : numéro visuel SIEOL, numéro officiel Ovilog, EID complet. La 1re ligne peut être un en-tête ou déjà une donnée. Traite le numéro visuel comme du texte (les zéros initiaux sont significatifs).</div>
+      <label>Fichier CSV</label>
+      <input type="file" id="import-sieol-file" accept=".csv">
+      <div id="import-sieol-err" class="error-box hidden"></div>
+      <div id="import-sieol-preview" style="margin-top:14px;"></div>
+      <button class="btn btn-primary hidden" id="btn-confirm-import-sieol" style="margin-top:14px;">Confirmer l'import</button>
+    </div>
+  `;
+
+  let parsedRows = null;
+
+  function processTableRows(tableRows) {
+    // Ignore la 1re ligne seulement si elle ressemble à un en-tête (EID en
+    // colonne 3 pas assez long pour être un EID réel).
+    let dataRows = tableRows;
+    if (tableRows.length > 0 && !/^\d{11,}$/.test(cleanEid(String((tableRows[0][2] || ''))))) {
+      dataRows = tableRows.slice(1);
+    }
+    const rows = [];
+    const nonTrouvees = [];
+    dataRows.forEach((parts, i) => {
+      if (!parts || parts.length < 3 || (!parts[0] && !parts[1] && !parts[2])) return;
+      const numeroSieol = String(parts[0] || '').trim();
+      const eidComplet = String(parts[2] || '').trim();
+      if (!numeroSieol || cleanEid(eidComplet).length < 11) { nonTrouvees.push('Ligne ' + (i + 2) + ' : ligne incomplète (numéro visuel ou EID manquant)'); return; }
+      const sheep = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eidComplet));
+      if (!sheep) { nonTrouvees.push('Ligne ' + (i + 2) + ' : aucune fiche pour l\'EID ' + eidComplet + ' (numéro visuel ' + numeroSieol + ')'); return; }
+      rows.push({ sheep, numeroSieol });
+    });
+    parsedRows = rows;
+    const err = document.getElementById('import-sieol-err');
+    err.classList.add('hidden');
+    const preview = document.getElementById('import-sieol-preview');
+    preview.innerHTML = `
+      <div class="grid2">
+        <div class="stat-card sc-green">
+          <div class="stat-card-label">Fiches à peupler</div>
+          <div class="stat-card-value" style="font-size:20px;">${rows.length}</div>
+        </div>
+        <div class="stat-card sc-amber">
+          <div class="stat-card-label">Non trouvées</div>
+          <div class="stat-card-value" style="font-size:20px;">${nonTrouvees.length}</div>
+        </div>
+      </div>
+      ${nonTrouvees.length > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;white-space:pre-line;">${nonTrouvees.slice(0, 15).join('\n')}${nonTrouvees.length > 15 ? '\n... (' + (nonTrouvees.length - 15) + ' de plus)' : ''}</div>` : ''}
+    `;
+    document.getElementById('btn-confirm-import-sieol').classList.toggle('hidden', rows.length === 0);
+  }
+
+  document.getElementById('import-sieol-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-sieol-err');
+    err.classList.add('hidden');
+    document.getElementById('import-sieol-preview').innerHTML = '';
+    document.getElementById('btn-confirm-import-sieol').classList.add('hidden');
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        processTableRows(decodeCsvBuffer(reader.result));
+      } catch (ex) {
+        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import-sieol').onclick = () => {
+    if (!parsedRows || parsedRows.length === 0) return;
+    parsedRows.forEach(row => { row.sheep.numeroSieol = row.numeroSieol; });
+    saveData(DB);
+    alert(parsedRows.length + ' fiche(s) mise(s) à jour avec leur numéro visuel SIEOL.');
+    render('parametres');
+  };
+}
+
+/* Résout une ligne du bilan de lactation à une brebis, dans l'ordre strict
+   demandé -- voir chantier "Bilan de lactation SIEOL" :
+   1. numeroSieol exact déjà stocké sur une fiche -> résolution directe,
+      fiable même en cas de collision de numéro officiel Ovilog (deux
+      brebis peuvent partager le même numéro officiel court, jamais le même
+      numeroSieol).
+   2. Sinon, suggestion de cohorte (voir suggererOfficielDepuisSieol) :
+      TOUTES les fiches dont le numéro officiel calculé correspond ET qui
+      n'ont pas déjà un numeroSieol différent (donc déjà résolues ailleurs)
+      sont proposées à validation manuelle -- jamais une seule par défaut,
+      exactement pour le cas où 2 brebis réelles partagent ce numéro
+      officiel (ex: 540/55040 -> 51040 chez cet éleveur).
+   3. Aucun candidat -> non résolue. */
+function resoudreLigneSieol(numeroVisuelSieol) {
+  const direct = DB.brebis.find(s => s.numeroSieol && s.numeroSieol === numeroVisuelSieol);
+  if (direct) return { type: 'direct', sheep: direct, candidats: [] };
+  const suggestion = suggererOfficielDepuisSieol(numeroVisuelSieol);
+  const candidats = suggestion ? DB.brebis.filter(s => !s.numeroSieol && numeroVisuel(s.eid) === suggestion) : [];
+  return { type: candidats.length > 0 ? 'candidats' : 'aucune', sheep: null, candidats };
+}
+
+/* Écran d'import du Bilan de lactation SIEOL/UNOTEC -- voir résolution dans
+   resoudreLigneSieol. Interactif (validation manuelle des candidats de
+   secours) : reste sur cet écran tant que l'éleveur n'a pas cliqué
+   "Confirmer l'import", qui seul écrit dans DB.bilanLactation/
+   DB.sieolSansMiseBas/numeroSieol. La campagne est TOUJOURS choisie
+   explicitement ici, jamais présumée être la campagne en cours d'Ovilog
+   (voir chantier : le bilan SIEOL porte sur la campagne qui vient de se
+   clôturer, Ovilog peut déjà avoir des échographies de la campagne
+   suivante en cours au même moment). */
+function renderImportBilanLactation() {
+  pageTitle.textContent = 'Import Bilan de lactation';
+  const campagnesOptions = campagnesDisponiblesSieol();
+  let campagneImport = campagnesOptions.length > 1 ? campagnesOptions[1] : campagnesOptions[0];
+  let parsedRows = null; // [{ numeroVisuelSieol, sansMiseBas, dateMiseBas, lactTotale, dureeTraite, classeParQuart, resolution: {type, sheep, candidats}, valideeSheep }]
+
+  app.innerHTML = `
+    <div class="card">
+      <label>Campagne concernée par ce bilan (celle qui vient de se clôturer, pas forcément la campagne en cours d'Ovilog)</label>
+      <select id="import-lact-campagne">
+        ${campagnesOptions.map(c => `<option value="${c}" ${c === campagneImport ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}
+      </select>
+      <div style="font-size:12px;color:var(--text-muted);margin:10px 0;">Fichier CSV (;) avec les colonnes numero_visuel_sieol;num_lactation;ref;ano_repro;date_mise_bas;taille_portee;mode_repro;ano_lact;lact_totale;duree_traite;indice_cumule;classe_par_quart;index_asc;cd_asc. Dates JJ/MM/AAAA, décimales à virgule.</div>
+      <label>Fichier CSV</label>
+      <input type="file" id="import-lact-file" accept=".csv">
+      <div id="import-lact-err" class="error-box hidden"></div>
+    </div>
+    <div id="import-lact-preview"></div>
+    <button class="btn btn-primary hidden" id="btn-confirm-import-lact" style="margin-top:14px;">Confirmer l'import</button>
+  `;
+
+  document.getElementById('import-lact-campagne').onchange = (e) => { campagneImport = parseInt(e.target.value, 10); };
+
+  function renderPreview() {
+    const preview = document.getElementById('import-lact-preview');
+    if (!parsedRows) { preview.innerHTML = ''; document.getElementById('btn-confirm-import-lact').classList.add('hidden'); return; }
+    const directes = parsedRows.filter(r => r.resolution.type === 'direct');
+    const aValider = parsedRows.filter(r => r.resolution.type === 'candidats' && !r.valideeSheep);
+    const validees = parsedRows.filter(r => r.resolution.type === 'candidats' && r.valideeSheep);
+    const nonResolues = parsedRows.filter(r => r.resolution.type === 'aucune');
+    const dejaChoisis = new Set(parsedRows.filter(r => r.valideeSheep).map(r => r.valideeSheep.id));
+
+    preview.innerHTML = `
+      <div class="card" style="margin-top:14px;">
+        <div class="grid2" style="grid-template-columns:repeat(4,1fr);">
+          <div class="stat-card sc-green"><div class="stat-card-label">Directes</div><div class="stat-card-value" style="font-size:18px;">${directes.length}</div></div>
+          <div class="stat-card sc-blue"><div class="stat-card-label">Validées</div><div class="stat-card-value" style="font-size:18px;">${validees.length}</div></div>
+          <div class="stat-card sc-amber"><div class="stat-card-label">À valider</div><div class="stat-card-value" style="font-size:18px;">${aValider.length}</div></div>
+          <div class="stat-card sc-coral"><div class="stat-card-label">Non résolues</div><div class="stat-card-value" style="font-size:18px;">${nonResolues.length}</div></div>
+        </div>
+      </div>
+      ${aValider.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px;">À valider manuellement (${aValider.length})</div>
+        ${aValider.map(r => {
+          const candidatsLibres = r.resolution.candidats.filter(s => !dejaChoisis.has(s.id));
+          return `
+          <div style="border-top:1px solid var(--border);padding:10px 0;">
+            <div style="font-size:13px;margin-bottom:6px;">Numéro visuel SIEOL <strong>${r.numeroVisuelSieol}</strong>${r.sansMiseBas ? ' — sans mise-bas' : (r.dateMiseBas ? ' — mise bas le ' + formatDateFr(r.dateMiseBas) : '')}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              ${candidatsLibres.length === 0 ? '<span style="font-size:12px;color:var(--text-muted);">Tous les candidats sont déjà attribués à une autre ligne de cet import.</span>' : candidatsLibres.map(s => `<button type="button" class="btn btn-secondary btn-choisir-candidat-lact" data-row="${r.__idx}" data-sheep="${s.id}" style="width:auto;padding:6px 12px;font-size:12px;">n°${numeroVisuel(s.eid)} — ${eidAffichageCourt(s.eid)}</button>`).join('')}
+            </div>
+          </div>
+        `; }).join('')}
+      </div>
+      ` : ''}
+      ${nonResolues.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Non résolues (${nonResolues.length}) — ignorées à l'import</div>
+        <div style="font-size:12px;color:var(--text-muted);">${nonResolues.slice(0, 20).map(r => r.numeroVisuelSieol).join(', ')}${nonResolues.length > 20 ? ', ... (' + (nonResolues.length - 20) + ' de plus)' : ''}</div>
+      </div>
+      ` : ''}
+    `;
+    document.querySelectorAll('.btn-choisir-candidat-lact').forEach(btn => {
+      btn.onclick = () => {
+        const row = parsedRows[parseInt(btn.dataset.row, 10)];
+        row.valideeSheep = DB.brebis.find(s => s.id === btn.dataset.sheep);
+        renderPreview();
+      };
+    });
+    document.getElementById('btn-confirm-import-lact').classList.toggle('hidden', directes.length + validees.length === 0);
+  }
+
+  function processTableRows(tableRows) {
+    let dataRows = tableRows;
+    if (tableRows.length > 0 && !/^\d+$/.test(String(tableRows[0][0] || '').trim())) dataRows = tableRows.slice(1);
+    parsedRows = dataRows
+      .filter(parts => parts && parts.length >= 12 && String(parts[0] || '').trim())
+      .map((parts, idx) => {
+        const numeroVisuelSieol = String(parts[0] || '').trim();
+        const anoRepro = String(parts[3] || '').trim();
+        const dateMiseBas = parseDateFrSlash(parts[4]);
+        const sansMiseBas = !!anoRepro && !dateMiseBas;
+        return {
+          __idx: idx,
+          numeroVisuelSieol,
+          sansMiseBas,
+          dateMiseBas,
+          lactTotale: parseDecimalVirgule(parts[8]),
+          dureeTraite: parseDecimalVirgule(parts[9]),
+          classeParQuart: parseDecimalVirgule(parts[11]),
+          resolution: resoudreLigneSieol(numeroVisuelSieol),
+          valideeSheep: null
+        };
+      });
+    renderPreview();
+  }
+
+  document.getElementById('import-lact-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-lact-err');
+    err.classList.add('hidden');
+    parsedRows = null;
+    renderPreview();
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        processTableRows(decodeCsvBuffer(reader.result));
+      } catch (ex) {
+        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import-lact').onclick = () => {
+    if (!parsedRows) return;
+    let nbLactations = 0, nbSansMiseBas = 0;
+    parsedRows.forEach(r => {
+      const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
+      if (!sheep) return; // non résolue ou pas encore validée -- ignorée sans bloquer le reste
+      if (r.resolution.type === 'candidats' && sheep) sheep.numeroSieol = r.numeroVisuelSieol; // mémorise pour les imports futurs (résolution directe, étape 1)
+      if (r.sansMiseBas) { upsertSieolSansMiseBas(sheep.eid, campagneImport); nbSansMiseBas++; }
+      else if (r.dateMiseBas) { upsertBilanLactation(sheep.eid, campagneImport, { dateMiseBas: r.dateMiseBas, lactTotale: r.lactTotale, dureeTraite: r.dureeTraite, classeParQuart: r.classeParQuart }); nbLactations++; }
+    });
+    saveData(DB);
+    alert(nbLactations + ' lactation(s) importée(s), ' + nbSansMiseBas + ' ligne(s) "sans mise-bas" transmise(s) au recoupement, pour la campagne ' + (campagneImport + 1) + '.');
+    bilanCampagneTab = 'lactation';
+    bilanLactationCampagneAffichee = campagneImport;
+    render('bilan-campagne');
+  };
+}
 
 /* Nom + contenu d'un fichier de sauvegarde automatique silencieuse (voir
    writeAutoBackupFile), utilisés avant le changement de campagne ET avant
@@ -11371,6 +11921,15 @@ function renderParametres() {
     </div>
 
     <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+        ${iconCircle(ICON_LAIT, 'blue', 'sm')}
+        <div style="font-size:14px;font-weight:600;">Correspondance numéro visuel SIEOL/UNOTEC</div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Importe le fichier de correspondance vérifié manuellement (numéro visuel SIEOL, numéro officiel Ovilog, EID complet) pour peupler le numéro visuel SIEOL sur les fiches existantes. Réutilisable à volonté, par exemple pour corriger ou compléter le fichier.</div>
+      <button class="btn btn-secondary" id="btn-goto-import-numero-sieol">Importer le fichier de correspondance</button>
+    </div>
+
+    <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Diagnostic Bluetooth (bâton Allflex)</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID.</div>
       <button class="btn btn-secondary" id="btn-goto-diag-bluetooth">Ouvrir le diagnostic</button>
@@ -11388,6 +11947,7 @@ function renderParametres() {
   `;
 
   document.getElementById('btn-goto-import').onclick = () => render('import-echo');
+  document.getElementById('btn-goto-import-numero-sieol').onclick = () => render('import-numero-sieol');
   document.getElementById('btn-goto-diag-bluetooth').onclick = () => render('diag-bluetooth');
 
   document.getElementById('btn-sync-action').onclick = () => {
