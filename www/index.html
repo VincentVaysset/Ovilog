@@ -610,17 +610,18 @@ function loadData() {
    la fois par le bouton "Exporter" manuel et par la synchronisation cloud
    (sauvegarde automatique avant de remplacer les données locales d'un
    appareil par celles du cloud). */
-function exportBackupFile(data, filenamePrefix) {
+async function exportBackupFile(data, filenamePrefix) {
   const dataStr = JSON.stringify(data, null, 2);
-  const blob = new Blob([dataStr], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filenamePrefix + '-' + new Date().toISOString().slice(0,10) + '.json';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const bytes = new TextEncoder().encode(dataStr);
+  const filename = filenamePrefix + '-' + new Date().toISOString().slice(0,10) + '.json';
+  // Voir saveOrShareBinaryFile plus bas dans le fichier : ni navigator.share()
+  // ni <a download> sur une blob: URL ne sont fiables dans la WebView Android
+  // packagée (aucun DownloadListener natif configuré) -- un clic "réussi" ne
+  // produisait alors rien de visible, sans le moindre message d'erreur
+  // (signalé en usage réel). Corrigé en réutilisant le même pont natif
+  // Capacitor que les autres exports (Registre, PDF), avec sa confirmation
+  // "Fichier enregistré".
+  await saveOrShareBinaryFile(filename, bytes, 'application/json');
 }
 
 /* Point de passage unique pour toute écriture des données (~100 appelants
@@ -12217,7 +12218,13 @@ function renderParametres() {
     render('parametres');
   };
 
-  document.getElementById('btn-export').onclick = () => exportBackupFile(DB, 'troupeau-sauvegarde');
+  document.getElementById('btn-export').onclick = () => {
+    const btn = document.getElementById('btn-export');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Export en cours...';
+    exportBackupFile(DB, 'troupeau-sauvegarde').finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
 
   document.getElementById('btn-import').onclick = () => {
     document.getElementById('import-file').click();
@@ -12982,7 +12989,7 @@ async function bootstrapDevice(uid) {
   if (!metaSnap.exists()) {
     await syncAllToCloud(DB);
   } else {
-    exportBackupFile(DB, 'avant-synchronisation-cloud');
+    await exportBackupFile(DB, 'avant-synchronisation-cloud');
   }
   localStorage.setItem(BOOTSTRAP_FLAG_KEY, uid);
 }
