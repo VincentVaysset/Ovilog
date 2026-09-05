@@ -569,30 +569,35 @@ function migrateData(d) {
   // à cheval sur 2 mois est saisi par l'éleveur en 2 entrées distinctes,
   // jamais splitté automatiquement.
   if (!d.penalitesBacterio) d.penalitesBacterio = [];
-  // Correctif exceptionnel et unique (05/09/2026), demandé par l'éleveur :
-  // la lutte (juin à fin octobre) chevauche systématiquement la fin de la
-  // campagne en cours (basée sur la lactation, décembre à août), et
-  // "Démarrer une nouvelle campagne" n'est cliqué qu'en septembre, une fois
-  // la lactation terminée -- donc APRÈS le premier constat d'écho de l'été.
-  // Avant l'ajout du sélecteur de campagne à la saisie (voir
-  // campagneEchoOptionsHtml), ce premier constat se retrouvait tagué sur
-  // l'ancienne campagne (DB.campagneDebut au moment de la saisie) alors
-  // qu'il concerne en réalité la campagne suivante (confirmé par
-  // l'éleveur : toutes les échos actuellement taguées sur la campagne en
-  // cours sont concernées, aucune à exclure). Retague donc en bloc, une
-  // fois pour toutes, chaque échographie encore taguée exactement sur
-  // DB.campagneDebut vers DB.campagneDebut + 1. Flag one-shot : ne rejoue
-  // jamais une 2e fois, y compris sur une base restaurée depuis une
-  // sauvegarde antérieure à ce correctif -- après celui-ci, le nouveau
-  // sélecteur évite que le problème se reproduise.
-  if (!d.echosCampagneSuivanteCorrigees20260905 && d.campagneDebut !== null && d.campagneDebut !== undefined) {
-    (d.brebis || []).forEach(s => {
-      (s.echographies || []).forEach(e => {
-        if (e.campagne === d.campagneDebut) e.campagne = d.campagneDebut + 1;
-      });
+  // Correctif exceptionnel (05/09/2026), demandé par l'éleveur : la lutte
+  // (juin à fin octobre) chevauche systématiquement la fin de la campagne
+  // en cours (basée sur la lactation, décembre à août), et "Démarrer une
+  // nouvelle campagne" n'est cliqué qu'en septembre, une fois la lactation
+  // terminée -- donc APRÈS le premier constat d'écho de l'été. Avant
+  // l'ajout du sélecteur de campagne à la saisie (voir
+  // campagneEchoOptionsHtml), ce premier constat s'est retrouvé tagué 2025
+  // (campagne en cours à ce moment-là) alors qu'il concerne en réalité la
+  // campagne suivante (confirmé par l'éleveur : toutes les échos taguées
+  // 2025 à ce jour sont concernées, aucune à exclure).
+  // PAS de flag one-shot ici, volontairement (contrairement aux autres
+  // correctifs ci-dessus) : un premier essai avec un flag "déjà fait" a
+  // échoué en conditions réelles -- la synchro cloud réécrit DB.brebis
+  // avec l'instantané Firestore encore non corrigé dès l'ouverture de
+  // l'appli (voir startListeners), ce qui annule le correctif fait ici
+  // EN MÉMOIRE avant qu'il ait eu la moindre chance d'être repoussé vers
+  // le cloud -- avec un flag, le correctif ne se relançait alors plus
+  // jamais et les échographies de l'été restaient invisibles sur la fiche.
+  // Comme la valeur ciblée (2025) est un fait historique figé et non "la
+  // campagne actuelle", ce correctif reste sûr à ré-appliquer à chaque
+  // chargement indéfiniment (même principe que la correction du
+  // coefficient MSU ci-dessus) : il redevient un no-op silencieux dès que
+  // plus aucune écho ne porte 2025 -- voir aussi la même correction
+  // reprise dans startListeners pour les instantanés reçus après coup.
+  (d.brebis || []).forEach(s => {
+    (s.echographies || []).forEach(e => {
+      if (e.campagne === 2025) e.campagne = 2026;
     });
-  }
-  d.echosCampagneSuivanteCorrigees20260905 = true;
+  });
   return d;
 }
 
@@ -637,8 +642,7 @@ function loadData() {
     registrePurgeExceptionnelle20260902: true, // nouvelle installation : registre déjà vide, rien à purger
     campagneDateDemarrageCorrigee20260904: true, // nouvelle installation : campagneDateDemarrage encore vide, rien à corriger
     lecteurBluetooth: null, // { address, name } — lecteur par défaut, voir bandeau/btEnsureConnectionListener
-    controleLaitierMigreMl: true, // nouvelle installation : jamais de données en litres à convertir
-    echosCampagneSuivanteCorrigees20260905: true // nouvelle installation : aucune écho encore saisie, rien à retaguer
+    controleLaitierMigreMl: true // nouvelle installation : jamais de données en litres à convertir
   };
 }
 /* Déclenche le téléchargement d'un fichier JSON de sauvegarde — utilisée à
@@ -13163,8 +13167,28 @@ function startListeners() {
       sync.lastSynced[colName] = {};
       // Instantané indépendant de ce qui va dans DB (voir deepClean) : DB
       // continue de contenir les objets « vivants » que l'appli modifie
-      // directement sur place.
+      // directement sur place. IMPORTANT : cloné AVANT le correctif
+      // ci-dessous, pas après -- sync.lastSynced doit garder la valeur
+      // brute encore non corrigée telle que Firestore la sert, sinon
+      // buildUpdatePayload ne verrait plus aucune différence à repousser
+      // et le correctif ne remonterait jamais vers le cloud (voir
+      // migrateData pour le contexte complet de ce correctif).
       arr.forEach(r => { sync.lastSynced[colName][r.id] = deepClean(r); });
+      // Un instantané distant peut arriver AVANT que le correctif fait par
+      // migrateData au chargement (encore seulement en mémoire, jamais
+      // repoussé) n'ait eu la moindre chance d'être synchronisé -- sans ce
+      // même correctif réappliqué ici, cet instantané écraserait DB.brebis
+      // avec l'ancienne valeur (2025) et les échographies de l'été
+      // redeviendraient invisibles sur la fiche jusqu'à la prochaine vraie
+      // saisie. Corrige `arr` (donc DB via applyRemoteUpdate juste en
+      // dessous), jamais sync.lastSynced ci-dessus (voir remarque).
+      if (colName === 'brebis') {
+        arr.forEach(s => {
+          (s.echographies || []).forEach(e => {
+            if (e.campagne === 2025) e.campagne = 2026;
+          });
+        });
+      }
       applyRemoteUpdate(() => { DB[colName] = arr; });
     }, err => console.error('Erreur d\'écoute Firestore (' + colName + ') :', err));
     sync.unsubscribers.push(unsub);
