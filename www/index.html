@@ -569,6 +569,30 @@ function migrateData(d) {
   // à cheval sur 2 mois est saisi par l'éleveur en 2 entrées distinctes,
   // jamais splitté automatiquement.
   if (!d.penalitesBacterio) d.penalitesBacterio = [];
+  // Correctif exceptionnel et unique (05/09/2026), demandé par l'éleveur :
+  // la lutte (juin à fin octobre) chevauche systématiquement la fin de la
+  // campagne en cours (basée sur la lactation, décembre à août), et
+  // "Démarrer une nouvelle campagne" n'est cliqué qu'en septembre, une fois
+  // la lactation terminée -- donc APRÈS le premier constat d'écho de l'été.
+  // Avant l'ajout du sélecteur de campagne à la saisie (voir
+  // campagneEchoOptionsHtml), ce premier constat se retrouvait tagué sur
+  // l'ancienne campagne (DB.campagneDebut au moment de la saisie) alors
+  // qu'il concerne en réalité la campagne suivante (confirmé par
+  // l'éleveur : toutes les échos actuellement taguées sur la campagne en
+  // cours sont concernées, aucune à exclure). Retague donc en bloc, une
+  // fois pour toutes, chaque échographie encore taguée exactement sur
+  // DB.campagneDebut vers DB.campagneDebut + 1. Flag one-shot : ne rejoue
+  // jamais une 2e fois, y compris sur une base restaurée depuis une
+  // sauvegarde antérieure à ce correctif -- après celui-ci, le nouveau
+  // sélecteur évite que le problème se reproduise.
+  if (!d.echosCampagneSuivanteCorrigees20260905 && d.campagneDebut !== null && d.campagneDebut !== undefined) {
+    (d.brebis || []).forEach(s => {
+      (s.echographies || []).forEach(e => {
+        if (e.campagne === d.campagneDebut) e.campagne = d.campagneDebut + 1;
+      });
+    });
+  }
+  d.echosCampagneSuivanteCorrigees20260905 = true;
   return d;
 }
 
@@ -613,7 +637,8 @@ function loadData() {
     registrePurgeExceptionnelle20260902: true, // nouvelle installation : registre déjà vide, rien à purger
     campagneDateDemarrageCorrigee20260904: true, // nouvelle installation : campagneDateDemarrage encore vide, rien à corriger
     lecteurBluetooth: null, // { address, name } — lecteur par défaut, voir bandeau/btEnsureConnectionListener
-    controleLaitierMigreMl: true // nouvelle installation : jamais de données en litres à convertir
+    controleLaitierMigreMl: true, // nouvelle installation : jamais de données en litres à convertir
+    echosCampagneSuivanteCorrigees20260905: true // nouvelle installation : aucune écho encore saisie, rien à retaguer
   };
 }
 /* Déclenche le téléchargement d'un fichier JSON de sauvegarde — utilisée à
@@ -1799,10 +1824,16 @@ function estVideDefinitiveCampagneN(sheep, campagne) {
   const list = Array.isArray(sheep.videesDefinitives) ? sheep.videesDefinitives : [];
   return list.some(v => v && v.campagne === campagne);
 }
-function marquerVideDefinitive(sheep) {
-  if (estVideDefinitiveCampagne(sheep)) return; // idempotent : pas de doublon si déjà marquée cette campagne
+/* campagne (optionnel) : campagne à marquer, par défaut celle en cours.
+   Utilisée avec une valeur explicite par Écho rapide quand l'échographie de
+   la session est elle-même tagée sur la campagne suivante (voir
+   renderEchoRapide) -- la vide définitive doit alors suivre la même
+   campagne que l'écho qui la déclenche, pas forcément DB.campagneDebut. */
+function marquerVideDefinitive(sheep, campagne) {
+  const c = (campagne !== undefined && campagne !== null) ? campagne : DB.campagneDebut;
+  if (estVideDefinitiveCampagneN(sheep, c)) return; // idempotent : pas de doublon si déjà marquée cette campagne
   sheep.videesDefinitives = sheep.videesDefinitives || [];
-  sheep.videesDefinitives.push({ campagne: DB.campagneDebut, date: new Date().toISOString().slice(0,10) });
+  sheep.videesDefinitives.push({ campagne: c, date: new Date().toISOString().slice(0,10) });
 }
 function annulerVideDefinitive(sheep) {
   if (!Array.isArray(sheep.videesDefinitives)) return;
@@ -2090,6 +2121,56 @@ function statutReproductionCampagne(sheep) {
   } catch (e) {
     return 'Non suivie'; // donnée inattendue — mieux vaut la lister comme "à suivre" que planter l'écran
   }
+}
+
+/* Millésime affiché d'une campagne à partir de sa valeur interne
+   (DB.campagneDebut ou une autre campagne explicite) -- même convention que
+   partout ailleurs dans l'appli (campagneDebut + 1). */
+function campagneLabel(campagneDebutVal) {
+  return campagneDebutVal + 1;
+}
+
+/* ---------- Sélecteur de campagne à la saisie d'une échographie ----------
+   La lutte (juin à fin octobre) chevauche systématiquement la fin de la
+   campagne en cours (basée sur la lactation, décembre à août) : le premier
+   constat d'écho, fait pendant l'été, doit être tagué sur la campagne
+   SUIVANTE alors que "Démarrer une nouvelle campagne" n'est cliqué qu'en
+   septembre, une fois la lactation terminée. Sans ce choix explicite, cet
+   écho se retrouverait tagué sur l'ancienne campagne (voir historique du
+   04-05/09/2026). Par défaut, la campagne en cours reste pré-sélectionnée
+   (cas très majoritaire) ; la campagne suivante est un choix actif. */
+function campagneEchoOptionsHtml(campagneSelectionnee) {
+  const enCours = DB.campagneDebut;
+  const suivante = DB.campagneDebut + 1;
+  const opt = (val, label) => `<button type="button" class="opt-btn campagne-echo-opt${val === campagneSelectionnee ? ' selected' : ''}" data-val="${val}">${label}</button>`;
+  return `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Campagne concernée</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">À vérifier surtout pour un premier constat fait avant d'avoir démarré la nouvelle campagne dans l'appli.</div>
+      <div class="grid4" style="grid-template-columns:repeat(2,1fr);margin-bottom:0;">
+        ${opt(enCours, 'Campagne ' + campagneLabel(enCours) + ' (en cours)')}
+        ${opt(suivante, 'Campagne ' + campagneLabel(suivante) + ' (à venir)')}
+      </div>
+    </div>
+  `;
+}
+// Attache les clics des deux boutons ci-dessus ; onChange(nouvelleValeur)
+// est appelé après mise à jour visuelle de la sélection.
+function attacherCampagneEchoOptions(onChange) {
+  document.querySelectorAll('.campagne-echo-opt').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.campagne-echo-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      onChange(parseInt(btn.dataset.val, 10));
+    };
+  });
+}
+// Ne demande confirmation que pour le choix "à venir" -- le seul qui sorte
+// de l'usage courant et où une erreur de saisie a un vrai coût (voir
+// gestion stricte du module demandée par l'éleveur).
+function confirmerCampagneEcho(campagneChoisie) {
+  if (campagneChoisie !== DB.campagneDebut + 1) return true;
+  return confirm('Confirmer : cette échographie concerne bien la Campagne ' + campagneLabel(campagneChoisie) + ' (à venir), pas la Campagne ' + campagneLabel(DB.campagneDebut) + ' en cours ?');
 }
 
 /* ---------- Bip sonore de confirmation de scan ---------- */
@@ -3872,11 +3953,18 @@ function renderAgneaux() {
    au sens de DB.campagneDebut au moment de l'import (le bilan SIEOL arrive
    après les contrôles laitiers, généralement avant le changement de
    campagne dans Ovilog) : l'exclure la ferait disparaître silencieusement
-   de la fiche alors qu'elle est bien enregistrée. */
+   de la fiche alors qu'elle est bien enregistrée.
+   Exclut la campagne en cours ET toute campagne future (campagne >
+   DB.campagneDebut) -- ce second cas ne concernait aucun groupe avant les
+   échographies (voir campagneEchoOptionsHtml) : un premier constat d'écho
+   tagué "campagne à venir" avant le changement officiel de campagne doit
+   rester dans la zone haute éditable, pas remonter comme le plus récent de
+   "Historique par campagne" alors qu'il ne s'est même pas encore produit
+   du point de vue de DB.campagneDebut. */
 function historiqueParCampagneHtml(groupes, emptyLabel) {
   const passees = [];
   groupes.forEach(g => {
-    const items = g.exclureCampagneEnCours === false ? g.items : g.items.filter(it => it.campagne !== DB.campagneDebut);
+    const items = g.exclureCampagneEnCours === false ? g.items : g.items.filter(it => it.campagne == null || it.campagne < DB.campagneDebut);
     items.forEach(it => passees.push({ item: it, renderItem: g.renderItem }));
   });
   if (passees.length === 0) return `<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">${emptyLabel}</div>`;
@@ -3905,19 +3993,31 @@ function renderDetail(id) {
   if (!sheep) { render('list'); return; }
   pageTitle.textContent = 'Brebis n°' + numeroVisuel(sheep.eid);
 
-  const historyHtml = sheep.echographies.map((e, i) => ({...e, idx: i})).reverse().map(e => `
+  const echoItemHtml = e => `
+    <div class="content">
+      <div style="font-weight:600;">${e.special ? e.special : e.stade}</div>
+      ${(!e.special && e.agneaux) || e.parasitisme ? `<div style="margin-top:5px;">${(!e.special && e.agneaux) ? `<span class="badge badge-green" style="margin-right:6px;">${e.agneaux === 'Double' ? '2 agneaux et plus' : '1 agneau'}</span>` : ''}${e.parasitisme ? '<span class="badge badge-amber">Parasitisme observé</span>' : ''}</div>` : ''}
+      <div class="date" style="margin-top:4px;">${formatDateFr(e.date)}</div>
+    </div>
+  `;
+  // Zone haute (éditable) : échographies de la campagne en cours (ou déjà
+  // taguées "campagne à venir", voir campagneEchoOptionsHtml) -- reste
+  // visible même après une mise bas de cette même campagne (utile pour
+  // repérer une incohérence, ex. écho "Vide" suivie d'une mise bas quand
+  // même), contrairement à l'agnelage/contrôle laitier ci-dessous. Les
+  // campagnes strictement passées sont affichées séparément, en lecture
+  // seule, dans "Historique par campagne" (voir historiqueCampagnesHtml).
+  const echoIndexes = sheep.echographies.map((e, i) => ({...e, idx: i}));
+  const echoCourantes = echoIndexes.filter(e => typeof e.campagne === 'number' && e.campagne >= DB.campagneDebut).reverse();
+  const historyHtml = echoCourantes.map(e => `
     <div class="swipe-wrap" data-kind="echographies" data-idx="${e.idx}">
       <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
       <div class="swipe-fg history-item">
         ${iconCircle(ICON_ECHO, 'green', 'sm')}
-        <div class="content">
-          <div style="font-weight:600;">${e.special ? e.special : e.stade}</div>
-          ${(!e.special && e.agneaux) || e.parasitisme ? `<div style="margin-top:5px;">${(!e.special && e.agneaux) ? `<span class="badge badge-green" style="margin-right:6px;">${e.agneaux === 'Double' ? '2 agneaux et plus' : '1 agneau'}</span>` : ''}${e.parasitisme ? '<span class="badge badge-amber">Parasitisme observé</span>' : ''}</div>` : ''}
-          <div class="date" style="margin-top:4px;">${formatDateFr(e.date)}</div>
-        </div>
+        ${echoItemHtml(e)}
       </div>
     </div>
-  `).join('') || '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune échographie enregistrée.</div>';
+  `).join('') || '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune échographie enregistrée cette campagne.</div>';
 
   // Zone haute (éditable) : uniquement l'agnelage de la campagne en cours —
   // sheep.agnelages n'est plus jamais remis à zéro (voir "Démarrer une
@@ -4020,6 +4120,7 @@ function renderDetail(id) {
     .map(l => ({ ...l, date: l.dateMiseBas }));
   const historiqueCampagnesHtml = historiqueParCampagneHtml(
     [
+      { items: echoIndexes, renderItem: e => `<div class="history-item">${iconCircle(ICON_ECHO, 'green', 'sm')}${echoItemHtml(e)}</div>` },
       { items: agnelagesIndexes, renderItem: a => `<div class="history-item">${iconCircle(ICON_SHEEP, 'amber', 'sm')}${agnelageItemHtml(a, false)}</div>` },
       { items: controleIndexes, renderItem: c => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}${controleItemHtml(c)}</div>` },
       { items: bilanLactationSheep, exclureCampagneEnCours: false, renderItem: l => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}<div class="content"><div style="font-size:11.5px;color:var(--text-muted);">Bilan de lactation</div><div style="font-weight:700;font-size:15px;">${fmtDecimal(l.lactTotale, 1)} L</div><div style="margin-top:5px;">${l.dureeTraite != null ? `<span class="badge badge-muted" style="margin-right:6px;">${l.dureeTraite} j de traite</span>` : ''}${l.classeParQuart != null ? `<span class="badge badge-blue">Classe ${l.classeParQuart}</span>` : ''}</div><div class="date" style="margin-top:4px;">Mise bas le ${formatDateFr(l.dateMiseBas)}</div></div></div>` }
@@ -4302,8 +4403,10 @@ function renderAddEcho(sheepId) {
   const existing = editing ? sheep.echographies[editContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier l\'échographie' : 'Nouvelle échographie';
   const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  let campagneChoisie = editing ? existing.campagne : DB.campagneDebut;
 
   app.innerHTML = `
+    ${campagneEchoOptionsHtml(campagneChoisie)}
     <div class="card">
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis n°${numeroVisuel(sheep.eid)}</div>
 
@@ -4351,6 +4454,7 @@ function renderAddEcho(sheepId) {
   let stade = existing ? existing.stade : null;
   let agneaux = existing ? existing.agneaux : null;
   let special = existing ? existing.special : null;
+  attacherCampagneEchoOptions(v => { campagneChoisie = v; });
 
   function clearGroup(sel) {
     document.querySelectorAll(sel).forEach(b => b.classList.remove('selected'));
@@ -4489,6 +4593,7 @@ function renderAddEcho(sheepId) {
       err.classList.remove('hidden');
       return;
     }
+    if (!confirmerCampagneEcho(campagneChoisie)) return;
     err.classList.add('hidden');
     const echo = {
       type: typeEcho,
@@ -4497,10 +4602,12 @@ function renderAddEcho(sheepId) {
       agneaux: agneaux,
       special: special,
       parasitisme: document.getElementById('f-parasit').checked,
-      // Sur une modification, on garde le tag de campagne d'origine (même
-      // absent, pour une saisie antérieure à cette fonctionnalité) plutôt
-      // que de la rattacher silencieusement à la campagne actuelle.
-      campagne: editing ? existing.campagne : DB.campagneDebut
+      // Campagne choisie explicitement ci-dessus (voir campagneEchoOptionsHtml)
+      // -- reste égale au tag d'origine sur une modification tant qu'on n'a
+      // pas touché le sélecteur, y compris absente (saisie antérieure à
+      // cette fonctionnalité) plutôt que rattachée silencieusement à la
+      // campagne actuelle.
+      campagne: campagneChoisie
     };
     if (editing) sheep.echographies[editContext.idx] = echo;
     else sheep.echographies.push(echo);
@@ -4790,8 +4897,8 @@ function renderAddAgnelage(sheepId) {
    la page de sélection du type"). Réinitialisée uniquement quand l'écran
    d'accueil (ou tout autre écran) est explicitement quitté vers autre chose
    ET qu'on revient plus tard : voir resetEchoRapideSession(). */
-let echoRapideSession = { typeEcho: null, count: 0, dernierEcho: false };
-function resetEchoRapideSession() { echoRapideSession = { typeEcho: null, count: 0, dernierEcho: false }; }
+let echoRapideSession = { typeEcho: null, count: 0, dernierEcho: false, campagne: null };
+function resetEchoRapideSession() { echoRapideSession = { typeEcho: null, count: 0, dernierEcho: false, campagne: null }; }
 
 function renderEchoRapide() {
   function typeLabel() {
@@ -4799,6 +4906,10 @@ function renderEchoRapide() {
   }
 
   function screenChooseType() {
+    // Choisie une fois pour toute la session (comme le type d'écho
+    // ci-dessous), pas ressaisie à chaque brebis scannée -- voir
+    // campagneEchoOptionsHtml.
+    if (echoRapideSession.campagne === null) echoRapideSession.campagne = DB.campagneDebut;
     pageTitle.textContent = 'Nouvelle session — Échographies';
     app.innerHTML = `
       <div class="card">
@@ -4810,6 +4921,7 @@ function renderEchoRapide() {
           <button type="button" class="opt-btn type-echo-session-opt" data-val="stade_comptage">Stades + comptage (+ 1 ou 2 agneaux)</button>
         </div>
       </div>
+      ${campagneEchoOptionsHtml(echoRapideSession.campagne)}
       <div class="card">
         <label style="display:flex;align-items:center;gap:10px;margin-bottom:0;">
           <input type="checkbox" id="f-dernier-echo" style="width:18px;height:18px;margin:0;flex-shrink:0;">
@@ -4828,10 +4940,12 @@ function renderEchoRapide() {
         document.getElementById('btn-start-echo-session').disabled = false;
       };
     });
+    attacherCampagneEchoOptions(v => { echoRapideSession.campagne = v; });
     document.getElementById('f-dernier-echo').checked = echoRapideSession.dernierEcho;
     document.getElementById('f-dernier-echo').onchange = (e) => { echoRapideSession.dernierEcho = e.target.checked; };
     document.getElementById('btn-start-echo-session').onclick = () => {
       if (!echoRapideSession.typeEcho) return;
+      if (!confirmerCampagneEcho(echoRapideSession.campagne)) return;
       screenLoop();
     };
     document.getElementById('btn-historique-echo').onclick = () => render('historique-echo');
@@ -5124,13 +5238,15 @@ function renderEchoRapide() {
             type: echoRapideSession.typeEcho,
             date: dateEcho,
             stade: stade, agneaux: agneaux, special: special, parasitisme: parasit,
-            campagne: DB.campagneDebut
+            campagne: echoRapideSession.campagne
           };
           currentSheep.echographies.push(echo);
           // "Dernière écho de la campagne" cochée : une brebis notée "Vide"
           // ici est vide définitive, pas juste vide "à cette écho" — pas de
-          // double saisie à faire (voir marquerVideDefinitive).
-          if (echoRapideSession.dernierEcho && stade === 'Vide') marquerVideDefinitive(currentSheep);
+          // double saisie à faire (voir marquerVideDefinitive). Rattachée à
+          // la même campagne que l'écho de cette session (voir
+          // echoRapideSession.campagne), pas forcément DB.campagneDebut.
+          if (echoRapideSession.dernierEcho && stade === 'Vide') marquerVideDefinitive(currentSheep, echoRapideSession.campagne);
           saveData(DB);
           echoRapideSession.count++;
           resetResult();
