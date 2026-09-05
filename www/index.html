@@ -466,17 +466,26 @@ function migrateData(d) {
   if (!d.lots) d.lots = [];
   if (!d.exploitation) d.exploitation = { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' };
   if (!d.brebis) d.brebis = [];
-  // Rétro-tag des agnelages/contrôles laitiers déjà enregistrés avant
-  // l'ajout du champ `campagne` (voir renderAddAgnelage/renderAddControle) :
-  // dérivé de la date de l'entrée elle-même (campagneAnneeDebutPourDate),
-  // jamais de DB.campagneDebut, pour ne pas mal classer une donnée passée
-  // dont la campagne réelle diffère de la campagne actuellement en cours.
+  // Rétro-tag des agnelages/contrôles laitiers/échographies déjà enregistrés
+  // avant l'ajout du champ `campagne` (voir renderAddAgnelage/renderAddControle
+  // /renderAddEcho) : dérivé de la date de l'entrée elle-même
+  // (campagneAnneeDebutPourDate), jamais de DB.campagneDebut, pour ne pas mal
+  // classer une donnée passée dont la campagne réelle diffère de la campagne
+  // actuellement en cours. Les échographies ont été oubliées de ce rétro-tag
+  // à l'origine (bug constaté le 05/09/2026 : une écho sans campagne
+  // disparaissait de la carte "Échographies" de la fiche brebis, reléguée en
+  // "Campagne inconnue" dans l'historique) -- ajoutées ici, AVANT le
+  // correctif 2025->2026 plus bas qui peut ensuite s'appliquer sur la
+  // valeur qu'on vient de déduire ici.
   d.brebis.forEach(s => {
     (s.agnelages || []).forEach(a => {
       if (a.campagne === undefined && a.date) a.campagne = campagneAnneeDebutPourDate(a.date);
     });
     (s.controleLaitier || []).forEach(c => {
       if (c.campagne === undefined && c.date) c.campagne = campagneAnneeDebutPourDate(c.date);
+    });
+    (s.echographies || []).forEach(e => {
+      if (e.campagne === undefined && e.date) e.campagne = campagneAnneeDebutPourDate(e.date);
     });
   });
   if (!d.prelevementsQualite) d.prelevementsQualite = [];
@@ -13178,13 +13187,16 @@ function startListeners() {
       // migrateData au chargement (encore seulement en mémoire, jamais
       // repoussé) n'ait eu la moindre chance d'être synchronisé -- sans ce
       // même correctif réappliqué ici, cet instantané écraserait DB.brebis
-      // avec l'ancienne valeur (2025) et les échographies de l'été
-      // redeviendraient invisibles sur la fiche jusqu'à la prochaine vraie
-      // saisie. Corrige `arr` (donc DB via applyRemoteUpdate juste en
-      // dessous), jamais sync.lastSynced ci-dessus (voir remarque).
+      // avec l'ancienne valeur (absente, ou 2025) et les échographies de
+      // l'été redeviendraient invisibles sur la fiche jusqu'à la prochaine
+      // vraie saisie. Reprend les 2 mêmes étapes que migrateData, dans le
+      // même ordre (rétro-tag par date d'abord, puis 2025->2026). Corrige
+      // `arr` (donc DB via applyRemoteUpdate juste en dessous), jamais
+      // sync.lastSynced ci-dessus (voir remarque).
       if (colName === 'brebis') {
         arr.forEach(s => {
           (s.echographies || []).forEach(e => {
+            if (e.campagne === undefined && e.date) e.campagne = campagneAnneeDebutPourDate(e.date);
             if (e.campagne === 2025) e.campagne = 2026;
           });
         });
