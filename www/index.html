@@ -6445,6 +6445,19 @@ function renderControleLaitier() {
   function recapHtml() {
     const r = resumesCampagne.find(x => x.controle === recapControle);
     if (!r) return '';
+    // Litrage moyen/brebis/jour, en L -- troupeau retombe sur tank ÷ brebis
+    // contrôlées pour un résumé importé avant l'ajout de ce champ (voir
+    // processResumeRows), sans quoi cette carte resterait vide pour tout
+    // résumé déjà en place.
+    const litrageTroupeau = r.laitTroupeau !== null && r.laitTroupeau !== undefined ? r.laitTroupeau
+      : (r.nbBrebis > 0 && r.laitTotal !== null && r.laitTotal !== undefined ? (r.laitTotal * 1000 / r.nbBrebis) : null);
+    const tuileLitrage = (nb, label, mlParJour) => `
+          <div style="flex:1;background:var(--bg);border-radius:var(--radius-sm);padding:8px 6px;text-align:center;">
+            ${nb !== null ? `<div style="font-weight:700;">${nb}</div>` : ''}
+            <div style="font-size:10.5px;color:var(--text-muted);">${label}</div>
+            <div style="font-weight:600;font-size:12.5px;margin-top:4px;">${fmtDecimal(mlParJour !== null && mlParJour !== undefined ? mlParJour / 1000 : null, 2)} L</div>
+            <div style="font-size:9.5px;color:var(--text-muted);">moy./brebis/j</div>
+          </div>`;
     return `
       <div class="card">
         ${sectionHeaderHtml(ICON_LAIT, 'blue', 'Récapitulatif · Contrôle ' + r.controle)}
@@ -6455,22 +6468,13 @@ function renderControleLaitier() {
         ` : ''}
         <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Tank (lait total)</span><strong>${fmtDecimal(r.laitTotal, 2)} L</strong></div>
         <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Cumul éprouvettes</span><strong>${fmtDecimal(r.laitControle, 2)} L</strong></div>
-        <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Coefficient</span><strong>${fmtDecimal(r.coefAc, 2)}</strong></div>
         <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Brebis contrôlées</span><strong>${r.nbBrebis}</strong></div>
         <div class="row" style="margin-top:10px;margin-bottom:0;">
-          <div style="flex:1;background:var(--bg);border-radius:var(--radius-sm);padding:8px 10px;text-align:center;">
-            <div style="font-weight:700;">${r.nbAntenaises}</div>
-            <div style="font-size:10.5px;color:var(--text-muted);">Antenaises</div>
-            <div style="font-weight:600;font-size:12.5px;margin-top:4px;">${fmtDecimal(r.laitAntenaises, 0)} mL</div>
-            <div style="font-size:9.5px;color:var(--text-muted);">moy./brebis/j</div>
-          </div>
+          ${tuileLitrage(r.nbBrebis, 'Troupeau', litrageTroupeau)}
           <div style="width:8px;"></div>
-          <div style="flex:1;background:var(--bg);border-radius:var(--radius-sm);padding:8px 10px;text-align:center;">
-            <div style="font-weight:700;">${r.nbAdultes}</div>
-            <div style="font-size:10.5px;color:var(--text-muted);">Adultes</div>
-            <div style="font-weight:600;font-size:12.5px;margin-top:4px;">${fmtDecimal(r.laitAdultes, 0)} mL</div>
-            <div style="font-size:9.5px;color:var(--text-muted);">moy./brebis/j</div>
-          </div>
+          ${tuileLitrage(r.nbAntenaises, 'Antenaises', r.laitAntenaises)}
+          <div style="width:8px;"></div>
+          ${tuileLitrage(r.nbAdultes, 'Adultes', r.laitAdultes)}
         </div>
       </div>
     `;
@@ -6511,8 +6515,9 @@ function renderControleLaitier() {
         <button type="button" class="btn btn-secondary" id="btn-cl-toggle-all" style="width:auto;padding:6px 14px;font-size:13px;">Tout cocher</button>
       </div>
       <div style="overflow-x:auto;">
-        <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:460px;" id="cl-table"></table>
+        <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:400px;" id="cl-table"></table>
       </div>
+      ${anomaliesPresentes.length > 0 ? `<div style="font-size:10.5px;color:var(--text-muted);line-height:1.6;margin-top:10px;">${anomaliesPresentes.map(c => c + ' ' + libelleAnomalieControle(c)).join(' · ')}</div>` : ''}
     </div>
 
     <button type="button" class="btn btn-primary" id="btn-cl-create-lot" disabled>Créer un lot de recherche</button>
@@ -6543,36 +6548,52 @@ function renderControleLaitier() {
     btn.textContent = toutCoche ? 'Tout décocher' : 'Tout cocher';
   }
 
+  // Largeur de la case à cocher, en dur : sert à positionner la colonne N°
+  // juste derrière lors du défilement horizontal (voir STICKY_NUM ci-dessous) --
+  // les deux colonnes restent fixes ensemble, cochage inclus, pendant que
+  // C1/C2/C3 défilent (retour éleveur : tableau trop large avec les libellés
+  // d'anomalie complets, cf. compact-tag remplacé par un simple code ici).
+  const STICKY_CHK = 'position:sticky;left:0;z-index:1;';
+  const STICKY_NUM = 'position:sticky;left:32px;z-index:1;box-shadow:2px 0 4px rgba(43,42,34,0.08);';
   function drawTable() {
     const filtered = currentFiltered();
     document.getElementById('cl-count').textContent = filtered.length + ' brebis correspondante(s) sur ' + rows.length + '.';
     const table = document.getElementById('cl-table');
+    // Anomalie affichée en simple code chiffré (rond rouge) plutôt qu'en mot
+    // -- le libellé complet reste consultable via la légende sous le tableau
+    // (voir anomaliesPresentes) et sur la fiche brebis, qui a la place pour
+    // le mot complet, elle.
     const cellHtml = (v, anomalie) => {
       if (v === null || v === undefined) return '';
-      const badge = anomalie ? ` <span class="compact-tag compact-tag-coral">${libelleAnomalieControle(anomalie)}</span>` : '';
+      const badge = anomalie ? ` <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:var(--coral-bg);color:var(--coral-fg);font-size:10px;font-weight:700;vertical-align:1px;">${anomalie}</span>` : '';
       return v + ' mL' + badge;
     };
     table.innerHTML = `
       <tr style="color:var(--text-muted);text-align:left;">
-        <th style="padding:4px 4px;width:26px;"></th>
-        <th class="cl-th" data-key="numero" style="padding:4px 4px;font-weight:500;cursor:pointer;">N°${arrow('numero')}</th>
+        <th style="padding:4px 4px;width:32px;background:var(--card);${STICKY_CHK}"></th>
+        <th class="cl-th" data-key="numero" style="padding:4px 4px;min-width:50px;font-weight:500;cursor:pointer;background:var(--card);${STICKY_NUM}">N°${arrow('numero')}</th>
         <th class="cl-th" data-key="mab" style="padding:4px 4px;font-weight:500;cursor:pointer;">MàB${arrow('mab')}</th>
         <th class="cl-th" data-key="c1" style="padding:4px 4px;font-weight:500;text-align:right;cursor:pointer;">C1${arrow('c1')}</th>
         <th class="cl-th" data-key="c2" style="padding:4px 4px;font-weight:500;text-align:right;cursor:pointer;">C2${arrow('c2')}</th>
         <th class="cl-th" data-key="c3" style="padding:4px 4px;font-weight:500;text-align:right;cursor:pointer;">C3${arrow('c3')}</th>
-        <th style="padding:4px 4px;font-weight:500;text-align:right;">Cumul</th>
       </tr>
-      ${filtered.map(r => `
-        <tr style="border-top:1px solid var(--border);">
-          <td style="padding:6px 4px;"><input type="checkbox" class="cl-check" data-eid="${r.eid}" style="width:16px;height:16px;margin:0;"${selection.has(r.eid) ? ' checked' : ''}></td>
-          <td style="padding:6px 4px;">n°${r.numero}</td>
+      ${filtered.map((r, i) => {
+        // Une ligne sur deux légèrement teintée (retour éleveur : tableau
+        // large, difficile à suivre à l'oeil sans repère) -- posée en style
+        // inline plutôt qu'en CSS nth-child pour que les 2 cellules fixes
+        // (case à cocher + n°) gardent exactement le même fond que le reste
+        // de leur ligne pendant le défilement horizontal.
+        const bg = i % 2 === 1 ? 'var(--bg)' : 'var(--card)';
+        return `
+        <tr style="border-top:1px solid var(--border);background:${bg};">
+          <td style="padding:6px 4px;background:${bg};${STICKY_CHK}"><input type="checkbox" class="cl-check" data-eid="${r.eid}" style="width:16px;height:16px;margin:0;"${selection.has(r.eid) ? ' checked' : ''}></td>
+          <td style="padding:6px 4px;background:${bg};${STICKY_NUM}">n°${r.numero}</td>
           <td style="padding:6px 4px;">${r.dateMab ? formatDateFr(r.dateMab) : ''}</td>
           <td style="padding:6px 4px;text-align:right;white-space:nowrap;">${cellHtml(r.c1, r.a1)}</td>
           <td style="padding:6px 4px;text-align:right;white-space:nowrap;">${cellHtml(r.c2, r.a2)}</td>
           <td style="padding:6px 4px;text-align:right;white-space:nowrap;">${cellHtml(r.c3, r.a3)}</td>
-          <td style="padding:6px 4px;text-align:right;">${r.cumul} mL</td>
         </tr>
-      `).join('') || `<tr><td colspan="7" style="padding:14px 4px;color:var(--text-muted);">Aucune brebis ne correspond aux filtres.</td></tr>`}
+      `; }).join('') || `<tr><td colspan="6" style="padding:14px 4px;color:var(--text-muted);">Aucune brebis ne correspond aux filtres.</td></tr>`}
     `;
     table.querySelectorAll('.cl-th').forEach(th => {
       th.onclick = () => {
@@ -12192,7 +12213,7 @@ function renderImportControleLaitierSieol() {
     </div>
 
     <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier résumé par contrôle (;), 1 ligne par contrôle -- colonnes repérées par leur en-tête (num_controle, date_controle, lait_total, lait_controle, nb_brebis, nb_ech, coef_ac, nb_antenaises, nb_adultes, lait_antenaises ou moy_jour_antenaises_ml, lait_adultes ou moy_jour_adultes_ml) : l'ordre et les colonnes en plus n'ont pas d'importance. Dates JJ/MM/AAAA, décimales à virgule.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier résumé par contrôle (;), 1 ligne par contrôle -- colonnes repérées par leur en-tête (num_controle, date_controle, lait_total, lait_controle, nb_brebis, nb_ech, coef_ac, nb_antenaises, nb_adultes, lait_antenaises ou moy_jour_antenaises_ml, lait_adultes ou moy_jour_adultes_ml, moy_jour_troupeau_ml si disponible) : l'ordre et les colonnes en plus n'ont pas d'importance. Dates JJ/MM/AAAA, décimales à virgule.</div>
       <label>Fichier résumé</label>
       <input type="file" id="import-cl-resume-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
       <div id="import-cl-resume-err" class="error-box hidden"></div>
@@ -12219,7 +12240,7 @@ function renderImportControleLaitierSieol() {
     };
   });
 
-  const CHAMPS_RESUME = ['laitTotal', 'laitControle', 'coefAc', 'nbBrebis', 'nbEch', 'nbAntenaises', 'laitAntenaises', 'nbAdultes', 'laitAdultes'];
+  const CHAMPS_RESUME = ['laitTotal', 'laitControle', 'coefAc', 'nbBrebis', 'nbEch', 'nbAntenaises', 'laitAntenaises', 'nbAdultes', 'laitAdultes', 'laitTroupeau'];
 
   function conflitDetail(sheep, n, c) {
     const idx = controleLaitierCampagneIdxN(sheep, n, campagneImport);
@@ -12429,7 +12450,12 @@ function renderImportControleLaitierSieol() {
     laitTotal: ['lait_total'], laitControle: ['lait_controle'],
     nbBrebis: ['nb_brebis'], nbEch: ['nb_ech'], coefAc: ['coef_ac'],
     nbAntenaises: ['nb_antenaises'], laitAntenaises: ['lait_antenaises', 'moy_jour_antenaises_ml'],
-    nbAdultes: ['nb_adultes'], laitAdultes: ['lait_adultes', 'moy_jour_adultes_ml']
+    nbAdultes: ['nb_adultes'], laitAdultes: ['lait_adultes', 'moy_jour_adultes_ml'],
+    // Pas d'alias côté ancien format 11 colonnes (qui n'avait pas de figure
+    // troupeau toute faite) -- processResumeRows la calcule alors elle-même
+    // depuis lait_total/nb_brebis (voir plus bas), au lieu de la stocker
+    // absente : recapHtml() n'a ainsi jamais besoin de ce repli lui-même.
+    laitTroupeau: ['moy_jour_troupeau_ml']
   };
   // Idem pour le cahier détaillé -- le fichier réel de l'import exceptionnel
   // campagne 2026 porte en plus ano_repro/date_mise_bas/taille_portee/
@@ -12455,21 +12481,31 @@ function renderImportControleLaitierSieol() {
     const get = (parts, key) => cols[key] !== -1 ? parts[cols[key]] : undefined;
     parsedResume = tableRows.slice(1)
       .filter(parts => parts && String(get(parts, 'controle') || '').trim())
-      .map((parts, idx) => ({
-        __idx: idx,
-        controle: parseInt(get(parts, 'controle'), 10),
-        date: parseDateFrSlash(get(parts, 'date')),
-        laitTotal: parseDecimalVirgule(get(parts, 'laitTotal')),
-        laitControle: parseDecimalVirgule(get(parts, 'laitControle')),
-        nbBrebis: parseInt(get(parts, 'nbBrebis'), 10) || 0,
-        nbEch: String(get(parts, 'nbEch') || '').trim() !== '' ? parseInt(get(parts, 'nbEch'), 10) : null,
-        coefAc: parseDecimalVirgule(get(parts, 'coefAc')),
-        nbAntenaises: parseInt(get(parts, 'nbAntenaises'), 10) || 0,
-        laitAntenaises: parseDecimalVirgule(get(parts, 'laitAntenaises')),
-        nbAdultes: parseInt(get(parts, 'nbAdultes'), 10) || 0,
-        laitAdultes: parseDecimalVirgule(get(parts, 'laitAdultes')),
-        resolutionConflit: null
-      }))
+      .map((parts, idx) => {
+        const laitTotal = parseDecimalVirgule(get(parts, 'laitTotal'));
+        const nbBrebis = parseInt(get(parts, 'nbBrebis'), 10) || 0;
+        // moy_jour_troupeau_ml (fournie telle quelle par UNOTEC, voir
+        // RESUME_FIELDS) si présente ; sinon repli calculé -- tank ÷ brebis
+        // contrôlées, seule donnée toujours disponible même dans l'ancien
+        // format à 11 colonnes qui n'a pas cette figure toute faite.
+        const laitTroupeauBrut = parseDecimalVirgule(get(parts, 'laitTroupeau'));
+        return {
+          __idx: idx,
+          controle: parseInt(get(parts, 'controle'), 10),
+          date: parseDateFrSlash(get(parts, 'date')),
+          laitTotal,
+          laitControle: parseDecimalVirgule(get(parts, 'laitControle')),
+          nbBrebis,
+          nbEch: String(get(parts, 'nbEch') || '').trim() !== '' ? parseInt(get(parts, 'nbEch'), 10) : null,
+          coefAc: parseDecimalVirgule(get(parts, 'coefAc')),
+          nbAntenaises: parseInt(get(parts, 'nbAntenaises'), 10) || 0,
+          laitAntenaises: parseDecimalVirgule(get(parts, 'laitAntenaises')),
+          nbAdultes: parseInt(get(parts, 'nbAdultes'), 10) || 0,
+          laitAdultes: parseDecimalVirgule(get(parts, 'laitAdultes')),
+          laitTroupeau: laitTroupeauBrut !== null ? laitTroupeauBrut : (nbBrebis > 0 && laitTotal !== null ? (laitTotal * 1000 / nbBrebis) : null),
+          resolutionConflit: null
+        };
+      })
       .filter(r => !isNaN(r.controle));
     // Présélectionne les contrôles présents dans le résumé -- reste un choix
     // modifiable (jamais présumé de façon irréversible), juste un point de
@@ -12582,7 +12618,7 @@ function renderImportControleLaitierSieol() {
         const identique = CHAMPS_RESUME.every(k => existant[k] === r[k]);
         if (!identique && r.resolutionConflit !== 'remplacer') { nbConflitsIgnores++; return; }
       }
-      upsertResumeControleLaitier(campagneImport, r.controle, { date: r.date, laitTotal: r.laitTotal, laitControle: r.laitControle, coefAc: r.coefAc, nbBrebis: r.nbBrebis, nbEch: r.nbEch, nbAntenaises: r.nbAntenaises, laitAntenaises: r.laitAntenaises, nbAdultes: r.nbAdultes, laitAdultes: r.laitAdultes });
+      upsertResumeControleLaitier(campagneImport, r.controle, { date: r.date, laitTotal: r.laitTotal, laitControle: r.laitControle, coefAc: r.coefAc, nbBrebis: r.nbBrebis, nbEch: r.nbEch, nbAntenaises: r.nbAntenaises, laitAntenaises: r.laitAntenaises, nbAdultes: r.nbAdultes, laitAdultes: r.laitAdultes, laitTroupeau: r.laitTroupeau });
       nbResume++;
     });
     saveData(DB);
