@@ -1932,6 +1932,19 @@ function upsertResumeControleLaitier(campagne, controle, champs) {
   if (idx !== -1) DB.resumeControleLaitier[idx] = { campagne, controle, ...champs };
   else DB.resumeControleLaitier.push({ campagne, controle, ...champs });
 }
+/* Litrage moyen/brebis/jour du troupeau (mL), pour un résumé de contrôle
+   donné -- reprend tel quel r.laitTroupeau (donnée UNOTEC déjà toute faite,
+   moy_jour_troupeau_ml, voir processResumeRows) quand elle existe, sinon
+   repli calculé (tank ÷ brebis contrôlées) pour un résumé importé avant
+   l'ajout de ce champ, ou dans l'ancien format à 11 colonnes qui n'a pas
+   cette figure toute faite. Utilisé à la fois par le récapitulatif de
+   l'écran Contrôle laitier (recapHtml) et par la carte de l'accueil
+   (dashboardKpiHtml) -- une seule source, jamais deux calculs distincts. */
+function litrageTroupeauResume(r) {
+  if (!r) return null;
+  if (r.laitTroupeau !== null && r.laitTroupeau !== undefined) return r.laitTroupeau;
+  return (r.nbBrebis > 0 && r.laitTotal !== null && r.laitTotal !== undefined) ? (r.laitTotal * 1000 / r.nbBrebis) : null;
+}
 /* Écrit ou remplace la partie "cahier" par brebis (ano_lact/numLactation/
    ref/lactMoyen/classeParQuart) -- toujours remplacée sans confirmation,
    contrairement au résumé et au détail par contrôle ci-dessus/dessous :
@@ -2439,6 +2452,9 @@ let pendingHighlightLambEid = null;
 // remis à zéro à chaque navigation (voir render()).
 let activeScanTarget = null;
 let editingAgnelleId = null;
+let addAgnelleOrigin = 'agnelles'; // écran vers lequel revenir après le formulaire add-agnelle : 'agnelles' (chantier de tri, historique) ou 'agnelle-detail' (nouvelle fiche, voir renderAgnelleDetail)
+let currentAgnelleId = null;
+let agnelleDetailOrigin = 'agnelles-inventaire';
 let currentBelierId = null;
 let belierDetailOrigin = 'beliers';
 let editBelierContext = null; // { kind, idx }
@@ -2451,7 +2467,7 @@ let declarationAnneeSelectionnee = null; // année civile choisie sur l'écran D
 
 // Vues racines, accessibles directement depuis le menu hamburger : elles
 // affichent le hamburger (pas de flèche retour) dans l'en-tête.
-const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'inventaire-actifs', 'lots', 'agnelles', 'journal', 'parametres', 'registre', 'declaration-annuelle', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite', 'liste-serie', 'controle-laitier']);
+const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 'inventaire-actifs', 'lots', 'agnelles', 'agnelles-inventaire', 'journal', 'parametres', 'registre', 'declaration-annuelle', 'sanitaire', 'echo-rapide', 'misebas-rapide', 'qualite', 'liste-serie', 'controle-laitier']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -2499,13 +2515,14 @@ const NAV_ITEMS = [
   { view: 'list', label: 'Brebis', icon: ICON_SHEEP, color: 'green' },
   { view: 'beliers', label: 'Béliers', icon: ICON_RAM, color: 'indigo' },
   { view: 'agneaux', label: 'Agneaux', icon: ICON_SHEEP, color: 'amber' },
-  { view: 'inventaire-actifs', label: 'Inventaire', icon: ICON_BOX, color: 'coral' },
-  { view: 'inventaire', label: "Mouvements d'animaux", icon: ICON_MOUVEMENT, color: 'coral' },
   { view: 'lots', label: 'Chantier de tri', icon: ICON_SEARCH, color: 'green' },
-  { view: 'controle-laitier', label: 'Contrôle laitier', icon: ICON_LAIT, color: 'blue' },
-  { view: 'sanitaire', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
+  { view: 'agnelles-inventaire', label: 'Agnelles', icon: ICON_SHEEP, color: 'amber' },
   { view: 'echo-rapide', label: 'Échographies', icon: ICON_ECHO, color: 'green' },
   { view: 'misebas-rapide', label: 'Mises-bas', icon: ICON_SHEEP, color: 'amber' },
+  { view: 'controle-laitier', label: 'Contrôle laitier', icon: ICON_LAIT, color: 'blue' },
+  { view: 'inventaire-actifs', label: 'Inventaire', icon: ICON_BOX, color: 'coral' },
+  { view: 'inventaire', label: "Mouvements d'animaux", icon: ICON_MOUVEMENT, color: 'coral' },
+  { view: 'sanitaire', label: 'Carnet sanitaire', icon: ICON_SANTE, color: 'coral' },
   { view: 'qualite', label: 'Qualité', icon: ICON_LAIT, color: 'blue' },
   { view: 'journal', label: 'Agenda', icon: ICON_JOURNAL, color: 'green' },
   { view: 'registre', label: "Registre d'élevage", icon: ICON_JOURNAL, color: 'coral' },
@@ -2550,14 +2567,14 @@ btnBack.onclick = () => {
     }
   }
   else if (currentView === 'add-sheep') render('list');
-  else if (currentView === 'add-agnelle') { editingAgnelleId = null; render('agnelles'); }
+  else if (currentView === 'add-agnelle') { editingAgnelleId = null; render(addAgnelleOrigin); }
+  else if (currentView === 'agnelle-detail') render(agnelleDetailOrigin);
   else if (currentView === 'add-lot' || currentView === 'add-lot-reforme') render('lots');
   else if (currentView === 'lot-search') render('lots');
   else if (currentView === 'mouvement-groupe') render('inventaire');
   else if (currentView === 'mouvements-collectifs') render('inventaire');
   else if (currentView === 'traitement-collectif') render('sanitaire');
   else if (currentView === 'traitements-collectifs') render('sanitaire');
-  else if (currentView === 'import-echo') render('parametres');
   else if (currentView === 'import-numero-sieol') render('parametres');
   else if (currentView === 'import-bilan-lactation') { bilanCampagneTab = 'lactation'; render('bilan-campagne'); }
   else if (currentView === 'recoupement-sieol') render('bilan-campagne');
@@ -2714,6 +2731,8 @@ function render(view, sheepId) {
     else if (view === 'inventaire-actifs') renderInventaireActifs();
     else if (view === 'agnelles') renderAgnelles();
     else if (view === 'add-agnelle') renderAddAgnelle();
+    else if (view === 'agnelles-inventaire') renderAgnellesInventaire();
+    else if (view === 'agnelle-detail') renderAgnelleDetail(currentAgnelleId);
     else if (view === 'beliers') renderBeliers();
     else if (view === 'add-belier') renderAddBelier();
     else if (view === 'belier-detail') renderBelierDetail(currentBelierId);
@@ -2732,7 +2751,6 @@ function render(view, sheepId) {
     else if (view === 'traitement-collectif') renderTraitementCollectif();
     else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
     else if (view === 'sanitaire') renderSanitaire();
-    else if (view === 'import-echo') renderImportEcho();
     else if (view === 'import-numero-sieol') renderImportNumeroSieol();
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
     else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
@@ -2824,23 +2842,28 @@ function dashboardKpiHtml() {
 
   const attendueTraiteCount = active.filter(s => isAttendueTraite(s, DB.brebis)).length;
 
-  const controlesParNumero = { 1: [], 2: [], 3: [] };
+  // Moyennes par contrôle : reprises directement du résumé importé (voir
+  // litrageTroupeauResume, même source que la carte "Récapitulatif" de
+  // l'écran Contrôle laitier) -- jamais recalculées ici à partir des
+  // relevés individuels, pour ne jamais diverger de ce que montre cet écran.
+  const resumesCampagneAccueil = (DB.resumeControleLaitier || []).filter(r => DB.campagneDebut == null || r.campagne === DB.campagneDebut);
+  function moyenneResume(n) {
+    const r = resumesCampagneAccueil.find(x => x.controle === n);
+    const v = litrageTroupeauResume(r);
+    return v !== null ? Math.round(v) : null; // mL : arrondi à l'entier, pas de décimale utile
+  }
+  const moyenne1 = moyenneResume(1);
+  const moyenne2 = moyenneResume(2);
+  const moyenne3 = moyenneResume(3);
+  // Nombre de relevés individuels (distinct de la moyenne ci-dessus, qui
+  // vient du résumé troupeau) -- inchangé, garde son propre sens.
+  let totalControles = 0;
   DB.brebis.forEach(s => {
     (s.controleLaitier || []).forEach(c => {
-      // Filtré sur la campagne en cours : controleLaitier n'est jamais
-      // remis à zéro (voir renderAddControle), donc sans ce filtre les
-      // moyennes mélangeraient toutes les campagnes entre elles.
       if (DB.campagneDebut != null && c.campagne !== DB.campagneDebut) return;
-      if (controlesParNumero[c.controle]) controlesParNumero[c.controle].push(c.quantite);
+      totalControles++;
     });
   });
-  function moyenne(arr) {
-    return arr.length > 0 ? Math.round(arr.reduce((a,b) => a+b, 0) / arr.length) : null; // mL : arrondi à l'entier, pas de décimale utile
-  }
-  const moyenne1 = moyenne(controlesParNumero[1]);
-  const moyenne2 = moyenne(controlesParNumero[2]);
-  const moyenne3 = moyenne(controlesParNumero[3]);
-  const totalControles = controlesParNumero[1].length + controlesParNumero[2].length + controlesParNumero[3].length;
 
   function bar(label, count, color) {
     const pct = total > 0 ? Math.round((count / total) * 100) : 0;
@@ -2971,14 +2994,14 @@ function renderHome() {
   `;
   app.appendChild(hero);
   hero.querySelector('#hero-brebis').onclick = () => render('list');
-  hero.querySelector('#hero-agnelles').onclick = () => render('agnelles');
+  hero.querySelector('#hero-agnelles').onclick = () => render('agnelles-inventaire');
   hero.querySelector('#hero-beliers').onclick = () => render('beliers');
 
   const dashboard = document.createElement('div');
   dashboard.innerHTML = dashboardKpiHtml();
   app.appendChild(dashboard);
   const kpiAgnelles = document.getElementById('kpi-agnelles');
-  if (kpiAgnelles) kpiAgnelles.onclick = () => render('agnelles');
+  if (kpiAgnelles) kpiAgnelles.onclick = () => render('agnelles-inventaire');
   const kpiAttendues = document.getElementById('kpi-attendues-traite');
   if (kpiAttendues) kpiAttendues.onclick = () => {
     openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(s => isAttendueTraite(s, DB.brebis)).map(s => s.eid));
@@ -3585,8 +3608,9 @@ function renderInventaireActifs() {
         belierDetailOrigin = 'inventaire-actifs';
         render('belier-detail');
       } else if (inventaireActifsTab === 'agnelles') {
-        editingAgnelleId = it.id;
-        render('add-agnelle');
+        currentAgnelleId = it.id;
+        agnelleDetailOrigin = 'inventaire-actifs';
+        render('agnelle-detail');
       } else {
         // Agneaux actifs : pas de fiche dédiée — ouvre celle de la mère,
         // comme partout ailleurs dans l'appli où un agneau est affiché.
@@ -6445,12 +6469,10 @@ function renderControleLaitier() {
   function recapHtml() {
     const r = resumesCampagne.find(x => x.controle === recapControle);
     if (!r) return '';
-    // Litrage moyen/brebis/jour, en L -- troupeau retombe sur tank ÷ brebis
-    // contrôlées pour un résumé importé avant l'ajout de ce champ (voir
-    // processResumeRows), sans quoi cette carte resterait vide pour tout
-    // résumé déjà en place.
-    const litrageTroupeau = r.laitTroupeau !== null && r.laitTroupeau !== undefined ? r.laitTroupeau
-      : (r.nbBrebis > 0 && r.laitTotal !== null && r.laitTotal !== undefined ? (r.laitTotal * 1000 / r.nbBrebis) : null);
+    // Litrage moyen/brebis/jour, en L -- voir litrageTroupeauResume (même
+    // source que la carte "Contrôle laitier" de l'accueil, jamais 2 calculs
+    // distincts).
+    const litrageTroupeau = litrageTroupeauResume(r);
     const tuileLitrage = (nb, label, mlParJour) => `
           <div style="flex:1;background:var(--bg);border-radius:var(--radius-sm);padding:8px 6px;text-align:center;">
             ${nb !== null ? `<div style="font-weight:700;">${nb}</div>` : ''}
@@ -7227,9 +7249,9 @@ function renderAgnelles() {
     }
   }
 
-  document.getElementById('btn-add-agnelle').onclick = () => { editingAgnelleId = null; render('add-agnelle'); };
+  document.getElementById('btn-add-agnelle').onclick = () => { editingAgnelleId = null; addAgnelleOrigin = 'agnelles'; render('add-agnelle'); };
   document.querySelectorAll('.btn-edit-agnelle').forEach(btn => {
-    btn.onclick = () => { editingAgnelleId = btn.dataset.id; render('add-agnelle'); };
+    btn.onclick = () => { editingAgnelleId = btn.dataset.id; addAgnelleOrigin = 'agnelles'; render('add-agnelle'); };
   });
 }
 
@@ -7306,7 +7328,7 @@ function renderAddAgnelle() {
       existing.dateEntree = date;
       editingAgnelleId = null;
       saveData(DB);
-      render('agnelles');
+      render(addAgnelleOrigin);
       return;
     }
 
@@ -7344,7 +7366,176 @@ function renderAddAgnelle() {
       });
     }
     saveData(DB);
-    render('agnelles');
+    render(addAgnelleOrigin);
+  };
+}
+
+/* ---------- Inventaire Agnelles (vrai onglet, au même niveau que Brebis/
+   Béliers/Agneaux) ----------
+   Distinct du chantier de tri (renderAgnelles ci-dessus, inchangé) : celui-ci
+   reste l'outil d'action ponctuelle (À trier/Triées/Écartées) ; celui-ci est
+   la consultation, à tout moment, de l'inventaire complet -- liste + fiche
+   par agnelle avec son historique (voir renderAgnelleDetail). */
+function renderAgnellesInventaire() {
+  const items = sortByAge(DB.agnelles || []);
+  pageTitle.textContent = 'Agnelles (' + items.length + ')';
+
+  const scanCard = document.createElement('div');
+  scanCard.className = 'card';
+  scanCard.innerHTML = `
+    <label>Scanner une agnelle pour ouvrir sa fiche</label>
+    <input type="text" id="scan-open-agnelle" placeholder="Scanner ou saisir l'EID" autofocus>
+    <div id="scan-open-agnelle-err" class="error-box hidden"></div>
+  `;
+  app.appendChild(scanCard);
+  const scanOpenAgnelle = document.getElementById('scan-open-agnelle');
+  setActiveScanTarget(scanOpenAgnelle);
+  wireEidLookupField(scanOpenAgnelle, {
+    pool: DB.agnelles || [],
+    feedbackEl: document.getElementById('scan-open-agnelle-err'),
+    notFoundMessage: "Aucune agnelle trouvée avec cet EID.",
+    clearBeforeResolve: false,
+    onFound: (ag) => {
+      currentAgnelleId = ag.id;
+      agnelleDetailOrigin = 'agnelles-inventaire';
+      render('agnelle-detail');
+    }
+  });
+
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.innerHTML = 'Aucune agnelle pour l\'instant.<br>Elles rejoignent l\'inventaire depuis le Chantier de tri.';
+    app.appendChild(empty);
+    return;
+  }
+  items.forEach(ag => {
+    const div = document.createElement('div');
+    div.className = 'sheep-item';
+    div.innerHTML = `
+      <div class="sheep-item-left">
+        ${iconCircle(ICON_SHEEP, 'amber')}
+        <div>
+          <div class="num">Agnelle n°${numeroVisuel(ag.eid)}</div>
+          <div class="sub">${age(ag.eid) !== null ? age(ag.eid) + ' an(s)' : 'âge inconnu'}</div>
+        </div>
+      </div>
+      <span class="badge ${ag.origine === 'née' ? 'badge-amber' : 'badge-muted'}">${ag.origine === 'née' ? 'Née sur l\'exploitation' : 'Achetée'}</span>
+    `;
+    div.onclick = () => { currentAgnelleId = ag.id; agnelleDetailOrigin = 'agnelles-inventaire'; render('agnelle-detail'); };
+    app.appendChild(div);
+  });
+}
+
+/* ---------- Fiche agnelle (lecture + historique) ----------
+   Sur le modèle allégé de renderBelierDetail : identité, généalogie (lien
+   vers la fiche de la mère si connue, sinon père/mère en texte libre pour
+   une agnelle achetée), carnet sanitaire et mouvements déjà enregistrés
+   (lecture seule -- il n'existe pas encore de saisie de nouveaux soins/
+   mouvements pour une agnelle ailleurs dans l'appli, donc pas ajoutée ici
+   non plus : hors périmètre de ce chantier). Modifier/Vendre/Supprimer
+   réutilisent tels quels le formulaire et la modale déjà utilisés par le
+   chantier de tri -- une seule logique, jamais deux façons de modifier une
+   agnelle. */
+function renderAgnelleDetail(id) {
+  const ag = (DB.agnelles || []).find(a => a.id === id);
+  if (!ag) { render('agnelles-inventaire'); return; }
+  pageTitle.textContent = 'Agnelle n°' + numeroVisuel(ag.eid);
+
+  const sanitaire = (ag.sanitaire || []).slice().reverse();
+  const sanitaireHtml = sanitaire.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun soin enregistré.</div>' : sanitaire.map(s => `
+    <div class="history-item">
+      ${iconCircle(ICON_SANTE, 'coral', 'sm')}
+      <div class="content">
+        <div style="font-weight:600;">${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</div>
+        ${s.dose ? `<div style="margin-top:5px;"><span class="badge badge-muted">${s.dose}</span></div>` : ''}
+        <div class="date" style="margin-top:4px;">${formatDateFr(s.date)}</div>
+        ${s.commentaire ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin-top:2px;">${s.commentaire}</div>` : ''}
+      </div>
+    </div>
+  `).join('');
+
+  const mouvements = (ag.mouvements || []).slice().reverse();
+  const mouvementHtml = mouvements.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun mouvement enregistré.</div>' : mouvements.map(m => `
+    <div class="history-item">
+      ${iconCircle(ICON_MOUVEMENT, 'coral', 'sm')}
+      <div class="content">
+        <div style="font-weight:600;">${m.type}</div>
+        ${m.cause ? `<div style="margin-top:5px;"><span class="badge badge-muted">${m.cause}</span></div>` : ''}
+        ${m.acheteur ? `<div style="font-size:12.5px;margin-top:4px;">Acheteur : <strong>${m.acheteur}</strong></div>` : ''}
+        <div class="date" style="margin-top:4px;">${formatDateFr(m.date)}</div>
+      </div>
+    </div>
+  `).join('');
+
+  const mother = ag.motherEid ? DB.brebis.find(s => cleanEid(s.eid) === cleanEid(ag.motherEid)) : null;
+  const lamb = findLambByEid(ag.eid);
+
+  app.innerHTML = `
+    <div class="card">
+      ${sectionHeaderHtml(ICON_SHEEP, 'amber', 'Identité')}
+      <div style="font-size:12px;color:var(--text-muted);">EID complet</div>
+      <div style="font-size:14px;margin-bottom:10px;">${ag.eid}</div>
+      <div class="grid2">
+        <div><div style="font-size:12px;color:var(--text-muted);">Âge</div><div style="font-weight:600;">${age(ag.eid) !== null ? age(ag.eid) + ' an(s)' : 'inconnu'}</div></div>
+        <div><div style="font-size:12px;color:var(--text-muted);">Origine</div><div style="font-weight:600;">${ag.origine === 'née' ? 'Née sur l\'exploitation' : 'Achetée'}</div></div>
+      </div>
+      <div style="margin-top:10px;font-size:12px;color:var(--text-muted);">${ag.origine === 'née' ? 'Triée/entrée' : 'Entrée'} le <strong style="color:var(--text);">${formatDateFr(ag.dateEntree)}</strong></div>
+    </div>
+
+    <div class="card">
+      ${sectionHeaderHtml(ICON_SHEEP, 'gray', 'Généalogie')}
+      ${mother
+        ? `<button type="button" class="btn btn-secondary" id="btn-voir-mere-agnelle-fiche" style="margin-bottom:8px;">Voir la fiche de la mère — n°${numeroVisuel(mother.eid)}</button>`
+        : (ag.pere || ag.mere)
+          ? `${ag.pere ? `<div style="font-size:13px;margin-bottom:4px;">Père : <strong>${ag.pere}</strong></div>` : ''}${ag.mere ? `<div style="font-size:13px;">Mère : <strong>${ag.mere}</strong></div>` : ''}`
+          : '<div style="font-size:13px;color:var(--text-muted);">Non renseignée.</div>'}
+      ${htmlLienMereAdoptive(lamb, 'btn-voir-mere-adoptive-agnelle-fiche')}
+    </div>
+
+    <div class="row" style="margin-bottom:16px;">
+      <button class="btn btn-secondary" id="btn-edit-agnelle-fiche">Modifier</button>
+      <button class="btn btn-secondary" id="btn-vendre-agnelle-fiche" style="color:var(--coral-fg);border-color:var(--coral-fg);">Vendre</button>
+    </div>
+
+    <div class="card">
+      ${sectionHeaderHtml(ICON_SANTE, 'coral', 'Carnet sanitaire')}
+      ${sanitaireHtml}
+    </div>
+    <div class="card">
+      ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
+      ${mouvementHtml}
+    </div>
+    <button class="btn btn-secondary" id="btn-delete-agnelle-fiche" style="color:var(--danger);border-color:var(--danger);">Supprimer cette agnelle</button>
+  `;
+
+  const btnMere = document.getElementById('btn-voir-mere-agnelle-fiche');
+  if (btnMere) btnMere.onclick = () => {
+    detailOrigin = 'agnelle-detail';
+    previousDetailId = null;
+    render('detail', mother.id);
+  };
+  const btnAdoptive = document.getElementById('btn-voir-mere-adoptive-agnelle-fiche');
+  if (btnAdoptive) btnAdoptive.onclick = () => {
+    const m = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(btnAdoptive.dataset.eid));
+    if (!m) { alert("Fiche de la mère adoptive introuvable (peut-être supprimée)."); return; }
+    detailOrigin = 'agnelle-detail';
+    previousDetailId = null;
+    render('detail', m.id);
+  };
+  document.getElementById('btn-edit-agnelle-fiche').onclick = () => {
+    editingAgnelleId = ag.id;
+    addAgnelleOrigin = 'agnelle-detail';
+    render('add-agnelle');
+  };
+  document.getElementById('btn-vendre-agnelle-fiche').onclick = () => {
+    showVendreAgnelleModal(ag, () => render(agnelleDetailOrigin));
+  };
+  document.getElementById('btn-delete-agnelle-fiche').onclick = () => {
+    if (!confirm('Supprimer l\'agnelle n°' + numeroVisuel(ag.eid) + ' de l\'inventaire ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
+    DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
+    saveData(DB);
+    render(agnelleDetailOrigin);
   };
 }
 
@@ -9147,8 +9338,8 @@ function renderAddLot() {
 
   function updateAgneauxDisponibilite() {
     // "Vide" seul coché -> agneaux non pertinent (une écho "Vide" n'a jamais
-    // de valeur agneaux, voir parseEchoComment) : grisé et vidé pour éviter
-    // une combinaison structurellement impossible.
+    // de valeur agneaux) : grisé et vidé pour éviter une combinaison
+    // structurellement impossible.
     const seulVide = stadeSet.size === 1 && stadeSet.has('Vide');
     agneauxContainer.querySelectorAll('.chip').forEach(chip => {
       chip.disabled = seulVide;
@@ -11602,29 +11793,6 @@ async function exportDeclarationAnnuellePdf(annee, c) {
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
-/* ---------- Import CSV inventaire + échographies ---------- */
-function normalizeTexte(s) {
-  return String(s).normalize('NFD').replace(new RegExp('[̀-ͯ]', 'g'), '').toLowerCase().trim();
-}
-
-function parseEchoComment(comment) {
-  const c = String(comment).trim();
-  if (!DB.casParticuliers) DB.casParticuliers = ['Pseudogestation', 'Avortée'];
-  const cas = DB.casParticuliers.find(cp => normalizeTexte(cp) === normalizeTexte(c));
-  if (cas) {
-    return { special: cas, stade: null, agneaux: null, parasitisme: false };
-  }
-  const words = c.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return null;
-  const stadesValides = { 'debut': 'Début', 'milieu': 'Milieu', 'fin': 'Fin', 'vide': 'Vide' };
-  const stade = stadesValides[normalizeTexte(words[0])];
-  if (!stade) return null;
-  const parasitisme = words.some(w => normalizeTexte(w) === 'p');
-  const num = words.find(w => w === '1' || w === '2');
-  const agneaux = num === '1' ? 'Simple' : num === '2' ? 'Double' : null;
-  return { special: null, stade, agneaux, parasitisme };
-}
-
 /* Décode un CSV en devinant l'encodage (UTF-8 si valide, sinon Windows-1252)
    et le séparateur (';', ',' ou tabulation — le plus fréquent sur les 1res lignes). */
 function decodeCsvBuffer(buffer) {
@@ -11750,156 +11918,6 @@ async function readXlsxRows(buffer) {
     rows.push(row);
   }
   return rows;
-}
-
-function renderImportEcho() {
-  pageTitle.textContent = 'Import CSV / Excel';
-  app.innerHTML = `
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-        ${iconCircle(ICON_ECHO, 'green', 'sm')}
-        <div style="font-size:13px;color:var(--text-muted);">Fichier CSV ou Excel (.xlsx) avec 2 colonnes : EID et commentaire (ex: Début 1, Milieu 2, Vide P, Pseudogestation...). La 1re ligne peut être un en-tête ou déjà une donnée.</div>
-      </div>
-      <label>Fichier CSV ou Excel</label>
-      <input type="file" id="import-echo-file" accept=".csv,.xlsx">
-      <label style="margin-top:12px;">Date à appliquer à ces échographies</label>
-      <input type="date" id="import-echo-date" value="${new Date().toISOString().slice(0,10)}">
-      <div id="import-echo-err" class="error-box hidden"></div>
-      <div id="import-echo-preview" style="margin-top:14px;"></div>
-      <button class="btn btn-primary hidden" id="btn-confirm-import" style="margin-top:14px;">Confirmer l'import</button>
-    </div>
-  `;
-
-  let parsedRows = null;
-
-  function processTableRows(tableRows) {
-    // Ignore la 1re ligne seulement si elle ressemble à un en-tête (1re colonne pas un EID valide)
-    let dataRows = tableRows;
-    if (tableRows.length > 0 && cleanEid(String(tableRows[0][0] || '')).length < 11) {
-      dataRows = tableRows.slice(1);
-    }
-    const rows = [];
-    const erreurs = [];
-    const nouvellesBrebisEids = [];
-    dataRows.forEach((parts, i) => {
-      if (!parts || parts.length < 2 || (!parts[0] && !parts[1])) return;
-      const eid = String(parts[0] || '').trim();
-      const comment = String(parts[1] || '').trim();
-      if (cleanEid(eid).length < 11) { erreurs.push('Ligne ' + (i+2) + ' : EID invalide (' + eid + ')'); return; }
-      const parsed = parseEchoComment(comment);
-      if (!parsed) { erreurs.push('Ligne ' + (i+2) + ' : commentaire non reconnu (' + comment + ')'); return; }
-      const existe = DB.brebis.some(s => cleanEid(s.eid) === cleanEid(eid));
-      if (!existe) {
-        // L'EID ne correspond à aucune brebis connue : avant de le compter comme
-        // "nouvelle brebis" à créer, vérifie qu'il n'appartient pas déjà à un
-        // autre animal (bélier, agnelle, agneau actif, registre...). Ne bloque
-        // que CETTE ligne, jamais tout le fichier (voir chantier "unicité EID").
-        const conflit = verifierEidUnique(eid);
-        if (conflit) { erreurs.push('Ligne ' + (i+2) + ' : ' + messageEidDejaUtilise(conflit)); return; }
-        nouvellesBrebisEids.push(eid);
-      }
-      rows.push({ eid, ...parsed });
-    });
-    parsedRows = rows;
-    const err = document.getElementById('import-echo-err');
-    err.classList.add('hidden');
-    const preview = document.getElementById('import-echo-preview');
-    // Liste détaillée des numéros (pas seulement des compteurs) : les
-    // nouvelles brebis notamment sont créées silencieusement à la
-    // confirmation, l'éleveur doit pouvoir les identifier une par une avant
-    // de valider, pas seulement en connaître le nombre.
-    const listeNumeros = (eids) => eids.slice(0, 15).map(e => 'n°' + numeroVisuel(e)).join(', ') + (eids.length > 15 ? ', ... (' + (eids.length - 15) + ' de plus)' : '');
-    preview.innerHTML = `
-        <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
-          <div class="stat-card sc-green">
-            <div class="stat-card-label">Reconnues</div>
-            <div class="stat-card-value" style="font-size:20px;">${rows.length}</div>
-          </div>
-          <div class="stat-card sc-amber">
-            <div class="stat-card-label">Nouvelles brebis</div>
-            <div class="stat-card-value" style="font-size:20px;">${nouvellesBrebisEids.length}</div>
-          </div>
-          <div class="stat-card ${erreurs.length ? 'sc-coral' : ''}" style="${erreurs.length ? '' : 'background:#f0efe9;color:var(--text-muted);'}">
-            <div class="stat-card-label">Ignorées</div>
-            <div class="stat-card-value" style="font-size:20px;">${erreurs.length}</div>
-          </div>
-        </div>
-        ${nouvellesBrebisEids.length ? '<div style="font-size:12px;color:var(--warning);margin-top:10px;"><strong>Nouvelles brebis qui seront créées :</strong> ' + listeNumeros(nouvellesBrebisEids) + '</div>' : ''}
-        ${rows.length ? '<div style="font-size:12px;color:var(--text-muted);margin-top:8px;"><strong>Échographies reconnues :</strong> ' + listeNumeros(rows.map(r => r.eid)) + '</div>' : ''}
-        ${erreurs.length ? '<div style="font-size:12px;color:var(--coral-fg);margin-top:8px;">' + erreurs.slice(0,10).join('<br>') + (erreurs.length > 10 ? '<br>... (' + (erreurs.length-10) + ' de plus)' : '') + '</div>' : ''}
-      `;
-    document.getElementById('btn-confirm-import').classList.toggle('hidden', rows.length === 0);
-  }
-
-  document.getElementById('import-echo-file').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const err = document.getElementById('import-echo-err');
-    err.classList.add('hidden');
-    document.getElementById('import-echo-preview').innerHTML = '';
-    document.getElementById('btn-confirm-import').classList.add('hidden');
-    const isXlsx = /\.xlsx$/i.test(file.name);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const tableRows = isXlsx ? await readXlsxRows(reader.result) : decodeCsvBuffer(reader.result);
-        processTableRows(tableRows);
-      } catch (ex) {
-        if (ex && ex.message === 'DECOMPRESSION_UNSUPPORTED') {
-          err.textContent = "Ce téléphone/navigateur ne sait pas décompresser les fichiers .xlsx — exporte plutôt en .csv depuis ton tableur.";
-        } else {
-          err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
-        }
-        err.classList.remove('hidden');
-      }
-    };
-    reader.onerror = () => {
-      err.textContent = "Erreur de lecture du fichier.";
-      err.classList.remove('hidden');
-    };
-    reader.readAsArrayBuffer(file);
-  });
-
-  document.getElementById('btn-confirm-import').onclick = () => {
-    if (!parsedRows || parsedRows.length === 0) return;
-    if (!confirm('Importer ' + parsedRows.length + ' échographie(s) ? Cette action ajoute des données, elle ne supprime rien.')) return;
-    const date = document.getElementById('import-echo-date').value;
-    let skipped = 0;
-    const rejetsDoublonEid = [];
-    parsedRows.forEach((row, i) => {
-      let sheep = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(row.eid));
-      if (!sheep) {
-        // Re-vérifié au moment de l'import (pas seulement à l'aperçu) : entre la
-        // prévisualisation et le clic "Confirmer", l'EID a pu être utilisé
-        // ailleurs (ex: import CSV lancé deux fois de suite). Ne rejette que
-        // cette ligne, le reste du fichier continue d'être traité normalement.
-        const conflit = verifierEidUnique(row.eid);
-        if (conflit) { rejetsDoublonEid.push('Ligne ' + (i+2) + ' : ' + messageEidDejaUtilise(conflit)); return; }
-        sheep = { id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: row.eid, createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Import (fichier CSV/Excel)', date: date }], controleLaitier: [], statut: 'active' };
-        DB.brebis.push(sheep);
-      }
-      sheep.echographies = sheep.echographies || [];
-      if (sheep.echographies.some(e => e.date === date)) { skipped++; return; } // une échographie existe déjà à cette date pour cette brebis
-      sheep.echographies.push({
-        type: row.special ? 'stade_comptage' : (row.agneaux ? 'stade_comptage' : 'stade'),
-        date: date,
-        stade: row.stade,
-        agneaux: row.agneaux,
-        special: row.special,
-        parasitisme: row.parasitisme,
-        campagne: DB.campagneDebut
-      });
-    });
-    saveData(DB);
-    const nbImportees = parsedRows.length - skipped - rejetsDoublonEid.length;
-    let msg = nbImportees + ' échographie(s) importée(s) avec succès.';
-    if (skipped > 0) msg += ' ' + skipped + ' ignorée(s) car une échographie existait déjà à cette date pour ces brebis.';
-    if (rejetsDoublonEid.length > 0) {
-      msg += '\n\n' + rejetsDoublonEid.length + ' ligne(s) rejetée(s) (EID déjà utilisé par un autre animal) :\n' + rejetsDoublonEid.slice(0, 10).join('\n') + (rejetsDoublonEid.length > 10 ? '\n... (' + (rejetsDoublonEid.length - 10) + ' de plus)' : '');
-    }
-    alert(msg);
-    render('parametres');
-  };
 }
 
 /* Import ponctuel (mais réutilisable à volonté, voir renderParametres) du
@@ -12978,15 +12996,6 @@ function renderParametres() {
 
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
-        ${iconCircle(ICON_ECHO, 'green', 'sm')}
-        <div style="font-size:14px;font-weight:600;">Import CSV/Excel — inventaire + échographies</div>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Importe un fichier CSV ou Excel (.xlsx) avec les colonnes EID et commentaire (ex: export de contrôle de gestation). Les brebis inconnues sont créées automatiquement, les échographies ajoutées à leur historique.</div>
-      <button class="btn btn-secondary" id="btn-goto-import">Importer un fichier</button>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
         ${iconCircle(ICON_LAIT, 'blue', 'sm')}
         <div style="font-size:14px;font-weight:600;">Correspondance numéro visuel SIEOL/UNOTEC</div>
       </div>
@@ -13020,7 +13029,6 @@ function renderParametres() {
     <div id="version-footer" style="text-align:center;font-size:11px;color:var(--text-muted);padding:6px 0 4px;">${libelleVersion()}</div>
   `;
 
-  document.getElementById('btn-goto-import').onclick = () => render('import-echo');
   document.getElementById('btn-goto-import-numero-sieol').onclick = () => render('import-numero-sieol');
   document.getElementById('btn-goto-import-agnelles').onclick = () => render('import-agnelles');
   document.getElementById('btn-goto-diag-bluetooth').onclick = () => render('diag-bluetooth');
