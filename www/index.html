@@ -1888,6 +1888,26 @@ function parseDateFrSlash(str) {
   if (!m) return null;
   return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
 }
+/* Correspondance colonnes CSV -> champs internes PAR NOM d'en-tête plutôt que
+   par position -- les exports SIEOL/UNOTEC varient dans le temps (colonnes
+   supplémentaires ajoutées, réordonnées) sans que ça doive casser un import
+   déjà en place (voir chantier "Import exceptionnel campagne 2026", où le
+   cahier de contrôle réel portait 4 colonnes de reproduction en plus de ce
+   qui était prévu, et le résumé un format à 60 colonnes avec des noms de
+   champ différents pour la même donnée -- ex: lait_antenaises/moy_jour_
+   antenaises_ml). `fields` : { cléInterne: [alias1, alias2, ...] } -- toute
+   colonne présente dans le fichier mais absente de `fields` est simplement
+   ignorée, sans bloquer l'import (ex: date_mise_bas, jamais utilisée par le
+   cahier de contrôle laitier -- voir renderImportControleLaitierSieol). */
+function buildColumnMap(headerRow, fields) {
+  const norm = s => String(s || '').trim().toLowerCase();
+  const headerNorm = (headerRow || []).map(norm);
+  const map = {};
+  Object.keys(fields).forEach(key => {
+    map[key] = headerNorm.findIndex(h => fields[key].some(alias => norm(alias) === h));
+  });
+  return map;
+}
 /* Écrit ou remplace (jamais de doublon) l'entrée DB.bilanLactation d'une
    brebis pour une campagne donnée -- voir résolution dans
    renderImportBilanLactation. */
@@ -12172,14 +12192,14 @@ function renderImportControleLaitierSieol() {
     </div>
 
     <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier résumé par contrôle (;) : num_controle;date_controle;lait_total;lait_controle;nb_brebis;nb_ech;coef_ac;nb_antenaises;lait_antenaises;nb_adultes;lait_adultes. Dates JJ/MM/AAAA, décimales à virgule.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier résumé par contrôle (;), 1 ligne par contrôle -- colonnes repérées par leur en-tête (num_controle, date_controle, lait_total, lait_controle, nb_brebis, nb_ech, coef_ac, nb_antenaises, nb_adultes, lait_antenaises ou moy_jour_antenaises_ml, lait_adultes ou moy_jour_adultes_ml) : l'ordre et les colonnes en plus n'ont pas d'importance. Dates JJ/MM/AAAA, décimales à virgule.</div>
       <label>Fichier résumé</label>
       <input type="file" id="import-cl-resume-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
       <div id="import-cl-resume-err" class="error-box hidden"></div>
     </div>
 
     <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Cahier de contrôle détaillé (;) : numero_visuel_sieol;ctl1_ml;ctl1_anomalie;ctl2_ml;ctl2_anomalie;ctl3_ml;ctl3_anomalie;ano_lact;num_lactation;ref;lact_moyen;classe_par_quart.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Cahier de contrôle détaillé (;), 1 ligne par brebis -- colonnes repérées par leur en-tête (numero_visuel_sieol, ctl1_ml/ctl1_anomalie, ctl2_ml/ctl2_anomalie, ctl3_ml/ctl3_anomalie, ano_lact, num_lactation, ref, lact_moyen, classe_par_quart) : l'ordre et les colonnes en plus n'ont pas d'importance -- ano_repro/date_mise_bas/taille_portee/mode_repro, si présentes, sont ignorées (aucune mise bas n'est créée depuis cet écran).</div>
       <label>Fichier cahier de contrôle</label>
       <input type="file" id="import-cl-cahier-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
       <div id="import-cl-cahier-err" class="error-box hidden"></div>
@@ -12212,6 +12232,24 @@ function renderImportControleLaitierSieol() {
     const existant = DB.resumeControleLaitier.find(e => e.campagne === campagneImport && e.controle === r.controle);
     if (!existant) return null;
     return CHAMPS_RESUME.some(k => existant[k] !== r[k]) ? existant : null;
+  }
+  /* Détection de valeur aberrante -- purement indicative (jamais bloquante,
+     voir aperçu ci-dessous), utile sur un import de campagne entière (301+
+     lignes) où une erreur de saisie SIEOL isolée serait sinon noyée dans le
+     volume. Un code d'anomalie déjà présent explique la valeur (voir
+     ANOMALIE_CONTROLE_LABELS) -- pas la peine de la resignaler. Sans code :
+     "bas" si quasi nulle, "haut" si nettement au-dessus de la médiane des
+     AUTRES valeurs du même contrôle dans cet import (seuils choisis larges
+     pour ne relever que les écarts francs, pas la variabilité normale
+     brebis à brebis). */
+  function detecterValeurAberrante(quantite, anomalie, autresValeursMemeControle) {
+    if (quantite === null || quantite === undefined || anomalie) return null;
+    if (quantite <= 150) return 'bas';
+    if (autresValeursMemeControle.length < 3) return null;
+    const triees = [...autresValeursMemeControle].sort((a, b) => a - b);
+    const mediane = triees[Math.floor(triees.length / 2)];
+    if (mediane > 0 && quantite > mediane * 2.2) return 'haut';
+    return null;
   }
 
   function renderPreview() {
@@ -12249,6 +12287,26 @@ function renderImportControleLaitierSieol() {
 
     const nbConflitsRestants = conflitsDetail.filter(x => x.c.resolutionConflit !== 'garder' && x.c.resolutionConflit !== 'remplacer').length
       + conflitsResumeList.filter(x => x.r.resolutionConflit !== 'garder' && x.r.resolutionConflit !== 'remplacer').length;
+
+    // Valeurs aberrantes : population de comparaison = toutes les valeurs de
+    // ce contrôle présentes dans le fichier (résolues ou non -- une brebis
+    // pas encore matchée reste une valeur réelle du troupeau pour la
+    // comparaison statistique), calculée uniquement sur les contrôles
+    // sélectionnés pour cet import.
+    const valeursParControle = {};
+    controlesSelectionnes.forEach(n => {
+      valeursParControle[n] = cahier.map(r => r.controles[n] && r.controles[n].quantite).filter(v => v !== null && v !== undefined);
+    });
+    const aberrantes = [];
+    cahier.forEach(r => {
+      controlesSelectionnes.forEach(n => {
+        const c = r.controles[n];
+        if (!c) return;
+        const autres = valeursParControle[n].filter(v => v !== c.quantite);
+        const type = detecterValeurAberrante(c.quantite, c.anomalie, autres);
+        if (type) aberrantes.push({ row: r, controle: n, c, type });
+      });
+    });
 
     preview.innerHTML = `
       <div class="card" style="margin-top:14px;">
@@ -12312,6 +12370,20 @@ function renderImportControleLaitierSieol() {
       </div>
       ` : ''}
 
+      ${aberrantes.length > 0 ? `
+      <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Valeurs à vérifier (${aberrantes.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Purement indicatif, n'empêche pas l'import : valeur quasi nulle sans code d'anomalie, ou nettement au-dessus des autres valeurs du même contrôle cette campagne. À toi de vérifier sur le cahier papier si besoin.</div>
+        ${aberrantes.slice(0, 40).map(({ row, controle, c, type }) => `
+          <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0;border-top:1px solid var(--border);">
+            <span>n°${row.numeroVisuelSieol} — Contrôle ${controle}</span>
+            <span style="color:var(--amber-fg);font-weight:600;">${c.quantite} mL ${type === 'bas' ? '(quasi nulle)' : '(nettement élevée)'}</span>
+          </div>
+        `).join('')}
+        ${aberrantes.length > 40 ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">... (${aberrantes.length - 40} de plus)</div>` : ''}
+      </div>
+      ` : ''}
+
       ${nonResolues.length > 0 ? `
       <div class="card" style="margin-top:10px;">
         <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Non résolues (${nonResolues.length}) — ignorées à l'import</div>
@@ -12346,24 +12418,56 @@ function renderImportControleLaitierSieol() {
     btnConfirm.textContent = nbConflitsRestants > 0 ? `Confirmer l'import (${nbConflitsRestants} conflit(s) non tranché(s) resteront inchangés)` : "Confirmer l'import";
   }
 
+  // Alias de colonnes par nom d'en-tête (voir buildColumnMap) -- tolère les
+  // formats SIEOL/UNOTEC successifs sans casser l'import : le résumé réel de
+  // l'import exceptionnel campagne 2026 est passé à 60 colonnes, avec
+  // lait_antenaises/lait_adultes renommées moy_jour_antenaises_ml/
+  // moy_jour_adultes_ml pour la même donnée (mL/brebis/jour, moyenne du
+  // groupe -- voir chantier "Cahier de contrôle SIEOL").
+  const RESUME_FIELDS = {
+    controle: ['num_controle'], date: ['date_controle'],
+    laitTotal: ['lait_total'], laitControle: ['lait_controle'],
+    nbBrebis: ['nb_brebis'], nbEch: ['nb_ech'], coefAc: ['coef_ac'],
+    nbAntenaises: ['nb_antenaises'], laitAntenaises: ['lait_antenaises', 'moy_jour_antenaises_ml'],
+    nbAdultes: ['nb_adultes'], laitAdultes: ['lait_adultes', 'moy_jour_adultes_ml']
+  };
+  // Idem pour le cahier détaillé -- le fichier réel de l'import exceptionnel
+  // campagne 2026 porte en plus ano_repro/date_mise_bas/taille_portee/
+  // mode_repro : absentes de cette table, elles sont ignorées d'elles-mêmes
+  // (jamais de mise bas créée depuis cet écran, voir plus bas).
+  const CAHIER_FIELDS = {
+    numeroVisuelSieol: ['numero_visuel_sieol'],
+    ctl1Ml: ['ctl1_ml'], ctl1Ano: ['ctl1_anomalie'],
+    ctl2Ml: ['ctl2_ml'], ctl2Ano: ['ctl2_anomalie'],
+    ctl3Ml: ['ctl3_ml'], ctl3Ano: ['ctl3_anomalie'],
+    anoLact: ['ano_lact'], numLactation: ['num_lactation'], ref: ['ref'],
+    lactMoyen: ['lact_moyen'], classeParQuart: ['classe_par_quart']
+  };
+
   function processResumeRows(tableRows) {
-    let dataRows = tableRows;
-    if (tableRows.length > 0 && !/^\d+$/.test(String(tableRows[0][0] || '').trim())) dataRows = tableRows.slice(1);
-    parsedResume = dataRows
-      .filter(parts => parts && parts.length >= 11 && String(parts[0] || '').trim())
+    if (!tableRows.length || /^\d+$/.test(String(tableRows[0][0] || '').trim())) {
+      throw new Error("En-tête introuvable en première ligne -- impossible de repérer les colonnes de ce fichier.");
+    }
+    const cols = buildColumnMap(tableRows[0], RESUME_FIELDS);
+    if (cols.controle === -1 || cols.laitTotal === -1) {
+      throw new Error("Colonnes attendues introuvables dans l'en-tête (num_controle / lait_total).");
+    }
+    const get = (parts, key) => cols[key] !== -1 ? parts[cols[key]] : undefined;
+    parsedResume = tableRows.slice(1)
+      .filter(parts => parts && String(get(parts, 'controle') || '').trim())
       .map((parts, idx) => ({
         __idx: idx,
-        controle: parseInt(parts[0], 10),
-        date: parseDateFrSlash(parts[1]),
-        laitTotal: parseDecimalVirgule(parts[2]),
-        laitControle: parseDecimalVirgule(parts[3]),
-        nbBrebis: parseInt(parts[4], 10) || 0,
-        nbEch: String(parts[5] || '').trim() !== '' ? parseInt(parts[5], 10) : null,
-        coefAc: parseDecimalVirgule(parts[6]),
-        nbAntenaises: parseInt(parts[7], 10) || 0,
-        laitAntenaises: parseDecimalVirgule(parts[8]),
-        nbAdultes: parseInt(parts[9], 10) || 0,
-        laitAdultes: parseDecimalVirgule(parts[10]),
+        controle: parseInt(get(parts, 'controle'), 10),
+        date: parseDateFrSlash(get(parts, 'date')),
+        laitTotal: parseDecimalVirgule(get(parts, 'laitTotal')),
+        laitControle: parseDecimalVirgule(get(parts, 'laitControle')),
+        nbBrebis: parseInt(get(parts, 'nbBrebis'), 10) || 0,
+        nbEch: String(get(parts, 'nbEch') || '').trim() !== '' ? parseInt(get(parts, 'nbEch'), 10) : null,
+        coefAc: parseDecimalVirgule(get(parts, 'coefAc')),
+        nbAntenaises: parseInt(get(parts, 'nbAntenaises'), 10) || 0,
+        laitAntenaises: parseDecimalVirgule(get(parts, 'laitAntenaises')),
+        nbAdultes: parseInt(get(parts, 'nbAdultes'), 10) || 0,
+        laitAdultes: parseDecimalVirgule(get(parts, 'laitAdultes')),
         resolutionConflit: null
       }))
       .filter(r => !isNaN(r.controle));
@@ -12381,18 +12485,25 @@ function renderImportControleLaitierSieol() {
   }
 
   function processCahierRows(tableRows) {
-    let dataRows = tableRows;
-    if (tableRows.length > 0 && !/^\d+$/.test(String(tableRows[0][0] || '').trim())) dataRows = tableRows.slice(1);
-    parsedCahier = dataRows
-      .filter(parts => parts && parts.length >= 12 && String(parts[0] || '').trim())
+    if (!tableRows.length || /^\d+$/.test(String(tableRows[0][0] || '').trim())) {
+      throw new Error("En-tête introuvable en première ligne -- impossible de repérer les colonnes de ce fichier.");
+    }
+    const cols = buildColumnMap(tableRows[0], CAHIER_FIELDS);
+    if (cols.numeroVisuelSieol === -1) {
+      throw new Error("Colonne numero_visuel_sieol introuvable dans l'en-tête.");
+    }
+    const get = (parts, key) => cols[key] !== -1 ? parts[cols[key]] : undefined;
+    const CTL_COLS = { 1: ['ctl1Ml', 'ctl1Ano'], 2: ['ctl2Ml', 'ctl2Ano'], 3: ['ctl3Ml', 'ctl3Ano'] };
+    parsedCahier = tableRows.slice(1)
+      .filter(parts => parts && String(get(parts, 'numeroVisuelSieol') || '').trim())
       .map((parts, idx) => {
-        const numeroVisuelSieol = String(parts[0] || '').trim();
+        const numeroVisuelSieol = String(get(parts, 'numeroVisuelSieol') || '').trim();
         const controles = {};
         [1, 2, 3].forEach(n => {
-          const baseIdx = 1 + (n - 1) * 2; // ctl1_ml=1, ctl2_ml=3, ctl3_ml=5
-          const ml = parseDecimalVirgule(parts[baseIdx]);
+          const [mlKey, anoKey] = CTL_COLS[n];
+          const ml = parseDecimalVirgule(get(parts, mlKey));
           if (ml !== null) {
-            const anoStr = String(parts[baseIdx + 1] || '').trim();
+            const anoStr = String(get(parts, anoKey) || '').trim();
             controles[n] = { quantite: Math.round(ml), anomalie: anoStr !== '' ? parseInt(anoStr, 10) : null, resolutionConflit: null };
           }
         });
@@ -12400,11 +12511,11 @@ function renderImportControleLaitierSieol() {
           __idx: idx,
           numeroVisuelSieol,
           controles,
-          anoLact: String(parts[7] || '').trim() || null,
-          numLactation: String(parts[8] || '').trim() || null,
-          ref: String(parts[9] || '').trim() || null,
-          lactMoyen: parseDecimalVirgule(parts[10]),
-          classeParQuart: String(parts[11] || '').trim() !== '' ? parseInt(parts[11], 10) : null,
+          anoLact: String(get(parts, 'anoLact') || '').trim() || null,
+          numLactation: String(get(parts, 'numLactation') || '').trim() || null,
+          ref: String(get(parts, 'ref') || '').trim() || null,
+          lactMoyen: parseDecimalVirgule(get(parts, 'lactMoyen')),
+          classeParQuart: String(get(parts, 'classeParQuart') || '').trim() !== '' ? parseInt(get(parts, 'classeParQuart'), 10) : null,
           resolution: resoudreLigneSieol(numeroVisuelSieol),
           valideeSheep: null
         };
