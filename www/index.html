@@ -269,6 +269,7 @@
   .compact-tag { display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 7px; border-radius: 6px; vertical-align: middle; }
   .compact-tag-green { background: var(--green-bg); color: var(--green-fg); }
   .compact-tag-amber { background: var(--amber-bg); color: var(--amber-fg); }
+  .compact-tag-coral { background: var(--coral-bg); color: var(--coral-fg); }
 
   /* ---------- Menu hamburger (drawer) ---------- */
   .drawer-overlay { position: fixed; inset: 0; background: rgba(43,38,28,0.45); z-index: 1000; display: flex; }
@@ -607,6 +608,21 @@ function migrateData(d) {
       if (e.campagne === 2025) e.campagne = 2026;
     });
   });
+  // Cahier de contrôle laitier SIEOL/UNOTEC (voir renderImportControleLaitierSieol) :
+  // résumé troupeau par contrôle -- { campagne, controle, date, laitTotal,
+  // laitControle, coefAc, nbBrebis, nbEch, nbAntenaises, laitAntenaises,
+  // nbAdultes, laitAdultes }, un par campagne + numéro de contrôle. Distinct
+  // de sheep.controleLaitier[] (détail par brebis, voir plus loin) : sert
+  // uniquement aux stats globales troupeau.
+  if (!d.resumeControleLaitier) d.resumeControleLaitier = [];
+  // Cahier de contrôle laitier SIEOL/UNOTEC : partie par brebis qui n'est
+  // PAS par contrôle (contrairement à sheep.controleLaitier[].anomalie
+  // ci-dessous) -- une seule entrée par brebis + campagne, remplacée (pas
+  // accumulée) à chaque réimport puisque lactMoyen est une estimation
+  // intermédiaire UNOTEC qui évolue au fil de la campagne, pas un total
+  // définitif à conserver version par version. { eid, campagne, anoLact,
+  // numLactation, ref, lactMoyen, classeParQuart }.
+  if (!d.cahierControleLaitier) d.cahierControleLaitier = [];
   return d;
 }
 
@@ -627,6 +643,8 @@ function loadData() {
     penalitesBacterio: [],
     bilanLactation: [],
     sieolSansMiseBas: [],
+    resumeControleLaitier: [],
+    cahierControleLaitier: [],
     listeSerie: [],
     parametresPrixLait: [
       { campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null },
@@ -1885,6 +1903,26 @@ function upsertSieolSansMiseBas(eid, campagne) {
   const existe = DB.sieolSansMiseBas.some(l => cleanEid(l.eid) === cleanEid(eid) && l.campagne === campagne);
   if (!existe) DB.sieolSansMiseBas.push({ eid, campagne });
 }
+/* Écrit ou remplace le résumé troupeau d'un contrôle pour une campagne
+   donnée -- voir renderImportControleLaitierSieol. N'est appelée qu'après
+   résolution explicite d'un éventuel conflit par l'éleveur : ne décide
+   jamais elle-même d'écraser une valeur déjà enregistrée. */
+function upsertResumeControleLaitier(campagne, controle, champs) {
+  const idx = DB.resumeControleLaitier.findIndex(r => r.campagne === campagne && r.controle === controle);
+  if (idx !== -1) DB.resumeControleLaitier[idx] = { campagne, controle, ...champs };
+  else DB.resumeControleLaitier.push({ campagne, controle, ...champs });
+}
+/* Écrit ou remplace la partie "cahier" par brebis (ano_lact/numLactation/
+   ref/lactMoyen/classeParQuart) -- toujours remplacée sans confirmation,
+   contrairement au résumé et au détail par contrôle ci-dessus/dessous :
+   lactMoyen est une estimation intermédiaire UNOTEC censée évoluer d'un
+   contrôle à l'autre, pas une valeur figée dont l'écrasement serait un
+   risque à confirmer (voir chantier "Cahier de contrôle SIEOL"). */
+function upsertCahierControleLaitier(eid, campagne, champs) {
+  const idx = DB.cahierControleLaitier.findIndex(c => cleanEid(c.eid) === cleanEid(eid) && c.campagne === campagne);
+  if (idx !== -1) DB.cahierControleLaitier[idx] = { eid, campagne, ...champs };
+  else DB.cahierControleLaitier.push({ eid, campagne, ...champs });
+}
 /* Campagnes proposées au sélecteur (import et vue d'ensemble) : les 6
    dernières campagnes autour de la campagne en cours, complétées par toute
    campagne plus ancienne déjà présente dans les données (import agressif
@@ -1925,6 +1963,39 @@ function agnelageCampagneActuelle(sheep) {
 function controleLaitierCampagneIdx(sheep, controle, excludeIdx) {
   const list = sheep.controleLaitier || [];
   return list.findIndex((c, i) => i !== excludeIdx && c && c.controle === controle && c.campagne === DB.campagneDebut);
+}
+/* Variante paramétrée par campagne explicite (voir renderImportControleLaitierSieol) :
+   l'import choisit toujours sa campagne explicitement (jamais présumée être
+   la campagne en cours), contrairement à la saisie manuelle ci-dessus. */
+function controleLaitierCampagneIdxN(sheep, controle, campagne) {
+  const list = sheep.controleLaitier || [];
+  return list.findIndex(c => c && c.controle === controle && c.campagne === campagne);
+}
+
+/* ---------- Codes d'anomalie du cahier de contrôle laitier SIEOL/UNOTEC ----------
+   Un code par contrôle (pas par lactation entière, voir ano_lact sur
+   DB.cahierControleLaitier) -- voir chantier "Cahier de contrôle SIEOL".
+   Codes 1 et 2 : signification inconnue pour l'instant chez cet éleveur,
+   volontairement absents de la table -- le libellé générique de secours
+   ("Anomalie N") s'affiche à leur place, sans bloquer l'import ; la table
+   est prête à recevoir leur vrai libellé le jour où ils sont identifiés.
+   Code 6 (Malade) : confirmé par le technicien actuel, mais peut varier
+   selon le technicien -- libellé volontairement marqué d'une réserve. */
+const ANOMALIE_CONTROLE_LABELS = {
+  3: 'Boucle électronique manquante',
+  4: 'Boucle conventionnelle manquante',
+  5: 'Réforme',
+  6: 'Malade (?)',
+  7: 'Contrôle sauté',
+  8: 'Mammites',
+  9: 'Tarie',
+  11: 'Allaitante et traite'
+};
+function libelleAnomalieControle(code) {
+  if (code === null || code === undefined || code === '') return null;
+  const n = typeof code === 'number' ? code : parseInt(code, 10);
+  if (isNaN(n)) return null;
+  return ANOMALIE_CONTROLE_LABELS[n] || ('Anomalie ' + n);
 }
 
 /* Mouvement le plus RÉCENT par DATE (pas par position dans le tableau) --
@@ -2644,6 +2715,7 @@ function render(view, sheepId) {
     else if (view === 'import-echo') renderImportEcho();
     else if (view === 'import-numero-sieol') renderImportNumeroSieol();
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
+    else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
     else if (view === 'recoupement-sieol') renderRecoupementSieol();
     else if (view === 'import-agnelles') renderImportAgnelles();
     else if (view === 'parametres') renderParametres();
@@ -4108,7 +4180,10 @@ function renderDetail(id) {
         <div style="font-size:11.5px;color:var(--text-muted);">Contrôle n°${c.controle}</div>
         <div class="date">${formatDateFr(c.date)}</div>
       </div>
-      <div style="font-weight:700;font-size:15px;flex-shrink:0;">${c.quantite} mL</div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div style="font-weight:700;font-size:15px;">${c.quantite} mL</div>
+        ${c.anomalie ? `<span class="compact-tag compact-tag-coral" style="margin-top:4px;">${libelleAnomalieControle(c.anomalie)}</span>` : ''}
+      </div>
     </div>
   `;
   const controleCourants = controleIndexes.filter(c => c.campagne === DB.campagneDebut).reverse();
@@ -4121,6 +4196,24 @@ function renderDetail(id) {
       </div>
     </div>
   `).join('');
+  // Cahier de contrôle SIEOL/UNOTEC (voir DB.cahierControleLaitier,
+  // renderImportControleLaitierSieol) : une seule entrée par brebis +
+  // campagne, jamais un historique par entrée -- scope à la campagne en
+  // cours comme la carte Contrôle laitier ci-dessus, pas d'historique des
+  // campagnes passées pour l'instant (hors périmètre de ce chantier).
+  const cahierCampagne = (DB.cahierControleLaitier || []).find(c => cleanEid(c.eid) === cleanEid(sheep.eid) && c.campagne === DB.campagneDebut);
+  const cahierCardHtml = !cahierCampagne ? '' : `
+    <div class="card">
+      ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Cahier de contrôle · campagne en cours')}
+      ${cahierCampagne.numLactation ? `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">N° de lactation</span><strong>${cahierCampagne.numLactation}</strong></div>` : ''}
+      ${cahierCampagne.classeParQuart !== null && cahierCampagne.classeParQuart !== undefined ? `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Classe par quart</span><strong>${cahierCampagne.classeParQuart}</strong></div>` : ''}
+      ${cahierCampagne.lactMoyen !== null && cahierCampagne.lactMoyen !== undefined ? `
+      <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Estimation lactation (UNOTEC)</span><strong>${fmtDecimal(cahierCampagne.lactMoyen, 0)} L</strong></div>
+      <div style="font-size:11px;color:var(--text-muted);font-style:italic;margin-top:2px;">Estimation intermédiaire, pas un total définitif — peut changer au contrôle suivant.</div>
+      ` : ''}
+      ${cahierCampagne.anoLact ? `<div style="margin-top:8px;"><span class="compact-tag compact-tag-coral">Anomalie lactation : ${cahierCampagne.anoLact}</span></div>` : ''}
+    </div>
+  `;
   // Historique combiné : agnelages ET contrôles laitiers des campagnes
   // précédentes regroupés ENSEMBLE par campagne (pas une sous-liste par
   // catégorie) — voir historiqueParCampagneHtml.
@@ -4325,6 +4418,7 @@ function renderDetail(id) {
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${controleHtml}
     </div>
+    ${cahierCardHtml}
     <div class="card">
       ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Historique par campagne')}
       ${historiqueCampagnesHtml}
@@ -6230,31 +6324,38 @@ function renderControleLaitier() {
 
   function controlesCampagne(sheep) {
     const vals = { 1: null, 2: null, 3: null };
+    const anomalies = { 1: null, 2: null, 3: null };
     (sheep.controleLaitier || []).forEach(c => {
       if (c.campagne !== DB.campagneDebut) return;
-      if (vals[c.controle] !== undefined) vals[c.controle] = c.quantite;
+      if (vals[c.controle] !== undefined) { vals[c.controle] = c.quantite; anomalies[c.controle] = c.anomalie || null; }
     });
-    return vals;
+    return { vals, anomalies };
   }
 
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   const rows = actives.map(s => {
-    const c = controlesCampagne(s);
+    const { vals: c, anomalies: a } = controlesCampagne(s);
     const agnelage = agnelageCampagneActuelle(s);
     return {
       sheep: s,
       eid: cleanEid(s.eid),
       numero: numeroVisuel(s.eid),
       c1: c[1], c2: c[2], c3: c[3],
+      a1: a[1], a2: a[2], a3: a[3],
       dateMab: agnelage ? agnelage.date : null,
       cumul: (c[1] || 0) + (c[2] || 0) + (c[3] || 0)
     };
   });
+  // Codes d'anomalie réellement présents cette campagne (pas une liste figée) --
+  // alimente les pastilles de filtre ci-dessous, voir passeFiltre.
+  const anomaliesPresentes = Array.from(new Set(
+    rows.flatMap(r => [r.a1, r.a2, r.a3]).filter(Boolean)
+  )).sort((x, y) => x - y);
 
   // État des filtres/tri, conservé en fermeture (pas dans le DOM) tant que
   // l'écran reste affiché — perdu en quittant, comme les autres écrans à
   // filtres de l'appli (ex: renderAddLot) qui ne persistent pas non plus.
-  const state = { controle: null, operateur: null, seuil: '', dateApres: '', sortKey: 'numero', sortDir: 'asc' };
+  const state = { controle: null, operateur: null, seuil: '', dateApres: '', anomalie: null, sortKey: 'numero', sortDir: 'asc' };
   // Sélection pour "Créer un lot de recherche" : volontairement indépendante
   // des filtres/tri (jamais recalculée ni vidée par un changement de filtre)
   // -- resserrer le filtre après avoir coché une brebis ne la décoche pas.
@@ -6273,6 +6374,7 @@ function renderControleLaitier() {
     if (state.dateApres) {
       if (!row.dateMab || row.dateMab <= state.dateApres) return false;
     }
+    if (state.anomalie !== null && row.a1 !== state.anomalie && row.a2 !== state.anomalie && row.a3 !== state.anomalie) return false;
     return true;
   }
 
@@ -6313,7 +6415,55 @@ function renderControleLaitier() {
     return state.sortDir === 'asc' ? ' ▲' : ' ▼';
   }
 
+  // Récapitulatif du contrôle (voir DB.resumeControleLaitier, importé depuis
+  // renderImportControleLaitierSieol) : par défaut le contrôle le plus
+  // récent de la campagne en cours qui a un résumé, modifiable via les 3
+  // boutons si plusieurs sont disponibles.
+  const resumesCampagne = (DB.resumeControleLaitier || []).filter(r => r.campagne === DB.campagneDebut).sort((a, b) => a.controle - b.controle);
+  let recapControle = resumesCampagne.length > 0 ? resumesCampagne[resumesCampagne.length - 1].controle : null;
+
+  function recapHtml() {
+    const r = resumesCampagne.find(x => x.controle === recapControle);
+    if (!r) return '';
+    return `
+      <div class="card">
+        ${sectionHeaderHtml(ICON_LAIT, 'blue', 'Récapitulatif · Contrôle ' + r.controle)}
+        ${resumesCampagne.length > 1 ? `
+        <div class="grid4" style="grid-template-columns:repeat(${resumesCampagne.length},1fr);margin-bottom:12px;">
+          ${resumesCampagne.map(x => `<button type="button" class="opt-btn cl-recap-opt${x.controle === recapControle ? ' selected' : ''}" data-val="${x.controle}">C${x.controle}</button>`).join('')}
+        </div>
+        ` : ''}
+        <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Tank (lait total)</span><strong>${fmtDecimal(r.laitTotal, 2)} L</strong></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Cumul éprouvettes</span><strong>${fmtDecimal(r.laitControle, 2)} L</strong></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Coefficient</span><strong>${fmtDecimal(r.coefAc, 2)}</strong></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Brebis contrôlées</span><strong>${r.nbBrebis}</strong></div>
+        <div class="row" style="margin-top:10px;margin-bottom:0;">
+          <div style="flex:1;background:var(--bg);border-radius:var(--radius-sm);padding:8px 10px;text-align:center;">
+            <div style="font-weight:700;">${r.nbAntenaises}</div>
+            <div style="font-size:10.5px;color:var(--text-muted);">Antenaises</div>
+            <div style="font-weight:600;font-size:12.5px;margin-top:4px;">${fmtDecimal(r.laitAntenaises, 0)} mL</div>
+            <div style="font-size:9.5px;color:var(--text-muted);">moy./brebis/j</div>
+          </div>
+          <div style="width:8px;"></div>
+          <div style="flex:1;background:var(--bg);border-radius:var(--radius-sm);padding:8px 10px;text-align:center;">
+            <div style="font-weight:700;">${r.nbAdultes}</div>
+            <div style="font-size:10.5px;color:var(--text-muted);">Adultes</div>
+            <div style="font-weight:600;font-size:12.5px;margin-top:4px;">${fmtDecimal(r.laitAdultes, 0)} mL</div>
+            <div style="font-size:9.5px;color:var(--text-muted);">moy./brebis/j</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   app.innerHTML = `
+    <div id="cl-recap-container">${recapHtml()}</div>
+    ${anomaliesPresentes.length > 0 ? `
+    <div class="chip-list" style="flex-wrap:nowrap;overflow-x:auto;">
+      <button type="button" class="chip chip-anomalie-opt${state.anomalie === null ? ' selected' : ''}" data-val="" style="flex-shrink:0;">Toutes</button>
+      ${anomaliesPresentes.map(code => `<button type="button" class="chip chip-anomalie-opt${state.anomalie === code ? ' selected' : ''}" data-val="${code}" style="flex-shrink:0;">${libelleAnomalieControle(code)}</button>`).join('')}
+    </div>
+    ` : ''}
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Filtrer par contrôle</div>
       <label>Contrôle</label>
@@ -6351,6 +6501,7 @@ function renderControleLaitier() {
       <button type="button" class="btn btn-secondary" id="btn-cl-export-pdf" style="flex:1;">Export PDF</button>
       <button type="button" class="btn btn-secondary" id="btn-cl-export-xlsx" style="flex:1;">Excel (.xlsx)</button>
     </div>
+    <button type="button" class="btn btn-secondary" id="btn-cl-import-sieol">Importer un cahier de contrôle</button>
   `;
 
   // Lignes triées + filtrées telles qu'affichées à l'écran à cet instant --
@@ -6376,7 +6527,11 @@ function renderControleLaitier() {
     const filtered = currentFiltered();
     document.getElementById('cl-count').textContent = filtered.length + ' brebis correspondante(s) sur ' + rows.length + '.';
     const table = document.getElementById('cl-table');
-    const cell = (v, unite) => v !== null && v !== undefined ? (v + (unite || '')) : '';
+    const cellHtml = (v, anomalie) => {
+      if (v === null || v === undefined) return '';
+      const badge = anomalie ? ` <span class="compact-tag compact-tag-coral">${libelleAnomalieControle(anomalie)}</span>` : '';
+      return v + ' mL' + badge;
+    };
     table.innerHTML = `
       <tr style="color:var(--text-muted);text-align:left;">
         <th style="padding:4px 4px;width:26px;"></th>
@@ -6392,9 +6547,9 @@ function renderControleLaitier() {
           <td style="padding:6px 4px;"><input type="checkbox" class="cl-check" data-eid="${r.eid}" style="width:16px;height:16px;margin:0;"${selection.has(r.eid) ? ' checked' : ''}></td>
           <td style="padding:6px 4px;">n°${r.numero}</td>
           <td style="padding:6px 4px;">${r.dateMab ? formatDateFr(r.dateMab) : ''}</td>
-          <td style="padding:6px 4px;text-align:right;">${cell(r.c1, ' mL')}</td>
-          <td style="padding:6px 4px;text-align:right;">${cell(r.c2, ' mL')}</td>
-          <td style="padding:6px 4px;text-align:right;">${cell(r.c3, ' mL')}</td>
+          <td style="padding:6px 4px;text-align:right;white-space:nowrap;">${cellHtml(r.c1, r.a1)}</td>
+          <td style="padding:6px 4px;text-align:right;white-space:nowrap;">${cellHtml(r.c2, r.a2)}</td>
+          <td style="padding:6px 4px;text-align:right;white-space:nowrap;">${cellHtml(r.c3, r.a3)}</td>
           <td style="padding:6px 4px;text-align:right;">${r.cumul} mL</td>
         </tr>
       `).join('') || `<tr><td colspan="7" style="padding:14px 4px;color:var(--text-muted);">Aucune brebis ne correspond aux filtres.</td></tr>`}
@@ -6467,6 +6622,28 @@ function renderControleLaitier() {
     state.dateApres = e.target.value;
     drawTable();
   });
+  document.querySelectorAll('.chip-anomalie-opt').forEach(btn => {
+    btn.onclick = () => {
+      const raw = btn.dataset.val;
+      state.anomalie = raw === '' ? null : parseInt(raw, 10);
+      document.querySelectorAll('.chip-anomalie-opt').forEach(b => {
+        const bRaw = b.dataset.val;
+        b.classList.toggle('selected', (bRaw === '' ? null : parseInt(bRaw, 10)) === state.anomalie);
+      });
+      drawTable();
+    };
+  });
+  function wireRecapButtons() {
+    document.querySelectorAll('.cl-recap-opt').forEach(btn => {
+      btn.onclick = () => {
+        recapControle = parseInt(btn.dataset.val, 10);
+        document.getElementById('cl-recap-container').innerHTML = recapHtml();
+        wireRecapButtons();
+      };
+    });
+  }
+  wireRecapButtons();
+  document.getElementById('btn-cl-import-sieol').onclick = () => render('import-controle-laitier-sieol');
 
   drawTable();
 }
@@ -11953,6 +12130,357 @@ function renderImportBilanLactation() {
   };
 }
 
+/* Écran d'import du cahier de contrôle laitier SIEOL/UNOTEC -- voir chantier
+   "Cahier de contrôle SIEOL" (distinct du Bilan de lactation ci-dessus :
+   deux documents différents, confirmé par l'éleveur). Deux fichiers
+   ensemble, jamais l'un sans l'autre pour confirmer : le résumé par
+   contrôle (troupeau, dates) et le cahier détaillé (par brebis). La date de
+   chaque contrôle vient TOUJOURS du résumé (le détail par brebis n'a pas de
+   date propre) -- les deux fichiers sont donc croisés à l'import.
+   Résolution des brebis : réutilise resoudreLigneSieol tel quel (même
+   mécanisme que le Bilan de lactation). Campagne ET contrôle(s) concernés
+   toujours choisis explicitement, jamais présumés (voir chantier).
+   Écrasement : jamais silencieux sur les valeurs de production
+   (sheep.controleLaitier[] et le résumé troupeau) -- un conflit détecté
+   affiche ancienne vs nouvelle valeur et exige un choix explicite
+   (Garder/Remplacer) ; un conflit laissé sans réponse au moment de
+   confirmer l'import est ignoré (valeur existante conservée), jamais
+   écrasé par défaut. Le cahier par brebis (ano_lact/numLactation/ref/
+   lactMoyen/classeParQuart), lui, est toujours remplacé sans confirmation
+   -- voir upsertCahierControleLaitier, lactMoyen est une estimation
+   intermédiaire censée évoluer, pas une valeur figée. */
+function renderImportControleLaitierSieol() {
+  pageTitle.textContent = 'Import contrôle laitier';
+  const campagnesOptions = campagnesDisponiblesSieol();
+  let campagneImport = (DB.campagneDebut !== null && DB.campagneDebut !== undefined && campagnesOptions.includes(DB.campagneDebut)) ? DB.campagneDebut : campagnesOptions[0];
+  const controlesSelectionnes = new Set();
+  let parsedResume = null;  // [{ __idx, controle, date, laitTotal, laitControle, coefAc, nbBrebis, nbEch, nbAntenaises, laitAntenaises, nbAdultes, laitAdultes, resolutionConflit }]
+  let parsedCahier = null;  // [{ __idx, numeroVisuelSieol, controles:{1:{quantite,anomalie,resolutionConflit},...}, anoLact, numLactation, ref, lactMoyen, classeParQuart, resolution, valideeSheep }]
+
+  app.innerHTML = `
+    <div class="card">
+      <label>Campagne concernée</label>
+      <select id="import-cl-campagne">
+        ${campagnesOptions.map(c => `<option value="${c}" ${c === campagneImport ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}
+      </select>
+      <label style="margin-top:12px;">Contrôle(s) concerné(s) par cet import</label>
+      <div class="grid4" style="grid-template-columns:repeat(3,1fr);margin-bottom:0;">
+        <button type="button" class="opt-btn cl-controle-opt" data-controle="1">C1</button>
+        <button type="button" class="opt-btn cl-controle-opt" data-controle="2">C2</button>
+        <button type="button" class="opt-btn cl-controle-opt" data-controle="3">C3</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier résumé par contrôle (;) : num_controle;date_controle;lait_total;lait_controle;nb_brebis;nb_ech;coef_ac;nb_antenaises;lait_antenaises;nb_adultes;lait_adultes. Dates JJ/MM/AAAA, décimales à virgule.</div>
+      <label>Fichier résumé</label>
+      <input type="file" id="import-cl-resume-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
+      <div id="import-cl-resume-err" class="error-box hidden"></div>
+    </div>
+
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Cahier de contrôle détaillé (;) : numero_visuel_sieol;ctl1_ml;ctl1_anomalie;ctl2_ml;ctl2_anomalie;ctl3_ml;ctl3_anomalie;ano_lact;num_lactation;ref;lact_moyen;classe_par_quart.</div>
+      <label>Fichier cahier de contrôle</label>
+      <input type="file" id="import-cl-cahier-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
+      <div id="import-cl-cahier-err" class="error-box hidden"></div>
+    </div>
+
+    <div id="import-cl-preview"></div>
+    <button class="btn btn-primary hidden" id="btn-confirm-import-cl" style="margin-top:14px;">Confirmer l'import</button>
+  `;
+
+  document.getElementById('import-cl-campagne').onchange = (e) => { campagneImport = parseInt(e.target.value, 10); renderPreview(); };
+  document.querySelectorAll('.cl-controle-opt').forEach(btn => {
+    btn.onclick = () => {
+      const n = parseInt(btn.dataset.controle, 10);
+      if (controlesSelectionnes.has(n)) { controlesSelectionnes.delete(n); btn.classList.remove('selected'); }
+      else { controlesSelectionnes.add(n); btn.classList.add('selected'); }
+      renderPreview();
+    };
+  });
+
+  const CHAMPS_RESUME = ['laitTotal', 'laitControle', 'coefAc', 'nbBrebis', 'nbEch', 'nbAntenaises', 'laitAntenaises', 'nbAdultes', 'laitAdultes'];
+
+  function conflitDetail(sheep, n, c) {
+    const idx = controleLaitierCampagneIdxN(sheep, n, campagneImport);
+    if (idx === -1) return null;
+    const existant = sheep.controleLaitier[idx];
+    if (existant.quantite === c.quantite && (existant.anomalie || null) === (c.anomalie || null)) return null;
+    return existant;
+  }
+  function conflitResume(r) {
+    const existant = DB.resumeControleLaitier.find(e => e.campagne === campagneImport && e.controle === r.controle);
+    if (!existant) return null;
+    return CHAMPS_RESUME.some(k => existant[k] !== r[k]) ? existant : null;
+  }
+
+  function renderPreview() {
+    const preview = document.getElementById('import-cl-preview');
+    const btnConfirm = document.getElementById('btn-confirm-import-cl');
+    if (!parsedCahier && !parsedResume) { preview.innerHTML = ''; btnConfirm.classList.add('hidden'); return; }
+    if (controlesSelectionnes.size === 0) {
+      preview.innerHTML = '<div class="card" style="margin-top:14px;"><div class="error-box">Choisis au moins un contrôle concerné par cet import avant de continuer.</div></div>';
+      btnConfirm.classList.add('hidden');
+      return;
+    }
+
+    const cahier = parsedCahier || [];
+    const directes = cahier.filter(r => r.resolution.type === 'direct');
+    const aValider = cahier.filter(r => r.resolution.type === 'candidats' && !r.valideeSheep);
+    const validees = cahier.filter(r => r.resolution.type === 'candidats' && r.valideeSheep);
+    const nonResolues = cahier.filter(r => r.resolution.type === 'aucune');
+    const dejaChoisis = new Set(cahier.filter(r => r.valideeSheep).map(r => r.valideeSheep.id));
+
+    const conflitsDetail = [];
+    cahier.forEach(r => {
+      const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
+      if (!sheep) return;
+      controlesSelectionnes.forEach(n => {
+        const c = r.controles[n];
+        if (!c) return;
+        const existant = conflitDetail(sheep, n, c);
+        if (existant) conflitsDetail.push({ row: r, sheep, controle: n, c, existant });
+      });
+    });
+    const resumeSelectionne = (parsedResume || []).filter(r => controlesSelectionnes.has(r.controle));
+    const conflitsResumeList = resumeSelectionne
+      .map(r => ({ r, existant: conflitResume(r) }))
+      .filter(x => x.existant);
+
+    const nbConflitsRestants = conflitsDetail.filter(x => x.c.resolutionConflit !== 'garder' && x.c.resolutionConflit !== 'remplacer').length
+      + conflitsResumeList.filter(x => x.r.resolutionConflit !== 'garder' && x.r.resolutionConflit !== 'remplacer').length;
+
+    preview.innerHTML = `
+      <div class="card" style="margin-top:14px;">
+        <div class="grid2" style="grid-template-columns:repeat(5,1fr);">
+          <div class="stat-card sc-green"><div class="stat-card-label">Directes</div><div class="stat-card-value" style="font-size:16px;">${directes.length}</div></div>
+          <div class="stat-card sc-blue"><div class="stat-card-label">Validées</div><div class="stat-card-value" style="font-size:16px;">${validees.length}</div></div>
+          <div class="stat-card sc-amber"><div class="stat-card-label">À valider</div><div class="stat-card-value" style="font-size:16px;">${aValider.length}</div></div>
+          <div class="stat-card sc-coral"><div class="stat-card-label">Non résolues</div><div class="stat-card-value" style="font-size:16px;">${nonResolues.length}</div></div>
+          <div class="stat-card sc-coral"><div class="stat-card-label">Conflits</div><div class="stat-card-value" style="font-size:16px;">${conflitsDetail.length + conflitsResumeList.length}</div></div>
+        </div>
+      </div>
+
+      ${aValider.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px;">À valider manuellement (${aValider.length})</div>
+        ${aValider.map(r => {
+          const candidatsLibres = r.resolution.candidats.filter(s => !dejaChoisis.has(s.id));
+          return `
+          <div style="border-top:1px solid var(--border);padding:10px 0;">
+            <div style="font-size:13px;margin-bottom:6px;">Numéro visuel SIEOL <strong>${r.numeroVisuelSieol}</strong></div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              ${candidatsLibres.length === 0 ? '<span style="font-size:12px;color:var(--text-muted);">Tous les candidats sont déjà attribués à une autre ligne de cet import.</span>' : candidatsLibres.map(s => `<button type="button" class="btn btn-secondary btn-choisir-candidat-cl" data-row="${r.__idx}" data-sheep="${s.id}" style="width:auto;padding:6px 12px;font-size:12px;">n°${numeroVisuel(s.eid)} — ${eidAffichageCourt(s.eid)}</button>`).join('')}
+            </div>
+          </div>
+        `; }).join('')}
+      </div>
+      ` : ''}
+
+      ${(conflitsDetail.length > 0 || conflitsResumeList.length > 0) ? `
+      <div class="card" style="margin-top:10px;border-color:var(--coral-fg);">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--coral-fg);">Conflits à trancher (${conflitsDetail.length + conflitsResumeList.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Une valeur existe déjà. Rien n'est écrasé sans ton choix explicite ; un conflit laissé sans réponse garde la valeur actuelle.</div>
+        ${conflitsResumeList.map(({ r, existant }) => `
+          <div style="border-top:1px solid var(--border);padding:10px 0;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Résumé du contrôle ${r.controle} déjà enregistré</div>
+            <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
+              <span>Actuel : tank ${fmtDecimal(existant.laitTotal, 2)} L</span>
+              <span style="color:var(--coral-fg);">Nouveau : tank ${fmtDecimal(r.laitTotal, 2)} L</span>
+            </div>
+            <div class="row" style="margin-bottom:0;">
+              <button type="button" class="btn btn-secondary btn-conflit-resume" data-idx="${r.__idx}" data-choix="garder" style="flex:1;">Garder l'actuel</button>
+              <button type="button" class="btn btn-primary btn-conflit-resume" data-idx="${r.__idx}" data-choix="remplacer" style="flex:1;background:var(--coral-fg);">Remplacer</button>
+            </div>
+            ${r.resolutionConflit ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Choix actuel : ${r.resolutionConflit === 'remplacer' ? 'remplacer' : "garder l'actuel"}.</div>` : ''}
+          </div>
+        `).join('')}
+        ${conflitsDetail.map(({ row, controle, c, existant }) => `
+          <div style="border-top:1px solid var(--border);padding:10px 0;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${row.numeroVisuelSieol} — Contrôle ${controle} déjà enregistré</div>
+            <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
+              <span>Actuel : ${existant.quantite} mL${existant.anomalie ? ' · ' + libelleAnomalieControle(existant.anomalie) : ''}</span>
+              <span style="color:var(--coral-fg);">Nouveau : ${c.quantite} mL${c.anomalie ? ' · ' + libelleAnomalieControle(c.anomalie) : ''}</span>
+            </div>
+            <div class="row" style="margin-bottom:0;">
+              <button type="button" class="btn btn-secondary btn-conflit-detail" data-row="${row.__idx}" data-controle="${controle}" data-choix="garder" style="flex:1;">Garder l'actuel</button>
+              <button type="button" class="btn btn-primary btn-conflit-detail" data-row="${row.__idx}" data-controle="${controle}" data-choix="remplacer" style="flex:1;background:var(--coral-fg);">Remplacer</button>
+            </div>
+            ${c.resolutionConflit ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Choix actuel : ${c.resolutionConflit === 'remplacer' ? 'remplacer' : "garder l'actuel"}.</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+      ` : ''}
+
+      ${nonResolues.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Non résolues (${nonResolues.length}) — ignorées à l'import</div>
+        <div style="font-size:12px;color:var(--text-muted);">${nonResolues.slice(0, 20).map(r => r.numeroVisuelSieol).join(', ')}${nonResolues.length > 20 ? ', ... (' + (nonResolues.length - 20) + ' de plus)' : ''}</div>
+      </div>
+      ` : ''}
+    `;
+
+    document.querySelectorAll('.btn-choisir-candidat-cl').forEach(btn => {
+      btn.onclick = () => {
+        const row = parsedCahier[parseInt(btn.dataset.row, 10)];
+        row.valideeSheep = DB.brebis.find(s => s.id === btn.dataset.sheep);
+        renderPreview();
+      };
+    });
+    document.querySelectorAll('.btn-conflit-resume').forEach(btn => {
+      btn.onclick = () => {
+        const row = parsedResume.find(r => r.__idx === parseInt(btn.dataset.idx, 10));
+        row.resolutionConflit = btn.dataset.choix;
+        renderPreview();
+      };
+    });
+    document.querySelectorAll('.btn-conflit-detail').forEach(btn => {
+      btn.onclick = () => {
+        const row = parsedCahier.find(r => r.__idx === parseInt(btn.dataset.row, 10));
+        row.controles[parseInt(btn.dataset.controle, 10)].resolutionConflit = btn.dataset.choix;
+        renderPreview();
+      };
+    });
+
+    btnConfirm.classList.toggle('hidden', directes.length + validees.length === 0 && resumeSelectionne.length === 0);
+    btnConfirm.textContent = nbConflitsRestants > 0 ? `Confirmer l'import (${nbConflitsRestants} conflit(s) non tranché(s) resteront inchangés)` : "Confirmer l'import";
+  }
+
+  function processResumeRows(tableRows) {
+    let dataRows = tableRows;
+    if (tableRows.length > 0 && !/^\d+$/.test(String(tableRows[0][0] || '').trim())) dataRows = tableRows.slice(1);
+    parsedResume = dataRows
+      .filter(parts => parts && parts.length >= 11 && String(parts[0] || '').trim())
+      .map((parts, idx) => ({
+        __idx: idx,
+        controle: parseInt(parts[0], 10),
+        date: parseDateFrSlash(parts[1]),
+        laitTotal: parseDecimalVirgule(parts[2]),
+        laitControle: parseDecimalVirgule(parts[3]),
+        nbBrebis: parseInt(parts[4], 10) || 0,
+        nbEch: String(parts[5] || '').trim() !== '' ? parseInt(parts[5], 10) : null,
+        coefAc: parseDecimalVirgule(parts[6]),
+        nbAntenaises: parseInt(parts[7], 10) || 0,
+        laitAntenaises: parseDecimalVirgule(parts[8]),
+        nbAdultes: parseInt(parts[9], 10) || 0,
+        laitAdultes: parseDecimalVirgule(parts[10]),
+        resolutionConflit: null
+      }))
+      .filter(r => !isNaN(r.controle));
+    // Présélectionne les contrôles présents dans le résumé -- reste un choix
+    // modifiable (jamais présumé de façon irréversible), juste un point de
+    // départ pratique plutôt qu'un troisième fichier à re-cocher à la main.
+    parsedResume.forEach(r => {
+      if (!controlesSelectionnes.has(r.controle)) {
+        controlesSelectionnes.add(r.controle);
+        const btn = document.querySelector('.cl-controle-opt[data-controle="' + r.controle + '"]');
+        if (btn) btn.classList.add('selected');
+      }
+    });
+    renderPreview();
+  }
+
+  function processCahierRows(tableRows) {
+    let dataRows = tableRows;
+    if (tableRows.length > 0 && !/^\d+$/.test(String(tableRows[0][0] || '').trim())) dataRows = tableRows.slice(1);
+    parsedCahier = dataRows
+      .filter(parts => parts && parts.length >= 12 && String(parts[0] || '').trim())
+      .map((parts, idx) => {
+        const numeroVisuelSieol = String(parts[0] || '').trim();
+        const controles = {};
+        [1, 2, 3].forEach(n => {
+          const baseIdx = 1 + (n - 1) * 2; // ctl1_ml=1, ctl2_ml=3, ctl3_ml=5
+          const ml = parseDecimalVirgule(parts[baseIdx]);
+          if (ml !== null) {
+            const anoStr = String(parts[baseIdx + 1] || '').trim();
+            controles[n] = { quantite: Math.round(ml), anomalie: anoStr !== '' ? parseInt(anoStr, 10) : null, resolutionConflit: null };
+          }
+        });
+        return {
+          __idx: idx,
+          numeroVisuelSieol,
+          controles,
+          anoLact: String(parts[7] || '').trim() || null,
+          numLactation: String(parts[8] || '').trim() || null,
+          ref: String(parts[9] || '').trim() || null,
+          lactMoyen: parseDecimalVirgule(parts[10]),
+          classeParQuart: String(parts[11] || '').trim() !== '' ? parseInt(parts[11], 10) : null,
+          resolution: resoudreLigneSieol(numeroVisuelSieol),
+          valideeSheep: null
+        };
+      });
+    renderPreview();
+  }
+
+  function wireFileInput(inputId, errId, onRows) {
+    document.getElementById(inputId).addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const err = document.getElementById(errId);
+      err.classList.add('hidden');
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          onRows(decodeCsvBuffer(reader.result));
+        } catch (ex) {
+          err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+          err.classList.remove('hidden');
+        }
+      };
+      reader.onerror = () => {
+        err.textContent = "Erreur de lecture du fichier.";
+        err.classList.remove('hidden');
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  wireFileInput('import-cl-resume-file', 'import-cl-resume-err', processResumeRows);
+  wireFileInput('import-cl-cahier-file', 'import-cl-cahier-err', processCahierRows);
+
+  document.getElementById('btn-confirm-import-cl').onclick = () => {
+    let nbControlesBrebis = 0, nbCahier = 0, nbResume = 0, nbConflitsIgnores = 0;
+    (parsedCahier || []).forEach(r => {
+      const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
+      if (!sheep) return; // non résolue ou pas encore validée -- ignorée sans bloquer le reste
+      if (r.resolution.type === 'candidats') sheep.numeroSieol = r.numeroVisuelSieol;
+      controlesSelectionnes.forEach(n => {
+        const c = r.controles[n];
+        if (!c) return;
+        const idx = controleLaitierCampagneIdxN(sheep, n, campagneImport);
+        const resumeRow = (parsedResume || []).find(rr => rr.controle === n);
+        if (idx !== -1) {
+          const existant = sheep.controleLaitier[idx];
+          const identique = existant.quantite === c.quantite && (existant.anomalie || null) === (c.anomalie || null);
+          if (!identique) {
+            if (c.resolutionConflit !== 'remplacer') { nbConflitsIgnores++; return; }
+          }
+          sheep.controleLaitier[idx] = { controle: n, quantite: c.quantite, anomalie: c.anomalie || null, date: (resumeRow && resumeRow.date) || existant.date, campagne: campagneImport };
+        } else {
+          sheep.controleLaitier = sheep.controleLaitier || [];
+          sheep.controleLaitier.push({ controle: n, quantite: c.quantite, anomalie: c.anomalie || null, date: resumeRow ? resumeRow.date : null, campagne: campagneImport });
+        }
+        nbControlesBrebis++;
+      });
+      upsertCahierControleLaitier(sheep.eid, campagneImport, { anoLact: r.anoLact, numLactation: r.numLactation, ref: r.ref, lactMoyen: r.lactMoyen, classeParQuart: r.classeParQuart });
+      nbCahier++;
+    });
+    (parsedResume || []).forEach(r => {
+      if (!controlesSelectionnes.has(r.controle)) return;
+      const existant = DB.resumeControleLaitier.find(e => e.campagne === campagneImport && e.controle === r.controle);
+      if (existant) {
+        const identique = CHAMPS_RESUME.every(k => existant[k] === r[k]);
+        if (!identique && r.resolutionConflit !== 'remplacer') { nbConflitsIgnores++; return; }
+      }
+      upsertResumeControleLaitier(campagneImport, r.controle, { date: r.date, laitTotal: r.laitTotal, laitControle: r.laitControle, coefAc: r.coefAc, nbBrebis: r.nbBrebis, nbEch: r.nbEch, nbAntenaises: r.nbAntenaises, laitAntenaises: r.laitAntenaises, nbAdultes: r.nbAdultes, laitAdultes: r.laitAdultes });
+      nbResume++;
+    });
+    saveData(DB);
+    alert(nbControlesBrebis + ' valeur(s) de contrôle importée(s) pour ' + nbCahier + ' brebis, ' + nbResume + ' résumé(s) mis à jour, campagne ' + (campagneImport + 1) + '.'
+      + (nbConflitsIgnores > 0 ? ' ' + nbConflitsIgnores + ' conflit(s) laissé(s) inchangé(s) (valeur existante conservée).' : ''));
+    render('controle-laitier');
+  };
+}
+
 /* Nom + contenu d'un fichier de sauvegarde automatique silencieuse (voir
    writeAutoBackupFile), utilisés avant le changement de campagne ET avant
    l'import d'une sauvegarde JSON (voir renderParametres) — horodaté à la
@@ -13009,7 +13537,7 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
   'casParticuliers', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   'registre', 'traitementsCollectifs', 'mouvementsCollectifs', 'penalitesBacterio',
-  'listeSerie'];
+  'listeSerie', 'resumeControleLaitier', 'cahierControleLaitier'];
 const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
 const BOOTSTRAP_FLAG_KEY = 'ovilog_sync_bootstrapped_uid';
 
