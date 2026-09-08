@@ -2581,6 +2581,7 @@ let activeScanTarget = null;
 let editingAgnelleId = null;
 let addAgnelleOrigin = 'agnelles'; // écran vers lequel revenir après le formulaire add-agnelle : 'agnelles' (chantier de tri, historique) ou 'agnelle-detail' (nouvelle fiche, voir renderAgnelleDetail)
 let currentAgnelleId = null;
+let editReproTarget = null; // { kind: 'brebis'|'agnelle', id } -- voir renderEditRepro
 let agnelleDetailOrigin = 'agnelles-inventaire';
 let currentBelierId = null;
 let belierDetailOrigin = 'beliers';
@@ -2697,6 +2698,10 @@ btnBack.onclick = () => {
   else if (currentView === 'add-agnelle') { editingAgnelleId = null; render(addAgnelleOrigin); }
   else if (currentView === 'agnelle-detail') render(agnelleDetailOrigin);
   else if (currentView === 'add-lot' || currentView === 'add-lot-reforme' || currentView === 'add-lot-repro' || currentView === 'edit-lot') render('lots');
+  else if (currentView === 'edit-repro') {
+    if (editReproTarget && editReproTarget.kind === 'agnelle') { currentAgnelleId = editReproTarget.id; render('agnelle-detail'); }
+    else render('detail', editReproTarget ? editReproTarget.id : currentSheepId);
+  }
   else if (currentView === 'lot-search') render('lots');
   else if (currentView === 'mouvement-groupe') render('inventaire');
   else if (currentView === 'mouvements-collectifs') render('inventaire');
@@ -2874,6 +2879,7 @@ function render(view, sheepId) {
     else if (view === 'add-lot-reforme') renderAddLotReforme();
     else if (view === 'add-lot-repro') renderAddLotRepro();
     else if (view === 'edit-lot') renderEditLot(currentLotId);
+    else if (view === 'edit-repro') renderEditRepro();
     else if (view === 'lot-search') renderLotSearch(currentLotId);
     else if (view === 'mouvement-groupe') renderMouvementGroupe();
     else if (view === 'mouvements-collectifs') renderMouvementsCollectifsHistorique();
@@ -4585,6 +4591,12 @@ function renderDetail(id) {
   // explicatif (voir codeReproActuel : un seul statut à la fois, jamais un
   // historique, une seule mise bas possible par campagne).
   const codeReproInfo = codeReproActuel(sheep, agnelageCampagneActuelle(sheep), videDefCampagne);
+  // Modifiable/supprimable directement d'ici (voir renderEditRepro) seulement
+  // tant qu'aucune mise bas n'a de résultat basé dessus (style "ok" = déjà
+  // sur l'agnelage, modifiable via "Modifier l'agnelage" à la place) ET qu'un
+  // évènement existe réellement (sinon rien à éditer, MN par défaut).
+  const reproEntryActuelle = (sheep.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut).slice(-1)[0] || null;
+  const reproModifiable = codeReproInfo.style !== 'ok' && reproEntryActuelle;
   const reproStatutHtml = `
     <div class="card">
       ${sectionHeaderHtml(ICON_ECHO, 'green', 'Statut reproduction' + (campagneAffichage ? ' · campagne ' + campagneAffichage : ''))}
@@ -4592,6 +4604,7 @@ function renderDetail(id) {
         <div style="display:flex;align-items:center;gap:8px;">
           <div style="font-weight:600;font-size:16px;">${statutReproductionCampagne(sheep)}</div>
           ${reproTagHtml(codeReproInfo.code, codeReproInfo.style)}
+          ${reproModifiable ? `<button type="button" class="btn btn-secondary" id="btn-edit-repro-tag" style="width:auto;padding:2px 8px;font-size:11px;">Modifier</button>` : ''}
         </div>
         ${videDefCampagne
           ? `<button type="button" class="btn btn-secondary" id="btn-annuler-vide-def" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">Annuler</button>`
@@ -4697,6 +4710,8 @@ function renderDetail(id) {
     saveData(DB);
     render('detail', sheep.id);
   };
+  const btnEditReproTag = document.getElementById('btn-edit-repro-tag');
+  if (btnEditReproTag) btnEditReproTag.onclick = () => { editReproTarget = { kind: 'brebis', id: sheep.id }; render('edit-repro'); };
   document.getElementById('btn-add-sanitaire').onclick = () => { editContext = null; render('add-sanitaire', sheep.id); };
   if (document.getElementById('btn-add-mouvement')) document.getElementById('btn-add-mouvement').onclick = () => { editContext = null; render('add-mouvement', sheep.id); };
   document.getElementById('btn-add-controle').onclick = () => { editContext = null; render('add-controle', sheep.id); };
@@ -7735,6 +7750,10 @@ function renderAgnelleDetail(id) {
   // executerChangementCampagne) -- toujours affiché "en attente", discrètement
   // dans l'Identité plutôt qu'une carte à part (voir codeReproActuel).
   const codeReproInfoAg = codeReproActuel(ag, null, false);
+  // Style d'une agnelle toujours "attente" (jamais "ok", pas encore
+  // d'agnelage possible) -- modifiable/supprimable ici dès qu'un évènement
+  // existe réellement (voir renderEditRepro).
+  const reproEntryActuelleAg = (ag.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut).slice(-1)[0] || null;
 
   app.innerHTML = `
     <div class="card">
@@ -7747,7 +7766,10 @@ function renderAgnelleDetail(id) {
       </div>
       <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;">
         <div style="font-size:12px;color:var(--text-muted);">${ag.origine === 'née' ? 'Triée/entrée' : 'Entrée'} le <strong style="color:var(--text);">${formatDateFr(ag.dateEntree)}</strong></div>
-        ${reproTagHtml(codeReproInfoAg.code, codeReproInfoAg.style)}
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${reproTagHtml(codeReproInfoAg.code, codeReproInfoAg.style)}
+          ${reproEntryActuelleAg ? `<button type="button" class="btn btn-secondary" id="btn-edit-repro-tag-ag" style="width:auto;padding:2px 8px;font-size:11px;">Modifier</button>` : ''}
+        </div>
       </div>
     </div>
 
@@ -7777,6 +7799,8 @@ function renderAgnelleDetail(id) {
     <button class="btn btn-secondary" id="btn-delete-agnelle-fiche" style="color:var(--danger);border-color:var(--danger);">Supprimer cette agnelle</button>
   `;
 
+  const btnEditReproTagAg = document.getElementById('btn-edit-repro-tag-ag');
+  if (btnEditReproTagAg) btnEditReproTagAg.onclick = () => { editReproTarget = { kind: 'agnelle', id: ag.id }; render('edit-repro'); };
   const btnMere = document.getElementById('btn-voir-mere-agnelle-fiche');
   if (btnMere) btnMere.onclick = () => {
     detailOrigin = 'agnelle-detail';
@@ -9919,6 +9943,61 @@ function renderEditLot(lotId) {
   }
 
   draw();
+}
+
+/* ---------- Modifier/supprimer directement depuis la fiche brebis/agnelle ----------
+   le dernier évènement Repro de la campagne (module Reproduction) -- accessible
+   uniquement tant qu'aucune mise bas n'a encore de résultat basé dessus (voir
+   codeReproActuel, style "attente"/"echec" -- une brebis avec une mise bas
+   déjà enregistrée passe par "Modifier l'agnelage", champ Repro déjà
+   existant, jamais ici). Mode verrouillé comme partout ailleurs dans ce
+   module (voir renderEditLot) -- seule la date se corrige, ou l'évènement se
+   supprime entièrement, ce qui retire aussi l'animal du lot d'origine s'il
+   existe encore (cohérence avec le retrait d'un membre depuis renderEditLot). */
+function renderEditRepro() {
+  const target = editReproTarget;
+  const animal = target && target.kind === 'agnelle' ? (DB.agnelles || []).find(a => a.id === target.id) : (target ? findSheep(target.id) : null);
+  if (!target || !animal) { render('home'); return; }
+  const modesCampagne = (animal.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut);
+  const entry = modesCampagne.length ? modesCampagne[modesCampagne.length - 1] : null;
+  const retour = () => {
+    if (target.kind === 'agnelle') { currentAgnelleId = target.id; render('agnelle-detail'); }
+    else render('detail', target.id);
+  };
+  if (!entry) { retour(); return; } // garde-fou : rien à éditer (déjà supprimé entre-temps, autre onglet...)
+
+  pageTitle.textContent = 'Évènement Repro';
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);">Mode</div>
+      <div style="font-weight:600;margin-bottom:14px;">${libelleModeRepro(entry.mode)} <span style="font-weight:400;color:var(--text-muted);font-size:12px;">(verrouillé — passe par le lot pour changer de mode)</span></div>
+      <label>Date</label>
+      <input type="date" id="f-edit-repro-date" value="${entry.date}">
+      <div id="err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-save-edit-repro" style="margin-bottom:10px;">Enregistrer</button>
+      <button class="btn btn-secondary" id="btn-del-edit-repro" style="color:var(--danger);border-color:var(--danger);">Supprimer cet évènement</button>
+    </div>
+  `;
+
+  document.getElementById('btn-save-edit-repro').onclick = () => {
+    const err = document.getElementById('err');
+    const dateVal = document.getElementById('f-edit-repro-date').value;
+    if (!dateVal) { err.textContent = "Renseigne une date."; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    entry.date = dateVal;
+    saveData(DB);
+    retour();
+  };
+  document.getElementById('btn-del-edit-repro').onclick = () => {
+    if (!confirm('Supprimer cet évènement Repro (' + libelleModeRepro(entry.mode) + ') ? ' + (animal.eid ? 'n°' + numeroVisuel(animal.eid) + ' ' : '') + 'repassera par défaut en Monte naturelle tant qu\'elle n\'est pas remise dans un lot.')) return;
+    animal.modesRepro = (animal.modesRepro || []).filter(m => m !== entry);
+    if (entry.lotId) {
+      const lot = (DB.lots || []).find(l => l.id === entry.lotId);
+      if (lot) lot.membres = lot.membres.filter(eid => cleanEid(eid) !== cleanEid(animal.eid));
+    }
+    saveData(DB);
+    retour();
+  };
 }
 
 function renderLotSearch(lotId) {
