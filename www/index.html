@@ -623,6 +623,12 @@ function migrateData(d) {
   // définitif à conserver version par version. { eid, campagne, anoLact,
   // numLactation, ref, lactMoyen, classeParQuart }.
   if (!d.cahierControleLaitier) d.cahierControleLaitier = [];
+  // Module Reproduction (remplace l'ancien pense-bête "Lutte") : fenêtre de
+  // gestation réglable (voir Paramètres) utilisée pour déduire le code Repro
+  // à la saisie d'une mise bas — voir deduireCodeRepro. Valeurs par défaut
+  // confirmées par l'éleveur.
+  if (d.reproGestationMin === undefined) d.reproGestationMin = 144;
+  if (d.reproGestationMax === undefined) d.reproGestationMax = 152;
   return d;
 }
 
@@ -651,6 +657,8 @@ function loadData() {
       { campagne: 2025, coefficientMsu: 12.1538, prixReference: 1580, msuReference: 130 }
     ],
     lots: [],
+    reproGestationMin: 144,
+    reproGestationMax: 152,
     exploitation: { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' },
     campagneDebut: null,
     casParticuliers: ['Pseudogestation', 'Avortée'],
@@ -2089,18 +2097,18 @@ function campagneBilanChiffres(activeList) {
   return { misesBasActives, videsDefinitivesActives, troupeauAMettreBas, misesBasRestantes };
 }
 
-/* Taux de réussite global (gestantes / brebis échographiées sur leur
-   dernière écho) — n'a de sens qu'en fin de campagne, affiché uniquement
-   dans Bilan de campagne (voir renderBilanCampagne). */
-function tauxReussiteGlobal(activeList) {
-  let gestantes = 0, avecEcho = 0;
-  activeList.forEach(s => {
-    const last = s.echographies[s.echographies.length - 1];
-    if (!last) return;
-    avecEcho++;
-    if (isGestanteEcho(last)) gestantes++;
-  });
-  return { avecEcho, gestantes, taux: avecEcho > 0 ? Math.round((gestantes / avecEcho) * 1000) / 10 : 0 };
+/* Taux de réussite global = mises bas ÷ (mises bas + vides définitives), sur
+   la population "brebis présentes depuis le début de la campagne" — même
+   cohorte que le tableau détaillé par groupe d'âge (voir
+   campagneCohortPresente/bilanReproductionHtml), plutôt que sur les actives
+   d'aujourd'hui. Remplace l'ancienne formule basée sur la dernière
+   échographie (gestantes/échographiées), qui ne reflétait que des constats
+   intermédiaires — celle-ci reflète le résultat réel de la campagne. */
+function tauxReussiteGlobal(cohort) {
+  const misesBas = cohort.filter(s => agnelageCampagneActuelleIdx(s) !== -1).length;
+  const videsDefinitives = cohort.filter(s => estVideDefinitiveCampagne(s) && agnelageCampagneActuelleIdx(s) === -1).length;
+  const total = misesBas + videsDefinitives;
+  return { misesBas, videsDefinitives, taux: total > 0 ? Math.round((misesBas / total) * 1000) / 10 : 0 };
 }
 
 /* Date de référence pour "brebis présentes" (voir campagneCohortPresente
@@ -2238,6 +2246,119 @@ function statutReproductionCampagne(sheep) {
   } catch (e) {
     return 'Non suivie'; // donnée inattendue — mieux vaut la lister comme "à suivre" que planter l'écran
   }
+}
+
+/* ---------- Module Reproduction (remplace l'ancien pense-bête "Lutte") ----------
+   Codes SIEOL/UNOTEC (inspirés Unotec/Vénus) : IA, EP (Éponge/œstrus induit),
+   RE (Retour IA) et MN (Monte naturelle). Seuls IA et EP se saisissent, et
+   uniquement en lot (voir renderAddLotRepro) — RE et MN sont TOUJOURS
+   déduits, jamais saisis directement.
+   Modèle de données : sheep.modesRepro[]/agnelle.modesRepro[] — un élément
+   par lot IA/Éponge où l'animal a été placé, { date, mode, campagne }.
+   Une seule mise bas par campagne (voir agnelageCampagneActuelleIdx) : la
+   fiche n'affiche donc jamais qu'un seul statut à la fois, jamais une
+   chronologie d'évènements (voir codeReproActuel ci-dessous). */
+const REPRO_MODE_LABELS = { IA: 'IA', EP: 'Éponge', RE: 'Retour IA', MN: 'Monte naturelle' };
+function libelleModeRepro(code) { return REPRO_MODE_LABELS[code] || code; }
+
+/* Code Repro actuellement pertinent pour un animal (brebis ou agnelle) sur
+   la campagne en cours, et son style d'affichage (voir reproTagHtml) :
+   - une mise bas déjà enregistrée cette campagne -> le code choisi/déduit à
+     sa saisie (agnelage.codeRepro, voir deduireCodeRepro), style "ok" ;
+   - sinon, vide définitive cette campagne -> le mode du dernier lot où
+     l'animal a été placé (IA/EP), ou MN par défaut si aucun -- style
+     "echec" (échec attribué à ce mode) ;
+   - sinon (pas encore de résultat) -> même mode déduit, style "attente".
+   `agnelageCampagne`/`videDefinitive` sont fournis par l'appelant plutôt que
+   recalculés ici : ces notions n'existent que pour une brebis (voir
+   agnelageCampagneActuelle/estVideDefinitiveCampagne) — passer null/false
+   pour une agnelle, qui n'a jamais encore d'agnelage. */
+function codeReproActuel(animal, agnelageCampagne, videDefinitive) {
+  const modes = (animal.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut);
+  const dernier = modes.length ? modes[modes.length - 1] : null;
+  // agnelageCampagne.codeRepro peut manquer sur un agnelage enregistré avant
+  // l'existence de ce module -- une mise bas déjà là reste malgré tout un
+  // succès (jamais rétrogradée en "en attente"), MN sert alors de repli
+  // neutre plutôt qu'un code inventé.
+  if (agnelageCampagne) {
+    return { code: agnelageCampagne.codeRepro || 'MN', style: 'ok' };
+  }
+  const code = dernier ? dernier.mode : 'MN';
+  return { code, style: videDefinitive ? 'echec' : 'attente' };
+}
+
+/* Code Repro déduit automatiquement à la saisie d'une mise bas (voir champ
+   "Repro" de renderAddAgnelage/renderMiseBasRapide), à partir du dernier lot
+   de reproduction de la brebis cette campagne et de la fenêtre de gestation
+   réglable (DB.reproGestationMin/Max, voir Paramètres, défaut 144-152 j) :
+   mise bas dans la fenêtre -> le mode du lot (IA/EP) ; hors fenêtre ->
+   Retour IA (RE), jamais saisi directement autrement ; aucun lot cette
+   campagne -> Monte naturelle (MN) par défaut. Simple suggestion de départ,
+   toujours modifiable par l'éleveur avant validation. */
+function deduireCodeRepro(sheep, dateMiseBas) {
+  const modes = (sheep.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut);
+  const dernier = modes.length ? modes[modes.length - 1] : null;
+  if (!dernier || !dateMiseBas) return 'MN';
+  const lotDate = new Date(dernier.date);
+  const mb = new Date(dateMiseBas);
+  if (isNaN(lotDate.getTime()) || isNaN(mb.getTime())) return dernier.mode;
+  const diffJours = Math.round((mb - lotDate) / 86400000);
+  const min = DB.reproGestationMin !== undefined ? DB.reproGestationMin : 144;
+  const max = DB.reproGestationMax !== undefined ? DB.reproGestationMax : 152;
+  return (diffJours >= min && diffJours <= max) ? dernier.mode : 'RE';
+}
+
+/* Étiquette compacte d'un code Repro, réutilisée sur la fiche brebis/agnelle
+   et la saisie de mise bas — même principe que les codes anomalie du
+   Contrôle laitier (compact-tag existant, jamais un nouveau composant). */
+function reproTagHtml(code, style) {
+  const cls = style === 'ok' ? 'compact-tag-green' : style === 'echec' ? 'compact-tag-coral' : 'compact-tag-amber';
+  return `<span class="compact-tag ${cls}" title="Repro : ${libelleModeRepro(code)}">${code}</span>`;
+}
+
+/* Retrouve une brebis OU une agnelle par EID — utilisé par le Bilan de
+   reproduction pour lire les membres d'un lot (voir DB.lots, membres
+   toujours stockés en EID comme les autres lots). */
+function findAnimalReproByEid(eid) {
+  return DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eid)) || (DB.agnelles || []).find(a => cleanEid(a.eid) === cleanEid(eid)) || null;
+}
+
+/* Statistiques de reproduction par code, sur la cohorte `cohort` (voir
+   campagneCohortPresente) — alimente à la fois la tuile "Répartition des
+   mises bas par code" et le tableau "Taux de réussite par mode" du Bilan de
+   reproduction. Une mise bas compte pour le code choisi/déduit à sa saisie
+   (agnelage.codeRepro) ; une vide définitive (sans mise bas) compte comme
+   échec pour le code actuellement affiché sur sa fiche (voir
+   codeReproActuel) — même règle que la vue par lot : chaque code est jugé
+   indépendamment, un même animal ne peut cependant compter qu'une fois ici
+   puisqu'une seule mise bas par campagne est possible. */
+function statsReproductionParCode(cohort) {
+  const codes = ['IA', 'EP', 'RE', 'MN'];
+  const stats = {};
+  codes.forEach(c => { stats[c] = { misesBas: 0, vides: 0, nesTotal: 0 }; });
+  cohort.forEach(s => {
+    const agnelage = agnelageCampagneActuelle(s);
+    if (agnelage) {
+      const code = stats[agnelage.codeRepro] ? agnelage.codeRepro : 'MN';
+      stats[code].misesBas++;
+      stats[code].nesTotal += agnelage.lambs.length;
+      return;
+    }
+    if (estVideDefinitiveCampagne(s)) {
+      const { code } = codeReproActuel(s, null, true);
+      (stats[code] || (stats[code] = { misesBas: 0, vides: 0, nesTotal: 0 })).vides++;
+    }
+  });
+  return codes.map(code => {
+    const st = stats[code];
+    const total = st.misesBas + st.vides;
+    return {
+      code, label: libelleModeRepro(code),
+      misesBas: st.misesBas, vides: st.vides,
+      taux: total > 0 ? Math.round((st.misesBas / total) * 1000) / 10 : null,
+      prolificite: st.misesBas > 0 ? Math.round((st.nesTotal / st.misesBas) * 100) / 100 : null
+    };
+  });
 }
 
 /* Millésime affiché d'une campagne à partir de sa valeur interne
@@ -2569,7 +2690,7 @@ btnBack.onclick = () => {
   else if (currentView === 'add-sheep') render('list');
   else if (currentView === 'add-agnelle') { editingAgnelleId = null; render(addAgnelleOrigin); }
   else if (currentView === 'agnelle-detail') render(agnelleDetailOrigin);
-  else if (currentView === 'add-lot' || currentView === 'add-lot-reforme') render('lots');
+  else if (currentView === 'add-lot' || currentView === 'add-lot-reforme' || currentView === 'add-lot-repro') render('lots');
   else if (currentView === 'lot-search') render('lots');
   else if (currentView === 'mouvement-groupe') render('inventaire');
   else if (currentView === 'mouvements-collectifs') render('inventaire');
@@ -2745,6 +2866,7 @@ function render(view, sheepId) {
     else if (view === 'lots') renderLots();
     else if (view === 'add-lot') renderAddLot();
     else if (view === 'add-lot-reforme') renderAddLotReforme();
+    else if (view === 'add-lot-repro') renderAddLotRepro();
     else if (view === 'lot-search') renderLotSearch(currentLotId);
     else if (view === 'mouvement-groupe') renderMouvementGroupe();
     else if (view === 'mouvements-collectifs') renderMouvementsCollectifsHistorique();
@@ -3337,14 +3459,16 @@ function bilanIncoherencesHtml(actives) {
 
 function bilanReproductionHtml(actives) {
   const { troupeauAMettreBas, misesBasRestantes } = campagneBilanChiffres(actives);
-  const { avecEcho, taux: tauxReussite } = tauxReussiteGlobal(actives);
 
-  // Population de référence du tableau détaillé ci-dessous : brebis
-  // présentes à la date de référence de la campagne (voir campagneRefDate/
-  // campagneCohortPresente), pas les actives d'aujourd'hui — pour rester
-  // cohérente avec elle-même (une vente en cours de campagne ne doit pas
-  // gonfler "% mises bas").
+  // Population de référence de tout ce bilan (taux global inclus, voir
+  // tauxReussiteGlobal) : brebis présentes à la date de référence de la
+  // campagne (voir campagneRefDate/campagneCohortPresente), pas les actives
+  // d'aujourd'hui — pour rester cohérente avec elle-même (une vente en
+  // cours de campagne ne doit pas gonfler "% mises bas").
   const cohort = campagneCohortPresente();
+  const { misesBas: misesBasGlobal, videsDefinitives: videsGlobal, taux: tauxReussite } = tauxReussiteGlobal(cohort);
+  const statsParCode = statsReproductionParCode(cohort);
+  const lotsRepro = (DB.lots || []).filter(l => l.type === 'reproduction');
   // Même date de référence que la population ci-dessus, également utilisée
   // pour figer le groupe d'âge de chaque brebis sur toute la campagne (voir
   // statsDetailleesParGroupeAge/ageADate) : sans repli sur aujourd'hui, une
@@ -3382,9 +3506,69 @@ function bilanReproductionHtml(actives) {
     </div>
 
     <div class="card" style="margin-bottom:10px;">
-      ${sectionHeaderHtml(ICON_ECHO, 'green', 'Taux de réussite')}
+      ${sectionHeaderHtml(ICON_ECHO, 'green', 'Taux de réussite global')}
       <div style="font-size:20px;font-weight:600;">${tauxReussite}%</div>
-      <div style="font-size:12px;color:var(--text-muted);">Sur ${avecEcho} brebis échographiées (dernière échographie)</div>
+      <div style="font-size:12px;color:var(--text-muted);">${misesBasGlobal} mise${misesBasGlobal > 1 ? 's' : ''} bas / (${misesBasGlobal} mise${misesBasGlobal > 1 ? 's' : ''} bas + ${videsGlobal} vide${videsGlobal > 1 ? 's' : ''} définitive${videsGlobal > 1 ? 's' : ''}) — sur les brebis présentes depuis le début de la campagne.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px;">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'indigo', 'Répartition des mises bas par code')}
+      <div class="grid4" style="grid-template-columns:repeat(4,1fr);text-align:center;">
+        ${statsParCode.map(s => `<div><div style="font-size:18px;font-weight:700;">${s.misesBas}</div><div style="font-size:10.5px;color:var(--text-muted);margin-top:2px;">${s.code}</div></div>`).join('')}
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:10px;">IA · Éponge · Retour IA (déduit) · Monte naturelle (déduit, par défaut) — code choisi ou corrigé à la saisie de chaque mise bas.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px;">
+      ${sectionHeaderHtml(ICON_SEARCH, 'blue', 'Lots de reproduction')}
+      ${lotsRepro.length === 0 ? '<div style="font-size:13px;color:var(--text-muted);">Aucun lot de reproduction pour l\'instant — voir Chantier de tri.</div>' : lotsRepro.map(lot => {
+        let lotMisesBas = 0, lotVides = 0, lotAttente = 0;
+        lot.membres.forEach(eid => {
+          const animal = findAnimalReproByEid(eid);
+          if (animal && Array.isArray(animal.agnelages) && agnelageCampagneActuelleIdx(animal) !== -1) { lotMisesBas++; return; }
+          if (animal && Array.isArray(animal.agnelages) && estVideDefinitiveCampagne(animal)) { lotVides++; return; }
+          lotAttente++;
+        });
+        const lotTotal = lot.membres.length || 1;
+        const pct = n => Math.round((n / lotTotal) * 1000) / 10;
+        return `
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:8px;">
+            <div style="font-size:13px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px;">${reproTagHtml(lot.mode, 'attente')}${lot.nom} — ${lot.membres.length} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}</div>
+            <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin:8px 0 6px;background:var(--gray-bg);">
+              <span style="display:block;height:100%;width:${pct(lotMisesBas)}%;background:var(--green-fg);"></span>
+              <span style="display:block;height:100%;width:${pct(lotVides)}%;background:var(--coral-fg);"></span>
+              <span style="display:block;height:100%;width:${pct(lotAttente)}%;background:var(--amber-fg);"></span>
+            </div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:10.5px;color:var(--text-muted);">
+              <span>${lotMisesBas} mise${lotMisesBas > 1 ? 's' : ''} bas</span>
+              <span>${lotVides} vide${lotVides > 1 ? 's' : ''}</span>
+              <span>${lotAttente} en attente</span>
+            </div>
+          </div>
+        `;
+      }).join('')}
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Retour IA et Monte naturelle n'ont pas de lot dédié (codes toujours déduits) — comptés seulement dans la répartition ci-dessus et le tableau ci-dessous.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px;">
+      ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Taux de réussite par mode')}
+      <div style="overflow-x:auto;">
+        <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:300px;">
+          <tr style="color:var(--text-muted);text-align:left;">
+            <th style="padding:4px 4px;font-weight:500;">Mode</th>
+            <th style="padding:4px 4px;font-weight:500;text-align:right;">Réussite</th>
+            <th style="padding:4px 4px;font-weight:500;text-align:right;">Prolificité</th>
+          </tr>
+          ${statsParCode.map(s => `
+            <tr style="border-top:1px solid var(--border);">
+              <td style="padding:6px 4px;">${s.label}</td>
+              <td style="padding:6px 4px;text-align:right;">${s.taux !== null ? s.taux + '%' : '—'}</td>
+              <td style="padding:6px 4px;text-align:right;">${s.prolificite !== null ? s.prolificite : '—'}</td>
+            </tr>
+          `).join('')}
+        </table>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Réussite = mises bas de ce code ÷ (mises bas + vides définitives de ce code). Prolificité = agneaux nés ÷ mises bas de ce code.</div>
     </div>
 
     <div class="card" style="margin-bottom:10px;">
@@ -4381,11 +4565,19 @@ function renderDetail(id) {
   const campagneAffichage = DB.campagneDebut ? (DB.campagneDebut + 1) : null;
   const videDefCampagne = estVideDefinitiveCampagne(sheep);
   const dejaMiseBasCampagne = agnelageCampagneActuelleIdx(sheep) !== -1;
+  // Code Repro (module Reproduction) affiché discrètement ici, sur la carte
+  // qui parle déjà de reproduction — pas de carte à part, pas de paragraphe
+  // explicatif (voir codeReproActuel : un seul statut à la fois, jamais un
+  // historique, une seule mise bas possible par campagne).
+  const codeReproInfo = codeReproActuel(sheep, agnelageCampagneActuelle(sheep), videDefCampagne);
   const reproStatutHtml = `
     <div class="card">
       ${sectionHeaderHtml(ICON_ECHO, 'green', 'Statut reproduction' + (campagneAffichage ? ' · campagne ' + campagneAffichage : ''))}
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-        <div style="font-weight:600;font-size:16px;">${statutReproductionCampagne(sheep)}</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="font-weight:600;font-size:16px;">${statutReproductionCampagne(sheep)}</div>
+          ${reproTagHtml(codeReproInfo.code, codeReproInfo.style)}
+        </div>
         ${videDefCampagne
           ? `<button type="button" class="btn btn-secondary" id="btn-annuler-vide-def" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">Annuler</button>`
           : dejaMiseBasCampagne
@@ -4801,18 +4993,43 @@ function renderAddAgnelage(sheepId) {
   const today = existing ? existing.date : new Date().toISOString().slice(0,10);
   let lambCount = 0;
   const lambs = {};
+  // Code Repro (module Reproduction) : déduit à l'ouverture depuis la date
+  // affichée, modifiable avant validation (voir deduireCodeRepro) — en
+  // édition, on reprend le code déjà choisi/corrigé plutôt que de le
+  // re-déduire (une correction manuelle ne doit jamais être silencieusement
+  // écrasée en rouvrant l'agnelage).
+  let codeRepro = (existing && existing.codeRepro) ? existing.codeRepro : deduireCodeRepro(sheep, today);
 
   app.innerHTML = `
     <div class="card">
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Mère — Brebis n°${numeroVisuel(sheep.eid)}</div>
       <label>Date de naissance</label>
       <input type="date" id="f-date" value="${today}" style="margin-bottom:16px;">
+      <label>Repro</label>
+      <div class="grid4" id="repro-code-list" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">
+        <button type="button" class="opt-btn repro-code-opt" data-val="IA">IA</button>
+        <button type="button" class="opt-btn repro-code-opt" data-val="EP">Éponge</button>
+        <button type="button" class="opt-btn repro-code-opt" data-val="RE">Retour</button>
+        <button type="button" class="opt-btn repro-code-opt" data-val="MN">Monte nat.</button>
+      </div>
       <div id="lamb-list"></div>
       <button type="button" class="btn btn-secondary" id="add-lamb" style="margin-bottom:14px;">+ Ajouter un agneau</button>
       <div id="err" class="error-box hidden"></div>
       <button class="btn btn-primary" id="btn-save-agnelage">${editing ? 'Enregistrer les modifications' : "Enregistrer l'agnelage"}</button>
     </div>
   `;
+
+  function updateReproCodeButtons() {
+    document.querySelectorAll('.repro-code-opt').forEach(b => b.classList.toggle('selected', b.dataset.val === codeRepro));
+  }
+  updateReproCodeButtons();
+  document.querySelectorAll('.repro-code-opt').forEach(b => {
+    b.onclick = () => { codeRepro = b.dataset.val; updateReproCodeButtons(); };
+  });
+  document.getElementById('f-date').addEventListener('change', (e) => {
+    codeRepro = deduireCodeRepro(sheep, e.target.value);
+    updateReproCodeButtons();
+  });
 
   function lambCard(id) {
     const div = document.createElement('div');
@@ -5017,7 +5234,8 @@ function renderAddAgnelage(sheepId) {
     const agnelage = {
       date: document.getElementById('f-date').value,
       lambs: ids.map(id => lambs[id]),
-      campagne: DB.campagneDebut
+      campagne: DB.campagneDebut,
+      codeRepro
     };
     agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
     sheep.agnelages = sheep.agnelages || [];
@@ -5543,9 +5761,11 @@ function renderMiseBasRapide() {
   let candidatsAmbigus = null; // numéro officiel court partagé par plusieurs brebis : l'éleveur doit choisir (voir trouverUnParEidOuNumero)
   let lambCount = 0;
   const lambs = {};
+  let codeRepro = 'MN'; // Repro (module Reproduction) : redéduit dès qu'une brebis est trouvée (voir plus bas), voir deduireCodeRepro
 
   function resetForm() {
     currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null; lambCount = 0;
+    codeRepro = 'MN';
     Object.keys(lambs).forEach(k => delete lambs[k]);
   }
 
@@ -5693,6 +5913,13 @@ function renderMiseBasRapide() {
       <div class="card">
         <label>Date de naissance</label>
         <input type="date" id="f-date-rapide" value="${new Date().toISOString().slice(0,10)}" style="margin-bottom:16px;">
+        <label>Repro</label>
+        <div class="grid4" id="repro-code-list-rapide" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">
+          <button type="button" class="opt-btn repro-code-opt-rapide" data-val="IA">IA</button>
+          <button type="button" class="opt-btn repro-code-opt-rapide" data-val="EP">Éponge</button>
+          <button type="button" class="opt-btn repro-code-opt-rapide" data-val="RE">Retour</button>
+          <button type="button" class="opt-btn repro-code-opt-rapide" data-val="MN">Monte nat.</button>
+        </div>
         <div id="lamb-list-rapide"></div>
         <button type="button" class="btn btn-secondary" id="add-lamb-rapide" style="margin-bottom:14px;">+ Ajouter un agneau</button>
         <div id="err" class="error-box hidden"></div>
@@ -5782,6 +6009,7 @@ function renderMiseBasRapide() {
         playBeepTrouve();
         resetForm();
         currentSheep = sheep;
+        codeRepro = deduireCodeRepro(currentSheep, new Date().toISOString().slice(0,10));
         draw();
       });
     }
@@ -5815,6 +6043,7 @@ function renderMiseBasRapide() {
       playBeepTrouve();
       resetForm();
       currentSheep = r.item;
+      codeRepro = deduireCodeRepro(currentSheep, new Date().toISOString().slice(0,10));
       draw();
     });
     document.getElementById('btn-fin-session-mb').onclick = () => {
@@ -5842,6 +6071,7 @@ function renderMiseBasRapide() {
         saveData(DB);
         unknownEid = null;
         currentSheep = newSheep;
+        codeRepro = deduireCodeRepro(currentSheep, new Date().toISOString().slice(0,10));
         draw();
         addLamb();
       };
@@ -5857,6 +6087,20 @@ function renderMiseBasRapide() {
     if (currentSheep && !dejaAgnelage) {
       document.getElementById('add-lamb-rapide').onclick = addLamb;
       if (Object.keys(lambs).length === 0) addLamb();
+
+      // Repro (module Reproduction) : même principe que renderAddAgnelage --
+      // déduit à chaque changement de date, modifiable en un tap.
+      const updateReproCodeButtonsRapide = () => {
+        document.querySelectorAll('.repro-code-opt-rapide').forEach(b => b.classList.toggle('selected', b.dataset.val === codeRepro));
+      };
+      updateReproCodeButtonsRapide();
+      document.querySelectorAll('.repro-code-opt-rapide').forEach(b => {
+        b.onclick = () => { codeRepro = b.dataset.val; updateReproCodeButtonsRapide(); };
+      });
+      document.getElementById('f-date-rapide').addEventListener('change', (e) => {
+        codeRepro = deduireCodeRepro(currentSheep, e.target.value);
+        updateReproCodeButtonsRapide();
+      });
 
       const btnValiderMb = document.getElementById('btn-valider-misebas');
       btnValiderMb.onclick = () => {
@@ -5928,7 +6172,8 @@ function renderMiseBasRapide() {
         const agnelage = {
           date: document.getElementById('f-date-rapide').value,
           lambs: ids.map(id => lambs[id]),
-          campagne: DB.campagneDebut
+          campagne: DB.campagneDebut,
+          codeRepro
         };
         agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
         currentSheep.agnelages = currentSheep.agnelages || [];
@@ -7470,6 +7715,11 @@ function renderAgnelleDetail(id) {
 
   const mother = ag.motherEid ? DB.brebis.find(s => cleanEid(s.eid) === cleanEid(ag.motherEid)) : null;
   const lamb = findLambByEid(ag.eid);
+  // Code Repro (module Reproduction) : une agnelle n'a pas encore
+  // d'agnelage/de vide définitive (ça ne commence qu'une fois brebis, voir
+  // executerChangementCampagne) -- toujours affiché "en attente", discrètement
+  // dans l'Identité plutôt qu'une carte à part (voir codeReproActuel).
+  const codeReproInfoAg = codeReproActuel(ag, null, false);
 
   app.innerHTML = `
     <div class="card">
@@ -7480,7 +7730,10 @@ function renderAgnelleDetail(id) {
         <div><div style="font-size:12px;color:var(--text-muted);">Âge</div><div style="font-weight:600;">${age(ag.eid) !== null ? age(ag.eid) + ' an(s)' : 'inconnu'}</div></div>
         <div><div style="font-size:12px;color:var(--text-muted);">Origine</div><div style="font-weight:600;">${ag.origine === 'née' ? 'Née sur l\'exploitation' : 'Achetée'}</div></div>
       </div>
-      <div style="margin-top:10px;font-size:12px;color:var(--text-muted);">${ag.origine === 'née' ? 'Triée/entrée' : 'Entrée'} le <strong style="color:var(--text);">${formatDateFr(ag.dateEntree)}</strong></div>
+      <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:12px;color:var(--text-muted);">${ag.origine === 'née' ? 'Triée/entrée' : 'Entrée'} le <strong style="color:var(--text);">${formatDateFr(ag.dateEntree)}</strong></div>
+        ${reproTagHtml(codeReproInfoAg.code, codeReproInfoAg.style)}
+      </div>
     </div>
 
     <div class="card">
@@ -8007,7 +8260,6 @@ function renderJournal() {
   DB.journal = DB.journal || [];
   DB.typesJournal = DB.typesJournal || [];
   DB.laitTank = DB.laitTank || [];
-  DB.luttes = DB.luttes || [];
   pageTitle.textContent = 'Agenda';
 
   const now = new Date();
@@ -8021,11 +8273,6 @@ function renderJournal() {
   // date par défaut (aujourd'hui) au rendu initial ; le champ date a aussi un
   // écouteur qui refait ce calcul à chaque changement (voir plus bas).
   const laitIdxPourDateDuJour = DB.laitTank.findIndex(l => l.date === dateDuJour);
-
-  const luttesBrebis = DB.luttes.filter(l => l.cible === 'Brebis');
-  const luttesAgnelles = DB.luttes.filter(l => l.cible === 'Agnelles');
-  const lastLutteBrebis = luttesBrebis.length ? luttesBrebis[luttesBrebis.length - 1] : null;
-  const lastLutteAgnelles = luttesAgnelles.length ? luttesAgnelles[luttesAgnelles.length - 1] : null;
 
   const sorted = [...DB.journal].sort((a,b) => (b.date || '').localeCompare(a.date || ''));
   const listHtml = sorted.length === 0
@@ -8138,37 +8385,6 @@ function renderJournal() {
             </div>
           </div>`;
         }).join('')}
-      </div>
-    </div>
-
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Lutte</div>
-      <div class="grid2" style="margin-bottom:6px;">
-        <div>
-          <div style="font-size:12px;color:var(--text-muted);">Brebis</div>
-          <div style="font-weight:600;">${lastLutteBrebis ? formatDateFr(lastLutteBrebis.date) : 'Non renseignée'}</div>
-        </div>
-        <div>
-          <div style="font-size:12px;color:var(--text-muted);">Agnelles</div>
-          <div style="font-weight:600;">${lastLutteAgnelles ? formatDateFr(lastLutteAgnelles.date) : 'Non renseignée'}</div>
-        </div>
-      </div>
-      <label style="margin-top:10px;">Nouvelle date de lutte</label>
-      <div class="grid2" style="margin-bottom:8px;">
-        <button type="button" class="opt-btn lutte-cible-opt" data-val="Brebis">Brebis</button>
-        <button type="button" class="opt-btn lutte-cible-opt" data-val="Agnelles">Agnelles</button>
-      </div>
-      <input type="date" id="f-lutte-date" value="${new Date().toISOString().slice(0,10)}">
-      <div id="lutte-err" class="error-box hidden"></div>
-      <button class="btn btn-secondary" id="btn-save-lutte">Enregistrer cette date</button>
-      ${DB.luttes.length > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:12px;margin-bottom:6px;">Historique</div>` : ''}
-      <div id="lutte-history">
-        ${[...DB.luttes].reverse().map((l, i) => `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px;">
-            <span>${l.cible} — ${formatDateFr(l.date)}</span>
-            <button type="button" class="btn btn-secondary btn-del-lutte" data-idx="${DB.luttes.length - 1 - i}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
-          </div>
-        `).join('')}
       </div>
     </div>
 
@@ -8333,36 +8549,6 @@ function renderJournal() {
     btn.onclick = () => {
       const record = findPrelevementQualiteByDate(btn.dataset.date);
       if (record) openQualiteSheet(record, 'journal');
-    };
-  });
-
-  let lutteCible = null;
-  document.querySelectorAll('.lutte-cible-opt').forEach(btn => {
-    btn.onclick = () => {
-      lutteCible = btn.dataset.val;
-      document.querySelectorAll('.lutte-cible-opt').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      document.getElementById('lutte-err').classList.add('hidden');
-    };
-  });
-  document.getElementById('btn-save-lutte').onclick = () => {
-    const err = document.getElementById('lutte-err');
-    if (!lutteCible) {
-      err.textContent = "Choisis Brebis ou Agnelles.";
-      err.classList.remove('hidden');
-      return;
-    }
-    err.classList.add('hidden');
-    DB.luttes.push({ cible: lutteCible, date: document.getElementById('f-lutte-date').value });
-    saveData(DB);
-    render('journal');
-  };
-  document.querySelectorAll('.btn-del-lutte').forEach(btn => {
-    btn.onclick = () => {
-      if (!confirm('Supprimer cette date de lutte ?')) return;
-      DB.luttes.splice(parseInt(btn.dataset.idx, 10), 1);
-      saveData(DB);
-      render('journal');
     };
   });
 
@@ -9123,10 +9309,10 @@ function renderLots() {
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:12px;">
-            ${iconCircle(ICON_SEARCH, lot.type === 'reforme' ? 'coral' : 'green', 'sm')}
+            ${lot.type === 'reproduction' ? reproTagHtml(lot.mode, 'attente') : iconCircle(ICON_SEARCH, lot.type === 'reforme' ? 'coral' : 'green', 'sm')}
             <div>
               <div style="font-weight:600;">${lot.nom}${lot.type === 'reforme' ? ' <span class="badge badge-coral" style="margin-left:6px;">Réforme</span>' : ''}</div>
-              <div style="font-size:12px;color:var(--text-muted);">${lot.membres.length} brebis · créé le ${formatDateFr(lot.dateCreation)}</div>
+              <div style="font-size:12px;color:var(--text-muted);">${lot.membres.length} ${lot.type === 'reproduction' && lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'} · créé le ${formatDateFr(lot.dateCreation)}</div>
             </div>
           </div>
           <button type="button" class="btn btn-secondary btn-del-lot" data-id="${lot.id}" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
@@ -9137,12 +9323,14 @@ function renderLots() {
 
   app.innerHTML = chantierTriTabBarHtml() + listHtml + `
     <button class="btn btn-primary" id="btn-new-lot" style="margin-top:10px;margin-bottom:10px;">+ Nouveau lot</button>
-    <button class="btn btn-secondary" id="btn-new-lot-reforme" style="border-color:var(--coral-fg);color:var(--coral-fg);">+ Nouveau lot de réforme</button>
+    <button class="btn btn-secondary" id="btn-new-lot-reforme" style="border-color:var(--coral-fg);color:var(--coral-fg);margin-bottom:10px;">+ Nouveau lot de réforme</button>
+    <button class="btn btn-secondary" id="btn-new-lot-repro" style="border-color:var(--indigo-fg);color:var(--indigo-fg);">+ Nouveau lot de reproduction</button>
   `;
 
   wireChantierTriTabBar();
   document.getElementById('btn-new-lot').onclick = () => render('add-lot');
   document.getElementById('btn-new-lot-reforme').onclick = () => render('add-lot-reforme');
+  document.getElementById('btn-new-lot-repro').onclick = () => render('add-lot-repro');
   document.querySelectorAll('.btn-search-lot').forEach(btn => {
     btn.onclick = () => { currentLotId = btn.dataset.id; render('lot-search'); };
   });
@@ -9454,6 +9642,110 @@ function renderAddLotReforme() {
     saveData(DB);
     render('lots');
   };
+}
+
+/* ---------- Lot de reproduction (module Reproduction, remplace "Lutte") ----------
+   Même principe qu'un lot classique/de réforme (sélection puis recherche en
+   bergerie via renderLotSearch, listé dans Chantier de tri), mais taggé
+   type:'reproduction' + mode ('IA' ou 'EP' -- seuls modes saisis en lot,
+   Retour IA et Monte naturelle sont toujours déduits, voir deduireCodeRepro)
+   et cible ('Brebis' ou 'Agnelles', une antenaise pouvant déjà être mise en
+   lot avant sa bascule en brebis). À la création, écrit un évènement
+   modesRepro sur chaque animal du lot -- c'est cette écriture, pas le lot
+   lui-même (qui peut être supprimé une fois la recherche en bergerie
+   terminée), qui alimente durablement la fiche et le Bilan de reproduction. */
+function renderAddLotRepro() {
+  pageTitle.textContent = 'Nouveau lot de reproduction';
+  let cible = 'Brebis';
+  let mode = 'IA';
+  const today = new Date().toISOString().slice(0,10);
+  const selected = new Set();
+
+  function pool() {
+    return cible === 'Agnelles' ? (DB.agnelles || []) : DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  }
+
+  function nomParDefaut() {
+    return libelleModeRepro(mode) + ' du ' + formatDateFr(today);
+  }
+
+  function draw() {
+    app.innerHTML = `
+      <div class="card">
+        <label>Cible</label>
+        <div class="grid2">
+          <button type="button" class="opt-btn cible-repro-opt${cible === 'Brebis' ? ' selected' : ''}" data-val="Brebis">Brebis</button>
+          <button type="button" class="opt-btn cible-repro-opt${cible === 'Agnelles' ? ' selected' : ''}" data-val="Agnelles">Agnelles</button>
+        </div>
+      </div>
+      <div class="card">
+        <label>Mode de ce lot</label>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Seuls IA et Éponge se créent en lot — Retour IA et Monte naturelle sont toujours déduits, jamais saisis ici.</div>
+        <div class="grid2">
+          <button type="button" class="opt-btn mode-repro-opt${mode === 'IA' ? ' selected' : ''}" data-val="IA">IA</button>
+          <button type="button" class="opt-btn mode-repro-opt${mode === 'EP' ? ' selected' : ''}" data-val="EP">Éponge</button>
+        </div>
+      </div>
+      <div class="card">
+        <label>Nom du lot</label>
+        <input type="text" id="f-lot-repro-nom" value="${nomParDefaut()}">
+        <label>Date de l'évènement</label>
+        <input type="date" id="f-lot-repro-date" value="${today}">
+      </div>
+      <div class="card">
+        <label>${cible === 'Agnelles' ? 'Antenaises' : 'Brebis'} du lot</label>
+        <div id="repro-lot-picker"></div>
+      </div>
+      <div id="err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-save-lot-repro">Créer le lot</button>
+    `;
+
+    renderSelectionPicker(document.getElementById('repro-lot-picker'), pool(), selected);
+
+    document.querySelectorAll('.cible-repro-opt').forEach(btn => {
+      btn.onclick = () => {
+        if (btn.dataset.val === cible) return;
+        cible = btn.dataset.val;
+        selected.clear(); // pool différente (brebis actives vs agnelles) : une sélection faite sur l'autre cible n'a plus de sens
+        draw();
+      };
+    });
+    document.querySelectorAll('.mode-repro-opt').forEach(btn => {
+      btn.onclick = () => {
+        if (btn.dataset.val === mode) return;
+        const nomInput = document.getElementById('f-lot-repro-nom');
+        const nomEtaitParDefaut = nomInput.value === nomParDefaut();
+        mode = btn.dataset.val;
+        document.querySelectorAll('.mode-repro-opt').forEach(b => b.classList.toggle('selected', b.dataset.val === mode));
+        if (nomEtaitParDefaut) nomInput.value = nomParDefaut(); // ne touche jamais à un nom déjà personnalisé par l'éleveur
+      };
+    });
+
+    document.getElementById('btn-save-lot-repro').onclick = () => {
+      const err = document.getElementById('err');
+      const nom = document.getElementById('f-lot-repro-nom').value.trim();
+      const dateEvenement = document.getElementById('f-lot-repro-date').value;
+      if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
+      if (!dateEvenement) { err.textContent = "Renseigne la date de l'évènement."; err.classList.remove('hidden'); return; }
+      if (selected.size === 0) { err.textContent = "Sélectionne au moins un animal (à la main ou au bip)."; err.classList.remove('hidden'); return; }
+      err.classList.add('hidden');
+      const animaux = pool().filter(a => selected.has(a.id));
+      const campagne = DB.campagneDebut;
+      animaux.forEach(a => {
+        a.modesRepro = a.modesRepro || [];
+        a.modesRepro.push({ date: dateEvenement, mode, campagne });
+      });
+      DB.lots = DB.lots || [];
+      DB.lots.push({
+        id: Date.now().toString(), nom, dateCreation: today, membres: animaux.map(a => a.eid),
+        type: 'reproduction', mode, cible, dateEvenement, campagne
+      });
+      saveData(DB);
+      render('lots');
+    };
+  }
+
+  draw();
 }
 
 function renderLotSearch(lotId) {
@@ -12689,9 +12981,9 @@ async function executerChangementCampagne() {
   const backupOk = await writeAutoBackupFile(nomFichierBackupAuto(backupDate), bytesBackupAuto(DB, backupDate));
   if (!backupOk) return false;
 
-  // Pense-bête sans valeur d'historique (voir correctif Lutte) : pas
-  // d'archivage, on vide simplement pour la nouvelle campagne.
-  DB.luttes = [];
+  // DB.luttes n'est plus alimenté depuis le module Reproduction (voir
+  // modesRepro, campagne-tagué comme les agnelages/échographies) : plus
+  // rien à remettre à zéro ici, contrairement à l'ancien pense-bête "Lutte".
 
   // Archive puis vide les mouvements des brebis déjà actives AVANT d'ajouter
   // les nouvelles (renouvelées depuis les agnelles), pour ne pas effacer le
@@ -12718,6 +13010,13 @@ async function executerChangementCampagne() {
       pere: ag.pere || '', mere: ag.mere || '', numeroSieol: ag.numeroSieol || null,
       createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: ag.sanitaire || [],
       mouvements: [{ type: 'Entrée', cause: 'Renouvellement (agnelle devenue brebis)', date: dateRenouvellement }],
+      // modesRepro : une agnelle peut déjà avoir été mise en lot de
+      // reproduction (IA/Éponge) avant sa bascule en brebis (lutte des
+      // antenaises pendant l'été, avant le changement de campagne de
+      // septembre/octobre) — sans cette reprise, ce module de reproduction
+      // aurait le même bug que la généalogie avant son correctif : la
+      // donnée existe sur l'agnelle mais disparaît à la bascule.
+      modesRepro: ag.modesRepro || [],
       controleLaitier: [], statut: 'active'
     });
     archiverDansRegistre('agneaux', ag.eid, { mouvements: ag.mouvements });
@@ -12760,8 +13059,6 @@ function renderConfirmationNouvelleCampagne() {
   const agesKeys = Object.keys(agesCount).sort((a, b) => a === '?' ? 1 : b === '?' ? -1 : Number(a) - Number(b));
   const brebisParAgeHtml = agesKeys.map(k => `<div class="history-item"><div class="content">${k === '?' ? 'Âge inconnu' : k + ' an(s)'} — ${agesCount[k]} brebis</div></div>`).join('');
 
-  const nbLuttes = (DB.luttes || []).length;
-
   app.innerHTML = `
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Agnelles → brebis (${agnelles.length})</div>
@@ -12775,8 +13072,7 @@ function renderConfirmationNouvelleCampagne() {
     </div>
     <div class="card" style="border-color:var(--danger);">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;color:var(--danger);">Sera remis à zéro</div>
-      <div style="font-size:13px;">${nbLuttes} date(s) de lutte seront effacées (pense-bête, non conservé d'une campagne à l'autre).</div>
-      <div style="font-size:13px;margin-top:6px;">Les mouvements (ventes, morts...) de la campagne écoulée seront retirés des fiches actives — mais conservés dans le registre d'élevage réglementaire.</div>
+      <div style="font-size:13px;">Les mouvements (ventes, morts...) de la campagne écoulée seront retirés des fiches actives — mais conservés dans le registre d'élevage réglementaire.</div>
     </div>
     <div class="card" style="border-color:var(--primary);">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Reste consultable</div>
@@ -12995,6 +13291,16 @@ function renderParametres() {
     </div>
 
     <div class="card">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'indigo', 'Reproduction')}
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Fenêtre de gestation utilisée pour déduire automatiquement le code Repro à la saisie d'une mise bas (dans la fenêtre après un lot IA/Éponge → ce mode ; hors fenêtre → Retour IA).</div>
+      <div class="row">
+        <div style="flex:1;"><label>Min (jours)</label><input type="number" id="f-repro-gestation-min" value="${DB.reproGestationMin}"></div>
+        <div style="flex:1;"><label>Max (jours)</label><input type="number" id="f-repro-gestation-max" value="${DB.reproGestationMax}"></div>
+      </div>
+      <button class="btn btn-secondary" id="btn-save-repro-gestation">Enregistrer</button>
+    </div>
+
+    <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
         ${iconCircle(ICON_LAIT, 'blue', 'sm')}
         <div style="font-size:14px;font-weight:600;">Correspondance numéro visuel SIEOL/UNOTEC</div>
@@ -13059,6 +13365,18 @@ function renderParametres() {
     };
     saveData(DB);
     alert('Informations enregistrées.');
+  };
+  document.getElementById('btn-save-repro-gestation').onclick = () => {
+    const min = parseInt(document.getElementById('f-repro-gestation-min').value, 10);
+    const max = parseInt(document.getElementById('f-repro-gestation-max').value, 10);
+    if (isNaN(min) || isNaN(max) || min <= 0 || max <= 0 || min > max) {
+      alert("Fenêtre invalide — vérifie les valeurs (min doit être inférieur ou égal à max).");
+      return;
+    }
+    DB.reproGestationMin = min;
+    DB.reproGestationMax = max;
+    saveData(DB);
+    alert('Fenêtre de gestation enregistrée.');
   };
   document.getElementById('btn-save-campagne-annee').onclick = () => {
     // Verrouillé dès le premier vrai "changement de campagne" (voir
@@ -13692,7 +14010,8 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
   'casParticuliers', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   'registre', 'traitementsCollectifs', 'mouvementsCollectifs', 'penalitesBacterio',
-  'listeSerie', 'resumeControleLaitier', 'cahierControleLaitier'];
+  'listeSerie', 'resumeControleLaitier', 'cahierControleLaitier',
+  'reproGestationMin', 'reproGestationMax'];
 const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
 const BOOTSTRAP_FLAG_KEY = 'ovilog_sync_bootstrapped_uid';
 
