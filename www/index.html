@@ -9411,22 +9411,40 @@ function renderLots() {
   document.querySelectorAll('.btn-del-lot').forEach(btn => {
     btn.onclick = () => {
       const lot = DB.lots.find(l => l.id === btn.dataset.id);
-      // Supprimer un lot ne touche jamais modesRepro (voir renderAddLotRepro :
-      // le lot lui-même n'est qu'un outil transitoire de recherche en
-      // bergerie, la donnée durable vit sur chaque animal) -- mais on prévient
-      // explicitement si un membre a déjà une mise bas rattachée à cette
-      // campagne, pour que l'éleveur ne pense pas à tort que ça l'efface.
+      // Le lot lui-même n'est qu'un outil transitoire de recherche en
+      // bergerie (voir renderAddLotRepro) -- mais supprimer un lot IA/Éponge
+      // sans jamais toucher modesRepro laissait les brebis restées "en
+      // attente" (aucune mise bas encore enregistrée cette campagne) avec un
+      // badge IA/Éponge affiché indéfiniment, alors que le lot qui l'a posé
+      // n'existe plus : oblige à corriger chaque fiche une par une (voir
+      // renderEditRepro) pour un lot créé par erreur. On nettoie donc ici
+      // aussi leur évènement modesRepro -- retrouvé par lotId, jamais deviné
+      // -- SAUF pour un membre ayant déjà une mise bas cette campagne : même
+      // règle "jamais de correction silencieuse" que renderEditLot, son
+      // suivi Repro reste intouché sur sa fiche.
       let message = 'Supprimer ce lot ?';
+      let membresSansMiseBas = [];
       if (lot && lot.type === 'reproduction') {
-        const avecMiseBas = lot.membres
-          .map(eid => findAnimalReproByEid(eid))
-          .filter(a => a && Array.isArray(a.agnelages) && a.agnelages.some(ag => ag.campagne === lot.campagne))
-          .map(a => numeroVisuel(a.eid));
-        if (avecMiseBas.length > 0) {
-          message = 'Supprimer ce lot ? n°' + avecMiseBas.join(', n°') + ' ont déjà une mise bas rattachée cette campagne — leur suivi Repro reste sur leur fiche, seul le lot (recherche en bergerie) disparaît.';
+        const avecMiseBasNoms = [];
+        lot.membres.forEach(eid => {
+          const a = findAnimalReproByEid(eid);
+          if (!a) return;
+          const dejaMiseBas = Array.isArray(a.agnelages) && a.agnelages.some(ag => ag.campagne === lot.campagne);
+          if (dejaMiseBas) avecMiseBasNoms.push(numeroVisuel(eid));
+          else membresSansMiseBas.push(a);
+        });
+        if (avecMiseBasNoms.length > 0 && membresSansMiseBas.length > 0) {
+          message = 'Supprimer ce lot ? n°' + avecMiseBasNoms.join(', n°') + ' ont déjà une mise bas rattachée cette campagne — leur suivi Repro reste sur leur fiche. Le suivi Repro (' + libelleModeRepro(lot.mode) + ') des ' + membresSansMiseBas.length + ' autre(s) membre(s) sera supprimé (retour à Monte naturelle par défaut).';
+        } else if (avecMiseBasNoms.length > 0) {
+          message = 'Supprimer ce lot ? n°' + avecMiseBasNoms.join(', n°') + ' ont déjà une mise bas rattachée cette campagne — leur suivi Repro reste sur leur fiche, seul le lot (recherche en bergerie) disparaît.';
+        } else if (membresSansMiseBas.length > 0) {
+          message = 'Supprimer ce lot ? Le suivi Repro (' + libelleModeRepro(lot.mode) + ') de ses ' + membresSansMiseBas.length + ' membre(s) sera aussi supprimé (retour à Monte naturelle par défaut).';
         }
       }
       if (!confirm(message)) return;
+      membresSansMiseBas.forEach(a => {
+        a.modesRepro = (a.modesRepro || []).filter(m => m.lotId !== lot.id);
+      });
       DB.lots = DB.lots.filter(l => l.id !== btn.dataset.id);
       saveData(DB);
       render('lots');
