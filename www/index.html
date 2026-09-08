@@ -629,6 +629,13 @@ function migrateData(d) {
   // confirmées par l'éleveur.
   if (d.reproGestationMin === undefined) d.reproGestationMin = 144;
   if (d.reproGestationMax === undefined) d.reproGestationMax = 152;
+  // Fenêtre "1er retour" (Bilan de reproduction, bloc IA) : mise bas issue
+  // d'une saillie de retour de chaleur ~21 j après l'IA directe, jamais
+  // enregistrée comme un évènement séparé -- seule une 2e fenêtre, plus
+  // tardive, autour de la même date de lot permet de la distinguer. Voir
+  // statsLotIA/statsLotIAParAgeExact.
+  if (d.reproRetourMin === undefined) d.reproRetourMin = 160;
+  if (d.reproRetourMax === undefined) d.reproRetourMax = 171;
   // Correctif orthographe (04/09/2026) : le produit injecté automatiquement
   // à la naissance de chaque agneau s'appelle "Séléphérol", jamais saisi tel
   // quel jusqu'ici (fautes "Selepherol"/"Sélépérol" dans le code d'origine).
@@ -681,6 +688,8 @@ function loadData() {
     lots: [],
     reproGestationMin: 144,
     reproGestationMax: 152,
+    reproRetourMin: 160,
+    reproRetourMax: 171,
     exploitation: { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' },
     campagneDebut: null,
     casParticuliers: ['Pseudogestation', 'Avortée'],
@@ -2395,6 +2404,143 @@ function statsReproductionParCode(cohort) {
   });
 }
 
+/* ---------- Bilan de reproduction — bloc "Lots IA" ----------
+   Reproduit le bulletin insémination Unotec (3 colonnes IA / 1er retour /
+   Global) pour un lot de reproduction en mode IA. Aucun changement au
+   modèle de données existant (codeRepro/modesRepro/deduireCodeRepro) : la
+   distinction IA directe / 1er retour n'est qu'un calcul d'affichage/
+   export, basé sur l'écart entre la date du lot et la date de mise bas
+   déjà enregistrée (agnelage.date) de chaque membre -- jamais une saillie
+   de retour enregistrée séparément.
+   - IA directe : mise bas dans [reproGestationMin ; reproGestationMax]
+     jours après la date du lot. Fertilité = mises bas IA ÷ effectif total.
+   - 1er retour : mise bas dans [reproRetourMin ; reproRetourMax] jours
+     après la MÊME date de lot (défaut 160-171j, réglable Paramètres).
+     Fertilité = mises bas 1er retour ÷ brebis RESTANTES après l'IA directe
+     (effectif − mises bas IA) -- pas l'effectif total, conforme au
+     bulletin Unotec (ex. 119 inséminées, 63 mises bas IA → dénominateur
+     1er retour = 56).
+   - Global : somme IA + 1er retour, fertilité = total ÷ effectif total.
+   - Prolificité (par colonne) = agneaux nés (mort-nés inclus) ÷ mises bas
+     de cette colonne, même dénominateur logique que sa fertilité. */
+function statsLotIA(lot) {
+  const min = DB.reproGestationMin !== undefined ? DB.reproGestationMin : 144;
+  const max = DB.reproGestationMax !== undefined ? DB.reproGestationMax : 152;
+  const retMin = DB.reproRetourMin !== undefined ? DB.reproRetourMin : 160;
+  const retMax = DB.reproRetourMax !== undefined ? DB.reproRetourMax : 171;
+  const lotDate = new Date(lot.dateEvenement || lot.dateCreation);
+  let effectif = 0, misesBasIA = 0, misesBasRetour = 0, agneauxIA = 0, agneauxRetour = 0;
+  (lot.membres || []).forEach(eid => {
+    const animal = findAnimalReproByEid(eid);
+    if (!animal) return;
+    effectif++;
+    const ag = agnelageCampagneActuelle(animal);
+    if (!ag || !ag.date || isNaN(lotDate.getTime())) return;
+    const mb = new Date(ag.date);
+    if (isNaN(mb.getTime())) return;
+    const diff = Math.round((mb - lotDate) / 86400000);
+    const nesTotal = (ag.lambs || []).length;
+    if (diff >= min && diff <= max) { misesBasIA++; agneauxIA += nesTotal; }
+    else if (diff >= retMin && diff <= retMax) { misesBasRetour++; agneauxRetour += nesTotal; }
+  });
+  return statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour);
+}
+// Fabrique le triplet {ia, retour, global} à partir des compteurs bruts --
+// partagé par statsLotIA (lot entier) et statsLotIAParAgeExact (par âge)
+// pour ne jamais dupliquer les formules/arrondis entre les deux.
+function statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour) {
+  const resteApresIA = effectif - misesBasIA;
+  const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
+  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
+  return {
+    effectif,
+    ia: { misesBas: misesBasIA, fertilite: pct(misesBasIA, effectif), prolificite: rat(agneauxIA, misesBasIA) },
+    retour: { misesBas: misesBasRetour, fertilite: pct(misesBasRetour, resteApresIA), prolificite: rat(agneauxRetour, misesBasRetour) },
+    global: {
+      misesBas: misesBasIA + misesBasRetour,
+      fertilite: pct(misesBasIA + misesBasRetour, effectif),
+      prolificite: rat(agneauxIA + agneauxRetour, misesBasIA + misesBasRetour)
+    }
+  };
+}
+
+/* Détail par ÂGE EXACT (2 ans, 3 ans, 4 ans... jusqu'au plus vieux
+   réellement présent, sans plafond arbitraire) d'un lot IA ciblant des
+   BREBIS -- réservé à l'export PDF (voir bilanReproductionHtml). Jamais
+   appelé pour un lot ciblant des agnelles (lot.cible === 'Agnelles') :
+   toutes du même âge, ce détail n'apporterait rien -- voir renderAddLotRepro,
+   un lot cible toujours SOIT des brebis SOIT des agnelles, jamais les deux.
+   Mêmes formules que statsLotIA, appliquées indépendamment à chaque année
+   d'âge (âge figé à la date de référence de la campagne, comme
+   statsDetailleesParGroupeAge). */
+function statsLotIAParAgeExact(lot) {
+  const min = DB.reproGestationMin !== undefined ? DB.reproGestationMin : 144;
+  const max = DB.reproGestationMax !== undefined ? DB.reproGestationMax : 152;
+  const retMin = DB.reproRetourMin !== undefined ? DB.reproRetourMin : 160;
+  const retMax = DB.reproRetourMax !== undefined ? DB.reproRetourMax : 171;
+  const lotDate = new Date(lot.dateEvenement || lot.dateCreation);
+  const refDate = campagneRefDate() || new Date();
+  const groupes = {};
+  (lot.membres || []).forEach(eid => {
+    const animal = findAnimalReproByEid(eid);
+    if (!animal) return;
+    const a = ageADate(eid, refDate);
+    if (a === null) return;
+    if (!groupes[a]) groupes[a] = { effectif: 0, misesBasIA: 0, misesBasRetour: 0, agneauxIA: 0, agneauxRetour: 0 };
+    const g = groupes[a];
+    g.effectif++;
+    const ag = agnelageCampagneActuelle(animal);
+    if (!ag || !ag.date || isNaN(lotDate.getTime())) return;
+    const mb = new Date(ag.date);
+    if (isNaN(mb.getTime())) return;
+    const diff = Math.round((mb - lotDate) / 86400000);
+    const nesTotal = (ag.lambs || []).length;
+    if (diff >= min && diff <= max) { g.misesBasIA++; g.agneauxIA += nesTotal; }
+    else if (diff >= retMin && diff <= retMax) { g.misesBasRetour++; g.agneauxRetour += nesTotal; }
+  });
+  return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(ageVal => {
+    const g = groupes[ageVal];
+    return Object.assign({ age: ageVal }, statsLotIAColonnes(g.effectif, g.misesBasIA, g.misesBasRetour, g.agneauxIA, g.agneauxRetour));
+  });
+}
+
+/* Bilan troupeau (Bloc 2, export PDF uniquement) par ÂGE EXACT -- jamais
+   plafonné à "5 ans et plus" comme l'écran (statsDetailleesParGroupeAge,
+   INCHANGÉ) : chaque âge réellement présent dans le troupeau a sa propre
+   ligne. Ajoute la "durée de mise bas" (jours entre la 1ère et la dernière
+   mise bas de la campagne, pour cet âge) -- nouvelle donnée demandée,
+   absente de statsDetailleesParGroupeAge. */
+function statsParAgeExactTroupeau(cohort, refDate) {
+  const groupes = {};
+  cohort.forEach(s => {
+    const a = ageADate(s.eid, refDate);
+    if (a === null || a < 1) return;
+    if (!groupes[a]) groupes[a] = { presentes: 0, misesBas: 0, nesTotal: 0, dates: [] };
+    const g = groupes[a];
+    g.presentes++;
+    const ag = agnelageCampagneActuelle(s);
+    if (!ag) return;
+    g.misesBas++;
+    g.nesTotal += (ag.lambs || []).length;
+    if (ag.date) g.dates.push(ag.date);
+  });
+  const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
+  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
+  return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(ageVal => {
+    const g = groupes[ageVal];
+    const datesTri = g.dates.slice().sort();
+    const dureeMiseBas = datesTri.length >= 2
+      ? Math.round((new Date(datesTri[datesTri.length - 1]) - new Date(datesTri[0])) / 86400000)
+      : (datesTri.length === 1 ? 0 : null);
+    return {
+      age: ageVal, presentes: g.presentes, misesBas: g.misesBas,
+      fertilite: pct(g.misesBas, g.presentes),
+      prolificite: rat(g.nesTotal, g.misesBas),
+      dureeMiseBas
+    };
+  });
+}
+
 /* Millésime affiché d'une campagne à partir de sa valeur interne
    (DB.campagneDebut ou une autre campagne explicite) -- même convention que
    partout ailleurs dans l'appli (campagneDebut + 1). */
@@ -2417,8 +2563,7 @@ function campagneEchoOptionsHtml(campagneSelectionnee) {
   const opt = (val, label) => `<button type="button" class="opt-btn campagne-echo-opt${val === campagneSelectionnee ? ' selected' : ''}" data-val="${val}">${label}</button>`;
   return `
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Campagne concernée</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">À vérifier surtout pour un premier constat fait avant d'avoir démarré la nouvelle campagne dans l'appli.</div>
+      <div style="display:flex;align-items:center;margin-bottom:12px;"><span style="font-size:14px;font-weight:600;">Campagne concernée</span>${infoBulleHtml('Campagne concernée', "À vérifier surtout pour un premier constat fait avant d'avoir démarré la nouvelle campagne dans l'appli.")}</div>
       <div class="grid4" style="grid-template-columns:repeat(2,1fr);margin-bottom:0;">
         ${opt(enCours, 'Campagne ' + campagneLabel(enCours) + ' (en cours)')}
         ${opt(suivante, 'Campagne ' + campagneLabel(suivante) + ' (à venir)')}
@@ -2587,6 +2732,54 @@ function showToast(message) {
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+/* ---------- Épuration des textes d'instructions ----------
+   Remplace un bloc de texte explicatif (mode d'emploi, rappel de règle,
+   aide contextuelle) affiché en permanence par un pictogramme ❔ cliquable
+   qui ouvre le texte, intégralement conservé, dans une popup à la demande.
+   Distinct du ⓘ déjà utilisé pour la fiche produit ANMV (voir
+   produit-info-link/renderGererProduits) : deux pictogrammes différents
+   pour deux natures de popup différentes, jamais confondus. Ne concerne
+   jamais les messages d'erreur, confirmations d'action ou alertes
+   ponctuelles, qui restent affichés normalement.
+   Le texte est gardé dans un registre en mémoire plutôt que dans un
+   attribut data-* (souvent long, avec guillemets/accents) -- reconstruit à
+   chaque render, jamais persisté. */
+let INFO_BULLE_TEXTES = {};
+let infoBulleCompteur = 0;
+function infoBulleHtml(titre, texte) {
+  const id = 'ib' + (infoBulleCompteur++);
+  INFO_BULLE_TEXTES[id] = { titre, texte };
+  return `<span class="info-bulle-btn" data-info-id="${id}" title="Mode d'emploi" style="cursor:pointer;font-size:14px;margin-left:6px;">❔</span>`;
+}
+// Appelé une fois après chaque render() (voir plus bas), sans condition sur
+// l'écran affiché -- sans effet s'il n'y a aucun ❔ sur l'écran, jamais
+// besoin de le rappeler depuis chaque fonction de rendu individuellement.
+function wireInfoBulles() {
+  document.querySelectorAll('.info-bulle-btn').forEach(el => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      const entree = INFO_BULLE_TEXTES[el.dataset.infoId];
+      if (entree) afficherInfoBulle(entree.titre, entree.texte);
+    };
+  });
+}
+function afficherInfoBulle(titre, texte) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+        ${iconCircle(ICON_JOURNAL, 'indigo', 'md')}
+        <div style="font-weight:700;font-size:15px;">${titre}</div>
+      </div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;line-height:1.5;white-space:pre-line;">${texte}</div>
+      <button type="button" class="btn btn-primary" id="btn-close-info-bulle">Fermer</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#btn-close-info-bulle').onclick = () => document.body.removeChild(overlay);
 }
 
 /* ---------- Navigation simple ---------- */
@@ -2932,6 +3125,7 @@ function render(view, sheepId) {
     console.error('Erreur lors de l\'affichage de l\'écran "' + view + '"', e);
     renderCrashScreen(view);
   }
+  wireInfoBulles(); // chantier "Épuration des textes d'instructions" -- générique, sans effet si l'écran affiché n'a aucun ❔
 
   requestAnimationFrame(() => window.scrollTo(0, isRoot ? (scrollPositions[view] || 0) : 0));
 }
@@ -3322,6 +3516,35 @@ function renderBilanCampagne() {
       render('bilan-campagne');
     };
   }
+  if (bilanCampagneTab === 'reproduction') {
+    // Dépliage d'une carte de lot IA (voir bilanReproductionHtml) : simple
+    // affichage/masquage en DOM, jamais un re-render -- garde le scroll et
+    // l'état des autres cartes déjà dépliées.
+    document.querySelectorAll('.lot-ia-head').forEach(head => {
+      head.onclick = () => {
+        const body = head.parentElement.querySelector('.lot-ia-body');
+        if (body) body.classList.toggle('hidden');
+      };
+    });
+    document.querySelectorAll('.btn-export-lot-ia-pdf').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const lot = (DB.lots || []).find(l => l.id === btn.dataset.lotId);
+        if (!lot) return;
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Export en cours...';
+        exportLotIaPdf(lot).finally(() => { btn.disabled = false; btn.textContent = original; });
+      };
+    });
+    const btnExportAge = document.getElementById('btn-export-bilan-age-pdf');
+    if (btnExportAge) btnExportAge.onclick = () => {
+      btnExportAge.disabled = true;
+      const original = btnExportAge.textContent;
+      btnExportAge.textContent = 'Export en cours...';
+      exportBilanAgeExactPdf().finally(() => { btnExportAge.disabled = false; btnExportAge.textContent = original; });
+    };
+  }
 }
 
 /* Sous-onglet "Bilan de lactation" de Bilan de campagne : vue d'ensemble
@@ -3353,7 +3576,7 @@ function bilanLactationHtml() {
   const classesTriees = Object.keys(repartitionClasse).sort((a, b) => Number(a) - Number(b));
 
   return `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Bilan de lactation SIEOL/UNOTEC, campagne sélectionnée explicitement — jamais présumée être la campagne en cours d'Ovilog (voir import).</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan de lactation', "Bilan de lactation SIEOL/UNOTEC, campagne sélectionnée explicitement — jamais présumée être la campagne en cours d'Ovilog (voir import).")}</div>
 
     <div class="card" style="margin-bottom:10px;">
       <label>Campagne consultée</label>
@@ -3518,7 +3741,12 @@ function bilanReproductionHtml(actives) {
   const cohort = campagneCohortPresente();
   const { misesBas: misesBasGlobal, videsDefinitives: videsGlobal, taux: tauxReussite } = tauxReussiteGlobal(cohort);
   const statsParCode = statsReproductionParCode(cohort);
-  const lotsRepro = (DB.lots || []).filter(l => l.type === 'reproduction');
+  // Bloc "Lots IA" (nouveau format, bulletin Unotec) : uniquement les lots IA
+  // DE LA CAMPAGNE EN COURS -- voir statsLotIA. Les lots Éponge gardent
+  // l'affichage existant (barre de progression, ci-dessous) tel quel, non
+  // filtré par campagne comme avant -- chantier séparé à venir pour eux.
+  const lotsIA = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'IA' && l.campagne === DB.campagneDebut);
+  const lotsEponge = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'EP');
   // Même date de référence que la population ci-dessus, également utilisée
   // pour figer le groupe d'âge de chaque brebis sur toute la campagne (voir
   // statsDetailleesParGroupeAge/ageADate) : sans repli sur aujourd'hui, une
@@ -3569,9 +3797,44 @@ function bilanReproductionHtml(actives) {
       <div style="font-size:11px;color:var(--text-muted);margin-top:10px;">IA · Éponge · Retour IA (déduit) · Monte naturelle (déduit, par défaut) — code choisi ou corrigé à la saisie de chaque mise bas.</div>
     </div>
 
+    ${lotsIA.length === 0 ? '' : `
     <div class="card" style="margin-bottom:10px;">
-      ${sectionHeaderHtml(ICON_SEARCH, 'blue', 'Lots de reproduction')}
-      ${lotsRepro.length === 0 ? '<div style="font-size:13px;color:var(--text-muted);">Aucun lot de reproduction pour l\'instant — voir Chantier de tri.</div>' : lotsRepro.map(lot => {
+      ${sectionHeaderHtml(ICON_ECHO, 'green', 'Lots IA')}
+      ${lotsIA.map(lot => {
+        const s = statsLotIA(lot);
+        const p = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
+        const r = v => v !== null ? fmtDecimal(v, 2) : '—';
+        return `
+        <div class="lot-ia-card" style="background:var(--card);border:1px solid var(--border);border-radius:14px;margin-bottom:8px;overflow:hidden;">
+          <div class="lot-ia-head" data-lot-id="${lot.id}" style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;">
+            <div style="min-width:0;">
+              <div style="font-size:14px;font-weight:700;">Lot IA — ${formatDateFr(lot.dateEvenement || lot.dateCreation)}</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.effectif} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}</div>
+            </div>
+            <div style="display:flex;gap:14px;flex-shrink:0;text-align:right;">
+              <div><div style="font-size:16px;font-weight:700;">${p(s.global.fertilite)}</div><div style="font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;">Fertilité</div></div>
+              <div><div style="font-size:16px;font-weight:700;">${r(s.global.prolificite)}</div><div style="font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;">Prolif.</div></div>
+            </div>
+          </div>
+          <div class="lot-ia-body hidden" data-lot-id="${lot.id}" style="padding:0 14px 14px;border-top:1px solid var(--border);padding-top:12px;">
+            <div style="overflow-x:auto;">
+              <table style="width:100%;font-size:12.5px;border-collapse:collapse;min-width:260px;">
+                <tr style="color:var(--text-muted);text-align:right;"><th style="text-align:left;font-weight:500;"></th><th style="font-weight:500;">IA</th><th style="font-weight:500;">1er retour</th><th style="font-weight:600;color:var(--green-fg);">Global</th></tr>
+                <tr style="border-top:1px solid var(--border);"><td>Mises bas</td><td style="text-align:right;">${s.ia.misesBas}</td><td style="text-align:right;">${s.retour.misesBas}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${s.global.misesBas}</td></tr>
+                <tr style="border-top:1px solid var(--border);"><td>Fertilité</td><td style="text-align:right;">${p(s.ia.fertilite)}</td><td style="text-align:right;">${p(s.retour.fertilite)}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${p(s.global.fertilite)}</td></tr>
+                <tr style="border-top:1px solid var(--border);"><td>Prolificité</td><td style="text-align:right;">${r(s.ia.prolificite)}</td><td style="text-align:right;">${r(s.retour.prolificite)}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${r(s.global.prolificite)}</td></tr>
+              </table>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">IA : mises bas ÷ effectif du lot (${s.effectif}). 1er retour : mises bas ÷ brebis restantes après l'IA directe (${s.effectif} − ${s.ia.misesBas} = ${s.effectif - s.ia.misesBas}). Global : total ÷ effectif du lot — comme le bulletin insémination Unotec. Détail par âge exact réservé à l'export PDF.</div>
+            <button type="button" class="btn btn-secondary btn-export-lot-ia-pdf" data-lot-id="${lot.id}" style="width:auto;padding:8px 14px;font-size:12.5px;margin-top:10px;">Export PDF de ce lot</button>
+          </div>
+        </div>
+      `; }).join('')}
+    </div>`}
+
+    <div class="card" style="margin-bottom:10px;">
+      ${sectionHeaderHtml(ICON_SEARCH, 'blue', 'Lots Éponge')}
+      ${lotsEponge.length === 0 ? '<div style="font-size:13px;color:var(--text-muted);">Aucun lot Éponge pour l\'instant — voir Chantier de tri.</div>' : lotsEponge.map(lot => {
         let lotMisesBas = 0, lotVides = 0, lotAttente = 0;
         lot.membres.forEach(eid => {
           const animal = findAnimalReproByEid(eid);
@@ -3641,6 +3904,8 @@ function bilanReproductionHtml(actives) {
         </table>
       </div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">% mises bas = brebis ayant mis bas ÷ brebis présentes. Prolificité = agneaux nés totaux ÷ brebis ayant mis bas. % mortalité = agneaux morts totaux ÷ agneaux nés totaux.</div>
+      <button type="button" class="btn btn-secondary" id="btn-export-bilan-age-pdf" style="width:auto;padding:8px 14px;font-size:12.5px;margin-top:10px;">Export PDF — bilan par âge</button>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Le PDF détaille par année d'âge exacte (2 ans, 3 ans, 4 ans... jusqu'au plus âgé du troupeau), avec la durée de mise bas de chaque âge — non affiché à l'écran.</div>
     </div>
   `;
 }
@@ -4487,7 +4752,7 @@ function renderDetail(id) {
       ${cahierCampagne.classeParQuart !== null && cahierCampagne.classeParQuart !== undefined ? `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Classe par quart</span><strong>${cahierCampagne.classeParQuart}</strong></div>` : ''}
       ${cahierCampagne.lactMoyen !== null && cahierCampagne.lactMoyen !== undefined ? `
       <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">Estimation lactation (UNOTEC)</span><strong>${fmtDecimal(cahierCampagne.lactMoyen, 0)} L</strong></div>
-      <div style="font-size:11px;color:var(--text-muted);font-style:italic;margin-top:2px;">Estimation intermédiaire, pas un total définitif — peut changer au contrôle suivant.</div>
+      <div style="font-size:11px;color:var(--text-muted);margin:-2px 0 4px;">Estimation intermédiaire, pas un total définitif — peut changer au contrôle suivant.</div>
       ` : ''}
       ${cahierCampagne.anoLact ? `<div style="margin-top:8px;"><span class="compact-tag compact-tag-coral">Anomalie lactation : ${cahierCampagne.anoLact}</span></div>` : ''}
     </div>
@@ -5119,7 +5384,7 @@ function renderAddAgnelage(sheepId) {
           <div class="adopt-preview" data-id="${id}" style="font-size:12px;margin-bottom:12px;"></div>
         </div>
       </div>
-      <div class="mortne-note hidden" data-id="${id}" style="font-size:12px;color:var(--text-muted);">Pas de boucle sur un mort-né — aucun EID à saisir.</div>
+      <div class="mortne-note hidden" data-id="${id}" style="font-size:12px;color:var(--text-muted);">${infoBulleHtml('Agneau mort-né', "Pas de boucle sur un mort-né — aucun EID à saisir.")}</div>
     `;
     return div;
   }
@@ -5341,8 +5606,7 @@ function renderEchoRapide() {
     pageTitle.textContent = 'Nouvelle session — Échographies';
     app.innerHTML = `
       <div class="card">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Type d'échographie pour cette session</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Ce choix reste fixé pour toute la session — inutile de le ressélectionner à chaque brebis.</div>
+        <div style="display:flex;align-items:center;margin-bottom:14px;"><span style="font-size:14px;font-weight:600;">Type d'échographie pour cette session</span>${infoBulleHtml('Type d’échographie pour cette session', "Ce choix reste fixé pour toute la session — inutile de le ressélectionner à chaque brebis.")}</div>
         <div style="display:flex;flex-direction:column;gap:10px;">
           <button type="button" class="opt-btn type-echo-session-opt" data-val="constat">Constat (Pleine / Vide)</button>
           <button type="button" class="opt-btn type-echo-session-opt" data-val="stade">Stades (Début / Milieu / Fin / Vide)</button>
@@ -5753,7 +6017,7 @@ function renderHistoriqueEchoBody() {
 function renderHistoriqueEcho() {
   pageTitle.textContent = 'Historique des échographies';
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Toutes les échographies enregistrées, toutes brebis confondues — filtrables par date.</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Historique des échographies', 'Toutes les échographies enregistrées, toutes brebis confondues — filtrables par date.')}</div>
     <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:14px;">
       <div style="flex:1;"><label>Filtrer par date</label><input type="date" id="historique-echo-date" value="${historiqueEchoFiltreDate}"></div>
       <button type="button" class="btn btn-secondary" id="historique-echo-reset" style="width:auto;padding:0 16px;height:44px;">Toutes</button>
@@ -5858,7 +6122,7 @@ function renderMiseBasRapide() {
         </div>
         <div class="selepherol-note" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);background:#f0efe9;border-radius:var(--radius);padding:8px 12px;margin-top:10px;">Séléphérol 2 cc appliqué automatiquement</div>
       </div>
-      <div class="mortne-note-rapide hidden" data-id="${id}" style="font-size:12px;color:var(--text-muted);margin-top:8px;">Pas de boucle sur un mort-né — aucun EID à saisir.</div>
+      <div class="mortne-note-rapide hidden" data-id="${id}" style="font-size:12px;color:var(--text-muted);margin-top:8px;">${infoBulleHtml('Agneau mort-né', "Pas de boucle sur un mort-né — aucun EID à saisir.")}</div>
     `;
     return div;
   }
@@ -6274,8 +6538,7 @@ function renderListeSerie() {
   function draw() {
     app.innerHTML = chantierTriTabBarHtml() + `
       <div class="card" style="margin-top:14px;">
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">Scanne les animaux à la suite, un par un — peu importe qu'ils soient connus ou non, tous rejoignent la liste.</div>
-        <label>Scanner un animal</label>
+        <label style="display:flex;align-items:center;">Scanner un animal${infoBulleHtml('Liste en série', "Scanne les animaux à la suite, un par un — peu importe qu'ils soient connus ou non, tous rejoignent la liste.")}</label>
         <input type="text" id="scan-liste-serie" placeholder="Scanner ou saisir l'EID" autofocus>
         <div id="scan-liste-feedback" style="margin-top:8px;font-size:13px;"></div>
       </div>
@@ -6404,7 +6667,7 @@ function renderAddSanitaire(sheepId) {
         </div>
       </div>
 
-      <div id="autre-note" class="hidden" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;padding:10px;background:#f0efe9;border-radius:var(--radius);">Soin de plaie — pas de produit à sélectionner.</div>
+      <div id="autre-note" class="hidden" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;padding:10px;background:#f0efe9;border-radius:var(--radius);">${infoBulleHtml('Type de soin « Autre »', 'Soin de plaie — pas de produit à sélectionner.')}</div>
 
       <div id="produit-block" class="hidden" style="margin-bottom:14px;">
         <label>Produit utilisé</label>
@@ -7411,8 +7674,7 @@ function renderAgnelles() {
     `).join('');
 
   app.innerHTML = chantierTriTabBarHtml() + `
-    <div style="font-size:14px;font-weight:600;margin-bottom:2px;">À trier (femelles nées sur l'exploitation)</div>
-    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Scanner une agnelle ci-dessous fait défiler jusqu'à sa fiche pour la repérer — la décision (Garder/Écarter) reste un geste volontaire.</div>
+    <div style="display:flex;align-items:center;margin-bottom:10px;"><span style="font-size:14px;font-weight:600;">À trier (femelles nées sur l'exploitation)</span>${infoBulleHtml('À trier', "Scanner une agnelle ci-dessous fait défiler jusqu'à sa fiche pour la repérer — la décision (Garder/Écarter) reste un geste volontaire.")}</div>
     <label>Scanner l'agnelle à trier</label>
     <input type="text" id="scan-tri" placeholder="Scanner ou saisir l'EID" autofocus>
     <div id="scan-err" class="error-box hidden"></div>
@@ -8066,7 +8328,7 @@ function renderAddSanitaireBelier() {
         </div>
       </div>
 
-      <div id="autre-note" class="hidden" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;padding:10px;background:#f0efe9;border-radius:var(--radius);">Soin de plaie — pas de produit à sélectionner.</div>
+      <div id="autre-note" class="hidden" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;padding:10px;background:#f0efe9;border-radius:var(--radius);">${infoBulleHtml('Type de soin « Autre »', 'Soin de plaie — pas de produit à sélectionner.')}</div>
 
       <div id="produit-block" class="hidden" style="margin-bottom:14px;">
         <label>Produit utilisé</label>
@@ -9573,7 +9835,7 @@ function renderAddLot() {
       <label>Nom du lot</label>
       <input type="text" id="f-lot-nom" placeholder="ex: Brebis vides à trier">
 
-      <label>Filtrer par dernière échographie (facultatif) — critères combinables</label>
+      <label style="display:flex;align-items:center;">Filtrer par dernière échographie (facultatif) — critères combinables${infoBulleHtml('Filtrer par dernière échographie', "Coche un ou plusieurs critères (combinés en ET) pour présélectionner des brebis ci-dessous — tu peux ensuite ajuster la sélection à la main ou au bip. Sans aucun critère coché, la sélection reste vide et se fait entièrement à la main.")}</label>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Stade</div>
       <div class="chip-list" id="stade-filtre-list">
         <button type="button" class="chip" data-val="Vide">Vide</button>
@@ -9591,8 +9853,6 @@ function renderAddLot() {
         <button type="button" class="chip" data-val="__parasitisme">Parasitisme</button>
         ${DB.casParticuliers.map(cp => `<button type="button" class="chip" data-val="${cp.replace(/"/g,'&quot;')}">${cp}</button>`).join('')}
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin:12px 0 14px;">Coche un ou plusieurs critères (combinés en ET) pour présélectionner des brebis ci-dessous — tu peux ensuite ajuster la sélection à la main ou au bip. Sans aucun critère coché, la sélection reste vide et se fait entièrement à la main.</div>
-
       <label>Brebis du lot</label>
       <div id="lot-picker" style="margin-bottom:14px;"></div>
 
@@ -9723,7 +9983,7 @@ function renderAddLotReforme() {
 
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Sélectionne les brebis à réformer — le lot sera ensuite disponible pour une recherche en bergerie, comme n'importe quel autre lot.</div>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">${infoBulleHtml('Nouveau lot de réforme', "Sélectionne les brebis à réformer — le lot sera ensuite disponible pour une recherche en bergerie, comme n'importe quel autre lot.")}</div>
       <label>Nom du lot</label>
       <input type="text" id="f-lot-nom" value="Réforme du ${formatDateFr(today)}">
 
@@ -9800,8 +10060,7 @@ function renderAddLotRepro() {
         </div>
       </div>
       <div class="card">
-        <label>Mode de ce lot</label>
-        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">Seuls IA et Éponge se créent en lot — Retour IA et Monte naturelle sont toujours déduits, jamais saisis ici.</div>
+        <label style="display:flex;align-items:center;">Mode de ce lot${infoBulleHtml('Mode de ce lot', 'Seuls IA et Éponge se créent en lot — Retour IA et Monte naturelle sont toujours déduits, jamais saisis ici.')}</label>
         <div class="grid2">
           <button type="button" class="opt-btn mode-repro-opt${mode === 'IA' ? ' selected' : ''}" data-val="IA">IA</button>
           <button type="button" class="opt-btn mode-repro-opt${mode === 'EP' ? ' selected' : ''}" data-val="EP">Éponge</button>
@@ -9813,9 +10072,8 @@ function renderAddLotRepro() {
         <label id="lbl-lot-repro-date">${mode === 'EP' ? "Date de pose de l'éponge" : "Date de l'évènement"}</label>
         <input type="date" id="f-lot-repro-date" value="${today}">
         <div id="bloc-lot-repro-lutte" class="${mode === 'EP' ? '' : 'hidden'}" style="margin-top:10px;">
-          <label>Date de lutte (pose + ${EPONGE_DELAI_LUTTE_JOURS} jours)</label>
+          <label style="display:flex;align-items:center;">Date de lutte (pose + ${EPONGE_DELAI_LUTTE_JOURS} jours)${infoBulleHtml('Date de lutte', "Calculée automatiquement à partir de la date de pose — modifiable si le retrait/l'introduction des béliers a été décalé.")}</label>
           <input type="date" id="f-lot-repro-date-lutte" value="${addDaysToDateStr(today, EPONGE_DELAI_LUTTE_JOURS)}">
-          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Calculée automatiquement à partir de la date de pose — modifiable si le retrait/l'introduction des béliers a été décalé.</div>
         </div>
       </div>
       ${campagneEchoOptionsHtml(campagneChoisie)}
@@ -10088,10 +10346,9 @@ function renderLotSearch(lotId) {
       <div class="card">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
           ${iconCircle(ICON_SEARCH, 'green', 'sm')}
-          <div style="font-size:13px;color:var(--text-muted);">Recherche en bergerie</div>
+          <div style="font-size:13px;color:var(--text-muted);display:flex;align-items:center;">Recherche en bergerie${infoBulleHtml('Recherche en bergerie', 'Scanne les brebis à la suite — en lecture continue ou brebis par brebis selon le réglage du bâton, chaque bip valide est pris en compte immédiatement.')}</div>
         </div>
         <div style="font-size:22px;font-weight:600;margin-bottom:14px;">${trouvees.size} / ${lot.membres.length} trouvée(s)</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Scanne les brebis à la suite — en lecture continue ou brebis par brebis selon le réglage du bâton, chaque bip valide est pris en compte immédiatement.</div>
         <label>Scanner une brebis</label>
         <input type="text" id="scan-lot" placeholder="Scanner ou saisir l'EID" autofocus>
         <div id="scan-feedback" style="margin-top:10px;font-size:14px;"></div>
@@ -10367,12 +10624,12 @@ function renderMouvementsCollectifsHistorique() {
       </div>
       ${m.annulable
         ? `<button type="button" class="btn btn-secondary btn-annuler-mvt-collectif" data-id="${m.id}" style="color:var(--danger);border-color:var(--danger);">Annuler ce mouvement groupé</button>`
-        : `<div style="font-size:12px;color:var(--text-muted);">Agnelles déjà archivées dans le registre d'élevage et retirées du roster de renouvellement — l'annulation automatique n'est pas disponible pour cette catégorie (à restaurer manuellement si besoin).</div>`}
+        : `<div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;">Non annulable${infoBulleHtml('Non annulable', "Agnelles déjà archivées dans le registre d'élevage et retirées du roster de renouvellement — l'annulation automatique n'est pas disponible pour cette catégorie (à restaurer manuellement si besoin).")}</div>`}
     </div>
   `;
 
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Retrouve un mouvement (vente/sortie) appliqué à plusieurs animaux en une fois, et annule-le d'un coup si besoin.</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Mouvements groupés', 'Retrouve un mouvement (vente/sortie) appliqué à plusieurs animaux en une fois, et annule-le d\'un coup si besoin.')}</div>
     ${DB.mouvementsCollectifs.length === 0
       ? '<div class="empty">Aucun mouvement groupé enregistré pour l\'instant.</div>'
       : [...DB.mouvementsCollectifs].reverse().map(itemHtml).join('')}
@@ -10403,7 +10660,7 @@ function renderMouvementsCollectifsHistorique() {
 function renderSanitaire() {
   pageTitle.textContent = 'Sanitaire';
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Applique un soin à plusieurs brebis en une fois, et retrouve l'historique des traitements déjà appliqués en masse.</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Sanitaire', "Applique un soin à plusieurs brebis en une fois, et retrouve l'historique des traitements déjà appliqués en masse.")}</div>
     <button class="btn btn-secondary" id="btn-traitement-collectif" style="border-color:var(--danger);color:var(--danger);margin-bottom:10px;">Traitement collectif (nouveau)</button>
     <button class="btn btn-secondary" id="btn-historique-collectif" style="margin-bottom:10px;">Gérer / supprimer un traitement collectif</button>
     <button class="btn btn-secondary" id="btn-gerer-produits">Gérer les produits (vaccins, traitements...)</button>
@@ -10517,7 +10774,7 @@ function renderGererProduits() {
   }).join('');
 
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Modifie ou supprime les produits proposés à la saisie. Un produit supprimé ici reste visible dans l'historique déjà enregistré. Clique sur un produit marqué ⓘ pour voir sa dose, ses délais d'attente et sa voie d'administration (ANMV).</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Gérer les produits', 'Modifie ou supprime les produits proposés à la saisie. Un produit supprimé ici reste visible dans l\'historique déjà enregistré. Clique sur un produit marqué ⓘ pour voir sa dose, ses délais d\'attente et sa voie d\'administration (ANMV).')}</div>
     ${html}
   `;
 
@@ -10571,7 +10828,7 @@ function renderTraitementCollectif() {
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
-        <div style="font-size:13px;color:var(--text-muted);">Applique un soin à plusieurs ${cfg.label.toLowerCase()} en une fois.</div>
+        <div style="font-size:13px;color:var(--text-muted);display:flex;align-items:center;">Traitement collectif${infoBulleHtml('Traitement collectif', 'Applique un soin à plusieurs ' + cfg.label.toLowerCase() + ' en une fois.')}</div>
       </div>
 
       <label>${cfg.label} concerné${cfg.actives === 'actifs' ? 's' : 'es'}</label>
@@ -10599,7 +10856,7 @@ function renderTraitementCollectif() {
         </div>
       </div>
 
-      <div id="autre-note" class="hidden" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;padding:10px;background:#f0efe9;border-radius:var(--radius);">Soin de plaie — pas de produit à sélectionner.</div>
+      <div id="autre-note" class="hidden" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;padding:10px;background:#f0efe9;border-radius:var(--radius);">${infoBulleHtml('Type de soin « Autre »', 'Soin de plaie — pas de produit à sélectionner.')}</div>
 
       <div id="produit-block" class="hidden" style="margin-bottom:14px;">
         <label>Produit utilisé</label>
@@ -10828,12 +11085,12 @@ function renderTraitementsCollectifsHistorique() {
     : [...DB.traitementsCollectifs].reverse().map(recentItemHtml).join('');
 
   const legacyHtml = legacyGroups.length === 0 ? '' : `
-    <div style="font-size:13px;color:var(--text-muted);margin:18px 2px 8px;">Groupes détectés dans d'anciennes saisies (avant cet écran), regroupés par produit toutes dates confondues — vérifie le nombre d'animaux et la plage de dates avant de supprimer :</div>
+    <div style="font-size:13px;color:var(--text-muted);margin:18px 2px 8px;display:flex;align-items:center;">Anciennes saisies (sans identifiant)${infoBulleHtml('Anciennes saisies', "Groupes détectés dans d'anciennes saisies (avant cet écran), regroupés par produit toutes dates confondues — vérifie le nombre d'animaux et la plage de dates avant de supprimer.")}</div>
     ${legacyGroups.map(legacyItemHtml).join('')}
   `;
 
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Retrouve un traitement appliqué à plusieurs animaux en une fois et supprime-le d'un coup de toutes les fiches concernées.</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Traitements collectifs', "Retrouve un traitement appliqué à plusieurs animaux en une fois et supprime-le d'un coup de toutes les fiches concernées.")}</div>
     ${recentHtml}
     ${legacyHtml}
   `;
@@ -12102,6 +12359,200 @@ function buildRapportCampagnePdfBytes(campagne) {
   return pdfLatin1ToBytes(pdf);
 }
 
+/* Assemble un PDF portrait/paysage d'UNE SEULE PAGE à partir d'un contenu
+   déjà construit (opérateurs pdfTextOp/pdfLineOp/pdfRectOp) -- factorise le
+   squelette (objets/xref) commun aux exports PDF du Bilan de reproduction
+   (voir buildLotIaPdfBytes/buildBilanAgeExactPdfBytes ci-dessous), qui
+   tiennent toujours sur une page (peu de lots/âges en réalité). buildPdfTable
+   (pagination multi-lignes) et buildRapportCampagnePdfBytes (2 pages fixes)
+   ci-dessus restent inchangés, pas concernés par ce chantier. */
+function buildSinglePagePdfBytes(content, landscape) {
+  const pageW = landscape ? PDF_PAGE_H : PDF_PAGE_W;
+  const pageH = landscape ? PDF_PAGE_W : PDF_PAGE_H;
+  const objects = [];
+  let nextNum = 1;
+  const alloc = () => nextNum++;
+  const catalogNum = alloc(), pagesNum = alloc(), fontNum = alloc(), fontBoldNum = alloc();
+  const pageNum = alloc(), contentNum = alloc();
+  objects.push({ num: contentNum, body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
+  objects.push({ num: pageNum, body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + pageW + ' ' + pageH + '] /Contents ' + contentNum + ' 0 R >>' });
+  objects.push({ num: catalogNum, body: '<< /Type /Catalog /Pages ' + pagesNum + ' 0 R >>' });
+  objects.push({ num: pagesNum, body: '<< /Type /Pages /Kids [' + pageNum + ' 0 R] /Count 1 >>' });
+  objects.push({ num: fontNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>' });
+  objects.push({ num: fontBoldNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>' });
+  objects.sort((a, b) => a.num - b.num);
+  let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
+  const offsets = [0];
+  objects.forEach(obj => { offsets[obj.num] = pdf.length; pdf += obj.num + ' 0 obj\n' + obj.body + '\nendobj\n'; });
+  const xrefStart = pdf.length;
+  pdf += 'xref\n0 ' + nextNum + '\n0000000000 65535 f \n';
+  for (let i = 1; i < nextNum; i++) pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  pdf += 'trailer\n<< /Size ' + nextNum + ' /Root ' + catalogNum + ' 0 R >>\nstartxref\n' + xrefStart + '\n%%EOF';
+  return pdfLatin1ToBytes(pdf);
+}
+
+/* Export PDF d'un lot IA (voir bouton "Export PDF de ce lot" sur la carte
+   dépliée, bilanReproductionHtml) : tableau 3 colonnes IA/1er retour/Global
+   du lot entier, PLUS le détail par âge exact (statsLotIAParAgeExact) SEULEMENT
+   si le lot cible des brebis (lot.cible === 'Brebis') -- un lot d'agnelles
+   n'a qu'un seul âge, ce détail n'apporterait rien (voir renderAddLotRepro,
+   cible toujours exclusive). Paysage : jusqu'à 11 colonnes dans le tableau
+   par âge, trop serré en portrait (même choix que exportRegistrePdf). */
+function buildLotIaPdfBytes(lot) {
+  const landscape = true;
+  const pageW = PDF_PAGE_H, pageH = PDF_PAGE_W;
+  const rightEdge = pageW - PDF_MARGIN;
+  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
+  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const stats = statsLotIA(lot);
+  const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
+  const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
+
+  let y = pageH - PDF_MARGIN;
+  let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Lot de reproduction IA', 'FB', 14);
+  content += pdfTextOp(PDF_MARGIN + 400, y, 'Lot IA — ' + formatDateFr(lot.dateEvenement || lot.dateCreation), 'FB', 10);
+  y -= 14;
+  content += pdfTextOp(PDF_MARGIN, y, exploitationNom, 'F1', 9);
+  content += pdfTextOp(PDF_MARGIN + 400, y, stats.effectif + ' ' + (lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis') + ' · édité le ' + aujourdhui, 'F1', 9);
+  y -= 10;
+  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+  y -= 24;
+
+  content += pdfTextOp(PDF_MARGIN, y, 'RÉSULTATS DU LOT', 'FB', 10.5);
+  y -= 20;
+  const cols3 = [{ label: '', x: 0 }, { label: 'IA', x: 160 }, { label: '1er retour', x: 260 }, { label: 'Global', x: 380 }];
+  cols3.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
+  y -= 5;
+  content += pdfLineOp(PDF_MARGIN, y, PDF_MARGIN + 460, y);
+  y -= 16;
+  const rows3 = [
+    ['Mises bas', String(stats.ia.misesBas), String(stats.retour.misesBas), String(stats.global.misesBas)],
+    ['Fertilité', pctTxt(stats.ia.fertilite), pctTxt(stats.retour.fertilite), pctTxt(stats.global.fertilite)],
+    ['Prolificité', ratTxt(stats.ia.prolificite), ratTxt(stats.retour.prolificite), ratTxt(stats.global.prolificite)]
+  ];
+  rows3.forEach(row => {
+    cols3.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], ci === 3 ? 'FB' : 'F1', 9.5); });
+    y -= PDF_ROW_HEIGHT;
+  });
+  y -= 6;
+  pdfWrapLines("Fenêtres : IA " + DB.reproGestationMin + "–" + DB.reproGestationMax + " j après la date du lot · 1er retour " + DB.reproRetourMin + "–" + DB.reproRetourMax + " j après la même date (réglable, Paramètres). Fertilité 1er retour = mises bas 1er retour ÷ brebis restantes après l'IA directe (" + stats.effectif + " − " + stats.ia.misesBas + " = " + (stats.effectif - stats.ia.misesBas) + ").", 150)
+    .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
+  y -= 16;
+
+  if (lot.cible !== 'Agnelles') {
+    const parAge = statsLotIAParAgeExact(lot);
+    content += pdfTextOp(PDF_MARGIN, y, 'DÉTAIL PAR ÂGE EXACT, AU SEIN DE CE LOT', 'FB', 10.5);
+    y -= 5;
+    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+    y -= 18;
+    const colsAge = [
+      { label: 'Âge', x: 0 }, { label: 'Effectif', x: 60 },
+      { label: 'MB', x: 130 }, { label: 'Fert.', x: 175 }, { label: 'Prol.', x: 225 },
+      { label: 'MB', x: 290 }, { label: 'Fert.', x: 335 }, { label: 'Prol.', x: 385 },
+      { label: 'MB', x: 450 }, { label: 'Fert.', x: 495 }, { label: 'Prol.', x: 545 }
+    ];
+    content += pdfTextOp(PDF_MARGIN + 130, y + 14, 'IA', 'FB', 8.5);
+    content += pdfTextOp(PDF_MARGIN + 290, y + 14, '1er retour', 'FB', 8.5);
+    content += pdfTextOp(PDF_MARGIN + 450, y + 14, 'Global', 'FB', 8.5);
+    colsAge.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 8.5); });
+    y -= 5;
+    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+    y -= 14;
+    if (parAge.length === 0) {
+      content += pdfTextOp(PDF_MARGIN, y, "Aucune mise bas enregistrée pour ce lot pour l'instant.", 'F1', 9);
+      y -= PDF_ROW_HEIGHT;
+    } else {
+      parAge.forEach(g => {
+        const row = [
+          g.age + ' an' + (g.age > 1 ? 's' : ''), String(g.effectif),
+          String(g.ia.misesBas), pctTxt(g.ia.fertilite), ratTxt(g.ia.prolificite),
+          String(g.retour.misesBas), pctTxt(g.retour.fertilite), ratTxt(g.retour.prolificite),
+          String(g.global.misesBas), pctTxt(g.global.fertilite), ratTxt(g.global.prolificite)
+        ];
+        colsAge.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], ci >= 8 ? 'FB' : 'F1', 8.5); });
+        y -= PDF_ROW_HEIGHT;
+      });
+    }
+    y -= 6;
+    content += pdfTextOp(PDF_MARGIN, y, "MB = mises bas, Fert. = fertilité, Prol. = prolificité — mêmes formules qu'au-dessus, par année d'âge exacte.", 'F1', 8);
+  } else {
+    content += pdfTextOp(PDF_MARGIN, y, "Pas de détail par âge pour un lot d'antenaises : toutes du même âge (1 an).", 'F1', 9);
+  }
+
+  content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
+  return buildSinglePagePdfBytes(content, landscape);
+}
+
+async function exportLotIaPdf(lot) {
+  const bytes = buildLotIaPdfBytes(lot);
+  const filename = 'lot-ia_' + slugifyFiltre(lot.nom || lot.id) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
+/* Export PDF du Bilan de reproduction troupeau (voir bouton "Export PDF —
+   bilan par âge", bilanReproductionHtml) : détail par année d'âge exacte
+   (statsParAgeExactTroupeau), toutes brebis confondues (IA + Éponge + MN) --
+   le tableau à l'écran (Agnelles/Brebis, statsDetailleesParGroupeAge) reste
+   inchangé, ce PDF est un export complémentaire, jamais un remplacement. */
+function buildBilanAgeExactPdfBytes() {
+  const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
+  const rightEdge = pageW - PDF_MARGIN;
+  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
+  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const cohort = campagneCohortPresente();
+  const refDate = campagneRefDate() || new Date();
+  const parAge = statsParAgeExactTroupeau(cohort, refDate);
+  const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
+  const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
+
+  let y = pageH - PDF_MARGIN;
+  let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Bilan de reproduction troupeau', 'FB', 14);
+  y -= 16;
+  content += pdfTextOp(PDF_MARGIN, y, exploitationNom + (DB.campagneDebut !== null && DB.campagneDebut !== undefined ? ' · Campagne ' + campagneLabel(DB.campagneDebut) : ''), 'F1', 9);
+  y -= 12;
+  content += pdfTextOp(PDF_MARGIN, y, cohort.length + ' brebis présentes (toutes brebis confondues, IA + Éponge + MN) · édité le ' + aujourdhui, 'F1', 9);
+  y -= 10;
+  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+  y -= 24;
+
+  content += pdfTextOp(PDF_MARGIN, y, "DÉTAIL PAR ANNÉE D'ÂGE EXACTE", 'FB', 10.5);
+  y -= 20;
+  const cols = [
+    { label: 'Âge', x: 0 }, { label: 'Présentes', x: 90 }, { label: 'Mises bas', x: 180 },
+    { label: 'Fertilité', x: 270 }, { label: 'Prolificité', x: 360 }, { label: 'Durée mise bas', x: 450 }
+  ];
+  cols.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
+  y -= 5;
+  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+  y -= 16;
+  if (parAge.length === 0) {
+    content += pdfTextOp(PDF_MARGIN, y, 'Aucune brebis présente cette campagne.', 'F1', 9.5);
+    y -= PDF_ROW_HEIGHT;
+  } else {
+    parAge.forEach(g => {
+      const row = [
+        g.age + ' an' + (g.age > 1 ? 's' : ''), String(g.presentes), String(g.misesBas),
+        pctTxt(g.fertilite), ratTxt(g.prolificite),
+        g.dureeMiseBas !== null ? g.dureeMiseBas + ' j' : '—'
+      ];
+      cols.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], 'F1', 9.5); });
+      y -= PDF_ROW_HEIGHT;
+    });
+  }
+  y -= 10;
+  pdfWrapLines("Le tableau à l'écran (Agnelles 1 an / Brebis 2 ans et plus) reste le regroupement de référence pour la lecture courante — ce détail par année d'âge exacte n'existe que dans cet export.", 95)
+    .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
+
+  content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
+  return buildSinglePagePdfBytes(content, false);
+}
+
+async function exportBilanAgeExactPdf() {
+  const bytes = buildBilanAgeExactPdfBytes();
+  const filename = 'bilan-reproduction-par-age_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
 async function exportRapportCampagnePdf(campagne) {
   const bytes = buildRapportCampagnePdfBytes(campagne);
   const filename = 'rapport-campagne_' + (campagne + 1) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
@@ -12290,13 +12741,13 @@ function renderRegistre() {
   ).join('')}</div>`;
 
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Registre d'élevage réglementaire : agnelage, mouvements et carnet sanitaire de tous les animaux — actifs et archivés — conformément à la conditionnalité PAC (arrêté du 5 juin 2000, conservation 5 ans).</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml("Registre d'élevage", "Registre d'élevage réglementaire : agnelage, mouvements et carnet sanitaire de tous les animaux — actifs et archivés — conformément à la conditionnalité PAC (arrêté du 5 juin 2000, conservation 5 ans).")}</div>
     <div class="card" style="padding:12px;margin-bottom:14px;">
       <div class="row">
         <button type="button" class="btn btn-secondary" id="btn-export-registre">Exporter en Excel (.xlsx)</button>
         <button type="button" class="btn btn-secondary" id="btn-export-registre-pdf">Export PDF</button>
+        ${infoBulleHtml('Exports', "L'Excel exporte les 3 onglets ; le PDF exporte uniquement l'onglet et les filtres actuellement affichés.")}
       </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">L'Excel exporte les 3 onglets ; le PDF exporte uniquement l'onglet et les filtres actuellement affichés.</div>
     </div>
     ${tabBarHtml}
     <input type="text" id="registre-filtre" placeholder="Rechercher un numéro..." value="${registreFiltre}" style="margin:12px 0;">
@@ -12364,7 +12815,7 @@ function renderDeclarationAnnuelle() {
   ).join('')}</select>`;
 
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Registre PAC — recensement au 1er janvier et ratio de l'aide ovine, en année civile (indépendant de la campagne agricole). Écran de consultation uniquement, aucune donnée n'est modifiée ici.</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Déclaration annuelle', "Registre PAC — recensement au 1er janvier et ratio de l'aide ovine, en année civile (indépendant de la campagne agricole). Écran de consultation uniquement, aucune donnée n'est modifiée ici.")}</div>
     <div class="card" style="padding:12px;margin-bottom:14px;">
       <label>Année</label>
       ${selectAnneeHtml}
@@ -12387,9 +12838,8 @@ function renderDeclarationAnnuelle() {
           <div><div style="font-size:12px;color:var(--text-muted);">Brebis présentes au 1er janvier ${declarationAnneeSelectionnee - 1}</div><div style="font-weight:600;">${c.brebisRatio}</div></div>
           <div><div style="font-size:12px;color:var(--text-muted);">Agneaux nés en ${declarationAnneeSelectionnee - 1}</div><div style="font-weight:600;">${c.agneauxNesRatio}</div></div>
           <div><div style="font-size:12px;color:var(--text-muted);">Agneaux vendus en ${declarationAnneeSelectionnee - 1}</div><div style="font-weight:600;">${c.agneauxVendusRatio}</div></div>
-          <div><div style="font-size:12px;color:var(--text-muted);">Ratio (vendus / présentes)</div><div style="font-weight:600;">${c.ratio === null ? 'Non disponible' : c.ratio}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;">Ratio (vendus / présentes)${infoBulleHtml('Ratio (vendus / présentes)', "Seuil réglementaire indicatif de l'aide ovine : ≈ 0,5.")}</div><div style="font-weight:600;">${c.ratio === null ? 'Non disponible' : c.ratio}</div></div>
         </div>
-        <div style="font-size:12px;color:var(--text-muted);">Seuil réglementaire indicatif de l'aide ovine : ≈ 0,5.</div>
       `}
     </div>
     <button type="button" class="btn btn-secondary" id="btn-export-declaration-pdf" style="margin-top:14px;">Exporter PDF</button>
@@ -12578,8 +13028,7 @@ function renderImportNumeroSieol() {
   pageTitle.textContent = 'Correspondance numéro visuel SIEOL';
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Fichier CSV avec 3 colonnes : numéro visuel SIEOL, numéro officiel Ovilog, EID complet. La 1re ligne peut être un en-tête ou déjà une donnée. Traite le numéro visuel comme du texte (les zéros initiaux sont significatifs).</div>
-      <label>Fichier CSV</label>
+      <label style="display:flex;align-items:center;">Fichier CSV${infoBulleHtml('Format du fichier', 'Fichier CSV avec 3 colonnes : numéro visuel SIEOL, numéro officiel Ovilog, EID complet. La 1re ligne peut être un en-tête ou déjà une donnée. Traite le numéro visuel comme du texte (les zéros initiaux sont significatifs).')}</label>
       <!-- accept volontairement large (extension + plusieurs types MIME) : sur
            certains téléphones Android, un CSV reçu par messagerie/mail est
            étiqueté avec un type MIME générique (text/plain, voire
@@ -12708,8 +13157,7 @@ function renderImportBilanLactation() {
       <select id="import-lact-campagne">
         ${campagnesOptions.map(c => `<option value="${c}" ${c === campagneImport ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}
       </select>
-      <div style="font-size:12px;color:var(--text-muted);margin:10px 0;">Fichier CSV (;) avec les colonnes numero_visuel_sieol;num_lactation;ref;ano_repro;date_mise_bas;taille_portee;mode_repro;ano_lact;lact_totale;duree_traite;indice_cumule;classe_par_quart;index_asc;cd_asc. Dates JJ/MM/AAAA, décimales à virgule.</div>
-      <label>Fichier CSV</label>
+      <label style="display:flex;align-items:center;">Fichier CSV${infoBulleHtml('Format du fichier', 'Fichier CSV (;) avec les colonnes numero_visuel_sieol;num_lactation;ref;ano_repro;date_mise_bas;taille_portee;mode_repro;ano_lact;lact_totale;duree_traite;indice_cumule;classe_par_quart;index_asc;cd_asc. Dates JJ/MM/AAAA, décimales à virgule.')}</label>
       <input type="file" id="import-lact-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
       <div id="import-lact-err" class="error-box hidden"></div>
     </div>
@@ -12877,15 +13325,13 @@ function renderImportControleLaitierSieol() {
     </div>
 
     <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier résumé par contrôle (;), 1 ligne par contrôle -- colonnes repérées par leur en-tête (num_controle, date_controle, lait_total, lait_controle, nb_brebis, nb_ech, coef_ac, nb_antenaises, nb_adultes, lait_antenaises ou moy_jour_antenaises_ml, lait_adultes ou moy_jour_adultes_ml, moy_jour_troupeau_ml si disponible) : l'ordre et les colonnes en plus n'ont pas d'importance. Dates JJ/MM/AAAA, décimales à virgule.</div>
-      <label>Fichier résumé</label>
+      <label style="display:flex;align-items:center;">Fichier résumé${infoBulleHtml('Format du fichier résumé', "Fichier résumé par contrôle (;), 1 ligne par contrôle -- colonnes repérées par leur en-tête (num_controle, date_controle, lait_total, lait_controle, nb_brebis, nb_ech, coef_ac, nb_antenaises, nb_adultes, lait_antenaises ou moy_jour_antenaises_ml, lait_adultes ou moy_jour_adultes_ml, moy_jour_troupeau_ml si disponible) : l'ordre et les colonnes en plus n'ont pas d'importance. Dates JJ/MM/AAAA, décimales à virgule.")}</label>
       <input type="file" id="import-cl-resume-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
       <div id="import-cl-resume-err" class="error-box hidden"></div>
     </div>
 
     <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Cahier de contrôle détaillé (;), 1 ligne par brebis -- colonnes repérées par leur en-tête (numero_visuel_sieol, ctl1_ml/ctl1_anomalie, ctl2_ml/ctl2_anomalie, ctl3_ml/ctl3_anomalie, ano_lact, num_lactation, ref, lact_moyen, classe_par_quart) : l'ordre et les colonnes en plus n'ont pas d'importance -- ano_repro/date_mise_bas/taille_portee/mode_repro, si présentes, sont ignorées (aucune mise bas n'est créée depuis cet écran).</div>
-      <label>Fichier cahier de contrôle</label>
+      <label style="display:flex;align-items:center;">Fichier cahier de contrôle${infoBulleHtml('Format du cahier de contrôle', "Cahier de contrôle détaillé (;), 1 ligne par brebis -- colonnes repérées par leur en-tête (numero_visuel_sieol, ctl1_ml/ctl1_anomalie, ctl2_ml/ctl2_anomalie, ctl3_ml/ctl3_anomalie, ano_lact, num_lactation, ref, lact_moyen, classe_par_quart) : l'ordre et les colonnes en plus n'ont pas d'importance -- ano_repro/date_mise_bas/taille_portee/mode_repro, si présentes, sont ignorées (aucune mise bas n'est créée depuis cet écran).")}</label>
       <input type="file" id="import-cl-cahier-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
       <div id="import-cl-cahier-err" class="error-box hidden"></div>
     </div>
@@ -13022,8 +13468,7 @@ function renderImportControleLaitierSieol() {
 
       ${(conflitsDetail.length > 0 || conflitsResumeList.length > 0) ? `
       <div class="card" style="margin-top:10px;border-color:var(--coral-fg);">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--coral-fg);">Conflits à trancher (${conflitsDetail.length + conflitsResumeList.length})</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Une valeur existe déjà. Rien n'est écrasé sans ton choix explicite ; un conflit laissé sans réponse garde la valeur actuelle.</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--coral-fg);display:flex;align-items:center;">Conflits à trancher (${conflitsDetail.length + conflitsResumeList.length})${infoBulleHtml('Conflits à trancher', "Une valeur existe déjà. Rien n'est écrasé sans ton choix explicite ; un conflit laissé sans réponse garde la valeur actuelle.")}</div>
         ${conflitsResumeList.map(({ r, existant }) => `
           <div style="border-top:1px solid var(--border);padding:10px 0;">
             <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Résumé du contrôle ${r.controle} déjà enregistré</div>
@@ -13057,8 +13502,7 @@ function renderImportControleLaitierSieol() {
 
       ${aberrantes.length > 0 ? `
       <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Valeurs à vérifier (${aberrantes.length})</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Purement indicatif, n'empêche pas l'import : valeur quasi nulle sans code d'anomalie, ou nettement au-dessus des autres valeurs du même contrôle cette campagne. À toi de vérifier sur le cahier papier si besoin.</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);display:flex;align-items:center;">Valeurs à vérifier (${aberrantes.length})${infoBulleHtml('Valeurs à vérifier', "Purement indicatif, n'empêche pas l'import : valeur quasi nulle sans code d'anomalie, ou nettement au-dessus des autres valeurs du même contrôle cette campagne. À toi de vérifier sur le cahier papier si besoin.")}</div>
         ${aberrantes.slice(0, 40).map(({ row, controle, c, type }) => `
           <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0;border-top:1px solid var(--border);">
             <span>n°${row.numeroVisuelSieol} — Contrôle ${controle}</span>
@@ -13477,8 +13921,7 @@ function renderImportAgnelles() {
   pageTitle.textContent = 'Import agnelles (généalogie UNOTEC)';
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Fichier CSV avec 3 colonnes : numéro officiel (11 chiffres), date de naissance (jj/mm/aaaa), numéro officiel de la mère (facultatif). La 1re ligne peut être un en-tête ou déjà une donnée.</div>
-      <label>Fichier CSV</label>
+      <label style="display:flex;align-items:center;">Fichier CSV${infoBulleHtml('Format du fichier', "Fichier CSV avec 3 colonnes : numéro officiel (11 chiffres), date de naissance (jj/mm/aaaa), numéro officiel de la mère (facultatif). La 1re ligne peut être un en-tête ou déjà une donnée.")}</label>
       <input type="file" id="import-agnelles-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
       <div id="import-agnelles-err" class="error-box hidden"></div>
       <div id="import-agnelles-preview" style="margin-top:14px;"></div>
@@ -13646,41 +14089,43 @@ function renderParametres() {
 
     <div class="card">
       ${sectionHeaderHtml(ICON_JOURNAL, 'indigo', 'Reproduction')}
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Fenêtre de gestation utilisée pour déduire automatiquement le code Repro à la saisie d'une mise bas (dans la fenêtre après un lot IA/Éponge → ce mode ; hors fenêtre → Retour IA).</div>
       <div class="row">
-        <div style="flex:1;"><label>Min (jours)</label><input type="number" id="f-repro-gestation-min" value="${DB.reproGestationMin}"></div>
+        <div style="flex:1;"><label style="display:flex;align-items:center;">Min (jours)${infoBulleHtml('Fenêtre de gestation (IA/Éponge)', "Fenêtre de gestation utilisée pour déduire automatiquement le code Repro à la saisie d'une mise bas (dans la fenêtre après un lot IA/Éponge → ce mode ; hors fenêtre → Retour IA).")}</label><input type="number" id="f-repro-gestation-min" value="${DB.reproGestationMin}"></div>
         <div style="flex:1;"><label>Max (jours)</label><input type="number" id="f-repro-gestation-max" value="${DB.reproGestationMax}"></div>
       </div>
       <button class="btn btn-secondary" id="btn-save-repro-gestation">Enregistrer</button>
+
+      <div style="font-size:12px;color:var(--text-muted);margin:16px 0 12px;">Fenêtre "1er retour" utilisée dans le Bilan de reproduction (bloc Lots IA) pour distinguer une mise bas issue de l'IA directe de celle d'une saillie de retour de chaleur — comptée à partir de la même date de lot, jamais une saillie enregistrée séparément.</div>
+      <div class="row">
+        <div style="flex:1;"><label>Min (jours)</label><input type="number" id="f-repro-retour-min" value="${DB.reproRetourMin}"></div>
+        <div style="flex:1;"><label>Max (jours)</label><input type="number" id="f-repro-retour-max" value="${DB.reproRetourMax}"></div>
+      </div>
+      <button class="btn btn-secondary" id="btn-save-repro-retour">Enregistrer</button>
     </div>
 
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
         ${iconCircle(ICON_LAIT, 'blue', 'sm')}
-        <div style="font-size:14px;font-weight:600;">Correspondance numéro visuel SIEOL/UNOTEC</div>
+        <div style="font-size:14px;font-weight:600;display:flex;align-items:center;">Correspondance numéro visuel SIEOL/UNOTEC${infoBulleHtml('Correspondance numéro visuel SIEOL/UNOTEC', "Importe le fichier de correspondance vérifié manuellement (numéro visuel SIEOL, numéro officiel Ovilog, EID complet) pour peupler le numéro visuel SIEOL sur les fiches existantes. Réutilisable à volonté, par exemple pour corriger ou compléter le fichier.")}</div>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Importe le fichier de correspondance vérifié manuellement (numéro visuel SIEOL, numéro officiel Ovilog, EID complet) pour peupler le numéro visuel SIEOL sur les fiches existantes. Réutilisable à volonté, par exemple pour corriger ou compléter le fichier.</div>
       <button class="btn btn-secondary" id="btn-goto-import-numero-sieol">Importer le fichier de correspondance</button>
     </div>
 
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
         ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
-        <div style="font-size:14px;font-weight:600;">Import agnelles (généalogie UNOTEC)</div>
+        <div style="font-size:14px;font-weight:600;display:flex;align-items:center;">Import agnelles (généalogie UNOTEC)${infoBulleHtml('Import agnelles (généalogie UNOTEC)', 'Importe un fichier CSV dérivé du rapport UNOTEC "Généalogies" (numéro officiel, date de naissance, numéro officiel de la mère) pour ajouter en une fois les agnelles gardées de l\'année à l\'inventaire.')}</div>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Importe un fichier CSV dérivé du rapport UNOTEC "Généalogies" (numéro officiel, date de naissance, numéro officiel de la mère) pour ajouter en une fois les agnelles gardées de l'année à l'inventaire.</div>
       <button class="btn btn-secondary" id="btn-goto-import-agnelles">Importer le fichier</button>
     </div>
 
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Diagnostic Bluetooth (bâton Allflex)</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID.</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Diagnostic Bluetooth (bâton Allflex)${infoBulleHtml('Diagnostic Bluetooth', "Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID.")}</div>
       <button class="btn btn-secondary" id="btn-goto-diag-bluetooth">Ouvrir le diagnostic</button>
     </div>
 
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Sauvegarde des données</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Important : à chaque fois qu'une nouvelle version du fichier est installée, exporte d'abord tes données ici, puis réimporte-les une fois la nouvelle version ouverte — sinon tout repart à zéro.</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Sauvegarde des données${infoBulleHtml('Sauvegarde des données', "Important : à chaque fois qu'une nouvelle version du fichier est installée, exporte d'abord tes données ici, puis réimporte-les une fois la nouvelle version ouverte — sinon tout repart à zéro.")}</div>
       <button class="btn btn-secondary" id="btn-export" style="margin-bottom:10px;">Exporter mes données (sauvegarde)</button>
       <input type="file" id="import-file" accept=".json" class="hidden">
       <button class="btn btn-secondary" id="btn-import">Importer une sauvegarde</button>
@@ -13731,6 +14176,18 @@ function renderParametres() {
     DB.reproGestationMax = max;
     saveData(DB);
     alert('Fenêtre de gestation enregistrée.');
+  };
+  document.getElementById('btn-save-repro-retour').onclick = () => {
+    const min = parseInt(document.getElementById('f-repro-retour-min').value, 10);
+    const max = parseInt(document.getElementById('f-repro-retour-max').value, 10);
+    if (isNaN(min) || isNaN(max) || min <= 0 || max <= 0 || min > max) {
+      alert("Fenêtre invalide — vérifie les valeurs (min doit être inférieur ou égal à max).");
+      return;
+    }
+    DB.reproRetourMin = min;
+    DB.reproRetourMax = max;
+    saveData(DB);
+    alert('Fenêtre "1er retour" enregistrée.');
   };
   document.getElementById('btn-save-campagne-annee').onclick = () => {
     // Verrouillé dès le premier vrai "changement de campagne" (voir
@@ -14037,8 +14494,7 @@ function ouvrirChangerLecteur() {
   overlay.id = 'overlay-changer-lecteur';
   overlay.innerHTML = `
     <div class="modal-card">
-      <div style="font-weight:700;font-size:15px;margin-bottom:4px;">Changer de lecteur</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Recherche des lecteurs Bluetooth à proximité (le bâton doit être allumé et à portée).</div>
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px;display:flex;align-items:center;">Changer de lecteur${infoBulleHtml('Changer de lecteur', 'Recherche des lecteurs Bluetooth à proximité (le bâton doit être allumé et à portée).')}</div>
       <div id="changer-lecteur-body"></div>
       <button type="button" class="btn btn-secondary" id="btn-fermer-changer-lecteur" style="margin-top:14px;">Fermer</button>
     </div>
@@ -14221,8 +14677,7 @@ function renderDiagBluetooth() {
 
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Appareils déjà appairés</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Le bâton Allflex doit apparaître ici (déjà appairé via l'autre appli) — aucune découverte n'est lancée, sa configuration matérielle n'est jamais touchée.</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;">Appareils déjà appairés${infoBulleHtml('Appareils déjà appairés', "Le bâton Allflex doit apparaître ici (déjà appairé via l'autre appli) — aucune découverte n'est lancée, sa configuration matérielle n'est jamais touchée.")}</div>
       <button type="button" class="btn btn-secondary" id="btn-diag-refresh">Rafraîchir la liste</button>
       <div id="diag-devices" style="margin-top:10px;"></div>
     </div>
@@ -14240,10 +14695,9 @@ function renderDiagBluetooth() {
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <div style="font-size:14px;font-weight:600;">Trames reçues (${btDiag.frames.length})</div>
+        <div style="font-size:14px;font-weight:600;display:flex;align-items:center;">Trames reçues (${btDiag.frames.length})${infoBulleHtml('Trames reçues', 'Scanne une boucle avec le bâton — chaque trame reçue s\'affiche ci-dessous en hexadécimal et en ASCII, sans aucune interprétation.')}</div>
         <button type="button" class="btn btn-secondary" id="btn-diag-clear" style="width:auto;padding:4px 10px;font-size:12px;">Vider</button>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Scanne une boucle avec le bâton — chaque trame reçue s'affiche ci-dessous en hexadécimal et en ASCII, sans aucune interprétation.</div>
       <div style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;">
         ${btDiag.frames.length === 0 ? '<div style="color:var(--text-muted);font-family:inherit;">Aucune trame reçue pour l\'instant.</div>' : btDiag.frames.map(f => `
           <div style="padding:6px 0;border-top:1px solid var(--border);">
@@ -14269,8 +14723,7 @@ function renderSyncLogin() {
   pageTitle.textContent = 'Connexion à la synchronisation';
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Connecte-toi avec le compte créé pour la synchronisation (même e-mail et mot de passe sur tous tes appareils).</div>
-      <label>Adresse e-mail</label>
+      <label style="display:flex;align-items:center;">Adresse e-mail${infoBulleHtml('Connexion à la synchronisation', 'Connecte-toi avec le compte créé pour la synchronisation (même e-mail et mot de passe sur tous tes appareils).')}</label>
       <input type="email" id="f-sync-email" placeholder="ton@email.fr" autocomplete="username">
       <label>Mot de passe</label>
       <input type="password" id="f-sync-password" autocomplete="current-password">
@@ -14365,7 +14818,7 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   'registre', 'traitementsCollectifs', 'mouvementsCollectifs', 'penalitesBacterio',
   'listeSerie', 'resumeControleLaitier', 'cahierControleLaitier',
-  'reproGestationMin', 'reproGestationMax'];
+  'reproGestationMin', 'reproGestationMax', 'reproRetourMin', 'reproRetourMax'];
 const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
 const BOOTSTRAP_FLAG_KEY = 'ovilog_sync_bootstrapped_uid';
 
