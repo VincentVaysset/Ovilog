@@ -2260,6 +2260,12 @@ function statutReproductionCampagne(sheep) {
    chronologie d'évènements (voir codeReproActuel ci-dessous). */
 const REPRO_MODE_LABELS = { IA: 'IA', EP: 'Éponge', RE: 'Retour IA', MN: 'Monte naturelle' };
 function libelleModeRepro(code) { return REPRO_MODE_LABELS[code] || code; }
+// Chiffre SIEOL/UNOTEC officiel de chaque mode (1/2/3/7) -- gardé en plus de
+// l'abréviation partout où un évènement/résultat Repro est écrit (voir
+// codeSieol sur modesRepro, codeSieolRepro sur l'agnelage), pour une future
+// compatibilité d'export/import avec un fichier SIEOL. L'abréviation reste
+// la seule donnée utilisée pour l'affichage et les calculs de ce module.
+const REPRO_CODE_SIEOL = { IA: 1, EP: 2, RE: 3, MN: 7 };
 
 /* Code Repro actuellement pertinent pour un animal (brebis ou agnelle) sur
    la campagne en cours, et son style d'affichage (voir reproTagHtml) :
@@ -2690,7 +2696,7 @@ btnBack.onclick = () => {
   else if (currentView === 'add-sheep') render('list');
   else if (currentView === 'add-agnelle') { editingAgnelleId = null; render(addAgnelleOrigin); }
   else if (currentView === 'agnelle-detail') render(agnelleDetailOrigin);
-  else if (currentView === 'add-lot' || currentView === 'add-lot-reforme' || currentView === 'add-lot-repro') render('lots');
+  else if (currentView === 'add-lot' || currentView === 'add-lot-reforme' || currentView === 'add-lot-repro' || currentView === 'edit-lot') render('lots');
   else if (currentView === 'lot-search') render('lots');
   else if (currentView === 'mouvement-groupe') render('inventaire');
   else if (currentView === 'mouvements-collectifs') render('inventaire');
@@ -2867,6 +2873,7 @@ function render(view, sheepId) {
     else if (view === 'add-lot') renderAddLot();
     else if (view === 'add-lot-reforme') renderAddLotReforme();
     else if (view === 'add-lot-repro') renderAddLotRepro();
+    else if (view === 'edit-lot') renderEditLot(currentLotId);
     else if (view === 'lot-search') renderLotSearch(currentLotId);
     else if (view === 'mouvement-groupe') renderMouvementGroupe();
     else if (view === 'mouvements-collectifs') renderMouvementsCollectifsHistorique();
@@ -2969,14 +2976,19 @@ function dashboardKpiHtml() {
   // l'écran Contrôle laitier) -- jamais recalculées ici à partir des
   // relevés individuels, pour ne jamais diverger de ce que montre cet écran.
   const resumesCampagneAccueil = (DB.resumeControleLaitier || []).filter(r => DB.campagneDebut == null || r.campagne === DB.campagneDebut);
-  function moyenneResume(n) {
+  // Litres (2 décimales, voir fmtDecimal) plutôt que mL -- même conversion
+  // et même arrondi que les tuiles de litrage du récapitulatif Contrôle
+  // laitier (tuileLitrage), jamais un calcul distinct. nbBrebis accompagne
+  // chaque moyenne (brebis contrôlées à ce contrôle), demandé avec la
+  // conversion en litres.
+  function resumeAccueil(n) {
     const r = resumesCampagneAccueil.find(x => x.controle === n);
     const v = litrageTroupeauResume(r);
-    return v !== null ? Math.round(v) : null; // mL : arrondi à l'entier, pas de décimale utile
+    return { litres: v !== null ? v / 1000 : null, nbBrebis: r ? r.nbBrebis : null };
   }
-  const moyenne1 = moyenneResume(1);
-  const moyenne2 = moyenneResume(2);
-  const moyenne3 = moyenneResume(3);
+  const resume1 = resumeAccueil(1);
+  const resume2 = resumeAccueil(2);
+  const resume3 = resumeAccueil(3);
   // Nombre de relevés individuels (distinct de la moyenne ci-dessus, qui
   // vient du résumé troupeau) -- inchangé, garde son propre sens.
   let totalControles = 0;
@@ -3073,15 +3085,18 @@ function dashboardKpiHtml() {
       <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
         <div>
           <div style="font-size:12px;color:var(--text-muted);">1er contrôle</div>
-          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${moyenne1 !== null ? moyenne1 + ' mL' : '—'}</div>
+          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${resume1.litres !== null ? fmtDecimal(resume1.litres, 2) + ' L' : '—'}</div>
+          ${resume1.nbBrebis !== null ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${resume1.nbBrebis} brebis</div>` : ''}
         </div>
         <div>
           <div style="font-size:12px;color:var(--text-muted);">2e contrôle</div>
-          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${moyenne2 !== null ? moyenne2 + ' mL' : '—'}</div>
+          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${resume2.litres !== null ? fmtDecimal(resume2.litres, 2) + ' L' : '—'}</div>
+          ${resume2.nbBrebis !== null ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${resume2.nbBrebis} brebis</div>` : ''}
         </div>
         <div>
           <div style="font-size:12px;color:var(--text-muted);">3e contrôle</div>
-          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${moyenne3 !== null ? moyenne3 + ' mL' : '—'}</div>
+          <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${resume3.litres !== null ? fmtDecimal(resume3.litres, 2) + ' L' : '—'}</div>
+          ${resume3.nbBrebis !== null ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${resume3.nbBrebis} brebis</div>` : ''}
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">${totalControles} relevé(s) enregistré(s) au total</div>
@@ -5235,7 +5250,7 @@ function renderAddAgnelage(sheepId) {
       date: document.getElementById('f-date').value,
       lambs: ids.map(id => lambs[id]),
       campagne: DB.campagneDebut,
-      codeRepro
+      codeRepro, codeSieolRepro: REPRO_CODE_SIEOL[codeRepro]
     };
     agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
     sheep.agnelages = sheep.agnelages || [];
@@ -6173,7 +6188,7 @@ function renderMiseBasRapide() {
           date: document.getElementById('f-date-rapide').value,
           lambs: ids.map(id => lambs[id]),
           campagne: DB.campagneDebut,
-          codeRepro
+          codeRepro, codeSieolRepro: REPRO_CODE_SIEOL[codeRepro]
         };
         agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
         currentSheep.agnelages = currentSheep.agnelages || [];
@@ -9317,7 +9332,10 @@ function renderLots() {
           </div>
           <button type="button" class="btn btn-secondary btn-del-lot" data-id="${lot.id}" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
         </div>
-        <button type="button" class="btn btn-primary btn-search-lot" data-id="${lot.id}">Chercher en bergerie</button>
+        <div class="row" style="gap:8px;margin-bottom:0;">
+          <button type="button" class="btn btn-secondary btn-edit-lot" data-id="${lot.id}" style="flex:1;">Modifier</button>
+          <button type="button" class="btn btn-primary btn-search-lot" data-id="${lot.id}" style="flex:2;">Chercher en bergerie</button>
+        </div>
       </div>
     `).join('');
 
@@ -9334,9 +9352,28 @@ function renderLots() {
   document.querySelectorAll('.btn-search-lot').forEach(btn => {
     btn.onclick = () => { currentLotId = btn.dataset.id; render('lot-search'); };
   });
+  document.querySelectorAll('.btn-edit-lot').forEach(btn => {
+    btn.onclick = () => { currentLotId = btn.dataset.id; render('edit-lot'); };
+  });
   document.querySelectorAll('.btn-del-lot').forEach(btn => {
     btn.onclick = () => {
-      if (!confirm('Supprimer ce lot ?')) return;
+      const lot = DB.lots.find(l => l.id === btn.dataset.id);
+      // Supprimer un lot ne touche jamais modesRepro (voir renderAddLotRepro :
+      // le lot lui-même n'est qu'un outil transitoire de recherche en
+      // bergerie, la donnée durable vit sur chaque animal) -- mais on prévient
+      // explicitement si un membre a déjà une mise bas rattachée à cette
+      // campagne, pour que l'éleveur ne pense pas à tort que ça l'efface.
+      let message = 'Supprimer ce lot ?';
+      if (lot && lot.type === 'reproduction') {
+        const avecMiseBas = lot.membres
+          .map(eid => findAnimalReproByEid(eid))
+          .filter(a => a && Array.isArray(a.agnelages) && a.agnelages.some(ag => ag.campagne === lot.campagne))
+          .map(a => numeroVisuel(a.eid));
+        if (avecMiseBas.length > 0) {
+          message = 'Supprimer ce lot ? n°' + avecMiseBas.join(', n°') + ' ont déjà une mise bas rattachée cette campagne — leur suivi Repro reste sur leur fiche, seul le lot (recherche en bergerie) disparaît.';
+        }
+      }
+      if (!confirm(message)) return;
       DB.lots = DB.lots.filter(l => l.id !== btn.dataset.id);
       saveData(DB);
       render('lots');
@@ -9658,6 +9695,13 @@ function renderAddLotRepro() {
   pageTitle.textContent = 'Nouveau lot de reproduction';
   let cible = 'Brebis';
   let mode = 'IA';
+  // Campagne concernée par ce lot (voir campagneEchoOptionsHtml, déjà utilisé
+  // pour les échographies) -- un lot IA créé en juin doit pouvoir être tagué
+  // sur la campagne À VENIR plutôt que DB.campagneDebut du moment, sans quoi
+  // la mise bas de novembre (saisie après le changement de campagne de
+  // septembre/octobre) ne retrouverait plus cet évènement modesRepro (voir
+  // deduireCodeRepro/codeReproActuel, qui filtrent par campagne exacte).
+  let campagneChoisie = DB.campagneDebut;
   const today = new Date().toISOString().slice(0,10);
   const selected = new Set();
 
@@ -9692,6 +9736,7 @@ function renderAddLotRepro() {
         <label>Date de l'évènement</label>
         <input type="date" id="f-lot-repro-date" value="${today}">
       </div>
+      ${campagneEchoOptionsHtml(campagneChoisie)}
       <div class="card">
         <label>${cible === 'Agnelles' ? 'Antenaises' : 'Brebis'} du lot</label>
         <div id="repro-lot-picker"></div>
@@ -9701,6 +9746,7 @@ function renderAddLotRepro() {
     `;
 
     renderSelectionPicker(document.getElementById('repro-lot-picker'), pool(), selected);
+    attacherCampagneEchoOptions(v => { campagneChoisie = v; });
 
     document.querySelectorAll('.cible-repro-opt').forEach(btn => {
       btn.onclick = () => {
@@ -9728,19 +9774,146 @@ function renderAddLotRepro() {
       if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
       if (!dateEvenement) { err.textContent = "Renseigne la date de l'évènement."; err.classList.remove('hidden'); return; }
       if (selected.size === 0) { err.textContent = "Sélectionne au moins un animal (à la main ou au bip)."; err.classList.remove('hidden'); return; }
+      if (!confirmerCampagneEcho(campagneChoisie)) return;
       err.classList.add('hidden');
       const animaux = pool().filter(a => selected.has(a.id));
-      const campagne = DB.campagneDebut;
+      const lotId = Date.now().toString();
       animaux.forEach(a => {
         a.modesRepro = a.modesRepro || [];
-        a.modesRepro.push({ date: dateEvenement, mode, campagne });
+        a.modesRepro.push({ date: dateEvenement, mode, campagne: campagneChoisie, codeSieol: REPRO_CODE_SIEOL[mode], lotId });
       });
       DB.lots = DB.lots || [];
       DB.lots.push({
-        id: Date.now().toString(), nom, dateCreation: today, membres: animaux.map(a => a.eid),
-        type: 'reproduction', mode, cible, dateEvenement, campagne
+        id: lotId, nom, dateCreation: today, membres: animaux.map(a => a.eid),
+        type: 'reproduction', mode, cible, dateEvenement, campagne: campagneChoisie
       });
       saveData(DB);
+      render('lots');
+    };
+  }
+
+  draw();
+}
+
+/* ---------- Modification d'un lot (tous types, Chantier de tri) ----------
+   Nom/date/membres toujours modifiables. Pour un lot de reproduction :
+   mode et cible verrouillés (pour changer, supprimer et recréer le lot --
+   sinon il faudrait réécrire l'évènement modesRepro de chaque membre) ; la
+   campagne reste modifiable (même sélecteur qu'à la création, voir
+   renderAddLotRepro) pour corriger un lot mal tagué.
+   Chaque évènement modesRepro écrit par CE lot porte son `lotId` (voir
+   renderAddLotRepro) -- c'est ce qui permet de le retrouver ici avec
+   certitude, plutôt que de deviner par date/mode/campagne. Toute
+   modification qui toucherait l'évènement modesRepro d'un membre ayant déjà
+   une mise bas enregistrée CETTE campagne est bloquée pour ce membre (jamais
+   de correction silencieuse) -- l'éleveur est prévenu et doit corriger à la
+   main depuis la fiche si besoin. */
+function renderEditLot(lotId) {
+  const lot = DB.lots.find(l => l.id === lotId);
+  if (!lot) { render('lots'); return; }
+  const isRepro = lot.type === 'reproduction';
+  let campagneChoisie = isRepro ? (lot.campagne != null ? lot.campagne : DB.campagneDebut) : null;
+
+  function pool() {
+    if (isRepro) return lot.cible === 'Agnelles' ? (DB.agnelles || []) : DB.brebis.filter(s => (s.statut || 'active') === 'active');
+    return DB.brebis.filter(s => (s.statut || 'active') === 'active'); // lots classique/réforme : toujours des brebis
+  }
+  // Membres actuels retrouvés par eid -> id (le composant de sélection
+  // travaille en id, comme partout ailleurs) ; un membre déjà supprimé de la
+  // base est silencieusement ignoré plutôt que de faire planter l'écran.
+  const membresIds = new Set(lot.membres.map(eid => { const a = findAnimalReproByEid(eid); return a ? a.id : null; }).filter(Boolean));
+  const dateActuelle = isRepro ? (lot.dateEvenement || lot.dateCreation) : lot.dateCreation;
+
+  function draw() {
+    pageTitle.textContent = 'Modifier le lot';
+    app.innerHTML = `
+      <div class="card">
+        <label>Nom du lot</label>
+        <input type="text" id="f-edit-lot-nom" value="${lot.nom}">
+        <label>Date${isRepro ? " de l'évènement" : ''}</label>
+        <input type="date" id="f-edit-lot-date" value="${dateActuelle}">
+        ${isRepro ? `<div style="font-size:11px;color:var(--text-muted);margin-top:10px;">Mode : <strong>${libelleModeRepro(lot.mode)}</strong> · Cible : <strong>${lot.cible}</strong> — verrouillés (supprime ce lot et recrées-en un pour changer).</div>` : ''}
+      </div>
+      ${isRepro ? campagneEchoOptionsHtml(campagneChoisie) : ''}
+      <div class="card">
+        <label>${isRepro && lot.cible === 'Agnelles' ? 'Antenaises' : 'Brebis'} du lot</label>
+        <div id="edit-lot-picker"></div>
+      </div>
+      <div id="err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-save-edit-lot">Enregistrer</button>
+    `;
+
+    renderSelectionPicker(document.getElementById('edit-lot-picker'), pool(), membresIds);
+    if (isRepro) attacherCampagneEchoOptions(v => { campagneChoisie = v; });
+
+    document.getElementById('btn-save-edit-lot').onclick = () => {
+      const err = document.getElementById('err');
+      const nom = document.getElementById('f-edit-lot-nom').value.trim();
+      const dateVal = document.getElementById('f-edit-lot-date').value;
+      if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
+      if (!dateVal) { err.textContent = "Renseigne une date."; err.classList.remove('hidden'); return; }
+      if (membresIds.size === 0) { err.textContent = "Le lot doit garder au moins un membre."; err.classList.remove('hidden'); return; }
+      if (isRepro && !confirmerCampagneEcho(campagneChoisie)) return;
+      err.classList.add('hidden');
+
+      const poolActuel = pool();
+      // Mutable : un retrait bloqué (mise bas déjà enregistrée) réinjecte
+      // l'animal ici, pour que lot.membres reste cohérent avec le fait que
+      // son évènement modesRepro, lui, n'a pas été touché.
+      const nouveauxMembres = poolActuel.filter(a => membresIds.has(a.id));
+      const ancienEids = new Set(lot.membres.map(cleanEid));
+      const nouveauEidsInitial = new Set(nouveauxMembres.map(a => cleanEid(a.eid)));
+      const dejaMiseBas = a => Array.isArray(a.agnelages) && a.agnelages.some(ag => ag.campagne === lot.campagne);
+      const bloquesSet = new Set();
+
+      if (isRepro) {
+        const dateChangee = dateVal !== dateActuelle;
+        const campagneChangee = campagneChoisie !== lot.campagne;
+
+        // Retirés du lot : supprime leur évènement modesRepro (retrouvé par
+        // lotId), sauf mise bas déjà enregistrée cette campagne -- bloqué,
+        // l'animal reste alors dans le lot (cohérence avec son évènement
+        // modesRepro, conservé lui aussi).
+        lot.membres.forEach(eid => {
+          if (nouveauEidsInitial.has(cleanEid(eid))) return;
+          const animal = findAnimalReproByEid(eid);
+          if (!animal) return;
+          if (dejaMiseBas(animal)) { bloquesSet.add(numeroVisuel(eid)); nouveauxMembres.push(animal); return; }
+          animal.modesRepro = (animal.modesRepro || []).filter(m => m.lotId !== lot.id);
+        });
+
+        // Date/campagne changée : répercute sur l'évènement modesRepro des
+        // membres déjà présents avant modification, sauf mise bas déjà
+        // enregistrée cette campagne -- bloqué (l'ancien évènement reste
+        // inchangé pour eux).
+        if (dateChangee || campagneChangee) {
+          nouveauxMembres.forEach(animal => {
+            if (!ancienEids.has(cleanEid(animal.eid))) return;
+            const entry = (animal.modesRepro || []).find(m => m.lotId === lot.id);
+            if (!entry) return;
+            if (dejaMiseBas(animal)) { bloquesSet.add(numeroVisuel(animal.eid)); return; }
+            entry.date = dateVal;
+            entry.campagne = campagneChoisie;
+          });
+        }
+
+        // Nouveaux membres : écrit un nouvel évènement modesRepro pour ce lot.
+        nouveauxMembres.forEach(animal => {
+          if (ancienEids.has(cleanEid(animal.eid))) return;
+          animal.modesRepro = animal.modesRepro || [];
+          animal.modesRepro.push({ date: dateVal, mode: lot.mode, campagne: campagneChoisie, codeSieol: REPRO_CODE_SIEOL[lot.mode], lotId: lot.id });
+        });
+      }
+
+      lot.nom = nom;
+      if (isRepro) { lot.dateEvenement = dateVal; lot.campagne = campagneChoisie; }
+      else { lot.dateCreation = dateVal; }
+      lot.membres = nouveauxMembres.map(a => a.eid);
+      saveData(DB);
+
+      if (bloquesSet.size > 0) {
+        alert('Lot enregistré, mais pas pour n°' + [...bloquesSet].join(', n°') + " -- une mise bas est déjà enregistrée pour cette campagne. Corrige-les depuis leur fiche si besoin.");
+      }
       render('lots');
     };
   }
