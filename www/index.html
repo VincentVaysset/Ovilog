@@ -629,6 +629,28 @@ function migrateData(d) {
   // confirmées par l'éleveur.
   if (d.reproGestationMin === undefined) d.reproGestationMin = 144;
   if (d.reproGestationMax === undefined) d.reproGestationMax = 152;
+  // Correctif orthographe (04/09/2026) : le produit injecté automatiquement
+  // à la naissance de chaque agneau s'appelle "Séléphérol", jamais saisi tel
+  // quel jusqu'ici (fautes "Selepherol"/"Sélépérol" dans le code d'origine).
+  // Retague les entrées déjà enregistrées, actives ET archivées dans le
+  // Registre d'élevage, pour que l'historique s'affiche correctement lui
+  // aussi -- pas seulement les nouvelles saisies. No-op silencieux dès que
+  // plus aucune entrée ne porte l'ancien nom (même principe que les autres
+  // correctifs ci-dessus).
+  function corrigerNomSelepherol(sanitaire) {
+    (sanitaire || []).forEach(s => { if (s && s.produit === 'Selepherol') s.produit = 'Séléphérol'; });
+  }
+  (d.brebis || []).forEach(s => {
+    corrigerNomSelepherol(s.sanitaire);
+    (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => corrigerNomSelepherol(l.sanitaire)));
+  });
+  (d.beliers || []).forEach(b => corrigerNomSelepherol(b.sanitaire));
+  (d.agnelles || []).forEach(a => corrigerNomSelepherol(a.sanitaire));
+  if (d.registre) {
+    ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+      Object.values(d.registre[cat] || {}).forEach(entry => corrigerNomSelepherol(entry.sanitaire));
+    });
+  }
   return d;
 }
 
@@ -2227,7 +2249,7 @@ function statsDetailleesParGroupeAge(cohort, refDate) {
    - 'Vide définitive' : marquage explicite (bouton fiche ou case "dernière
      écho de la campagne"), prioritaire sur toute échographie car c'est une
      décision volontaire de l'éleveur, pas une simple lecture d'écho.
-   - 'Non suivie' : aucune échographie taguée de cette campagne pour l'instant.
+   - 'Aucune info repro' : aucune échographie taguée de cette campagne pour l'instant.
    - Sinon, dérivé de la dernière échographie de la campagne : cas
      particulier (Avortée/Pseudogestation), gestante en cours, ou vide
      confirmée (provisoire, contrairement à "Vide définitive" ci-dessus). */
@@ -2237,14 +2259,14 @@ function statutReproductionCampagne(sheep) {
     if (estVideDefinitiveCampagne(sheep)) return 'Vide définitive';
     const echos = Array.isArray(sheep.echographies) ? sheep.echographies : [];
     const echosCampagne = echos.filter(e => e && e.campagne === DB.campagneDebut);
-    if (echosCampagne.length === 0) return 'Non suivie';
+    if (echosCampagne.length === 0) return 'Aucune info repro';
     const dernier = echosCampagne[echosCampagne.length - 1];
     if (dernier.special === 'Avortée') return 'Avortée';
     if (dernier.special === 'Pseudogestation') return 'Pseudogestation';
     if (isGestanteEcho(dernier)) return 'Gestante (en cours)';
     return 'Vide confirmée';
   } catch (e) {
-    return 'Non suivie'; // donnée inattendue — mieux vaut la lister comme "à suivre" que planter l'écran
+    return 'Aucune info repro'; // donnée inattendue — mieux vaut la lister comme "à suivre" que planter l'écran
   }
 }
 
@@ -2266,6 +2288,12 @@ function libelleModeRepro(code) { return REPRO_MODE_LABELS[code] || code; }
 // compatibilité d'export/import avec un fichier SIEOL. L'abréviation reste
 // la seule donnée utilisée pour l'affichage et les calculs de ce module.
 const REPRO_CODE_SIEOL = { IA: 1, EP: 2, RE: 3, MN: 7 };
+// Protocole éponge : posée à J0, retirée à J+14, béliers introduits à J+16 --
+// c'est CETTE date (pose + 16 jours), pas la date de pose, qui vaut date de
+// lutte effective et sert donc de référence à la fenêtre de gestation
+// (deduireCodeRepro/codeReproActuel, qui ne lisent que modesRepro[].date,
+// jamais la date de pose elle-même -- non conservée). Voir renderAddLotRepro.
+const EPONGE_DELAI_LUTTE_JOURS = 16;
 
 /* Code Repro actuellement pertinent pour un animal (brebis ou agnelle) sur
    la campagne en cours, et son style d'affichage (voir reproTagHtml) :
@@ -3071,9 +3099,9 @@ function dashboardKpiHtml() {
         ${iconCircle(ICON_JOURNAL, 'coral', 'sm')}
         <div>
           <div class="stat-card-label">Bilan de campagne</div>
-          <div class="stat-card-value">${active.filter(s => statutReproductionCampagne(s) === 'Non suivie').length}</div>
+          <div class="stat-card-value">${active.filter(s => statutReproductionCampagne(s) === 'Aucune info repro').length}</div>
         </div>
-        <div class="stat-card-sub" style="margin-left:auto;text-align:right;max-width:150px;">Brebis sans statut de reproduction connu</div>
+        <div class="stat-card-sub" style="margin-left:auto;text-align:right;max-width:150px;">Aucune info repro cette campagne</div>
       </div>
     </div>
 
@@ -3199,7 +3227,7 @@ function renderList() {
         ? `<span class="badge badge-amber">${formatDateFr(lastAgnelage.date)} · ${lastAgnelage.lambs.length} agn.</span>`
         : `<span class="badge badge-muted">Aucun agnelage</span>`;
     // Statut de reproduction de la campagne : redondant avec badgeHtml pour
-    // "Mise bas" (déjà visible ci-dessus) et sans intérêt pour "Non suivie"
+    // "Mise bas" (déjà visible ci-dessus) et sans intérêt pour "Aucune info repro"
     // (pas encore d'échographie cette campagne) — affiché uniquement pour
     // les statuts qui apportent une information nouvelle.
     const repro = statutReproductionCampagne(sheep);
@@ -3428,7 +3456,7 @@ function renderRecoupementSieol() {
 }
 
 function bilanIncoherencesHtml(actives) {
-  const groupes = { 'Non suivie': [], 'Mise bas': [], 'Vide définitive': [] };
+  const groupes = { 'Aucune info repro': [], 'Mise bas': [], 'Vide définitive': [] };
   actives.forEach(s => {
     const statut = statutReproductionCampagne(s);
     if (groupes[statut]) groupes[statut].push(s);
@@ -3440,11 +3468,12 @@ function bilanIncoherencesHtml(actives) {
   // une correction manuelle, en plus du bouton "Annuler" déjà sur la fiche.
   const incoherentes = actives.filter(s => agnelageCampagneActuelleIdx(s) !== -1 && estVideDefinitiveCampagne(s));
 
-  // "Non suivie" en tête : c'est la liste la plus actionnable (aucune info
-  // de reproduction cette campagne — ni écho, ni mise bas, ni vide définitive —
-  // donc celle à vérifier en priorité pour ne rien laisser passer).
+  // "Aucune info repro" en tête : c'est la liste la plus actionnable (aucune
+  // info de reproduction cette campagne — ni écho, ni mise bas, ni vide
+  // définitive — donc celle à vérifier en priorité pour ne rien laisser
+  // passer).
   const config = [
-    { key: 'Non suivie', label: 'Non suivies', color: 'amber', intro: "Aucune information de reproduction cette campagne (ni échographie, ni mise bas) — à vérifier en priorité." },
+    { key: 'Aucune info repro', label: 'Aucune info repro', color: 'amber', intro: "Aucune information de reproduction cette campagne (ni échographie, ni mise bas) — à vérifier en priorité." },
     { key: 'Mise bas', label: 'Ont mis bas', color: 'green' },
     { key: 'Vide définitive', label: 'Vides définitives', color: 'blue' }
   ];
@@ -4513,7 +4542,7 @@ function renderDetail(id) {
     if (l.sexe === 'Femelle' && l.triStatut === 'gardée') badge = 'Renouvelée';
     else if (l.statutFinal === 'vendu') badge = 'Vendu';
     else if (l.statutFinal === 'mort') badge = 'Mort';
-    const aEuSelepherol = (l.sanitaire || []).some(s => s.produit === 'Selepherol');
+    const aEuSelepherol = (l.sanitaire || []).some(s => s.produit === 'Séléphérol');
     return `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
         <div style="display:flex;align-items:center;gap:10px;">
@@ -4523,7 +4552,7 @@ function renderDetail(id) {
               <span style="font-size:14px;font-weight:600;">n°${l.eid ? numeroVisuel(l.eid) : '?'}</span>
               <span class="badge ${l.sexe === 'Mâle' ? 'badge-blue' : 'badge-coral'}">${l.sexe}</span>
             </div>
-            ${aEuSelepherol ? '<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Sélépérol 2cc administré</div>' : ''}
+            ${aEuSelepherol ? '<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Séléphérol 2 cc administré</div>' : ''}
           </div>
         </div>
         ${sortieDecidee
@@ -5250,10 +5279,10 @@ function renderAddAgnelage(sheepId) {
           }
         }
         lambs[id].sanitaire = lambs[id].sanitaire || [];
-        const dejaSelepherol = lambs[id].sanitaire.some(s => s.produit === 'Selepherol');
+        const dejaSelepherol = lambs[id].sanitaire.some(s => s.produit === 'Séléphérol');
         if (!dejaSelepherol) {
           lambs[id].sanitaire.push({
-            type: 'Traitement', sousType: null, produit: 'Selepherol', dose: '2 cc',
+            type: 'Traitement', sousType: null, produit: 'Séléphérol', dose: '2 cc',
             date: document.getElementById('f-date').value,
             commentaire: 'Injection systématique à la naissance'
           });
@@ -5745,7 +5774,7 @@ function renderHistoriqueEcho() {
 
 /* ---------- Saisie rapide de mises bas (boucle scan → agnelage) ----------
    Reprend exactement le formulaire d'agnelage existant (renderAddAgnelage :
-   sexe par agneau, EID, adoption, Sélépérol automatique) mais sans quitter
+   sexe par agneau, EID, adoption, Séléphérol automatique) mais sans quitter
    l'écran entre deux brebis : scan → formulaire → Valider et scanner la
    suivante → tout se vide. Compteur de session. EID inconnu → création à la
    volée, comme pour les échographies. */
@@ -5827,7 +5856,7 @@ function renderMiseBasRapide() {
           <input type="text" class="adopt-eid-rapide" data-id="${id}" placeholder="Scanner ou saisir le numéro">
           <div class="adopt-preview-rapide" data-id="${id}" style="font-size:12px;margin-bottom:12px;"></div>
         </div>
-        <div class="selepherol-note" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);background:#f0efe9;border-radius:var(--radius);padding:8px 12px;margin-top:10px;">Sélépérol 2 cc appliqué automatiquement</div>
+        <div class="selepherol-note" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted);background:#f0efe9;border-radius:var(--radius);padding:8px 12px;margin-top:10px;">Séléphérol 2 cc appliqué automatiquement</div>
       </div>
       <div class="mortne-note-rapide hidden" data-id="${id}" style="font-size:12px;color:var(--text-muted);margin-top:8px;">Pas de boucle sur un mort-né — aucun EID à saisir.</div>
     `;
@@ -6187,10 +6216,10 @@ function renderMiseBasRapide() {
             }
             lambs[id].sanitaire = lambs[id].sanitaire || [];
             const dateNaissance = document.getElementById('f-date-rapide').value;
-            const dejaSelepherol = lambs[id].sanitaire.some(s => s.produit === 'Selepherol');
+            const dejaSelepherol = lambs[id].sanitaire.some(s => s.produit === 'Séléphérol');
             if (!dejaSelepherol) {
               lambs[id].sanitaire.push({
-                type: 'Traitement', sousType: null, produit: 'Selepherol', dose: '2 cc',
+                type: 'Traitement', sousType: null, produit: 'Séléphérol', dose: '2 cc',
                 date: dateNaissance,
                 commentaire: 'Injection systématique à la naissance'
               });
@@ -9728,6 +9757,12 @@ function renderAddLotRepro() {
   let campagneChoisie = DB.campagneDebut;
   const today = new Date().toISOString().slice(0,10);
   const selected = new Set();
+  // Pour un lot Éponge : la date de lutte effective n'est pas la date de
+  // pose saisie, mais pose + 16 jours (retrait à J+14, introduction des
+  // béliers à J+16 -- voir EPONGE_DELAI_LUTTE_JOURS). Recalculée à chaque
+  // changement de la date de pose tant que l'éleveur n'a jamais corrigé la
+  // date de lutte à la main (cas d'un retrait/introduction décalés).
+  let dateLutteTouchee = false;
 
   function pool() {
     return cible === 'Agnelles' ? (DB.agnelles || []) : DB.brebis.filter(s => (s.statut || 'active') === 'active');
@@ -9757,8 +9792,13 @@ function renderAddLotRepro() {
       <div class="card">
         <label>Nom du lot</label>
         <input type="text" id="f-lot-repro-nom" value="${nomParDefaut()}">
-        <label>Date de l'évènement</label>
+        <label id="lbl-lot-repro-date">${mode === 'EP' ? "Date de pose de l'éponge" : "Date de l'évènement"}</label>
         <input type="date" id="f-lot-repro-date" value="${today}">
+        <div id="bloc-lot-repro-lutte" class="${mode === 'EP' ? '' : 'hidden'}" style="margin-top:10px;">
+          <label>Date de lutte (pose + ${EPONGE_DELAI_LUTTE_JOURS} jours)</label>
+          <input type="date" id="f-lot-repro-date-lutte" value="${addDaysToDateStr(today, EPONGE_DELAI_LUTTE_JOURS)}">
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Calculée automatiquement à partir de la date de pose — modifiable si le retrait/l'introduction des béliers a été décalé.</div>
+        </div>
       </div>
       ${campagneEchoOptionsHtml(campagneChoisie)}
       <div class="card">
@@ -9780,6 +9820,12 @@ function renderAddLotRepro() {
         draw();
       };
     });
+    document.getElementById('f-lot-repro-date').oninput = (e) => {
+      if (mode === 'EP' && !dateLutteTouchee) {
+        document.getElementById('f-lot-repro-date-lutte').value = addDaysToDateStr(e.target.value, EPONGE_DELAI_LUTTE_JOURS);
+      }
+    };
+    document.getElementById('f-lot-repro-date-lutte').oninput = () => { dateLutteTouchee = true; };
     document.querySelectorAll('.mode-repro-opt').forEach(btn => {
       btn.onclick = () => {
         if (btn.dataset.val === mode) return;
@@ -9788,15 +9834,23 @@ function renderAddLotRepro() {
         mode = btn.dataset.val;
         document.querySelectorAll('.mode-repro-opt').forEach(b => b.classList.toggle('selected', b.dataset.val === mode));
         if (nomEtaitParDefaut) nomInput.value = nomParDefaut(); // ne touche jamais à un nom déjà personnalisé par l'éleveur
+        document.getElementById('lbl-lot-repro-date').textContent = mode === 'EP' ? "Date de pose de l'éponge" : "Date de l'évènement";
+        const bloc = document.getElementById('bloc-lot-repro-lutte');
+        bloc.classList.toggle('hidden', mode !== 'EP');
+        if (mode === 'EP' && !dateLutteTouchee) {
+          document.getElementById('f-lot-repro-date-lutte').value = addDaysToDateStr(document.getElementById('f-lot-repro-date').value, EPONGE_DELAI_LUTTE_JOURS);
+        }
       };
     });
 
     document.getElementById('btn-save-lot-repro').onclick = () => {
       const err = document.getElementById('err');
       const nom = document.getElementById('f-lot-repro-nom').value.trim();
-      const dateEvenement = document.getElementById('f-lot-repro-date').value;
+      const datePose = document.getElementById('f-lot-repro-date').value;
+      const dateEvenement = mode === 'EP' ? document.getElementById('f-lot-repro-date-lutte').value : datePose;
       if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
-      if (!dateEvenement) { err.textContent = "Renseigne la date de l'évènement."; err.classList.remove('hidden'); return; }
+      if (!datePose) { err.textContent = "Renseigne la date de l'évènement."; err.classList.remove('hidden'); return; }
+      if (mode === 'EP' && !dateEvenement) { err.textContent = "Renseigne la date de lutte."; err.classList.remove('hidden'); return; }
       if (selected.size === 0) { err.textContent = "Sélectionne au moins un animal (à la main ou au bip)."; err.classList.remove('hidden'); return; }
       if (!confirmerCampagneEcho(campagneChoisie)) return;
       err.classList.add('hidden');
@@ -11052,6 +11106,35 @@ function registreMouvementsRows() {
   return rows;
 }
 
+/* Carnet sanitaire des agneaux (dont le Séléphérol injecté systématiquement
+   à la naissance, voir renderAddAgnelage/renderMiseBasRapide) -- même
+   principe que lambMouvementsRows() juste au-dessus, dont l'onglet Sanitaire
+   n'avait jamais son équivalent : REGISTRE_CATEGORIES ne couvre que
+   Brebis/Bélier/Agnelle, jamais les agneaux (mâles ou femelles), dont le
+   sanitaire reste sur le sous-objet lamb au sein de l'agnelage de la mère.
+   Aucun filtre sur triStatut/sexe : une agnelle gardée (déjà dans la
+   catégorie "Agnelle" via DB.agnelles) apparaît donc ici aussi, en double --
+   assumé, comme pour ses mouvements. */
+function lambSanitaireRows() {
+  const rows = [];
+  registreEntriesFor('brebis').forEach(entry => {
+    entry.agnelages.forEach(ag => {
+      (ag.lambs || []).forEach(l => {
+        if (!l.eid) return; // pas bouclé : pas de traçabilité individuelle possible
+        (l.sanitaire || []).forEach(s => {
+          rows.push({
+            eid: l.eid, categorie: 'Agneau',
+            type: (s.type || '') + (s.sousType ? ' · ' + s.sousType : ''),
+            produit: s.produit || '', date: s.date || '', dose: s.dose || '',
+            campagne: campagneDeDateRegistre(s.date)
+          });
+        });
+      });
+    });
+  });
+  return rows;
+}
+
 function registreSanitaireRows() {
   const rows = [];
   REGISTRE_CATEGORIES.forEach(c => {
@@ -11066,6 +11149,7 @@ function registreSanitaireRows() {
       });
     });
   });
+  rows.push(...lambSanitaireRows());
   rows.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   return rows;
 }
