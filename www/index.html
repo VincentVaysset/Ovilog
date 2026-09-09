@@ -12130,6 +12130,80 @@ async function writeAutoBackupFile(filename, bytes) {
   }
 }
 
+/* ---------- Roulement des sauvegardes automatiques locales ----------
+   Chantier "Sauvegarde locale automatique" : ne garde que les
+   BACKUP_AUTO_MAX (3) fichiers ovilog_backup_*.json les plus récents dans
+   le dossier Documents, pour ne jamais encombrer le téléphone. Ne touche
+   JAMAIS aux données elles-mêmes (DB, Firestore) -- uniquement à ces
+   copies redondantes sur l'appareil ; la base reste intégralement
+   conservée (voir migrateData, qui ne supprime jamais un champ), comme
+   l'exige la conservation réglementaire du registre d'élevage. Le nom de
+   fichier intègre déjà un horodatage triable (voir nomFichierBackupAuto) :
+   inutile de garder un état séparé, un tri alphabétique suffit. Actif
+   uniquement sous l'app installée (plugin Filesystem) -- hors de là, pas
+   de dossier à lister, comportement inchangé (voir writeAutoBackupFile).
+   Silencieux par nature : jamais d'alerte ni de blocage, une erreur reste
+   locale à la console. */
+const BACKUP_AUTO_MAX = 3;
+const BACKUP_AUTO_PREFIX = 'ovilog_backup_';
+async function listAutoBackupFiles() {
+  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!Filesystem) return null; // pas de dossier à lister hors app installée
+  try {
+    const res = await Filesystem.readdir({ path: '', directory: 'DOCUMENTS' });
+    // Capacitor 6 renvoie des objets {name, ...} ; une éventuelle plateforme
+    // encore sur l'ancien format (chaînes brutes) reste gérée par sécurité.
+    const noms = (res.files || []).map(f => (typeof f === 'string' ? f : f.name));
+    // Le plus récent en premier -- le nom encode l'horodatage, un tri
+    // alphabétique descendant suffit (ovilog_backup_AAAAMMJJ_HHMMSS.json).
+    return noms.filter(n => n.startsWith(BACKUP_AUTO_PREFIX) && n.endsWith('.json')).sort().reverse();
+  } catch (e) {
+    console.error('Sauvegarde automatique : échec de la lecture du dossier Documents', e);
+    return null;
+  }
+}
+async function purgeOldAutoBackups() {
+  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!Filesystem) return;
+  const noms = await listAutoBackupFiles();
+  if (!noms) return;
+  for (const nom of noms.slice(BACKUP_AUTO_MAX)) {
+    try { await Filesystem.deleteFile({ path: nom, directory: 'DOCUMENTS' }); }
+    catch (e) { console.error('Sauvegarde automatique : échec de la suppression de ' + nom, e); }
+  }
+}
+function dateDepuisNomBackup(nom) {
+  const m = nom.match(/^ovilog_backup_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.json$/);
+  if (!m) return null;
+  const [annee, mois, jour, heure, minute, seconde] = m.slice(1).map(Number);
+  return new Date(annee, mois - 1, jour, heure, minute, seconde);
+}
+/* Vérification silencieuse à l'ouverture de l'app : si la sauvegarde
+   automatique la plus récente a plus de BACKUP_AUTO_INTERVALLE_JOURS jours
+   (ou qu'il n'y en a aucune), en crée une nouvelle -- totalement en tâche
+   de fond, sans aucune fenêtre ni interaction (voir writeAutoBackupFile),
+   puis purge pour ne garder que les BACKUP_AUTO_MAX plus récentes. Appelée
+   sans jamais être attendue (voir point d'entrée principal) : ne doit
+   jamais retarder ni bloquer le démarrage de l'appli. */
+const BACKUP_AUTO_INTERVALLE_JOURS = 3;
+async function verifierSauvegardeAutoPeriodique() {
+  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!Filesystem) return; // pas de dossier accessible hors app installée -- rien à faire
+  try {
+    const noms = await listAutoBackupFiles();
+    if (noms === null) return;
+    const derniere = noms.length ? dateDepuisNomBackup(noms[0]) : null;
+    const tropAncienne = !derniere || (Date.now() - derniere.getTime()) > BACKUP_AUTO_INTERVALLE_JOURS * 86400000;
+    if (tropAncienne) {
+      const backupDate = new Date();
+      await writeAutoBackupFile(nomFichierBackupAuto(backupDate), bytesBackupAuto(DB, backupDate));
+    }
+    await purgeOldAutoBackups();
+  } catch (e) {
+    console.error('Sauvegarde automatique périodique : échec', e);
+  }
+}
+
 /* Confirmation affichée après un enregistrement réussi via le pont natif
    Capacitor (voir saveOrShareBinaryFile) — indique où retrouver le fichier,
    la WebView elle-même n'ayant pas de gestionnaire de téléchargements
@@ -13927,6 +14001,7 @@ async function executerChangementCampagne() {
   const backupDate = new Date();
   const backupOk = await writeAutoBackupFile(nomFichierBackupAuto(backupDate), bytesBackupAuto(DB, backupDate));
   if (!backupOk) return false;
+  await purgeOldAutoBackups(); // roulement : ne garde que les BACKUP_AUTO_MAX plus récentes
 
   // DB.luttes n'est plus alimenté depuis le module Reproduction (voir
   // modesRepro, campagne-tagué comme les agnelages/échographies) : plus
@@ -14395,6 +14470,7 @@ function renderParametres() {
           alert("Import annulé : la sauvegarde automatique de tes données actuelles a échoué (avant de les remplacer). Réessaie, ou exporte-les manuellement d'abord.");
           return;
         }
+        await purgeOldAutoBackups(); // roulement : ne garde que les BACKUP_AUTO_MAX plus récentes
         // migrateData comble les champs qui n'existaient pas encore dans une
         // sauvegarde plus ancienne, pour éviter toute erreur sur un champ
         // manquant juste après la restauration.
@@ -14915,6 +14991,10 @@ render('home');
 // lecteur) pour que la LED de l'en-tête reflète une déconnexion passive
 // (hors de portée) même si l'utilisateur n'a pas encore touché le bouton.
 btEnsureConnectionListener();
+// Sauvegarde automatique locale (chantier "Sauvegarde locale automatique")
+// -- jamais attendue : ne doit jamais retarder l'affichage de l'accueil,
+// entièrement silencieuse (voir verifierSauvegardeAutoPeriodique).
+verifierSauvegardeAutoPeriodique();
 updateHeaderReaderButton();
 </script>
 
