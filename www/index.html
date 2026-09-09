@@ -2330,25 +2330,52 @@ function codeReproActuel(animal, agnelageCampagne, videDefinitive) {
   return { code, style: videDefinitive ? 'echec' : 'attente' };
 }
 
-/* Code Repro déduit automatiquement à la saisie d'une mise bas (voir champ
-   "Repro" de renderAddAgnelage/renderMiseBasRapide), à partir du dernier lot
-   de reproduction de la brebis cette campagne et de la fenêtre de gestation
-   réglable (DB.reproGestationMin/Max, voir Paramètres, défaut 144-152 j) :
-   mise bas dans la fenêtre -> le mode du lot (IA/EP) ; hors fenêtre ->
-   Retour IA (RE), jamais saisi directement autrement ; aucun lot cette
-   campagne -> Monte naturelle (MN) par défaut. Simple suggestion de départ,
-   toujours modifiable par l'éleveur avant validation. */
-function deduireCodeRepro(sheep, dateMiseBas) {
-  const modes = (sheep.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut);
-  const dernier = modes.length ? modes[modes.length - 1] : null;
-  if (!dernier || !dateMiseBas) return 'MN';
-  const lotDate = new Date(dernier.date);
+/* Rattache une date de mise bas à un évènement modesRepro (lot IA/Éponge)
+   PAR FENÊTRE DE DATES UNIQUEMENT (jamais par égalité de campagne) --
+   correction du "décalage de campagne" : un lot constitué en cours de
+   campagne (technicien IA) donne souvent des mises bas qui tombent sur la
+   campagne suivante, sans que le champ `campagne` du lot (informatif
+   seulement, voir renderAddLotRepro) n'ait besoin de le refléter. Renvoie
+   'directe' (fenêtre IA/Éponge, DB.reproGestationMin/Max, défaut 144-152j),
+   'retour' (fenêtre 1er retour, DB.reproRetourMin/Max, défaut 160-171j),
+   ou null si la date de mise bas ne tombe dans aucune des deux. */
+function fenetreReproMatch(dateEvenement, dateMiseBas) {
+  if (!dateEvenement || !dateMiseBas) return null;
+  const evtDate = new Date(dateEvenement);
   const mb = new Date(dateMiseBas);
-  if (isNaN(lotDate.getTime()) || isNaN(mb.getTime())) return dernier.mode;
-  const diffJours = Math.round((mb - lotDate) / 86400000);
+  if (isNaN(evtDate.getTime()) || isNaN(mb.getTime())) return null;
+  const diffJours = Math.round((mb - evtDate) / 86400000);
   const min = DB.reproGestationMin !== undefined ? DB.reproGestationMin : 144;
   const max = DB.reproGestationMax !== undefined ? DB.reproGestationMax : 152;
-  return (diffJours >= min && diffJours <= max) ? dernier.mode : 'RE';
+  const retMin = DB.reproRetourMin !== undefined ? DB.reproRetourMin : 160;
+  const retMax = DB.reproRetourMax !== undefined ? DB.reproRetourMax : 171;
+  if (diffJours >= min && diffJours <= max) return 'directe';
+  if (diffJours >= retMin && diffJours <= retMax) return 'retour';
+  return null;
+}
+
+/* Code Repro déduit automatiquement à la saisie d'une mise bas (voir champ
+   "Repro" de renderAddAgnelage/renderMiseBasRapide) -- cherche dans TOUT
+   l'historique modesRepro de la brebis (pas seulement la campagne en cours,
+   voir fenetreReproMatch) l'évènement dont la fenêtre contient la date de
+   mise bas saisie : fenêtre directe -> le mode du lot (IA/EP) ; fenêtre 1er
+   retour -> Retour IA (RE) ; aucun évènement ne correspond (aucun lot, ou un
+   lot ancien déjà hors de propos) -> Monte naturelle (MN) par défaut. Simple
+   suggestion de départ, toujours modifiable par l'éleveur avant validation.
+   Parcourt l'historique du plus récent au plus ancien pour privilégier
+   l'évènement le plus probable en cas de correspondances multiples
+   (rarissime en pratique -- un seul lot couvre normalement chaque cycle). */
+function deduireCodeRepro(sheep, dateMiseBas) {
+  const modes = sheep.modesRepro || [];
+  if (!dateMiseBas) return 'MN';
+  for (let i = modes.length - 1; i >= 0; i--) {
+    const m = modes[i];
+    if (!m) continue;
+    const match = fenetreReproMatch(m.date, dateMiseBas);
+    if (match === 'directe') return m.mode;
+    if (match === 'retour') return 'RE';
+  }
+  return 'MN';
 }
 
 /* Étiquette compacte d'un code Repro, réutilisée sur la fiche brebis/agnelle
@@ -2462,6 +2489,39 @@ function statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agn
       prolificite: rat(agneauxIA + agneauxRetour, misesBasIA + misesBasRetour)
     }
   };
+}
+
+/* Un lot IA apparaît dans le Bilan de reproduction de la campagne EN COURS
+   (DB.campagneDebut) si : au moins un membre a une mise bas réelle
+   rattachée à ce lot (par fenêtre de dates, voir fenetreReproMatch) qui est
+   tombée dans la campagne en cours, OU au moins un membre reste encore en
+   attente (ni mise bas rattachée à ce lot, ni vide définitive cette
+   campagne) -- pour rester suivable tant qu'aucun résultat n'est connu,
+   qu'on soit encore dans la campagne de création du lot ou déjà dans la
+   suivante (technicien IA constituant le lot en cours de campagne, mises
+   bas retombant souvent sur la campagne suivante -- voir deduireCodeRepro).
+   Un lot entièrement résolu (chaque membre a une mise bas rattachée ou est
+   vide définitive) dont aucune mise bas réelle n'est tombée dans la
+   campagne en cours disparaît du Bilan en cours -- il appartient déjà au
+   Bilan (passé) de la campagne où ses mises bas sont réellement tombées. */
+function lotIAConcerneCampagneEnCours(lot) {
+  const lotDate = lot.dateEvenement || lot.dateCreation;
+  let uneMiseBasCetteCampagne = false;
+  let unMembreEnAttente = false;
+  (lot.membres || []).forEach(eid => {
+    const animal = findAnimalReproByEid(eid);
+    if (!animal) return;
+    const agnelageLie = Array.isArray(animal.agnelages)
+      ? animal.agnelages.find(ag => ag && ag.date && fenetreReproMatch(lotDate, ag.date) !== null)
+      : null;
+    if (agnelageLie) {
+      if (agnelageLie.campagne === DB.campagneDebut) uneMiseBasCetteCampagne = true;
+      return;
+    }
+    if (estVideDefinitiveCampagne(animal)) return; // résolue (vide définitive), pas en attente
+    unMembreEnAttente = true;
+  });
+  return uneMiseBasCetteCampagne || unMembreEnAttente;
 }
 
 /* Détail par ÂGE EXACT (2 ans, 3 ans, 4 ans... jusqu'au plus vieux
@@ -3741,11 +3801,14 @@ function bilanReproductionHtml(actives) {
   const cohort = campagneCohortPresente();
   const { misesBas: misesBasGlobal, videsDefinitives: videsGlobal, taux: tauxReussite } = tauxReussiteGlobal(cohort);
   const statsParCode = statsReproductionParCode(cohort);
-  // Bloc "Lots IA" (nouveau format, bulletin Unotec) : uniquement les lots IA
-  // DE LA CAMPAGNE EN COURS -- voir statsLotIA. Les lots Éponge gardent
-  // l'affichage existant (barre de progression, ci-dessous) tel quel, non
-  // filtré par campagne comme avant -- chantier séparé à venir pour eux.
-  const lotsIA = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'IA' && l.campagne === DB.campagneDebut);
+  // Bloc "Lots IA" (nouveau format, bulletin Unotec) : les lots IA concernés
+  // par la campagne en cours -- voir statsLotIA et lotIAConcerneCampagneEnCours
+  // (mises bas réelles de cette campagne OU encore en attente ; jamais le
+  // champ lot.campagne, informatif seulement depuis la correction du
+  // décalage de campagne). Les lots Éponge gardent l'affichage existant
+  // (barre de progression, ci-dessous) tel quel, non filtré par campagne
+  // comme avant -- chantier séparé à venir pour eux.
+  const lotsIA = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'IA' && lotIAConcerneCampagneEnCours(l));
   const lotsEponge = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'EP');
   // Même date de référence que la population ci-dessus, également utilisée
   // pour figer le groupe d'âge de chaque brebis sur toute la campagne (voir
@@ -9681,24 +9744,28 @@ function renderLots() {
       // n'existe plus : oblige à corriger chaque fiche une par une (voir
       // renderEditRepro) pour un lot créé par erreur. On nettoie donc ici
       // aussi leur évènement modesRepro -- retrouvé par lotId, jamais deviné
-      // -- SAUF pour un membre ayant déjà une mise bas cette campagne : même
-      // règle "jamais de correction silencieuse" que renderEditLot, son
-      // suivi Repro reste intouché sur sa fiche.
+      // -- SAUF pour un membre ayant déjà une mise bas réelle rattachée à ce
+      // lot (par fenêtre de dates, voir fenetreReproMatch -- jamais par
+      // égalité de campagne, qui ne suit plus la vraie campagne de la mise
+      // bas depuis la correction du décalage de campagne) : même règle
+      // "jamais de correction silencieuse" que renderEditLot, son suivi
+      // Repro reste intouché sur sa fiche.
       let message = 'Supprimer ce lot ?';
       let membresSansMiseBas = [];
       if (lot && lot.type === 'reproduction') {
         const avecMiseBasNoms = [];
+        const lotDate = lot.dateEvenement || lot.dateCreation;
         lot.membres.forEach(eid => {
           const a = findAnimalReproByEid(eid);
           if (!a) return;
-          const dejaMiseBas = Array.isArray(a.agnelages) && a.agnelages.some(ag => ag.campagne === lot.campagne);
+          const dejaMiseBas = Array.isArray(a.agnelages) && a.agnelages.some(ag => ag && ag.date && fenetreReproMatch(lotDate, ag.date) !== null);
           if (dejaMiseBas) avecMiseBasNoms.push(numeroVisuel(eid));
           else membresSansMiseBas.push(a);
         });
         if (avecMiseBasNoms.length > 0 && membresSansMiseBas.length > 0) {
-          message = 'Supprimer ce lot ? n°' + avecMiseBasNoms.join(', n°') + ' ont déjà une mise bas rattachée cette campagne — leur suivi Repro reste sur leur fiche. Le suivi Repro (' + libelleModeRepro(lot.mode) + ') des ' + membresSansMiseBas.length + ' autre(s) membre(s) sera supprimé (retour à Monte naturelle par défaut).';
+          message = 'Supprimer ce lot ? n°' + avecMiseBasNoms.join(', n°') + ' ont déjà une mise bas rattachée à ce lot — leur suivi Repro reste sur leur fiche. Le suivi Repro (' + libelleModeRepro(lot.mode) + ') des ' + membresSansMiseBas.length + ' autre(s) membre(s) sera supprimé (retour à Monte naturelle par défaut).';
         } else if (avecMiseBasNoms.length > 0) {
-          message = 'Supprimer ce lot ? n°' + avecMiseBasNoms.join(', n°') + ' ont déjà une mise bas rattachée cette campagne — leur suivi Repro reste sur leur fiche, seul le lot (recherche en bergerie) disparaît.';
+          message = 'Supprimer ce lot ? n°' + avecMiseBasNoms.join(', n°') + ' ont déjà une mise bas rattachée à ce lot — leur suivi Repro reste sur leur fiche, seul le lot (recherche en bergerie) disparaît.';
         } else if (membresSansMiseBas.length > 0) {
           message = 'Supprimer ce lot ? Le suivi Repro (' + libelleModeRepro(lot.mode) + ') de ses ' + membresSansMiseBas.length + ' membre(s) sera aussi supprimé (retour à Monte naturelle par défaut).';
         }
@@ -10026,13 +10093,6 @@ function renderAddLotRepro() {
   pageTitle.textContent = 'Nouveau lot de reproduction';
   let cible = 'Brebis';
   let mode = 'IA';
-  // Campagne concernée par ce lot (voir campagneEchoOptionsHtml, déjà utilisé
-  // pour les échographies) -- un lot IA créé en juin doit pouvoir être tagué
-  // sur la campagne À VENIR plutôt que DB.campagneDebut du moment, sans quoi
-  // la mise bas de novembre (saisie après le changement de campagne de
-  // septembre/octobre) ne retrouverait plus cet évènement modesRepro (voir
-  // deduireCodeRepro/codeReproActuel, qui filtrent par campagne exacte).
-  let campagneChoisie = DB.campagneDebut;
   const today = new Date().toISOString().slice(0,10);
   const selected = new Set();
   // Pour un lot Éponge : la date de lutte effective n'est pas la date de
@@ -10076,7 +10136,6 @@ function renderAddLotRepro() {
           <input type="date" id="f-lot-repro-date-lutte" value="${addDaysToDateStr(today, EPONGE_DELAI_LUTTE_JOURS)}">
         </div>
       </div>
-      ${campagneEchoOptionsHtml(campagneChoisie)}
       <div class="card">
         <label>${cible === 'Agnelles' ? 'Antenaises' : 'Brebis'} du lot</label>
         <div id="repro-lot-picker"></div>
@@ -10086,7 +10145,6 @@ function renderAddLotRepro() {
     `;
 
     renderSelectionPicker(document.getElementById('repro-lot-picker'), pool(), selected);
-    attacherCampagneEchoOptions(v => { campagneChoisie = v; });
 
     document.querySelectorAll('.cible-repro-opt').forEach(btn => {
       btn.onclick = () => {
@@ -10128,18 +10186,21 @@ function renderAddLotRepro() {
       if (!datePose) { err.textContent = "Renseigne la date de l'évènement."; err.classList.remove('hidden'); return; }
       if (mode === 'EP' && !dateEvenement) { err.textContent = "Renseigne la date de lutte."; err.classList.remove('hidden'); return; }
       if (selected.size === 0) { err.textContent = "Sélectionne au moins un animal (à la main ou au bip)."; err.classList.remove('hidden'); return; }
-      if (!confirmerCampagneEcho(campagneChoisie)) return;
       err.classList.add('hidden');
       const animaux = pool().filter(a => selected.has(a.id));
       const lotId = Date.now().toString();
+      // Campagne = celle en cours au moment de la création, à titre
+      // INFORMATIF seulement (jamais relue pour rattacher une mise bas,
+      // voir deduireCodeRepro/fenetreReproMatch -- fenêtre de dates
+      // uniquement, peu importe cette valeur).
       animaux.forEach(a => {
         a.modesRepro = a.modesRepro || [];
-        a.modesRepro.push({ date: dateEvenement, mode, campagne: campagneChoisie, codeSieol: REPRO_CODE_SIEOL[mode], lotId });
+        a.modesRepro.push({ date: dateEvenement, mode, campagne: DB.campagneDebut, codeSieol: REPRO_CODE_SIEOL[mode], lotId });
       });
       DB.lots = DB.lots || [];
       DB.lots.push({
         id: lotId, nom, dateCreation: today, membres: animaux.map(a => a.eid),
-        type: 'reproduction', mode, cible, dateEvenement, campagne: campagneChoisie
+        type: 'reproduction', mode, cible, dateEvenement, campagne: DB.campagneDebut
       });
       saveData(DB);
       render('lots');
@@ -10153,20 +10214,23 @@ function renderAddLotRepro() {
    Nom/date/membres toujours modifiables. Pour un lot de reproduction :
    mode et cible verrouillés (pour changer, supprimer et recréer le lot --
    sinon il faudrait réécrire l'évènement modesRepro de chaque membre) ; la
-   campagne reste modifiable (même sélecteur qu'à la création, voir
-   renderAddLotRepro) pour corriger un lot mal tagué.
+   campagne n'est plus éditable ici -- champ informatif seulement (voir
+   renderAddLotRepro/fenetreReproMatch), aucune correction n'est plus
+   nécessaire puisqu'elle n'intervient plus dans le rattachement d'une mise
+   bas.
    Chaque évènement modesRepro écrit par CE lot porte son `lotId` (voir
    renderAddLotRepro) -- c'est ce qui permet de le retrouver ici avec
    certitude, plutôt que de deviner par date/mode/campagne. Toute
    modification qui toucherait l'évènement modesRepro d'un membre ayant déjà
-   une mise bas enregistrée CETTE campagne est bloquée pour ce membre (jamais
-   de correction silencieuse) -- l'éleveur est prévenu et doit corriger à la
-   main depuis la fiche si besoin. */
+   une mise bas réelle rattachée à CE lot (par fenêtre de dates, voir
+   fenetreReproMatch -- jamais par égalité de campagne, qui ne suit plus la
+   mise bas réelle depuis la correction du décalage de campagne) est bloquée
+   pour ce membre (jamais de correction silencieuse) -- l'éleveur est prévenu
+   et doit corriger à la main depuis la fiche si besoin. */
 function renderEditLot(lotId) {
   const lot = DB.lots.find(l => l.id === lotId);
   if (!lot) { render('lots'); return; }
   const isRepro = lot.type === 'reproduction';
-  let campagneChoisie = isRepro ? (lot.campagne != null ? lot.campagne : DB.campagneDebut) : null;
 
   function pool() {
     if (isRepro) return lot.cible === 'Agnelles' ? (DB.agnelles || []) : DB.brebis.filter(s => (s.statut || 'active') === 'active');
@@ -10188,7 +10252,6 @@ function renderEditLot(lotId) {
         <input type="date" id="f-edit-lot-date" value="${dateActuelle}">
         ${isRepro ? `<div style="font-size:11px;color:var(--text-muted);margin-top:10px;">Mode : <strong>${libelleModeRepro(lot.mode)}</strong> · Cible : <strong>${lot.cible}</strong> — verrouillés (supprime ce lot et recrées-en un pour changer).</div>` : ''}
       </div>
-      ${isRepro ? campagneEchoOptionsHtml(campagneChoisie) : ''}
       <div class="card">
         <label>${isRepro && lot.cible === 'Agnelles' ? 'Antenaises' : 'Brebis'} du lot</label>
         <div id="edit-lot-picker"></div>
@@ -10198,7 +10261,6 @@ function renderEditLot(lotId) {
     `;
 
     renderSelectionPicker(document.getElementById('edit-lot-picker'), pool(), membresIds);
-    if (isRepro) attacherCampagneEchoOptions(v => { campagneChoisie = v; });
 
     document.getElementById('btn-save-edit-lot').onclick = () => {
       const err = document.getElementById('err');
@@ -10207,7 +10269,6 @@ function renderEditLot(lotId) {
       if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
       if (!dateVal) { err.textContent = "Renseigne une date."; err.classList.remove('hidden'); return; }
       if (membresIds.size === 0) { err.textContent = "Le lot doit garder au moins un membre."; err.classList.remove('hidden'); return; }
-      if (isRepro && !confirmerCampagneEcho(campagneChoisie)) return;
       err.classList.add('hidden');
 
       const poolActuel = pool();
@@ -10217,15 +10278,18 @@ function renderEditLot(lotId) {
       const nouveauxMembres = poolActuel.filter(a => membresIds.has(a.id));
       const ancienEids = new Set(lot.membres.map(cleanEid));
       const nouveauEidsInitial = new Set(nouveauxMembres.map(a => cleanEid(a.eid)));
-      const dejaMiseBas = a => Array.isArray(a.agnelages) && a.agnelages.some(ag => ag.campagne === lot.campagne);
+      // Mise bas déjà rattachée à CE lot -- par fenêtre de dates (voir
+      // fenetreReproMatch), jamais par égalité de campagne : lot.campagne
+      // est informatif seulement depuis la correction du décalage de
+      // campagne, il ne suit plus forcément la vraie campagne de la mise bas.
+      const dejaMiseBas = a => Array.isArray(a.agnelages) && a.agnelages.some(ag => ag && ag.date && fenetreReproMatch(lot.dateEvenement || lot.dateCreation, ag.date) !== null);
       const bloquesSet = new Set();
 
       if (isRepro) {
         const dateChangee = dateVal !== dateActuelle;
-        const campagneChangee = campagneChoisie !== lot.campagne;
 
         // Retirés du lot : supprime leur évènement modesRepro (retrouvé par
-        // lotId), sauf mise bas déjà enregistrée cette campagne -- bloqué,
+        // lotId), sauf mise bas déjà rattachée à ce lot -- bloqué,
         // l'animal reste alors dans le lot (cohérence avec son évènement
         // modesRepro, conservé lui aussi).
         lot.membres.forEach(eid => {
@@ -10236,37 +10300,36 @@ function renderEditLot(lotId) {
           animal.modesRepro = (animal.modesRepro || []).filter(m => m.lotId !== lot.id);
         });
 
-        // Date/campagne changée : répercute sur l'évènement modesRepro des
-        // membres déjà présents avant modification, sauf mise bas déjà
-        // enregistrée cette campagne -- bloqué (l'ancien évènement reste
-        // inchangé pour eux).
-        if (dateChangee || campagneChangee) {
+        // Date changée : répercute sur l'évènement modesRepro des membres
+        // déjà présents avant modification, sauf mise bas déjà rattachée à
+        // ce lot -- bloqué (l'ancien évènement reste inchangé pour eux).
+        if (dateChangee) {
           nouveauxMembres.forEach(animal => {
             if (!ancienEids.has(cleanEid(animal.eid))) return;
             const entry = (animal.modesRepro || []).find(m => m.lotId === lot.id);
             if (!entry) return;
             if (dejaMiseBas(animal)) { bloquesSet.add(numeroVisuel(animal.eid)); return; }
             entry.date = dateVal;
-            entry.campagne = campagneChoisie;
           });
         }
 
-        // Nouveaux membres : écrit un nouvel évènement modesRepro pour ce lot.
+        // Nouveaux membres : écrit un nouvel évènement modesRepro pour ce
+        // lot, campagne = celle en cours à titre informatif seulement.
         nouveauxMembres.forEach(animal => {
           if (ancienEids.has(cleanEid(animal.eid))) return;
           animal.modesRepro = animal.modesRepro || [];
-          animal.modesRepro.push({ date: dateVal, mode: lot.mode, campagne: campagneChoisie, codeSieol: REPRO_CODE_SIEOL[lot.mode], lotId: lot.id });
+          animal.modesRepro.push({ date: dateVal, mode: lot.mode, campagne: DB.campagneDebut, codeSieol: REPRO_CODE_SIEOL[lot.mode], lotId: lot.id });
         });
       }
 
       lot.nom = nom;
-      if (isRepro) { lot.dateEvenement = dateVal; lot.campagne = campagneChoisie; }
+      if (isRepro) { lot.dateEvenement = dateVal; }
       else { lot.dateCreation = dateVal; }
       lot.membres = nouveauxMembres.map(a => a.eid);
       saveData(DB);
 
       if (bloquesSet.size > 0) {
-        alert('Lot enregistré, mais pas pour n°' + [...bloquesSet].join(', n°') + " -- une mise bas est déjà enregistrée pour cette campagne. Corrige-les depuis leur fiche si besoin.");
+        alert('Lot enregistré, mais pas pour n°' + [...bloquesSet].join(', n°') + " -- une mise bas est déjà rattachée à ce lot. Corrige-les depuis leur fiche si besoin.");
       }
       render('lots');
     };
