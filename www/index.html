@@ -14355,6 +14355,16 @@ function renderParametres() {
       <button class="btn btn-secondary" id="btn-import">Importer une sauvegarde</button>
     </div>
 
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+        ${iconCircle(ICON_SYNC, 'blue', 'sm')}
+        <div style="font-size:14px;font-weight:600;">Mises à jour</div>
+      </div>
+      <div id="update-version-installee" style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Version installée : …</div>
+      <button class="btn btn-secondary" id="btn-check-update" disabled>Vérifier les mises à jour</button>
+      <div id="update-check-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+    </div>
+
     <div id="version-footer" style="text-align:center;font-size:11px;color:var(--text-muted);padding:6px 0 4px;">${libelleVersion()}</div>
   `;
 
@@ -14484,6 +14494,41 @@ function renderParametres() {
     };
     reader.readAsText(file);
   };
+
+  // Section "Mises à jour" -- désactivée avec un message explicite hors
+  // app installée (navigateur de test), activée dès que la version
+  // installée a pu être lue (voir versionCodeInstalle).
+  (async () => {
+    const versionEl = document.getElementById('update-version-installee');
+    const btnCheck = document.getElementById('btn-check-update');
+    const statusEl = document.getElementById('update-check-status');
+    if (!versionEl || !btnCheck || !statusEl) return; // écran déjà quitté entre-temps
+    const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if (!AppPlugin) {
+      versionEl.textContent = 'Version installée : ' + libelleVersion().replace('Version : ', '');
+      statusEl.textContent = "Mise à jour disponible uniquement sur l'application installée.";
+      return;
+    }
+    try {
+      const info = await AppPlugin.getInfo();
+      versionEl.textContent = 'Version installée : ' + info.version;
+    } catch (e) {
+      versionEl.textContent = 'Version installée : inconnue';
+    }
+    btnCheck.disabled = false;
+    btnCheck.onclick = async () => {
+      btnCheck.disabled = true;
+      statusEl.textContent = 'Vérification en cours...';
+      const release = await verifierMiseAJourDisponible();
+      btnCheck.disabled = false;
+      if (!release) {
+        statusEl.textContent = '✅ Vous êtes à jour.';
+        return;
+      }
+      statusEl.textContent = '🆕 Nouvelle version disponible : ' + release.name;
+      afficherPopupMiseAJour(release);
+    };
+  })();
 }
 
 /* ---------- Diagnostic Bluetooth (bâton Allflex, Bluetooth Classic/SPP) ----------
@@ -14985,6 +15030,193 @@ function renderSyncLogin() {
   passwordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') attemptLogin(); });
 }
 
+/* ---------- Mises à jour automatiques In-App ----------
+   L'appli n'étant pas distribuée via le Play Store, elle interroge
+   directement les Releases du dépôt GitHub public pour savoir si une
+   version plus récente existe, propose de la télécharger, puis relance
+   l'installeur système Android dessus (voir ApkInstallerPlugin côté
+   natif). Android gère alors seul la mise à jour par-dessus l'existant
+   (même applicationId + même clé de signature, versionCode strictement
+   croissant -- voir build.gradle et .github/workflows/build-apk.yml) :
+   aucune donnée locale (localStorage) n'est jamais perdue par ce
+   mécanisme, sans code de migration à écrire ici. Firestore n'est de
+   toute façon jamais concerné, une mise à jour cliente ne touchant à
+   rien côté serveur. */
+const UPDATE_REPO_OWNER = 'VincentVaysset';
+const UPDATE_REPO_NAME = 'Ovilog';
+const UPDATE_DISMISSED_KEY = 'ovilog_update_dismissed_versioncode';
+
+// null si l'appli tourne hors app installée (navigateur de test) ou si le
+// plugin @capacitor/app n'est pas disponible pour une autre raison --
+// jamais une exception remontée à l'appelant.
+async function versionCodeInstalle() {
+  const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (!AppPlugin) return null;
+  try {
+    const info = await AppPlugin.getInfo();
+    const n = parseInt(info.build, 10);
+    return Number.isFinite(n) ? n : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Interroge la liste des Releases GitHub (API publique, sans
+// authentification -- aucun secret embarqué dans l'APK distribué) et
+// renvoie les informations de la plus récente, ou null si indisponible /
+// mal formée / sans APK attaché. Le tag doit être de la forme "v<entier>"
+// (voir l'étape "Publier la Release GitHub" du workflow CI) : c'est cet
+// entier, identique au versionCode Android du build correspondant, qui
+// sert de base de comparaison -- jamais le nom/tag brut.
+async function derniereReleaseDisponible() {
+  try {
+    const res = await fetch('https://api.github.com/repos/' + UPDATE_REPO_OWNER + '/' + UPDATE_REPO_NAME + '/releases', {
+      headers: { 'Accept': 'application/vnd.github+json' }
+    });
+    if (!res.ok) return null;
+    const releases = await res.json();
+    if (!Array.isArray(releases) || !releases.length) return null;
+    const derniere = releases[0]; // la plus récente -- GitHub trie par date de création décroissante
+    const m = /^v(\d+)$/.exec(derniere.tag_name || '');
+    if (!m) return null;
+    const asset = (derniere.assets || []).find(a => /\.apk$/i.test(a.name || ''));
+    if (!asset || !asset.browser_download_url) return null;
+    // Contrôle basique de provenance avant de retenir l'URL de
+    // téléchargement : elle doit provenir de GitHub lui-même.
+    let url;
+    try { url = new URL(asset.browser_download_url); } catch (e) { return null; }
+    const hoteAutorise = url.hostname === 'github.com' || url.hostname.endsWith('.githubusercontent.com');
+    if (!hoteAutorise) return null;
+    return {
+      versionCode: parseInt(m[1], 10),
+      tagName: derniere.tag_name,
+      name: derniere.name || derniere.tag_name,
+      body: derniere.body || '',
+      apkUrl: asset.browser_download_url
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// Combine les deux -- renvoie les infos de la release à proposer si elle
+// est réellement plus récente que la version installée, sinon null (déjà
+// à jour, hors app installée, ou vérification impossible pour une raison
+// quelconque -- jamais d'exception ni de message d'erreur pour l'appelant
+// silencieux, voir vérifierMiseAJourAuDemarrage plus bas).
+async function verifierMiseAJourDisponible() {
+  const localCode = await versionCodeInstalle();
+  if (localCode === null) return null;
+  const release = await derniereReleaseDisponible();
+  if (!release) return null;
+  if (release.versionCode <= localCode) return null;
+  return release;
+}
+
+// Popup non bloquante "Nouvelle version disponible" -- un seul exemplaire
+// à la fois (appelée à la fois par le bouton manuel et par la vérification
+// silencieuse au démarrage). "Plus tard" mémorise le versionCode proposé
+// (localStorage) pour ne pas resolliciter à chaque ouverture pour cette
+// même version -- réapparaît dès qu'une version plus récente encore sort.
+function afficherPopupMiseAJour(release) {
+  if (document.getElementById('update-popup-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'update-popup-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+        ${iconCircle(ICON_SYNC, 'blue', 'md')}
+        <div>
+          <div style="font-weight:700;font-size:15px;">Nouvelle version disponible</div>
+          <div style="font-size:12px;color:var(--text-muted);">${release.name}</div>
+        </div>
+      </div>
+      <div id="update-popup-body" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;white-space:pre-wrap;max-height:160px;overflow-y:auto;"></div>
+      <div id="update-popup-status" style="font-size:12px;color:var(--text-muted);margin-bottom:12px;"></div>
+      <div style="display:flex;gap:10px;">
+        <button type="button" class="btn btn-secondary" id="update-popup-later" style="flex:1;">Plus tard</button>
+        <button type="button" class="btn btn-primary" id="update-popup-install" style="flex:1;">Télécharger et installer</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  // Notes de version en texte brut (jamais en innerHTML) : leur contenu
+  // vient du corps du commit CI, jamais d'une source externe non fiable,
+  // mais autant ne prendre aucun risque d'injection pour si peu.
+  const bodyEl = overlay.querySelector('#update-popup-body');
+  if (release.body) { bodyEl.textContent = release.body; } else { bodyEl.remove(); }
+  overlay.querySelector('#update-popup-later').onclick = () => {
+    try { localStorage.setItem(UPDATE_DISMISSED_KEY, String(release.versionCode)); } catch (e) { /* ignoré */ }
+    document.body.removeChild(overlay);
+  };
+  overlay.querySelector('#update-popup-install').onclick = () => telechargerEtInstallerMiseAJour(release, overlay);
+}
+
+// Télécharge l'APK de la release (fetch), l'écrit dans le cache de l'appli
+// via @capacitor/filesystem (Directory.Cache), puis relance l'installeur
+// système via ApkInstallerPlugin. Le téléchargement ne démarre jamais tout
+// seul : uniquement sur ce clic explicite de l'éleveur.
+async function telechargerEtInstallerMiseAJour(release, overlay) {
+  const statusEl = overlay.querySelector('#update-popup-status');
+  const btnInstall = overlay.querySelector('#update-popup-install');
+  const btnLater = overlay.querySelector('#update-popup-later');
+  const ApkInstaller = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.ApkInstaller;
+  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!ApkInstaller || !Filesystem) {
+    statusEl.textContent = "Mise à jour disponible uniquement sur l'application installée.";
+    return;
+  }
+  btnInstall.disabled = true;
+  btnLater.disabled = true;
+  const fileName = 'ovilog-update.apk';
+  try {
+    statusEl.textContent = 'Téléchargement en cours...';
+    const res = await fetch(release.apkUrl);
+    if (!res.ok) throw new Error('téléchargement impossible (' + res.status + ')');
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    await Filesystem.writeFile({ path: fileName, data: uint8ToBase64(bytes), directory: 'CACHE' });
+
+    statusEl.textContent = "Vérification de l'autorisation d'installation...";
+    const perm = await ApkInstaller.canRequestInstall();
+    if (!perm || !perm.value) {
+      statusEl.textContent = 'Autorise "Installer des applications inconnues" pour Ovilog dans l\'écran qui s\'ouvre, puis reviens ici et retape sur "Télécharger et installer" (pas besoin de retélécharger).';
+      await ApkInstaller.openInstallPermissionSettings();
+      btnInstall.disabled = false;
+      btnLater.disabled = false;
+      return;
+    }
+
+    statusEl.textContent = "Ouverture de l'installation...";
+    await ApkInstaller.install({ fileName });
+    // L'intent système est lancé -- la suite (écran de confirmation
+    // Android) échappe à l'appli, on referme simplement la popup.
+    document.body.removeChild(overlay);
+  } catch (e) {
+    statusEl.textContent = 'Échec : ' + (e && e.message ? e.message : 'erreur inconnue') + '.';
+    btnInstall.disabled = false;
+    btnLater.disabled = false;
+  }
+}
+
+// Vérification silencieuse au démarrage -- jamais attendue (ne doit jamais
+// retarder l'affichage de l'accueil), jamais de message en cas d'échec
+// réseau, et jamais de re-sollicitation pour une version déjà écartée via
+// "Plus tard" (voir UPDATE_DISMISSED_KEY).
+async function verifierMiseAJourAuDemarrage() {
+  try {
+    const release = await verifierMiseAJourDisponible();
+    if (!release) return;
+    let dernierRefus = null;
+    try { dernierRefus = parseInt(localStorage.getItem(UPDATE_DISMISSED_KEY), 10); } catch (e) { /* ignoré */ }
+    if (Number.isFinite(dernierRefus) && dernierRefus >= release.versionCode) return;
+    afficherPopupMiseAJour(release);
+  } catch (e) {
+    // Silencieux par conception (voir en-tête du bloc) -- jamais de popup
+    // d'erreur pour une simple vérification en tâche de fond.
+  }
+}
+
 /* ---------- Démarrage ---------- */
 render('home');
 // Enregistré dès le démarrage (pas seulement au premier tap sur le bouton
@@ -14995,6 +15227,10 @@ btEnsureConnectionListener();
 // -- jamais attendue : ne doit jamais retarder l'affichage de l'accueil,
 // entièrement silencieuse (voir verifierSauvegardeAutoPeriodique).
 verifierSauvegardeAutoPeriodique();
+// Mises à jour automatiques In-App -- jamais attendue, entièrement
+// silencieuse tant qu'aucune mise à jour n'est trouvée (voir
+// verifierMiseAJourAuDemarrage).
+verifierMiseAJourAuDemarrage();
 updateHeaderReaderButton();
 </script>
 
