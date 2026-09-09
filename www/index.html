@@ -242,6 +242,11 @@
   .icon-circle.ic-md svg { width: 24px; height: 24px; }
   .icon-circle.ic-sm { width: 36px; height: 36px; }
   .icon-circle.ic-sm svg { width: 19px; height: 19px; }
+  /* Taille réduite pour la barre d'onglets de la fiche brebis (icône
+     au-dessus du libellé, voir .fiche-tab-btn) -- trop de catégories pour
+     ic-sm dans une grille compacte. */
+  .icon-circle.ic-xs { width: 22px; height: 22px; }
+  .icon-circle.ic-xs svg { width: 12px; height: 12px; }
   .icon-circle.ic-lg { width: 52px; height: 52px; }
   .icon-circle.ic-lg svg { width: 28px; height: 28px; }
   .icon-circle.ic-green  { background: var(--green-bg);  color: var(--green-fg); }
@@ -286,6 +291,17 @@
   .tab-bar { display: flex; gap: 4px; background: #f0efe9; padding: 4px; border-radius: var(--radius-pill); margin-bottom: 16px; }
   .tab-btn { flex: 1; border: none; background: none; padding: 9px 6px; border-radius: var(--radius-pill); font-size: 13px; font-weight: 600; color: var(--text-muted); cursor: pointer; }
   .tab-btn.active { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+
+  /* ---------- Grille d'onglets de la fiche brebis (chantier "Refonte en
+     onglets", inspiré Vénus/Psion) ----------
+     Même principe que .tab-bar ci-dessus (pilule active sur fond clair),
+     mais en grille 2 lignes avec icône au-dessus du libellé : trop de
+     catégories (7) pour tenir sur une seule ligne façon .tab-bar. */
+  .fiche-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: #f0efe9; padding: 4px; border-radius: var(--radius-pill); margin-bottom: 4px; }
+  .fiche-tabs.row2 { grid-template-columns: repeat(3, 1fr); margin-bottom: 16px; }
+  .fiche-tab-btn { border: none; background: none; padding: 8px 2px; border-radius: var(--radius-pill); font-size: 10.5px; font-weight: 700; color: var(--text-muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; line-height: 1.15; }
+  .fiche-tab-btn.active { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+  .fiche-tab-btn.disabled { color: #b8b39c; cursor: default; }
 
   /* ---------- Bandeau d'accueil (compteurs troupeau) ---------- */
   .home-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
@@ -2869,6 +2885,13 @@ let belierDetailOrigin = 'beliers';
 let editBelierContext = null; // { kind, idx }
 let currentLotId = null;
 let inventaireTab = 'brebis';
+// Onglet actif de la fiche brebis (chantier "Refonte en onglets", inspiré
+// Vénus/Psion -- voir renderDetail) : remis à "ident" quand on ouvre une
+// AUTRE brebis (ficheBrebisTabSheepId change), mais conservé lors d'un
+// re-rendu de la MÊME fiche après une action (ex: suppression d'un item
+// via swipe) -- même principe que bilanCampagneTab ci-dessous.
+let ficheBrebisTab = 'ident';
+let ficheBrebisTabSheepId = null;
 let bilanCampagneTab = 'incoherences';
 let bilanLactationCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan de lactation, voir bilanLactationHtml
 let inventaireActifsTab = 'brebis'; // 'brebis' | 'agnelles' | 'beliers' | 'agneaux' — voir renderInventaireActifs
@@ -4679,10 +4702,35 @@ function historiqueParCampagneHtml(groupes, emptyLabel) {
   }).join('');
 }
 
+/* ---------- Fiche brebis en onglets (inspiré Vénus/Psion, mockup validé) ----------
+   7 catégories réparties sur 2 lignes (4 + 3) -- Ovilog gère plus de
+   catégories que le Psion (Sanitaire notamment), voir mapping dans le
+   mockup. "Index" (calcul de lactation) reste désactivé : dépend du
+   fichier SIEOL réel, pas encore reçu (voir "Bilan de lactation" et
+   etat_avancement.md) -- rien à afficher tant que cette donnée n'existe
+   pas réellement, plutôt qu'un aperçu avec des chiffres fictifs. */
+const FICHE_BREBIS_TABS = [
+  { key: 'ident', label: 'Ident.', icon: ICON_SHEEP, color: 'gray' },
+  { key: 'repro', label: 'Repro & Écho', icon: ICON_ECHO, color: 'green' },
+  { key: 'sanit', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
+  { key: 'ctrl', label: 'Contrôles', icon: ICON_LAIT, color: 'blue' },
+  { key: 'mouv', label: 'Mouv.', icon: ICON_MOUVEMENT, color: 'coral' },
+  { key: 'carriere', label: 'Carrière', icon: ICON_CALENDAR, color: 'gray' },
+  { key: 'index', label: 'Index', icon: ICON_JOURNAL, color: 'gray', disabled: true }
+];
+function ficheBrebisTabsHtml(active) {
+  const btnHtml = t => `<button type="button" class="fiche-tab-btn${active === t.key ? ' active' : ''}${t.disabled ? ' disabled' : ''}" data-tab="${t.key}"${t.disabled ? ' disabled' : ''}>${iconCircle(t.icon, t.color, 'xs')}${t.label}</button>`;
+  return `
+    <div class="fiche-tabs">${FICHE_BREBIS_TABS.slice(0, 4).map(btnHtml).join('')}</div>
+    <div class="fiche-tabs row2">${FICHE_BREBIS_TABS.slice(4).map(btnHtml).join('')}</div>
+  `;
+}
+
 function renderDetail(id) {
   const sheep = findSheep(id);
   if (!sheep) { render('list'); return; }
   pageTitle.textContent = 'Brebis n°' + numeroVisuel(sheep.eid);
+  if (ficheBrebisTabSheepId !== id) { ficheBrebisTab = 'ident'; ficheBrebisTabSheepId = id; }
 
   const echoItemHtml = e => `
     <div class="content">
@@ -4972,7 +5020,11 @@ function renderDetail(id) {
     </div>
   `;
 
-  app.innerHTML = `
+  // ---------- Contenu par onglet (chantier "Refonte en onglets", inspiré
+  // Vénus/Psion, mockup validé) -- chaque carte/bouton ci-dessous est
+  // strictement identique à l'ancien affichage empilé, seule la répartition
+  // en onglets change (voir FICHE_BREBIS_TABS/ficheBrebisTabsHtml). ----------
+  const identTabHtml = `
     <div class="card">
       ${sectionHeaderHtml(ICON_SHEEP, 'gray', 'Identité')}
       <div style="font-size:12px;color:var(--text-muted);">EID complet</div>
@@ -4994,25 +5046,22 @@ function renderDetail(id) {
         : `<div style="margin-top:10px;font-size:11.5px;color:var(--text-muted);">Modification de l'EID impossible : cet animal a déjà un historique enregistré.</div>`}
     </div>
     ${statutBadge}
-    ${reproStatutHtml}
-    ${attendueTraiteBadge}
-    ${withdrawalBadge}
     ${mereBlock}
     ${genealogieBlock}
     ${agneauxAdoptesBlock}
-    <div class="row" style="margin-bottom:10px;">
+    <button class="btn btn-secondary" id="btn-delete-sheep" style="color:var(--danger);border-color:var(--danger);">Supprimer cette brebis</button>
+  `;
+
+  const reproTabHtml = `
+    ${attendueTraiteBadge}
+    ${withdrawalBadge}
+    ${reproStatutHtml}
+    <div class="row" style="margin-bottom:16px;">
       <button class="btn btn-primary" id="btn-add-echo" style="flex:1;">+ Échographie</button>
       ${dejaMiseBasCampagne
         ? '<div class="badge badge-muted" style="flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;">Mise bas déjà saisie — modifie-la ci-dessous</div>'
         : '<button class="btn btn-primary" id="btn-add-agnelage" style="flex:1;background:var(--accent);">+ Agnelage</button>'}
     </div>
-    <div class="row" style="margin-bottom:16px;">
-      <button class="btn btn-primary" id="btn-add-sanitaire" style="flex:1;background:var(--danger);">+ Carnet sanitaire</button>
-      ${(sheep.mouvements && sheep.mouvements.length > 0)
-        ? '<div class="badge badge-muted" style="flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;">Mouvement déjà saisi — modifie-le ci-dessous</div>'
-        : '<button class="btn btn-primary" id="btn-add-mouvement" style="flex:1;background:var(--danger);">+ Mouvement</button>'}
-    </div>
-    <button class="btn btn-primary" id="btn-add-controle" style="background:var(--blue-solid);margin-bottom:16px;">+ Contrôle laitier</button>
     ${allLiveLambs.length > 0 ? `
     <div class="card">
       ${sectionHeaderHtml(ICON_SHEEP, 'amber', 'Devenir des agneaux')}
@@ -5029,29 +5078,62 @@ function renderDetail(id) {
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${agnelageHtml}
     </div>
+  `;
+
+  const sanitTabHtml = `
+    <button class="btn btn-primary" id="btn-add-sanitaire" style="background:var(--danger);margin-bottom:16px;">+ Carnet sanitaire</button>
     <div class="card">
       ${sectionHeaderHtml(ICON_SANTE, 'coral', 'Carnet sanitaire')}
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${sanitaireHtml}
     </div>
+  `;
+
+  const ctrlTabHtml = `
+    <button class="btn btn-primary" id="btn-add-controle" style="background:var(--blue-solid);margin-bottom:16px;">+ Contrôle laitier</button>
     <div class="card">
       ${sectionHeaderHtml(ICON_LAIT, 'blue', 'Contrôle laitier · campagne en cours')}
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${controleHtml}
     </div>
     ${cahierCardHtml}
-    <div class="card">
-      ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Historique par campagne')}
-      ${historiqueCampagnesHtml}
+  `;
+
+  const mouvTabHtml = `
+    <div style="margin-bottom:16px;">
+      ${(sheep.mouvements && sheep.mouvements.length > 0)
+        ? '<div class="badge badge-muted" style="display:block;text-align:center;padding:10px;">Mouvement déjà saisi — modifie-le ci-dessous</div>'
+        : '<button class="btn btn-primary" id="btn-add-mouvement" style="background:var(--danger);">+ Mouvement</button>'}
     </div>
     <div class="card">
       ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${mouvementHtml}
     </div>
-    <button class="btn btn-secondary" id="btn-delete-sheep" style="color:var(--danger);border-color:var(--danger);">Supprimer cette brebis</button>
   `;
-  document.getElementById('btn-add-echo').onclick = () => { editContext = null; render('add-echo', sheep.id); };
+
+  const carriereTabHtml = `
+    <div class="card">
+      ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Historique par campagne')}
+      ${historiqueCampagnesHtml}
+    </div>
+  `;
+
+  const ficheBrebisTabContent = {
+    ident: identTabHtml, repro: reproTabHtml, sanit: sanitTabHtml,
+    ctrl: ctrlTabHtml, mouv: mouvTabHtml, carriere: carriereTabHtml
+  };
+
+  app.innerHTML = `
+    ${ficheBrebisTabsHtml(ficheBrebisTab)}
+    ${ficheBrebisTabContent[ficheBrebisTab] || identTabHtml}
+  `;
+  document.querySelectorAll('.fiche-tab-btn').forEach(btn => {
+    if (btn.disabled) return;
+    btn.onclick = () => { ficheBrebisTab = btn.dataset.tab; render('detail', sheep.id); };
+  });
+  const btnAddEcho = document.getElementById('btn-add-echo');
+  if (btnAddEcho) btnAddEcho.onclick = () => { editContext = null; render('add-echo', sheep.id); };
   if (document.getElementById('btn-add-agnelage')) document.getElementById('btn-add-agnelage').onclick = () => { editContext = null; render('add-agnelage', sheep.id); };
   const btnMarquerVideDef = document.getElementById('btn-marquer-vide-def');
   if (btnMarquerVideDef) btnMarquerVideDef.onclick = () => {
@@ -5069,12 +5151,15 @@ function renderDetail(id) {
   };
   const btnEditReproTag = document.getElementById('btn-edit-repro-tag');
   if (btnEditReproTag) btnEditReproTag.onclick = () => { editReproTarget = { kind: 'brebis', id: sheep.id }; render('edit-repro'); };
-  document.getElementById('btn-add-sanitaire').onclick = () => { editContext = null; render('add-sanitaire', sheep.id); };
+  const btnAddSanitaire = document.getElementById('btn-add-sanitaire');
+  if (btnAddSanitaire) btnAddSanitaire.onclick = () => { editContext = null; render('add-sanitaire', sheep.id); };
   if (document.getElementById('btn-add-mouvement')) document.getElementById('btn-add-mouvement').onclick = () => { editContext = null; render('add-mouvement', sheep.id); };
-  document.getElementById('btn-add-controle').onclick = () => { editContext = null; render('add-controle', sheep.id); };
+  const btnAddControle = document.getElementById('btn-add-controle');
+  if (btnAddControle) btnAddControle.onclick = () => { editContext = null; render('add-controle', sheep.id); };
   const btnCorrigerEid = document.getElementById('btn-corriger-eid');
   if (btnCorrigerEid) btnCorrigerEid.onclick = () => openCorrigerEidSheet(sheep, () => render('detail', sheep.id));
-  document.getElementById('btn-modifier-numero-sieol').onclick = () => openCorrigerNumeroSieolSheet(sheep, () => render('detail', sheep.id));
+  const btnModifierNumeroSieol = document.getElementById('btn-modifier-numero-sieol');
+  if (btnModifierNumeroSieol) btnModifierNumeroSieol.onclick = () => openCorrigerNumeroSieolSheet(sheep, () => render('detail', sheep.id));
   document.querySelectorAll('.btn-lamb-vendu').forEach(btn => {
     btn.onclick = () => {
       const lamb = allLiveLambs[parseInt(btn.dataset.i, 10)];
@@ -5117,7 +5202,8 @@ function renderDetail(id) {
       render(btn.dataset.target);
     };
   });
-  document.getElementById('btn-delete-sheep').onclick = () => {
+  const btnDeleteSheep = document.getElementById('btn-delete-sheep');
+  if (btnDeleteSheep) btnDeleteSheep.onclick = () => {
     if (!confirm('Supprimer la brebis n°' + numeroVisuel(sheep.eid) + ' ? Son carnet sanitaire, ses mises bas et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
     DB.brebis = DB.brebis.filter(s => s.id !== sheep.id);
     saveData(DB);
