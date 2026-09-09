@@ -123,6 +123,14 @@
   - Écran envisagé : "Déclaration annuelle" avec sélecteur d'année civile, affichant les 3 chiffres + export PDF/Excel à joindre au registre d'élevage
   - Non prioritaire tant que Bilan de lactation et audit changement de campagne ne sont pas traités, mais chantier utile à ne pas oublier (risque de sanction en cas de contrôle)
   - Voir cahier_des_charges.md, section 11, pour le détail complet
+- **Refonte fiche brebis en onglets (inspiré Unotec/Psion, captures de référence fournies par l'éleveur)** : modèle cible à terme pour remplacer la fiche brebis actuelle (qui empile tout) par une structure en onglets :
+  - **Mouv.** : entrée/sortie de l'animal (date + code + libellé, ex: "4 — Renouvellement")
+  - **Contrôles** : historique des pesées laitières (n° contrôle, date, lait, anomalie, cellules)
+  - **Mise Bas** : dernière mise bas (date + code Repro) + détail des agneaux nés (n° ordre, sexe, code sevrage, date sevrage, mère si adoption)
+  - **Carrière** : résumé compact, une ligne par mise bas (mâles/femelles/morts/adoptés/anomalie/mode repro), avec totaux Mises Bas + Agneaux
+  - **Index** : calcul de lactation (indice, classe, lait total, durée, indice cumulé, nombre de campagnes) — recoupe le futur "Bilan de lactation" déjà noté en attente du fichier SIEOL réel
+  - Rejoint la piste déjà notée précédemment dans ce fichier ("Onglet-based historical view per brebis, inspiré Venus") — même direction, précisée maintenant avec un vrai modèle d'écran de référence (captures Psion/Unotec de l'éleveur, non jointes au fichier texte mais disponibles auprès de lui si besoin de les revoir)
+  - Non prioritaire tant que le module reproduction (lots IA/Éponge + ses correctifs récents) n'est pas stabilisé et testé terrain — à reprendre une fois cette étape close
 
 ---
 
