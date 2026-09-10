@@ -14533,13 +14533,17 @@ function renderParametres() {
     btnCheck.onclick = async () => {
       btnCheck.disabled = true;
       statusEl.textContent = 'Vérification en cours...';
-      const { ok, release } = await verifierMiseAJourDisponible();
+      const { ok, release, reason } = await verifierMiseAJourDisponible();
       btnCheck.disabled = false;
       if (!ok) {
         // Distinct de "à jour" : la vérification elle-même a échoué (réseau,
         // réponse GitHub inattendue) -- ne jamais laisser croire à tort que
-        // tout est à jour dans ce cas (signalé en usage réel).
-        statusEl.textContent = '⚠️ Vérification impossible — vérifie ta connexion internet et réessaie.';
+        // tout est à jour dans ce cas (signalé en usage réel). Le détail
+        // technique entre parenthèses (code HTTP, etc.) n'est pas destiné à
+        // l'éleveur mais permet de diagnostiquer à distance si le problème
+        // se reproduit (ex: http_403 = limite de requêtes GitHub atteinte,
+        // fréquent derrière un NAT opérateur mobile partagé).
+        statusEl.textContent = '⚠️ Vérification impossible — vérifie ta connexion internet et réessaie.' + (reason ? ' (' + reason + ')' : '');
         return;
       }
       if (!release) {
@@ -15217,9 +15221,14 @@ async function derniereReleaseDisponible() {
     const res = await fetch('https://api.github.com/repos/' + UPDATE_REPO_OWNER + '/' + UPDATE_REPO_NAME + '/releases', {
       headers: { 'Accept': 'application/vnd.github+json' }
     });
-    if (!res.ok) return { ok: false, best: null };
+    // reason distingue une réponse HTTP en erreur (ex: limite de requêtes
+    // anonymes GitHub -- 60/heure par IP publique, vite atteinte derrière
+    // un NAT opérateur mobile partagé par de nombreux abonnés) d'un échec
+    // réseau pur (voir catch ci-dessous) -- utile pour diagnostiquer un
+    // signalement terrain sans accès direct à l'appareil.
+    if (!res.ok) return { ok: false, best: null, reason: 'http_' + res.status };
     const releases = await res.json();
-    if (!Array.isArray(releases)) return { ok: false, best: null };
+    if (!Array.isArray(releases)) return { ok: false, best: null, reason: 'reponse_invalide' };
     let best = null;
     for (const r of releases) {
       const m = /^v(\d+)$/.exec(r.tag_name || '');
@@ -15239,7 +15248,7 @@ async function derniereReleaseDisponible() {
     }
     return { ok: true, best };
   } catch (e) {
-    return { ok: false, best: null };
+    return { ok: false, best: null, reason: 'reseau:' + (e && e.message || 'inconnu') };
   }
 }
 
@@ -15253,9 +15262,9 @@ async function derniereReleaseDisponible() {
 // un simple échec de connexion (voir l'appel manuel dans Paramètres).
 async function verifierMiseAJourDisponible() {
   const localCode = await versionCodeInstalle();
-  if (localCode === null) return { ok: false, release: null };
-  const { ok, best } = await derniereReleaseDisponible();
-  if (!ok) return { ok: false, release: null };
+  if (localCode === null) return { ok: false, release: null, reason: 'version_installee_inconnue' };
+  const { ok, best, reason } = await derniereReleaseDisponible();
+  if (!ok) return { ok: false, release: null, reason };
   if (!best || best.versionCode <= localCode) return { ok: true, release: null };
   return { ok: true, release: best };
 }
