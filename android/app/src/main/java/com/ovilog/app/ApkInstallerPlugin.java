@@ -11,22 +11,25 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 /**
- * Déclenche l'installeur système Android pour une mise à jour de l'appli
- * elle-même, distribuée hors Play Store (voir chantier "Mises à jour
- * automatiques In-App"). Le fichier .apk est déjà téléchargé et écrit dans
- * le cache de l'appli (côté JS, via @capacitor/filesystem, Directory.Cache
- * = context.getCacheDir(), exactement le même dossier que celui utilisé
- * ici) avant d'appeler install() -- ce plugin ne fait QUE l'exposer via le
- * FileProvider déjà configuré (AndroidManifest.xml / file_paths.xml,
- * utilisé jusqu'ici pour l'export du registre en .xlsx) et lancer l'intent
- * système d'installation. C'est ensuite Android, jamais ce code, qui
- * affiche l'écran de confirmation et décide d'installer -- rien ici ne
- * touche aux données de l'appli (localStorage/Firestore), qu'Android
- * préserve automatiquement lors d'une mise à jour par-dessus l'existant
- * (même applicationId + même clé de signature, déjà garantis par le
- * pipeline CI -- voir .github/workflows/build-apk.yml).
+ * Télécharge et déclenche l'installeur système Android pour une mise à
+ * jour de l'appli elle-même, distribuée hors Play Store (voir chantier
+ * "Mises à jour automatiques In-App"). download() récupère l'APK et
+ * install() l'expose via le FileProvider déjà configuré (AndroidManifest.xml
+ * / file_paths.xml, utilisé jusqu'ici pour l'export du registre en .xlsx)
+ * puis lance l'intent système d'installation. Les deux méthodes lisent/
+ * écrivent le même fichier dans le cache de l'appli (context.getCacheDir(),
+ * identique à Directory.Cache côté @capacitor/filesystem). C'est ensuite
+ * Android, jamais ce code, qui affiche l'écran de confirmation et décide
+ * d'installer -- rien ici ne touche aux données de l'appli (localStorage/
+ * Firestore), qu'Android préserve automatiquement lors d'une mise à jour
+ * par-dessus l'existant (même applicationId + même clé de signature, déjà
+ * garantis par le pipeline CI -- voir .github/workflows/build-apk.yml).
  */
 @CapacitorPlugin(name = "ApkInstaller")
 public class ApkInstallerPlugin extends Plugin {
@@ -61,10 +64,62 @@ public class ApkInstallerPlugin extends Plugin {
         call.resolve();
     }
 
+    // Télécharge l'APK de mise à jour et l'écrit directement dans le cache
+    // de l'appli (même dossier que install() lit ensuite). Fait ici, en
+    // Java, plutôt qu'un fetch() côté JS (voir telechargerEtInstallerMiseAJour) :
+    // GitHub ne renvoie AUCUN en-tête Access-Control-Allow-Origin sur le
+    // téléchargement des assets de release (contrairement à l'API
+    // /releases elle-même, qui en renvoie un) -- un fetch() depuis la
+    // WebView échoue donc systématiquement avec "Failed to fetch", signalé
+    // en usage réel. HttpURLConnection, exécuté ici hors WebView, n'est pas
+    // soumis à cette restriction (CORS est une politique de navigateur,
+    // pas du protocole HTTP lui-même). Suit automatiquement la redirection
+    // 302 de github.com vers le stockage réel de l'asset (releases-assets/
+    // Azure Blob), aucune configuration supplémentaire nécessaire.
+    @PluginMethod
+    public void download(PluginCall call) {
+        String urlString = call.getString("url");
+        String fileName = call.getString("fileName");
+        if (urlString == null || urlString.isEmpty() || fileName == null || fileName.isEmpty()) {
+            call.reject("url ou fileName manquant");
+            return;
+        }
+        InputStream input = null;
+        FileOutputStream output = null;
+        try {
+            URL url = new URL(urlString);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setInstanceFollowRedirects(true);
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(30000);
+            conn.connect();
+            int code = conn.getResponseCode();
+            if (code != HttpURLConnection.HTTP_OK) {
+                call.reject("Téléchargement impossible (code " + code + ")");
+                return;
+            }
+            File outFile = new File(getContext().getCacheDir(), fileName);
+            input = conn.getInputStream();
+            output = new FileOutputStream(outFile);
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = input.read(buffer)) != -1) {
+                output.write(buffer, 0, len);
+            }
+            output.flush();
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Échec du téléchargement : " + e.getMessage(), e);
+        } finally {
+            try { if (input != null) input.close(); } catch (Exception ignored) {}
+            try { if (output != null) output.close(); } catch (Exception ignored) {}
+        }
+    }
+
     // fileName : nom du fichier déjà présent dans le cache de l'appli
     // (context.getCacheDir(), le même dossier que Directory.Cache côté
-    // @capacitor/filesystem -- voir writeFile appelé juste avant côté JS,
-    // dans telechargerEtInstallerMiseAJour).
+    // @capacitor/filesystem -- voir download() ci-dessus, qui écrit
+    // directement dans ce même dossier).
     @PluginMethod
     public void install(PluginCall call) {
         String fileName = call.getString("fileName");
