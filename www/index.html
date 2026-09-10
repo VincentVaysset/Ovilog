@@ -3034,6 +3034,8 @@ btnBack.onclick = () => {
   else if (currentView === 'gerer-produits') render('sanitaire');
   else if (currentView === 'historique-echo') render('echo-rapide');
   else if (currentView === 'diag-bluetooth') { btDiagLeaveScreen(); render('parametres'); }
+  else if (currentView === 'maj-inventaire') render('inventaire-actifs');
+  else if (currentView === 'maj-inventaire-validation') render('maj-inventaire');
 };
 fabAdd.onclick = () => render('add-sheep');
 
@@ -3221,6 +3223,8 @@ function render(view, sheepId) {
     else if (view === 'boot') renderBoot();
     else if (view === 'auth') renderAuthGate();
     else if (view === 'diag-bluetooth') renderDiagBluetooth();
+    else if (view === 'maj-inventaire') renderMajInventaire();
+    else if (view === 'maj-inventaire-validation') renderMajInventaireValidation();
   } catch (e) {
     console.error('Erreur lors de l\'affichage de l\'écran "' + view + '"', e);
     renderCrashScreen(view);
@@ -4187,6 +4191,9 @@ function renderInventaireActifs() {
   app.innerHTML = `
     <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${items.length} animal(aux) actif(s).</div>
     ${tabBarHtml}
+    ${inventaireActifsTab === 'brebis' ? `
+    <button type="button" class="btn btn-secondary" id="btn-maj-inventaire" style="border-color:var(--danger);color:var(--danger);margin:14px 0 0;">Mise à jour inventaire (bipage complet)</button>
+    ` : ''}
     <div class="row" style="margin:14px 0;">
       <button type="button" class="btn btn-secondary" id="btn-export-inventaire-pdf">Export PDF</button>
       <button type="button" class="btn btn-secondary" id="btn-export-inventaire-xlsx">Export Excel (.xlsx)</button>
@@ -4197,6 +4204,9 @@ function renderInventaireActifs() {
   document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
     btn.onclick = () => { inventaireActifsTab = btn.dataset.tab; render('inventaire-actifs'); };
   });
+
+  const btnMajInventaire = document.getElementById('btn-maj-inventaire');
+  if (btnMajInventaire) btnMajInventaire.onclick = () => render('maj-inventaire');
 
   document.querySelectorAll('.inventaire-actifs-row').forEach(tr => {
     tr.onclick = () => {
@@ -4242,6 +4252,293 @@ function renderInventaireActifs() {
     ] }]);
     saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + new Date().toISOString().slice(0,10) + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   };
+}
+
+/* ---------- Mise à jour inventaire (rapprochement RFID) ----------
+   Bipage complet du troupeau physiquement présent, comparé à l'inventaire
+   brebis actives d'Ovilog, avec application groupée des écarts. Deux
+   écrans volontairement séparés (voir renderMajInventaire ci-dessous puis
+   renderMajInventaireValidation) : le bipage reste une simple boucle de
+   scan (comme Liste en série), tout le calcul de rapprochement n'a lieu
+   qu'à l'ouverture de l'écran de validation, jamais pendant le scan. */
+
+/* Session de bipage transitoire, persistée comme DB.listeSerie (un
+   bipage complet peut prendre du temps -- une appli tuée en arrière-plan
+   ne doit pas faire perdre la progression). eids : EID nettoyés, sans
+   doublon (un rebip est ignoré, voir renderMajInventaire). Réinitialisée
+   uniquement à la validation finale ou à un "Recommencer" explicite. */
+function renderMajInventaire() {
+  pageTitle.textContent = 'Mise à jour inventaire';
+  DB.majInventaireSession = DB.majInventaireSession || { eids: [] };
+  const session = DB.majInventaireSession;
+
+  function draw() {
+    app.innerHTML = `
+      <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Scanne toutes les brebis physiquement présentes dans la bergerie, une par une. Termine le bipage pour voir le rapprochement avec l'inventaire actif.</div>
+      <div class="card">
+        <label style="display:flex;align-items:center;">Scanner une brebis${infoBulleHtml('Mise à jour inventaire', "Bipe toutes les brebis présentes, connues ou non de l'appli -- le rapprochement avec l'inventaire actif se fait à la fin, sur l'écran suivant.")}</label>
+        <input type="text" id="scan-maj-inventaire" placeholder="Scanner ou saisir l'EID" autofocus>
+        <div id="scan-maj-feedback" style="margin-top:8px;font-size:13px;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 8px;">
+        <div style="font-size:14px;font-weight:600;">${session.eids.length} ${session.eids.length > 1 ? 'brebis bipées' : 'brebis bipée'}</div>
+        ${session.eids.length > 0 ? '<button type="button" class="btn btn-secondary" id="btn-recommencer-maj-inventaire" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Recommencer</button>' : ''}
+      </div>
+      <div id="maj-inventaire-rows"></div>
+      <div id="maj-inventaire-empty" class="empty${session.eids.length ? ' hidden' : ''}">Aucune brebis scannée pour l'instant.</div>
+      <button type="button" class="btn btn-primary" id="btn-terminer-bipage" style="margin-top:16px;"${session.eids.length === 0 ? ' disabled' : ''}>Terminer le bipage → Voir le rapprochement</button>
+    `;
+
+    const rowsEl = document.getElementById('maj-inventaire-rows');
+    [...session.eids].reverse().forEach((eid) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid var(--border);';
+      row.innerHTML = `
+        <div style="font-weight:600;">n°${numeroVisuel(eid)}</div>
+        <button type="button" class="btn-remove-maj-inventaire" data-eid="${eid}" style="background:none;border:none;color:var(--text-muted);font-size:19px;padding:2px 8px;line-height:1;">✕</button>
+      `;
+      rowsEl.appendChild(row);
+    });
+    document.querySelectorAll('.btn-remove-maj-inventaire').forEach(btn => {
+      // Retrait simple, sans confirm() : corrige un bip malencontreux avant
+      // de continuer -- même logique que Liste en série (voir plus haut).
+      btn.onclick = () => {
+        session.eids = session.eids.filter(e => e !== btn.dataset.eid);
+        saveData(DB);
+        draw();
+      };
+    });
+    const btnRecommencer = document.getElementById('btn-recommencer-maj-inventaire');
+    if (btnRecommencer) btnRecommencer.onclick = () => {
+      if (!confirm('Recommencer le bipage depuis le début (' + session.eids.length + ' brebis actuellement bipées seront oubliées) ?')) return;
+      session.eids = [];
+      saveData(DB);
+      draw();
+    };
+    document.getElementById('btn-terminer-bipage').onclick = () => {
+      if (session.eids.length === 0) return;
+      render('maj-inventaire-validation');
+    };
+
+    const scanInput = document.getElementById('scan-maj-inventaire');
+    setActiveScanTarget(scanInput);
+    scanInput.focus();
+    scanInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const val = cleanEid(scanInput.value);
+      const feedback = document.getElementById('scan-maj-feedback');
+      scanInput.value = '';
+      if (!val) return;
+      if (session.eids.includes(val)) {
+        playBeepDejaTrouve();
+        feedback.textContent = 'n°' + numeroVisuel(val) + ' déjà bipée.';
+        feedback.style.color = 'var(--warning)';
+        return;
+      }
+      playBeepTrouve();
+      feedback.textContent = '';
+      session.eids.push(val);
+      saveData(DB);
+      draw();
+    });
+  }
+  draw();
+}
+
+/* Motif dédié posé sur chaque mouvement de sortie/entrée généré par ce
+   module (jamais utilisé ailleurs) -- permet de les distinguer d'une vraie
+   cause de mortalité renseignée à la main, tout en restant un simple champ
+   `cause`/`cause` de mouvement "Morte"/"Entrée" ordinaire : aucune
+   structure de données nouvelle, tout le reste de l'appli (registre,
+   déclaration annuelle, badges de statut, annulation de mouvement groupé)
+   continue de fonctionner sans modification. Ajouté à DB.causesMortalite
+   pour que l'écran d'édition d'un mouvement (voir renderAddMouvement)
+   affiche bien le chip correspondant au lieu de perdre silencieusement la
+   cause à la prochaine sauvegarde (chip introuvable -> non sélectionné). */
+const MOTIF_MAJ_INVENTAIRE = 'Mise à jour inventaire';
+
+/* Calcul pur du rapprochement -- aucune écriture dans DB ici. Réutilise
+   verifierEidUnique() (déjà partagé par toute l'appli) plutôt que de
+   ré-implémenter la recherche brebis/béliers/agnelles/agneaux/registre :
+   un EID "en plus" qui correspond à un bélier, une agnelle ou un animal
+   déjà archivé au registre est ainsi correctement reconnu comme tel
+   (purement informatif, aucune action proposée), sans dupliquer cette
+   logique de recherche. */
+function calculerRapprochementInventaire(eidsScannees) {
+  const activesBrebis = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const activesEids = new Set(activesBrebis.map(s => cleanEid(s.eid)));
+  const confirmees = activesBrebis.filter(s => eidsScannees.includes(cleanEid(s.eid)));
+  const enMoins = activesBrebis.filter(s => !eidsScannees.includes(cleanEid(s.eid)));
+
+  const enPlus = [];
+  eidsScannees.forEach(eid => {
+    if (activesEids.has(eid)) return; // déjà comptée en "confirmées"
+    const conflit = verifierEidUnique(eid);
+    if (!conflit) { enPlus.push({ eid, type: 'inconnue', conflit: null, sheep: null }); return; }
+    if (conflit.categorie === 'brebis') {
+      // Forcément inactive : une brebis active aurait été filtrée ci-dessus.
+      enPlus.push({ eid, type: 'reactivable', conflit, sheep: DB.brebis.find(s => cleanEid(s.eid) === eid) });
+      return;
+    }
+    enPlus.push({ eid, type: 'autre', conflit, sheep: null }); // bélier/agnelle/agneau/registre -- informatif seulement
+  });
+
+  return { confirmees, enMoins, enPlus };
+}
+
+/* Écran de rapprochement + validation groupée. `decisions` (en plus,
+   'creer'|'reactiver'|'ignorer' par eid) et `exclusions` (en moins, ids à
+   NE PAS sortir) sont de simples variables de fermeture -- écran à usage
+   unique, pas de raison de les faire survivre à une navigation ailleurs et
+   retour (contrairement à DB.majInventaireSession, qui doit lui survivre
+   à une fermeture d'appli en cours de bipage). */
+function renderMajInventaireValidation() {
+  pageTitle.textContent = 'Rapprochement inventaire';
+  DB.majInventaireSession = DB.majInventaireSession || { eids: [] };
+  const rappro = calculerRapprochementInventaire(DB.majInventaireSession.eids);
+
+  const decisions = {};
+  rappro.enPlus.forEach(p => {
+    // Choix pré-sélectionné mais toujours modifiable : la ligne elle-même
+    // reste la "mention explicite" demandée, sans imposer un clic pour
+    // chaque brebis d'un lot par ailleurs déjà sans ambiguïté.
+    if (p.type === 'reactivable') decisions[p.eid] = 'reactiver';
+    else if (p.type === 'inconnue') decisions[p.eid] = 'creer';
+    // type === 'autre' : aucune décision possible, purement informatif.
+  });
+  const exclusions = new Set(); // ids de brebis "en moins" à NE PAS sortir
+
+  function draw() {
+    const enMoinsRowsHtml = rappro.enMoins.map(s => `
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);">
+        <input type="checkbox" class="cb-exclure-enmoins" data-id="${s.id}" ${exclusions.has(s.id) ? '' : 'checked'} style="width:18px;height:18px;margin:0;flex-shrink:0;">
+        <span style="font-size:14px;">n°${numeroVisuel(s.eid)}</span>
+        <span style="font-size:12px;color:var(--text-muted);margin-left:auto;">${exclusions.has(s.id) ? 'Conservée active' : 'Sera sortie'}</span>
+      </label>
+    `).join('') || '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucune.</div>';
+
+    const enPlusRowsHtml = rappro.enPlus.map(p => {
+      const numero = 'n°' + numeroVisuel(p.eid);
+      if (p.type === 'autre') {
+        return `<div style="padding:8px 0;border-top:1px solid var(--border);font-size:13px;">
+          ${numero} <span class="badge badge-muted" style="margin-left:6px;">${p.conflit.statutLabel}</span>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Bipée par erreur pendant le tour de bergerie -- aucune action, ignorée automatiquement.</div>
+        </div>`;
+      }
+      const options = p.type === 'reactivable'
+        ? [['reactiver', 'Réactiver'], ['ignorer', 'Ignorer']]
+        : [['creer', 'Créer'], ['ignorer', 'Ignorer']];
+      return `<div style="padding:8px 0;border-top:1px solid var(--border);">
+        <div style="font-size:14px;margin-bottom:6px;">${numero}${p.type === 'reactivable' ? ` <span style="font-size:12px;color:var(--text-muted);">(${p.conflit.statutLabel}${p.conflit.dateLabel ? ', ' + p.conflit.dateLabel : ''})</span>` : ' <span class="badge badge-muted">EID inconnu</span>'}</div>
+        <div class="grid2" style="max-width:280px;">
+          ${options.map(([val, label]) => `<button type="button" class="opt-btn enplus-decision${decisions[p.eid] === val ? ' selected' : ''}" data-eid="${p.eid}" data-val="${val}">${label}</button>`).join('')}
+        </div>
+      </div>`;
+    }).join('') || '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucune.</div>';
+
+    const nbSorties = rappro.enMoins.filter(s => !exclusions.has(s.id)).length;
+    const nbReactivations = rappro.enPlus.filter(p => decisions[p.eid] === 'reactiver').length;
+    const nbCreations = rappro.enPlus.filter(p => decisions[p.eid] === 'creer').length;
+
+    app.innerHTML = `
+      <div class="card" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:14px;font-weight:600;">Confirmées</span>
+          <span class="badge badge-green">${rappro.confirmees.length}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Brebis actives d'Ovilog retrouvées au bipage -- rien à faire.</div>
+      </div>
+
+      <div class="card" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-size:14px;font-weight:600;">En moins</span>
+          <span class="badge badge-amber">${rappro.enMoins.length}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Actives dans Ovilog mais non bipées -- décoche celles à conserver actives (isolée, soignée ailleurs...).</div>
+        <div id="enmoins-rows">${enMoinsRowsHtml}</div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-size:14px;font-weight:600;">En plus</span>
+          <span class="badge badge-amber">${rappro.enPlus.length}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Bipées mais pas dans l'inventaire actif -- choisis une action pour chacune.</div>
+        <div id="enplus-rows">${enPlusRowsHtml}</div>
+      </div>
+
+      <div id="maj-inventaire-err" class="error-box hidden" style="margin-top:14px;"></div>
+      <button type="button" class="btn btn-primary" id="btn-valider-maj-inventaire" style="margin-top:10px;background:var(--danger);">Valider (${nbSorties} sortie(s), ${nbReactivations} réactivation(s), ${nbCreations} création(s))</button>
+    `;
+
+    document.querySelectorAll('.cb-exclure-enmoins').forEach(cb => {
+      cb.onchange = () => {
+        if (cb.checked) exclusions.delete(cb.dataset.id);
+        else exclusions.add(cb.dataset.id);
+        draw();
+      };
+    });
+    document.querySelectorAll('.enplus-decision').forEach(btn => {
+      btn.onclick = () => {
+        decisions[btn.dataset.eid] = btn.dataset.val;
+        draw();
+      };
+    });
+
+    document.getElementById('btn-valider-maj-inventaire').onclick = () => {
+      const errBox = document.getElementById('maj-inventaire-err');
+      const aSortir = rappro.enMoins.filter(s => !exclusions.has(s.id));
+      const aReactiver = rappro.enPlus.filter(p => decisions[p.eid] === 'reactiver');
+      const aCreer = rappro.enPlus.filter(p => decisions[p.eid] === 'creer');
+      const total = aSortir.length + aReactiver.length + aCreer.length;
+      if (total === 0) {
+        errBox.textContent = "Aucun changement à appliquer -- l'inventaire est déjà à jour.";
+        errBox.classList.remove('hidden');
+        return;
+      }
+      if (!confirm('Appliquer la mise à jour inventaire : ' + aSortir.length + ' sortie(s), ' + aReactiver.length + ' réactivation(s), ' + aCreer.length + ' création(s) ?')) return;
+      errBox.classList.add('hidden');
+
+      const dateJour = new Date().toISOString().slice(0, 10);
+
+      if (aSortir.length > 0) {
+        if (!DB.causesMortalite.includes(MOTIF_MAJ_INVENTAIRE)) DB.causesMortalite.push(MOTIF_MAJ_INVENTAIRE);
+        const collectifId = 'MC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+        aSortir.forEach(s => CATEGORIE_ANIMAL_CONFIG.brebis.applySortie(s, 'Morte', MOTIF_MAJ_INVENTAIRE, null, dateJour, collectifId));
+        DB.mouvementsCollectifs = DB.mouvementsCollectifs || [];
+        DB.mouvementsCollectifs.push({
+          id: collectifId, categorie: 'brebis', annulable: true,
+          type: 'Morte', cause: MOTIF_MAJ_INVENTAIRE, acheteur: null,
+          date: dateJour, membres: aSortir.map(s => s.eid), createdAt: Date.now()
+        });
+      }
+
+      aReactiver.forEach(p => {
+        const s = p.sheep;
+        // Même effet que le glisser-suppression déjà disponible sur la
+        // fiche (voir deleteItem) : retire le(s) mouvement(s) de sortie,
+        // conserve tout le reste (dont un éventuel mouvement "Entrée").
+        s.mouvements = (s.mouvements || []).filter(m => !CATEGORIE_ANIMAL_CONFIG.brebis.typeSortie.includes(m.type));
+        recalculerStatutBrebis(s);
+      });
+
+      aCreer.forEach((p, i) => {
+        const sheep = {
+          id: Date.now().toString() + Math.random().toString(36).slice(2, 6) + i,
+          eid: p.eid, createdAt: Date.now(), dateEntree: dateJour, pere: null, mere: null,
+          echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active'
+        };
+        sheep.mouvements.push({ type: 'Entrée', cause: MOTIF_MAJ_INVENTAIRE, date: dateJour });
+        DB.brebis.push(sheep);
+      });
+
+      DB.majInventaireSession = { eids: [] };
+      saveData(DB);
+      alert('Inventaire mis à jour : ' + aSortir.length + ' sortie(s), ' + aReactiver.length + ' réactivation(s), ' + aCreer.length + ' création(s).');
+      render('inventaire-actifs');
+    };
+  }
+  draw();
 }
 
 /* ---------- Ajout brebis ---------- */
@@ -7634,6 +7931,13 @@ function renderAddMouvement(sheepId) {
     sheep.mouvements = sheep.mouvements || [];
     const statutAvant = sheep.statut || 'active';
     const ancienMouvement = editing ? sheep.mouvements[editContext.idx] : null;
+    // Un mouvement issu d'une sortie groupée (Mouvement groupé, ou "Mise à
+    // jour inventaire") porte un collectifId qui le rattache à
+    // DB.mouvementsCollectifs -- sans le reporter ici, corriger juste la
+    // cause ou la date d'UNE brebis du lot la faisait disparaître de ce
+    // lot (retrouvable/annulable en masse) sans que rien ne le signale,
+    // cassant sa traçabilité par rapport aux autres membres du même lot.
+    if (ancienMouvement && ancienMouvement.collectifId) mouvement.collectifId = ancienMouvement.collectifId;
     if (editing) sheep.mouvements[editContext.idx] = mouvement;
     else sheep.mouvements.push(mouvement);
     recalculerStatutBrebis(sheep);
