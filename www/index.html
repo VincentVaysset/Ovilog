@@ -14533,8 +14533,15 @@ function renderParametres() {
     btnCheck.onclick = async () => {
       btnCheck.disabled = true;
       statusEl.textContent = 'Vérification en cours...';
-      const release = await verifierMiseAJourDisponible();
+      const { ok, release } = await verifierMiseAJourDisponible();
       btnCheck.disabled = false;
+      if (!ok) {
+        // Distinct de "à jour" : la vérification elle-même a échoué (réseau,
+        // réponse GitHub inattendue) -- ne jamais laisser croire à tort que
+        // tout est à jour dans ce cas (signalé en usage réel).
+        statusEl.textContent = '⚠️ Vérification impossible — vérifie ta connexion internet et réessaie.';
+        return;
+      }
       if (!release) {
         statusEl.textContent = '✅ Vous êtes à jour.';
         return;
@@ -15189,54 +15196,68 @@ async function versionCodeInstalle() {
 
 // Interroge la liste des Releases GitHub (API publique, sans
 // authentification -- aucun secret embarqué dans l'APK distribué) et
-// renvoie les informations de la plus récente, ou null si indisponible /
-// mal formée / sans APK attaché. Le tag doit être de la forme "v<entier>"
-// (voir l'étape "Publier la Release GitHub" du workflow CI) : c'est cet
-// entier, identique au versionCode Android du build correspondant, qui
-// sert de base de comparaison -- jamais le nom/tag brut.
+// renvoie { ok, best } : ok=false si la requête ou la réponse est en échec
+// (réseau, parsing) -- distinct de "aucune release exploitable trouvée",
+// qui reste ok=true avec best=null (voir la distinction faite par
+// l'appelant, nécessaire pour ne jamais afficher "à jour" à tort sur un
+// simple échec réseau). Le tag doit être de la forme "v<entier>" (voir
+// l'étape "Publier la Release GitHub" du workflow CI) : c'est cet entier,
+// identique au versionCode Android du build correspondant, qui sert de
+// base de comparaison -- jamais le nom/tag brut.
+//
+// Examine TOUTES les releases renvoyées (pas seulement la première) et
+// retient celle au versionCode le plus élevé -- jamais un simple
+// `releases[0]` en confiance aveugle dans l'ordre renvoyé par l'API :
+// signalé en usage réel après une release CI dont le tag pointait par
+// erreur vers un vieux commit de main (target_commitish non précisé,
+// corrigé dans le workflow), ce qui donnait à toutes les releases un
+// created_at identique -- un ordre de tri qui n'est alors plus garanti.
 async function derniereReleaseDisponible() {
   try {
     const res = await fetch('https://api.github.com/repos/' + UPDATE_REPO_OWNER + '/' + UPDATE_REPO_NAME + '/releases', {
       headers: { 'Accept': 'application/vnd.github+json' }
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { ok: false, best: null };
     const releases = await res.json();
-    if (!Array.isArray(releases) || !releases.length) return null;
-    const derniere = releases[0]; // la plus récente -- GitHub trie par date de création décroissante
-    const m = /^v(\d+)$/.exec(derniere.tag_name || '');
-    if (!m) return null;
-    const asset = (derniere.assets || []).find(a => /\.apk$/i.test(a.name || ''));
-    if (!asset || !asset.browser_download_url) return null;
-    // Contrôle basique de provenance avant de retenir l'URL de
-    // téléchargement : elle doit provenir de GitHub lui-même.
-    let url;
-    try { url = new URL(asset.browser_download_url); } catch (e) { return null; }
-    const hoteAutorise = url.hostname === 'github.com' || url.hostname.endsWith('.githubusercontent.com');
-    if (!hoteAutorise) return null;
-    return {
-      versionCode: parseInt(m[1], 10),
-      tagName: derniere.tag_name,
-      name: derniere.name || derniere.tag_name,
-      body: derniere.body || '',
-      apkUrl: asset.browser_download_url
-    };
+    if (!Array.isArray(releases)) return { ok: false, best: null };
+    let best = null;
+    for (const r of releases) {
+      const m = /^v(\d+)$/.exec(r.tag_name || '');
+      if (!m) continue;
+      const asset = (r.assets || []).find(a => /\.apk$/i.test(a.name || ''));
+      if (!asset || !asset.browser_download_url) continue;
+      // Contrôle basique de provenance avant de retenir l'URL de
+      // téléchargement : elle doit provenir de GitHub lui-même.
+      let url;
+      try { url = new URL(asset.browser_download_url); } catch (e) { continue; }
+      const hoteAutorise = url.hostname === 'github.com' || url.hostname.endsWith('.githubusercontent.com');
+      if (!hoteAutorise) continue;
+      const versionCode = parseInt(m[1], 10);
+      if (!best || versionCode > best.versionCode) {
+        best = { versionCode, tagName: r.tag_name, name: r.name || r.tag_name, body: r.body || '', apkUrl: asset.browser_download_url };
+      }
+    }
+    return { ok: true, best };
   } catch (e) {
-    return null;
+    return { ok: false, best: null };
   }
 }
 
-// Combine les deux -- renvoie les infos de la release à proposer si elle
-// est réellement plus récente que la version installée, sinon null (déjà
-// à jour, hors app installée, ou vérification impossible pour une raison
-// quelconque -- jamais d'exception ni de message d'erreur pour l'appelant
-// silencieux, voir vérifierMiseAJourAuDemarrage plus bas).
+// Combine les deux -- renvoie { ok, release } : release contient les infos
+// de la mise à jour à proposer si elle est réellement plus récente que la
+// version installée (ok=true, release=objet), null si déjà à jour (ok=true,
+// release=null) ou si hors app installée (ok=false, release=null -- rien à
+// vérifier). ok=false signale spécifiquement un échec de la vérification
+// elle-même (réseau, réponse GitHub mal formée) -- à distinguer d'un "déjà
+// à jour" confirmé, pour ne jamais afficher à tort "Vous êtes à jour" sur
+// un simple échec de connexion (voir l'appel manuel dans Paramètres).
 async function verifierMiseAJourDisponible() {
   const localCode = await versionCodeInstalle();
-  if (localCode === null) return null;
-  const release = await derniereReleaseDisponible();
-  if (!release) return null;
-  if (release.versionCode <= localCode) return null;
-  return release;
+  if (localCode === null) return { ok: false, release: null };
+  const { ok, best } = await derniereReleaseDisponible();
+  if (!ok) return { ok: false, release: null };
+  if (!best || best.versionCode <= localCode) return { ok: true, release: null };
+  return { ok: true, release: best };
 }
 
 // Popup non bloquante "Nouvelle version disponible" -- un seul exemplaire
@@ -15331,7 +15352,7 @@ async function telechargerEtInstallerMiseAJour(release, overlay) {
 // "Plus tard" (voir UPDATE_DISMISSED_KEY).
 async function verifierMiseAJourAuDemarrage() {
   try {
-    const release = await verifierMiseAJourDisponible();
+    const { release } = await verifierMiseAJourDisponible();
     if (!release) return;
     let dernierRefus = null;
     try { dernierRefus = parseInt(localStorage.getItem(UPDATE_DISMISSED_KEY), 10); } catch (e) { /* ignoré */ }
