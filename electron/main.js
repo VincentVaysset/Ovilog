@@ -12,6 +12,16 @@
 // partie publication.
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
+const log = require('electron-log');
+
+// Fichier de log consultable (par défaut sous Windows :
+// %APPDATA%/Ovilog/logs/main.log) -- tant que l'auto-update n'est pas
+// stabilisé, mieux vaut un résultat inspectable qu'un .catch(() => {})
+// qui avale tout silencieusement (c'est exactement ce qui a masqué le
+// bug de nommage d'artefact NSIS découvert sur ce chantier : la
+// vérification "réussissait" en apparence alors que le téléchargement de
+// l'installeur échouait en 404 en coulisses).
+log.transports.file.level = 'info';
 
 // require() différé et gardé par app.isPackaged : hors app packagée (npm
 // start), il n'existe ni feed de mise à jour valide ni exécutable NSIS à
@@ -60,6 +70,13 @@ app.whenReady().then(() => {
   });
 
   if (autoUpdater) {
+    // Branché AVANT tout appel : electron-updater journalise lui-même
+    // chaque étape de son cycle de vie (recherche, version trouvée, URL de
+    // téléchargement, erreurs...) dès que ce logger est renseigné (sinon il
+    // se contente d'un `console` par défaut, invisible dans une appli
+    // packagée sans terminal).
+    autoUpdater.logger = log;
+
     // Toutes les Releases publiées jusqu'ici sont marquées "prerelease" sur
     // GitHub (voir build-apk.yml : prerelease tant que la branche n'est pas
     // main) -- electron-updater les ignore par défaut (allowPrerelease vaut
@@ -85,7 +102,23 @@ app.whenReady().then(() => {
     // 4h a été retiré, sur demande explicite) : la détection doit se faire
     // au redémarrage de l'appli, pas au bout d'un délai arbitraire pendant
     // qu'elle tourne déjà.
-    autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+    autoUpdater.checkForUpdatesAndNotify()
+      .then(result => {
+        // result vaut null quand la vérification tourne déjà (jamais le
+        // cas ici, un seul appel par démarrage) -- sinon, contient la
+        // version trouvée même si elle n'est pas plus récente.
+        if (result && result.updateInfo) {
+          log.info(`Vérification de mise à jour terminée -- version distante : ${result.updateInfo.version}`);
+        } else {
+          log.info('Vérification de mise à jour terminée -- aucun résultat exploitable');
+        }
+      })
+      .catch(err => {
+        // Jamais d'erreur visible pour l'utilisateur ici (simple défaut
+        // réseau, absence de release plus récente...) -- mais désormais
+        // tracée dans le fichier de log plutôt qu'avalée en silence.
+        log.error(`Échec de la vérification de mise à jour : ${err && err.stack || err}`);
+      });
   }
 });
 
