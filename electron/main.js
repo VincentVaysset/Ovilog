@@ -56,6 +56,14 @@ function creerFenetrePrincipale() {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, 'preload.js'),
+      // Transmet le numéro de version au préchargement (voir preload.js) --
+      // app.getVersion() (jamais sandboxé, contrairement au préchargement)
+      // lit exactement le même champ "version" de package.json que celui
+      // packagé par electron-builder. process.argv (lu côté preload) est un
+      // global toujours fourni par Electron, sandbox ou non -- contrairement
+      // à require() d'un fichier arbitraire, qui a cassé window.electronAPI
+      // en silence sur le build précédent (voir commentaire dans preload.js).
+      additionalArguments: ['--ovilog-version=' + app.getVersion()],
     },
   });
   fenetre.loadFile(cheminIndexHtml());
