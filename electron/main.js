@@ -69,7 +69,7 @@ app.whenReady().then(() => {
     // fois la branche mergée sur main (Releases non-prerelease).
     autoUpdater.allowPrerelease = true;
 
-    // Vérification silencieuse au démarrage puis toutes les 4h -- comme
+    // Vérification silencieuse une seule fois, ici, au démarrage -- comme
     // verifierMiseAJourAuDemarrage() côté Android (voir www/index.html) :
     // jamais d'erreur visible pour un simple défaut réseau ou l'absence de
     // release plus récente. En cas de mise à jour trouvée, electron-updater
@@ -80,10 +80,12 @@ app.whenReady().then(() => {
     // passer par un plugin natif pour contourner l'absence d'en-têtes CORS
     // sur les assets de release -- ce problème ne se pose pas ici, tout se
     // passe côté process principal Node, jamais dans un contexte navigateur).
+    //
+    // Pas de re-vérification périodique (l'ancien setInterval toutes les
+    // 4h a été retiré, sur demande explicite) : la détection doit se faire
+    // au redémarrage de l'appli, pas au bout d'un délai arbitraire pendant
+    // qu'elle tourne déjà.
     autoUpdater.checkForUpdatesAndNotify().catch(() => {});
-    setInterval(() => {
-      autoUpdater.checkForUpdatesAndNotify().catch(() => {});
-    }, 4 * 60 * 60 * 1000);
   }
 });
 
