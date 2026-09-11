@@ -331,6 +331,30 @@
   .fiche-desktop-grid > button,
   .fiche-desktop-grid > div:not(.card) { grid-column: 1 / -1; }
 
+  /* ---------- Dashboard d'accueil desktop (chantier "Refonte écran
+     d'accueil desktop", plan + maquette validés) -- voir
+     dashboardDesktopHtml, actif uniquement via isDesktopMode(). ---------- */
+  .dashboard-desktop-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+  .dash-block { display: flex; flex-direction: column; gap: 14px; }
+  @media (max-width: 1100px) { .dashboard-desktop-grid { grid-template-columns: 1fr; } }
+  .block-title { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+  .kpi-row { display: flex; gap: 16px; margin-bottom: 14px; }
+  .kpi { flex: 1; }
+  .kpi-value { font-size: 22px; font-weight: 700; }
+  .kpi-label { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+  .bar-row { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 3px; }
+  .bar-track { height: 8px; background: #eee; border-radius: 5px; overflow: hidden; margin-bottom: 9px; }
+  .bar-fill { height: 100%; }
+  .list-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-top: 1px solid var(--border); font-size: 13px; }
+  .list-row:first-child { border-top: none; }
+  .compare-group { margin-bottom: 10px; }
+  .compare-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+  .compare-bars { display: flex; flex-direction: column; gap: 3px; }
+  .compare-bar-track { position: relative; width: 82%; height: 16px; background: #f0efe9; border-radius: 4px; overflow: visible; }
+  .compare-bar-fill { height: 100%; border-radius: 4px; }
+  .compare-bar-val { position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .compare-bar-val.muted { color: var(--text-muted); font-weight: 500; }
+
   /* ---------- Bandeau d'accueil (compteurs troupeau) ---------- */
   .home-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
   .stat-pill { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 8px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; cursor: pointer; }
@@ -3193,7 +3217,7 @@ function render(view, sheepId) {
   // d'AUCUN écran pas encore repensé pour le desktop (voir chantier
   // "Refonte fiche brebis desktop" -- les autres écrans restent centrés
   // sur 700px tant qu'ils n'ont pas reçu le même traitement).
-  app.classList.toggle('fiche-desktop-wide', isDesktopMode() && view === 'detail');
+  app.classList.toggle('fiche-desktop-wide', isDesktopMode() && (view === 'detail' || view === 'home'));
   // Réinitialisé à chaque navigation : c'est à l'écran qui s'affiche de se
   // déclarer explicitement via setActiveScanTarget() s'il attend un scan EID
   // (voir onEidScanned plus bas). Évite qu'un scan Bluetooth reçu sur un
@@ -3303,12 +3327,26 @@ function renderCrashScreen(view) {
 }
 
 /* ---------- KPIs du tableau de bord (fusionnés dans l'écran d'accueil) ---------- */
-function dashboardKpiHtml() {
+/* Toutes les données chiffrées de l'écran d'accueil (hors pastilles
+   effectifs, calculées séparément dans renderHome), extraites de
+   dashboardKpiHtml en fonction pure -- réutilisée telle quelle par le
+   dashboard desktop (voir dashboardDesktopHtml/isDesktopMode) pour ne
+   jamais recalculer différemment les mêmes chiffres entre mobile et
+   desktop, seule la mise en page change. */
+function dashboardStatsData() {
   const active = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   const total = active.length;
 
   const stadeCount = { 'Début': 0, 'Milieu': 0, 'Fin': 0, 'Vide': 0 };
   let avecEcho = 0;
+  // Prolificité prévisionnelle (campagne en cours) : moyenne du nombre de
+  // têtes annoncées (Simple=1/Double=2) par la DERNIÈRE échographie de
+  // chaque brebis encore gestante -- même champ `agneaux` que celui déjà
+  // affiché sur la fiche brebis (voir echoItemHtml dans renderDetail),
+  // jamais une nouvelle saisie. Une brebis confirmée Vide n'a jamais ce
+  // champ renseigné (rien à estimer), donc filtrer sur sa présence suffit
+  // à l'exclure sans règle supplémentaire.
+  let gestantesAvecEstim = 0, totalTeteEstimee = 0;
   active.forEach(s => {
     const last = s.echographies[s.echographies.length - 1];
     if (!last) return;
@@ -3316,7 +3354,12 @@ function dashboardKpiHtml() {
     if (last.type !== 'constat' && last.stade && stadeCount.hasOwnProperty(last.stade)) {
       stadeCount[last.stade]++;
     }
+    if (last.agneaux) {
+      gestantesAvecEstim++;
+      totalTeteEstimee += last.agneaux === 'Double' ? 2 : 1;
+    }
   });
+  const prolificitePrevisionnelle = gestantesAvecEstim > 0 ? Math.round((totalTeteEstimee / gestantesAvecEstim) * 100) / 100 : null;
 
   let totalMisesBas = 0, totalAgneaux = 0, totalMortNes = 0, totalMales = 0, totalFemelles = 0;
   DB.brebis.forEach(s => {
@@ -3349,6 +3392,12 @@ function dashboardKpiHtml() {
   const { misesBasActives, troupeauAMettreBas, misesBasRestantes } = campagneBilanChiffres(active);
   const pctMisesBasRealisees = troupeauAMettreBas > 0 ? Math.min(100, Math.round((misesBasActives / troupeauAMettreBas) * 100)) : 0;
 
+  // Taux de réussite global de la campagne (voir Bilan de campagne) --
+  // sur la cohorte "présentes au démarrage", pas les actives d'aujourd'hui
+  // (voir campagneCohortPresente/tauxReussiteGlobal), affiché tel quel par
+  // le dashboard desktop.
+  const tauxReussite = tauxReussiteGlobal(campagneCohortPresente());
+
   const attendueTraiteCount = active.filter(s => isAttendueTraite(s, DB.brebis)).length;
 
   // Moyennes par contrôle : reprises directement du résumé importé (voir
@@ -3378,6 +3427,21 @@ function dashboardKpiHtml() {
       totalControles++;
     });
   });
+
+  return {
+    active, total, stadeCount, avecEcho, totalMisesBas, totalAgneaux, totalMortNes,
+    totalMales, totalFemelles, prolificite, prolificitePrevisionnelle,
+    misesBasActives, troupeauAMettreBas, misesBasRestantes, pctMisesBasRealisees,
+    tauxReussite, attendueTraiteCount, resume1, resume2, resume3, totalControles
+  };
+}
+
+function dashboardKpiHtml() {
+  const {
+    active, total, stadeCount, avecEcho, totalAgneaux, totalMortNes, totalMales, totalFemelles,
+    prolificite, misesBasActives, troupeauAMettreBas, misesBasRestantes, pctMisesBasRealisees,
+    attendueTraiteCount, resume1, resume2, resume3, totalControles
+  } = dashboardStatsData();
 
   function bar(label, count, color) {
     const pct = total > 0 ? Math.round((count / total) * 100) : 0;
@@ -3488,9 +3552,272 @@ function dashboardKpiHtml() {
    Vue d'ensemble de l'exploitation (pastilles, KPIs) — distincte de l'onglet
    "Brebis" du menu, qui n'affiche que l'inventaire pur et son propre scan
    (voir renderList ci-dessous). */
+/* ---------- Dashboard desktop (chantier "Refonte écran d'accueil
+   desktop", plan + maquette validés) ----------
+   4 blocs en grille, réutilisant EXACTEMENT les mêmes fonctions de calcul
+   que l'accueil mobile (dashboardStatsData, tauxReussiteGlobal,
+   computeWithdrawalAlerts, litrageTroupeauResume...) -- rien n'est
+   recalculé différemment, seule la disposition change. Actif UNIQUEMENT
+   si isDesktopMode() (voir renderHome) : l'accueil mobile/Android garde
+   exactement son rendu actuel (hero + dashboardKpiHtml). */
+
+/* Bloc "Mortalité & Sanitaire" : pertes de la campagne (brebis mortes +
+   causes, agneaux morts/mort-nés) et traitements en cours dont le délai
+   d'attente lait/viande est encore actif -- computeWithdrawalAlerts est
+   déjà utilisé sur la fiche de chaque brebis (voir renderDetail), simple
+   boucle ici sur toutes les actives, aucune nouvelle règle de calcul. */
+function mortaliteSanitaireData() {
+  const causesCount = {};
+  let brebisMortesCount = 0;
+  DB.brebis.forEach(s => {
+    (s.mouvements || []).forEach(m => {
+      if (m.type !== 'Morte') return;
+      if (DB.campagneDebut != null && campagneAnneeDebutPourDate(m.date) !== DB.campagneDebut) return;
+      brebisMortesCount++;
+      const cause = m.cause || 'Non renseignée';
+      causesCount[cause] = (causesCount[cause] || 0) + 1;
+    });
+  });
+
+  let agneauxMorts = 0;
+  DB.brebis.forEach(s => {
+    (s.agnelages || []).forEach(a => {
+      if (DB.campagneDebut != null && a.campagne !== DB.campagneDebut) return;
+      a.lambs.forEach(l => {
+        if (l.sexe === 'Mort-né' || l.statutFinal === 'mort') agneauxMorts++;
+      });
+    });
+  });
+
+  const traitementsEnCours = [];
+  DB.brebis.filter(s => (s.statut || 'active') === 'active').forEach(s => {
+    const w = computeWithdrawalAlerts(s);
+    if (w.laitFin || w.viandeFin) traitementsEnCours.push({ id: s.id, eid: s.eid, laitFin: w.laitFin, viandeFin: w.viandeFin });
+  });
+
+  return { brebisMortesCount, causesCount, agneauxMorts, traitementsEnCours };
+}
+
+/* Bloc "Contrôle laitier" : moyenne par brebis (litrageTroupeauResume,
+   déjà utilisée par dashboardStatsData/l'écran Contrôle laitier) pour
+   chacun des 3 contrôles, campagne en cours ET campagne précédente --
+   DB.resumeControleLaitier n'est jamais purgé d'une campagne à l'autre
+   (seul son champ `campagne` distingue les années), donc comparer les
+   deux ne demande qu'un second appel à la même fonction. */
+function controleLaitierCompareData() {
+  function moyennePour(campagne, n) {
+    if (campagne == null) return null;
+    const r = (DB.resumeControleLaitier || []).find(x => x.campagne === campagne && x.controle === n);
+    const v = litrageTroupeauResume(r);
+    return v !== null ? v / 1000 : null;
+  }
+  const campagneActuelle = DB.campagneDebut;
+  const campagnePrecedente = DB.campagneDebut != null ? DB.campagneDebut - 1 : null;
+  return [1, 2, 3].map(n => ({
+    controle: n,
+    actuel: moyennePour(campagneActuelle, n),
+    precedent: moyennePour(campagnePrecedente, n)
+  }));
+}
+
+/* Bloc "Mouvements & Effectifs" : entrées/ventes/pertes de la campagne en
+   cours, sur les 3 catégories qui suivent des mouvements dans un tableau
+   dédié (brebis/béliers/agnelles) -- campagneAnneeDebutPourDate est déjà
+   utilisée ailleurs pour rattacher une date à une campagne (échographies),
+   réutilisée ici telle quelle sur la date de chaque mouvement. */
+function mouvementsCampagneData() {
+  let entrees = 0, vendues = 0, mortes = 0;
+  function compter(pool, venteTypes, morteType) {
+    pool.forEach(a => {
+      (a.mouvements || []).forEach(m => {
+        if (DB.campagneDebut == null || campagneAnneeDebutPourDate(m.date) !== DB.campagneDebut) return;
+        if (m.type === 'Entrée') entrees++;
+        else if (venteTypes.includes(m.type)) vendues++;
+        else if (m.type === morteType) mortes++;
+      });
+    });
+  }
+  compter(DB.brebis, ['Vendue', 'Vendue reproduction'], 'Morte');
+  compter(DB.beliers || [], ['Vendu', 'Vendu reproduction'], 'Mort');
+  compter(DB.agnelles || [], ['Vendue', 'Vendue reproduction'], 'Morte');
+  return { entrees, vendues, mortes };
+}
+
+/* Bloc "Mouvements & Effectifs" (liste) : les derniers événements, tous
+   animaux confondus -- les ventes/sorties de brebis/béliers/agnelles se
+   font quasi toujours par lot (voir Mouvement groupé/Mise à jour
+   inventaire, DB.mouvementsCollectifs) : UN SEUL événement par lot plutôt
+   qu'une ligne par animal. Un mouvement individuel déjà représenté par un
+   lot (collectifId posé) n'est jamais listé une seconde fois. Les agneaux
+   mâles (vendus/morts un par un depuis "Devenir des agneaux", voir
+   showLambSortieModal) n'ont pour l'instant aucun mécanisme de lot dans
+   l'appli -- restent donc listés individuellement, fidèle à ce que les
+   données représentent réellement. */
+function derniersMouvementsData(limite) {
+  const events = [];
+  (DB.mouvementsCollectifs || []).forEach(m => {
+    const cfg = CATEGORIE_ANIMAL_CONFIG[m.categorie || 'brebis'];
+    events.push({ label: 'Lot de ' + m.membres.length + ' ' + cfg.label.toLowerCase(), type: m.type, date: m.date });
+  });
+  function ajouterIndividuels(pool, prefixe) {
+    pool.forEach(a => {
+      (a.mouvements || []).forEach(m => {
+        if (m.collectifId) return; // déjà représenté ci-dessus via son lot
+        events.push({ label: prefixe + ' n°' + numeroVisuel(a.eid), type: m.type, date: m.date });
+      });
+    });
+  }
+  ajouterIndividuels(DB.brebis, 'Brebis');
+  ajouterIndividuels(DB.beliers || [], 'Bélier');
+  ajouterIndividuels(DB.agnelles || [], 'Agnelle');
+  DB.brebis.forEach(s => {
+    (s.agnelages || []).forEach(a => {
+      a.lambs.forEach(l => {
+        if (l.sexe === 'Mort-né') return;
+        (l.mouvements || []).forEach(m => {
+          events.push({ label: 'Agneau n°' + (l.eid ? numeroVisuel(l.eid) : '?'), type: m.type, date: m.date });
+        });
+      });
+    });
+  });
+  return events
+    .filter(e => e.date)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, limite);
+}
+
+function dashboardDesktopHtml() {
+  const s = dashboardStatsData();
+  const mortaSanit = mortaliteSanitaireData();
+  const laitCompare = controleLaitierCompareData();
+  const mvtCampagne = mouvementsCampagneData();
+  const derniersMvt = derniersMouvementsData(6);
+  const nbBeliersActifs = DB.beliers.filter(b => (b.statut || 'actif') === 'actif').length;
+  const nbAgnelles = (DB.agnelles || []).length;
+
+  const badgeType = t => (t === 'Morte' || t === 'Mort') ? 'badge-coral' : 'badge-muted';
+  const causesRows = Object.entries(mortaSanit.causesCount)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cause, n]) => `<div class="list-row"><span>${cause}</span><span class="badge badge-muted">${n}</span></div>`)
+    .join('') || '<div class="muted" style="font-size:13px;padding:6px 0;">Aucune perte enregistrée cette campagne.</div>';
+
+  const delaisRows = mortaSanit.traitementsEnCours.length === 0
+    ? '<div class="muted" style="font-size:13px;padding:6px 0;">Aucun délai d\'attente actif.</div>'
+    : mortaSanit.traitementsEnCours.map(w => `
+        <div class="list-row dash-eid-link" data-id="${w.id}" style="cursor:pointer;">
+          <span>Brebis n°${numeroVisuel(w.eid)}</span>
+          <span>${w.laitFin ? `<span class="badge badge-coral">Lait jusqu'au ${formatDateFr(w.laitFin)}</span>` : ''}${w.viandeFin ? `<span class="badge badge-coral" style="margin-left:4px;">Viande jusqu'au ${formatDateFr(w.viandeFin)}</span>` : ''}</span>
+        </div>
+      `).join('');
+
+  const maxLitres = Math.max(0.01, ...laitCompare.flatMap(c => [c.actuel || 0, c.precedent || 0]));
+  const compareRows = laitCompare.map(c => `
+    <div class="compare-group">
+      <div class="compare-label">${['1er', '2e', '3e'][c.controle - 1]} contrôle</div>
+      <div class="compare-bars">
+        <div class="compare-bar-track"><div class="compare-bar-fill" style="width:${c.actuel !== null ? Math.round((c.actuel / maxLitres) * 100) : 0}%;background:var(--blue-fg);"></div><span class="compare-bar-val">${c.actuel !== null ? fmtDecimal(c.actuel, 2) + ' L' : '—'}</span></div>
+        <div class="compare-bar-track"><div class="compare-bar-fill" style="width:${c.precedent !== null ? Math.round((c.precedent / maxLitres) * 100) : 0}%;background:#c7dcea;"></div><span class="compare-bar-val muted">${c.precedent !== null ? fmtDecimal(c.precedent, 2) + ' L' : '—'}</span></div>
+      </div>
+    </div>
+  `).join('');
+
+  const mvtRows = derniersMvt.length === 0
+    ? '<div class="muted" style="font-size:13px;padding:6px 0;">Aucun mouvement enregistré.</div>'
+    : derniersMvt.map(e => `<div class="list-row"><span>${e.label}</span><span><span class="badge ${badgeType(e.type)}">${e.type}</span> <span class="muted">${formatDateFr(e.date)}</span></span></div>`).join('');
+
+  return `
+    <div class="dashboard-desktop-grid">
+      <div class="dash-block">
+        <div class="card">
+          <div class="block-title">${iconCircle(ICON_ECHO, 'green', 'sm')} Reproduction & Mises bas</div>
+          <div class="kpi-row">
+            <div class="kpi"><div class="kpi-value">${s.tauxReussite.taux} %</div><div class="kpi-label">Taux de réussite</div></div>
+            <div class="kpi"><div class="kpi-value">${s.prolificite}</div><div class="kpi-label">Prolificité réelle</div></div>
+            <div class="kpi"><div class="kpi-value">${s.prolificitePrevisionnelle !== null ? s.prolificitePrevisionnelle : '—'}</div><div class="kpi-label">Prévisionnelle (écho)</div></div>
+          </div>
+          <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">Mises bas réalisées : ${s.misesBasActives} / ${s.troupeauAMettreBas}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${s.pctMisesBasRealisees}%;background:var(--amber-fg);"></div></div>
+          <div style="font-size:11.5px;color:var(--text-muted);">${s.totalAgneaux} agneaux nés, dont ${s.totalMortNes} mort-né(s) · ${s.totalMales} mâle(s) / ${s.totalFemelles} femelle(s)</div>
+        </div>
+        <div class="card">
+          <div class="block-title" style="font-size:13px;">Répartition par stade (dernière échographie)</div>
+          ${['Début', 'Milieu', 'Fin', 'Vide'].map(stade => `
+            <div class="bar-row"><span>${stade}</span><span class="muted">${s.stadeCount[stade]} (${s.total > 0 ? Math.round((s.stadeCount[stade] / s.total) * 100) : 0}%)</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:${s.total > 0 ? Math.round((s.stadeCount[stade] / s.total) * 100) : 0}%;background:${stade === 'Début' ? 'var(--primary-light)' : stade === 'Milieu' ? 'var(--primary)' : stade === 'Fin' ? 'var(--success)' : 'var(--danger)'};"></div></div>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="dash-block">
+        <div class="card">
+          <div class="block-title">${iconCircle(ICON_SANTE, 'coral', 'sm')} Mortalité & Sanitaire</div>
+          <div class="kpi-row">
+            <div class="kpi"><div class="kpi-value">${mortaSanit.brebisMortesCount}</div><div class="kpi-label">Brebis mortes</div></div>
+            <div class="kpi"><div class="kpi-value">${mortaSanit.agneauxMorts}</div><div class="kpi-label">Agneaux morts</div></div>
+            <div class="kpi"><div class="kpi-value">${mortaSanit.traitementsEnCours.length}</div><div class="kpi-label">Traitements en cours</div></div>
+          </div>
+          <div style="font-size:12.5px;font-weight:600;margin:10px 0 4px;">Causes de mortalité (brebis, campagne)</div>
+          ${causesRows}
+        </div>
+        <div class="card">
+          <div class="block-title" style="font-size:13px;">Délais d'attente actifs</div>
+          ${delaisRows}
+        </div>
+      </div>
+
+      <div class="dash-block">
+        <div class="card">
+          <div class="block-title">${iconCircle(ICON_LAIT, 'blue', 'sm')} Contrôle laitier / Production</div>
+          <div class="kpi-row">
+            <div class="kpi"><div class="kpi-value">${s.resume1.litres !== null ? fmtDecimal(s.resume1.litres, 2) + ' L' : '—'}</div><div class="kpi-label">1er contrôle</div></div>
+            <div class="kpi"><div class="kpi-value">${[s.resume1, s.resume2, s.resume3].every(r => r.litres === null) ? '—' : fmtDecimal([s.resume1, s.resume2, s.resume3].reduce((sum, r) => sum + (r.litres || 0), 0), 2) + ' L'}</div><div class="kpi-label">Cumul 3 contrôles</div></div>
+            <div class="kpi"><div class="kpi-value">${s.attendueTraiteCount}</div><div class="kpi-label">Attendues à la traite</div></div>
+          </div>
+          <div style="font-size:12.5px;font-weight:600;margin:12px 0 10px;">Moyenne par brebis · campagne ${DB.campagneDebut != null ? (DB.campagneDebut + 1) : ''} vs ${DB.campagneDebut != null ? DB.campagneDebut : ''}</div>
+          <div style="display:flex;gap:6px;font-size:11px;color:var(--text-muted);margin-bottom:8px;">
+            <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:9px;height:9px;border-radius:2px;background:var(--blue-fg);display:inline-block;"></span>Campagne en cours</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;margin-left:10px;"><span style="width:9px;height:9px;border-radius:2px;background:#c7dcea;display:inline-block;"></span>Campagne précédente</span>
+          </div>
+          ${compareRows}
+        </div>
+      </div>
+
+      <div class="dash-block">
+        <div class="card">
+          <div class="block-title">${iconCircle(ICON_MOUVEMENT, 'indigo', 'sm')} Mouvements & Effectifs</div>
+          <div class="kpi-row">
+            <div class="kpi"><div class="kpi-value">${s.total}</div><div class="kpi-label">Brebis actives</div></div>
+            <div class="kpi"><div class="kpi-value">${nbAgnelles}</div><div class="kpi-label">Agnelles</div></div>
+            <div class="kpi"><div class="kpi-value">${nbBeliersActifs}</div><div class="kpi-label">Béliers actifs</div></div>
+          </div>
+          <div style="font-size:12.5px;font-weight:600;margin:10px 0 4px;">Mouvements — campagne en cours</div>
+          <div class="list-row"><span>Entrées</span><span class="badge badge-muted">${mvtCampagne.entrees}</span></div>
+          <div class="list-row"><span>Vendues</span><span class="badge badge-muted">${mvtCampagne.vendues}</span></div>
+          <div class="list-row"><span>Mortes</span><span class="badge badge-muted">${mvtCampagne.mortes}</span></div>
+        </div>
+        <div class="card">
+          <div class="block-title" style="font-size:13px;">Derniers mouvements</div>
+          ${mvtRows}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderHome() {
-  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   pageTitle.textContent = 'Mon troupeau';
+
+  if (isDesktopMode()) {
+    const dashboard = document.createElement('div');
+    dashboard.innerHTML = dashboardDesktopHtml();
+    app.appendChild(dashboard);
+    document.querySelectorAll('.dash-eid-link').forEach(el => {
+      el.onclick = () => { detailOrigin = 'home'; previousDetailId = null; render('detail', el.dataset.id); };
+    });
+    return;
+  }
+
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
 
   const nbBeliersActifs = DB.beliers.filter(b => (b.statut || 'actif') === 'actif').length;
   const hero = document.createElement('div');
