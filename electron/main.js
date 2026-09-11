@@ -60,6 +60,15 @@ app.whenReady().then(() => {
   });
 
   if (autoUpdater) {
+    // Toutes les Releases publiées jusqu'ici sont marquées "prerelease" sur
+    // GitHub (voir build-apk.yml : prerelease tant que la branche n'est pas
+    // main) -- electron-updater les ignore par défaut (allowPrerelease vaut
+    // false tant que app.getVersion() n'a pas elle-même un suffixe du genre
+    // "-beta", ce qui n'est pas notre cas). Sans ce réglage, la vérification
+    // ne trouve donc jamais rien à installer, silencieusement. À revoir une
+    // fois la branche mergée sur main (Releases non-prerelease).
+    autoUpdater.allowPrerelease = true;
+
     // Vérification silencieuse au démarrage puis toutes les 4h -- comme
     // verifierMiseAJourAuDemarrage() côté Android (voir www/index.html) :
     // jamais d'erreur visible pour un simple défaut réseau ou l'absence de
