@@ -3268,6 +3268,7 @@ function render(view, sheepId) {
     else if (view === 'controle-laitier') renderControleLaitier();
     else if (view === 'liste-serie') renderListeSerie();
     else if (view === 'journal') renderJournal();
+    else if (view === 'import-tank-laitier') renderImportTankLaitier();
     else if (view === 'lots') renderLots();
     else if (view === 'add-lot') renderAddLot();
     else if (view === 'add-lot-reforme') renderAddLotReforme();
@@ -9562,7 +9563,10 @@ function renderJournal() {
       </div>
 
       <div id="lait-err" class="error-box hidden"></div>
-      <button class="btn btn-secondary" id="btn-save-lait" style="margin-top:8px;">Enregistrer</button>
+      <div class="row" style="margin-top:8px;">
+        <button class="btn btn-secondary" id="btn-save-lait" style="flex:1;">Enregistrer</button>
+        <button type="button" class="btn btn-secondary" id="btn-goto-import-tank" style="flex:1;">Importer un CSV</button>
+      </div>
       ${DB.laitTank.length > 0 ? '<div style="font-size:12px;color:var(--text-muted);margin-top:12px;margin-bottom:6px;">Derniers relevés</div>' : ''}
       <div>
         ${[...DB.laitTank].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,4).map(l => {
@@ -9809,8 +9813,243 @@ function renderJournal() {
       render('journal');
     };
   });
+
+  document.getElementById('btn-goto-import-tank').onclick = () => render('import-tank-laitier');
 }
 
+/* ---------- Import CSV du tank laitier (production journalière) ----------
+   Comble un historique jamais saisi au fil de l'eau (chantier "Import CSV
+   Tank laitier") -- même principe que les autres imports CSV (aperçu
+   obligatoire avant toute écriture, jamais d'écrasement silencieux) mais
+   sans résolution par animal (une ligne = une date, pas une brebis) :
+   nettement plus simple que resoudreLigneSieol.
+   Format attendu : CSV ';', en-tête DATE;LITRAGE, dates ISO (AAAA-MM-JJ,
+   déjà le format de stockage interne -- voir DB.laitTank), litrage en
+   litres (point ou virgule décimale, voir parseDecimalVirgule).
+   Chaque entrée créée a EXACTEMENT la même forme que la saisie manuelle
+   (voir renderJournal, btn-save-lait) : {date, quantite}, arrondie au
+   même 1/10 de litre (jamais 2 décimales -- ce chiffre n'existe que sur
+   les moyennes de Contrôle laitier, un champ différent), campagne jamais
+   stockée (déduite à la volée par campagneAnneeDebutPourDate comme
+   partout ailleurs). Un doublon écrasé resynchronise le prélèvement
+   qualité de cette date s'il existe (resyncPrelevementQualiteVolume, qui
+   ne touche QUE le champ volume -- jamais de suppression/recréation du
+   prélèvement, ses autres mesures restent intactes). */
+function parseTankLaitierCsv(rows) {
+  const erreurs = []; // { ligne, motif }
+  const parDate = new Map(); // date -> quantite (une valeur par date, la dernière du fichier gagne)
+  let doublonsInternes = 0;
+  if (rows.length === 0) return { valides: [], erreurs: [{ ligne: 0, motif: 'Fichier vide.' }], doublonsInternes: 0 };
+  const entete = (rows[0] || []).map(c => String(c || '').trim().toUpperCase());
+  if (entete[0] !== 'DATE' || entete[1] !== 'LITRAGE') {
+    return { valides: [], erreurs: [{ ligne: 1, motif: "En-tête attendu DATE;LITRAGE, trouvé : " + rows[0].join(';') }], doublonsInternes: 0 };
+  }
+  rows.slice(1).forEach((parts, i) => {
+    const ligne = i + 2; // 1-indexé, +1 pour l'en-tête déjà consommé
+    if (!parts || parts.every(p => !String(p || '').trim())) return; // ligne vide silencieusement ignorée
+    const dateStr = String(parts[0] || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || isNaN(new Date(dateStr + 'T00:00:00').getTime())) {
+      erreurs.push({ ligne, motif: 'Date invalide (attendu AAAA-MM-JJ) : "' + dateStr + '"' });
+      return;
+    }
+    const quantite = parseDecimalVirgule(parts[1]);
+    if (quantite === null || quantite < 0) {
+      erreurs.push({ ligne, motif: 'Litrage invalide : "' + (parts[1] || '') + '"' });
+      return;
+    }
+    if (parDate.has(dateStr)) doublonsInternes++;
+    parDate.set(dateStr, Math.round(quantite * 10) / 10); // même arrondi que la saisie manuelle
+  });
+  const valides = [...parDate.entries()].map(([date, quantite]) => ({ date, quantite })).sort((a, b) => a.date.localeCompare(b.date));
+  return { valides, erreurs, doublonsInternes };
+}
+
+/* Avertissement purement indicatif (jamais bloquant) sur un litrage qui
+   s'écarte franchement de la fourchette habituelle -- même principe que
+   detecterValeurAberrante (import Contrôle laitier SIEOL), mais comparé à
+   la médiane d'une fenêtre GLISSANTE de ±10 jours autour de la date
+   plutôt qu'à la médiane globale de tout l'import : sur un historique de
+   plusieurs mois, la production varie normalement au fil de la courbe de
+   lactation (pic puis tarissement) -- une médiane globale sur 202 jours
+   signalerait à tort une bonne partie de cette variation saisonnière
+   normale comme "aberrante". */
+function detecterLitragesAberrants(valides) {
+  const FENETRE_JOURS = 10;
+  const dateToTime = d => new Date(d + 'T00:00:00').getTime();
+  const jours = valides.map(r => ({ ...r, t: dateToTime(r.date) }));
+  const aberrants = [];
+  jours.forEach(r => {
+    const voisins = jours.filter(x => x !== r && Math.abs(x.t - r.t) <= FENETRE_JOURS * 86400000).map(x => x.quantite);
+    if (voisins.length < 5) return; // pas assez de recul local pour juger (tout début/fin d'import)
+    const triees = [...voisins].sort((a, b) => a - b);
+    const mediane = triees[Math.floor(triees.length / 2)];
+    if (mediane <= 0) return;
+    if (r.quantite < mediane * 0.3 || r.quantite > mediane * 1.8) {
+      aberrants.push({ date: r.date, quantite: r.quantite, mediane: Math.round(mediane * 10) / 10 });
+    }
+  });
+  return aberrants;
+}
+
+function renderImportTankLaitier() {
+  pageTitle.textContent = 'Import CSV — Tank laitier';
+  let parsed = null; // { valides, erreurs, doublonsInternes }
+
+  app.innerHTML = `
+    <div class="card">
+      <label style="display:flex;align-items:center;">Fichier CSV${infoBulleHtml('Format du fichier', "Fichier CSV (;) avec l'en-tête DATE;LITRAGE. Dates AAAA-MM-JJ, litrage en litres (point ou virgule décimale).")}</label>
+      <input type="file" id="import-tank-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
+      <div id="import-tank-err" class="error-box hidden"></div>
+    </div>
+    <div id="import-tank-preview"></div>
+    <button class="btn btn-primary hidden" id="btn-confirm-import-tank" style="margin-top:14px;">Confirmer l'import</button>
+  `;
+
+  function renderPreview() {
+    const preview = document.getElementById('import-tank-preview');
+    const btnConfirm = document.getElementById('btn-confirm-import-tank');
+    if (!parsed) { preview.innerHTML = ''; btnConfirm.classList.add('hidden'); return; }
+
+    const { valides, erreurs, doublonsInternes } = parsed;
+    const existantes = valides
+      .map(r => ({ ...r, ancienne: DB.laitTank.find(l => l.date === r.date) }))
+      .filter(r => r.ancienne);
+    const nouvelles = valides.filter(r => !DB.laitTank.some(l => l.date === r.date));
+    const aberrants = detecterLitragesAberrants(valides);
+
+    preview.innerHTML = `
+      <div class="card" style="margin-top:14px;">
+        <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
+          <div class="stat-card sc-blue"><div class="stat-card-label">Lignes lues</div><div class="stat-card-value" style="font-size:18px;">${valides.length}</div></div>
+          <div class="stat-card sc-green"><div class="stat-card-label">Nouvelles dates</div><div class="stat-card-value" style="font-size:18px;">${nouvelles.length}</div></div>
+          <div class="stat-card sc-amber"><div class="stat-card-label">Déjà existantes</div><div class="stat-card-value" style="font-size:18px;">${existantes.length}</div></div>
+        </div>
+        ${doublonsInternes > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;">${doublonsInternes} date(s) apparaissai(en)t plusieurs fois dans le fichier — seule la dernière valeur de chacune a été retenue.</div>` : ''}
+      </div>
+      ${erreurs.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px;color:var(--danger);">${erreurs.length} ligne(s) ignorée(s) (format invalide)</div>
+        <div style="font-size:12px;color:var(--text-muted);max-height:160px;overflow-y:auto;">
+          ${erreurs.slice(0, 30).map(e => `Ligne ${e.ligne} : ${e.motif}`).join('<br>')}
+          ${erreurs.length > 30 ? '<br>... (' + (erreurs.length - 30) + ' de plus)' : ''}
+        </div>
+      </div>
+      ` : ''}
+      ${aberrants.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px;color:var(--warning);">⚠️ ${aberrants.length} valeur(s) hors de la fourchette habituelle du tank</div>
+        <div style="font-size:12px;color:var(--text-muted);max-height:160px;overflow-y:auto;">
+          ${aberrants.map(a => formatDateFr(a.date) + ' : ' + a.quantite + ' L (médiane locale ' + a.mediane + ' L)').join('<br>')}
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Purement indicatif — aucune correction automatique, ces valeurs seront importées telles quelles après confirmation.</div>
+      </div>
+      ` : ''}
+      ${existantes.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px;">${existantes.length} date(s) déjà saisie(s) — que faire ?</div>
+        <div style="max-height:220px;overflow-y:auto;margin-bottom:12px;">
+          ${existantes.map(r => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid var(--border);font-size:13px;"><span>${formatDateFr(r.date)}</span><span>${r.ancienne.quantite} L → <strong>${r.quantite} L</strong></span></div>`).join('')}
+        </div>
+        <label class="row" style="align-items:center;gap:8px;cursor:pointer;margin-bottom:6px;">
+          <input type="radio" name="import-tank-conflit" value="ecraser" style="width:18px;height:18px;margin:0;">
+          <span style="font-size:13.5px;">Écraser ces ${existantes.length} valeur(s) existante(s) par celles du fichier</span>
+        </label>
+        <label class="row" style="align-items:center;gap:8px;cursor:pointer;">
+          <input type="radio" name="import-tank-conflit" value="ignorer" style="width:18px;height:18px;margin:0;">
+          <span style="font-size:13.5px;">Ignorer ces dates (garder les valeurs déjà saisies)</span>
+        </label>
+        <div id="import-tank-conflit-err" class="error-box hidden" style="margin-top:8px;"></div>
+      </div>
+      ` : ''}
+    `;
+    document.querySelectorAll('input[name="import-tank-conflit"]').forEach(r => {
+      r.onchange = () => document.getElementById('import-tank-conflit-err').classList.add('hidden');
+    });
+    btnConfirm.classList.toggle('hidden', nouvelles.length + existantes.length === 0);
+  }
+
+  document.getElementById('import-tank-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-tank-err');
+    err.classList.add('hidden');
+    parsed = null;
+    renderPreview();
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        parsed = parseTankLaitierCsv(decodeCsvBuffer(reader.result));
+        renderPreview();
+      } catch (ex) {
+        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import-tank').onclick = async () => {
+    if (!parsed) return;
+    const { valides } = parsed;
+    const existantes = valides.filter(r => DB.laitTank.some(l => l.date === r.date));
+    const nouvelles = valides.filter(r => !DB.laitTank.some(l => l.date === r.date));
+
+    let choixConflit = null;
+    if (existantes.length > 0) {
+      const checked = document.querySelector('input[name="import-tank-conflit"]:checked');
+      if (!checked) {
+        document.getElementById('import-tank-conflit-err').textContent = "Choisis ce qu'il faut faire des dates déjà saisies avant de continuer.";
+        document.getElementById('import-tank-conflit-err').classList.remove('hidden');
+        return;
+      }
+      choixConflit = checked.value;
+    }
+
+    const aberrants = detecterLitragesAberrants(valides);
+    if (aberrants.length > 0) {
+      const detail = aberrants.slice(0, 15).map(a => formatDateFr(a.date) + ' : ' + a.quantite + ' L (médiane locale ' + a.mediane + ' L)').join('\n')
+        + (aberrants.length > 15 ? '\n... (' + (aberrants.length - 15) + ' de plus)' : '');
+      if (!confirm('Valeur(s) hors de la fourchette habituelle du tank détectée(s) :\n' + detail + '\nConfirmez-vous cet import tel quel ?')) return;
+    }
+
+    // Sauvegarde automatique et silencieuse des données ACTUELLES avant
+    // d'y toucher -- même filet de sécurité que la restauration JSON (voir
+    // section "Import/Export" de Paramètres) : si elle échoue, l'import
+    // est bloqué plutôt que de risquer d'écraser des relevés sans filet.
+    const backupDate = new Date();
+    const backupFilename = nomFichierBackupAuto(backupDate);
+    const backupResume = resumeContenuSauvegarde(DB);
+    const backupOk = await writeAutoBackupFile(backupFilename, bytesBackupAuto(DB, backupDate));
+    if (!backupOk) {
+      alert("Import annulé : la sauvegarde automatique de tes données actuelles a échoué (avant de les remplacer). Réessaie, ou exporte-les manuellement d'abord.");
+      return;
+    }
+    await purgeOldAutoBackups();
+
+    nouvelles.forEach(r => DB.laitTank.push({ date: r.date, quantite: r.quantite }));
+    let nbEcrasees = 0;
+    if (choixConflit === 'ecraser') {
+      existantes.forEach(r => {
+        const idx = DB.laitTank.findIndex(l => l.date === r.date);
+        if (idx === -1) return;
+        DB.laitTank[idx].quantite = r.quantite;
+        // Ne touche QUE le champ volume d'un prélèvement qualité déjà
+        // saisi à cette date -- jamais de suppression/recréation, ses
+        // autres mesures (cellules, flore, résultats...) restent intactes.
+        resyncPrelevementQualiteVolume(r.date, r.quantite);
+        nbEcrasees++;
+      });
+    }
+    saveData(DB);
+    const msgConflit = existantes.length === 0 ? '' : (choixConflit === 'ecraser' ? ', ' + nbEcrasees + ' date(s) existante(s) écrasée(s)' : ', ' + existantes.length + ' date(s) existante(s) ignorée(s)');
+    alert(nouvelles.length + ' nouvelle(s) date(s) importée(s)' + msgConflit + '.\n\nPar sécurité, tes données précédentes (' + backupResume + ') ont été sauvegardées automatiquement dans le fichier ' + backupFilename + ' avant l\'import.');
+    render('journal');
+  };
+}
 
 /* ---------- Suivi qualité du lait ---------- */
 const MOIS_LABELS_CAMPAGNE = ['Oct', 'Nov', 'Déc', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep'];
