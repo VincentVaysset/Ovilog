@@ -121,6 +121,10 @@
   .header-farm-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; opacity: 0.85; padding: 0 2px; min-height: 14px; }
   .header-farm-row span:empty { display: none; }
   main { max-width: 700px; margin: 0 auto; padding: 16px; padding-bottom: 60px; }
+  /* Voir render() -- appliqué écran par écran (classe posée/retirée à
+     chaque navigation), jamais globalement : seuls les écrans desktop
+     déjà repensés en grille (fiche brebis pour l'instant) en profitent. */
+  main#app.fiche-desktop-wide { max-width: 1500px; }
   .card {
     background: var(--card);
     border: 1px solid var(--border);
@@ -303,6 +307,30 @@
   .fiche-tab-btn.active { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
   .fiche-tab-btn.disabled { color: #b8b39c; cursor: default; }
 
+  /* ---------- Fiche brebis en mode desktop (chantier "Refonte fiche
+     brebis desktop", option B validée : bandeau d'identité fixe + mêmes
+     onglets élargis sur toute la largeur + contenu de chaque onglet en
+     grille de cartes plutôt qu'empilé) -- appliqué UNIQUEMENT quand
+     isDesktopMode() (voir renderDetail), jamais sur mobile/Android : le
+     contenu de chaque onglet (ficheBrebisTabContent) reste rigoureusement
+     identique, seule cette mise en page change. */
+  .fiche-desktop-header { display: flex; align-items: center; gap: 20px; margin-bottom: 20px; }
+  /* mereBlock (bouton "Voir la fiche de la mère", réutilisé tel quel dans
+     le bandeau desktop -- voir desktopHeaderHtml) hérite de button.btn
+     {width:100%}, pensé pour un bouton seul en colonne mobile -- dans ce
+     bandeau flex, il doit garder sa largeur de contenu, pas prendre toute
+     la ligne au détriment du nom/des badges à côté. */
+  .fiche-desktop-header button.btn { width: auto; flex-shrink: 0; margin-bottom: 0; }
+  .fiche-desktop-name { font-size: 20px; font-weight: 700; }
+  .fiche-desktop-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .fiche-desktop-badges > div { margin-bottom: 0 !important; }
+  .fiche-tabs-desktop-wrap { display: flex; gap: 6px; background: #f0efe9; padding: 5px; border-radius: var(--radius-pill); margin-bottom: 20px; }
+  .fiche-tabs-desktop-wrap .fiche-tabs { display: contents; }
+  .fiche-tabs-desktop-wrap .fiche-tab-btn { flex: 1; flex-direction: row; padding: 10px; font-size: 13px; }
+  .fiche-desktop-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; align-items: start; }
+  .fiche-desktop-grid > button,
+  .fiche-desktop-grid > div:not(.card) { grid-column: 1 / -1; }
+
   /* ---------- Bandeau d'accueil (compteurs troupeau) ---------- */
   .home-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
   .stat-pill { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 8px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; cursor: pointer; }
@@ -426,6 +454,18 @@ const OVILOG_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABAAA
    local (sentinelle encore présente, jamais montrée telle quelle). */
 function libelleVersion() {
   return BUILD_VERSION.includes('OVILOG_BUILD_VERSION') ? 'Version : développement local' : 'Version : ' + BUILD_VERSION;
+}
+
+/* Vrai uniquement dans l'app Electron (voir electron/preload.js -- expose
+   window.electronAPI via contextBridge, jamais window.Capacitor, pour ne
+   pas interférer avec la détection des plugins Capacitor utilisée
+   partout ailleurs dans ce fichier). Sert à basculer certains écrans sur
+   une mise en page grand écran (voir chantier "Refonte fiche brebis
+   desktop" -- renderDetail) SANS toucher au rendu mobile/Android : chaque
+   point d'appel doit garder le rendu existant inchangé quand cette
+   fonction renvoie false, y compris dans un navigateur de test classique. */
+function isDesktopMode() {
+  return !!(window.electronAPI && window.electronAPI.isDesktop);
 }
 
 /* ---------- Stockage local ---------- */
@@ -3146,6 +3186,14 @@ function render(view, sheepId) {
   currentView = view;
   if (sheepId !== undefined) currentSheepId = sheepId;
   app.innerHTML = '';
+  // Élargit <main id="app"> (normalement plafonné à 700px, voir la règle
+  // "main {...}") UNIQUEMENT pour les écrans desktop déjà redessinés en
+  // grille grand écran (voir isDesktopMode()/renderDetail) -- écran par
+  // écran plutôt qu'un élargissement global, pour ne changer la largeur
+  // d'AUCUN écran pas encore repensé pour le desktop (voir chantier
+  // "Refonte fiche brebis desktop" -- les autres écrans restent centrés
+  // sur 700px tant qu'ils n'ont pas reçu le même traitement).
+  app.classList.toggle('fiche-desktop-wide', isDesktopMode() && view === 'detail');
   // Réinitialisé à chaque navigation : c'est à l'écran qui s'affiche de se
   // déclarer explicitement via setActiveScanTarget() s'il attend un scan EID
   // (voir onEidScanned plus bas). Évite qu'un scan Bluetooth reçu sur un
@@ -5045,6 +5093,13 @@ function renderDetail(id) {
   if (!sheep) { render('list'); return; }
   pageTitle.textContent = 'Brebis n°' + numeroVisuel(sheep.eid);
   if (ficheBrebisTabSheepId !== id) { ficheBrebisTab = 'ident'; ficheBrebisTabSheepId = id; }
+  // Refonte fiche brebis desktop (option B validée) : identité + badges
+  // regroupés dans un bandeau fixe séparé (voir desktopHeaderHtml plus
+  // bas) au lieu d'être répétés dans l'onglet Ident./Repro comme sur
+  // mobile -- statutBadge/mereBlock/attendueTraiteBadge/withdrawalBadge
+  // restent calculés une seule fois plus bas et sont simplement omis de
+  // ficheBrebisTabContent quand desktop=true pour éviter un doublon.
+  const desktop = isDesktopMode();
 
   const echoItemHtml = e => `
     <div class="content">
@@ -5359,16 +5414,16 @@ function renderDetail(id) {
         ? `<button type="button" class="btn btn-secondary" id="btn-corriger-eid" style="margin-top:10px;">Corriger l'EID</button>`
         : `<div style="margin-top:10px;font-size:11.5px;color:var(--text-muted);">Modification de l'EID impossible : cet animal a déjà un historique enregistré.</div>`}
     </div>
-    ${statutBadge}
-    ${mereBlock}
+    ${desktop ? '' : statutBadge}
+    ${desktop ? '' : mereBlock}
     ${genealogieBlock}
     ${agneauxAdoptesBlock}
     <button class="btn btn-secondary" id="btn-delete-sheep" style="color:var(--danger);border-color:var(--danger);">Supprimer cette brebis</button>
   `;
 
   const reproTabHtml = `
-    ${attendueTraiteBadge}
-    ${withdrawalBadge}
+    ${desktop ? '' : attendueTraiteBadge}
+    ${desktop ? '' : withdrawalBadge}
     ${reproStatutHtml}
     <div class="row" style="margin-bottom:16px;">
       <button class="btn btn-primary" id="btn-add-echo" style="flex:1;">+ Échographie</button>
@@ -5438,7 +5493,31 @@ function renderDetail(id) {
     ctrl: ctrlTabHtml, mouv: mouvTabHtml, carriere: carriereTabHtml
   };
 
-  app.innerHTML = `
+  // Bandeau d'identité desktop : regroupe ce qui, sur mobile, n'apparaît
+  // que sur les onglets Ident./Repro (statutBadge, mereBlock,
+  // attendueTraiteBadge, withdrawalBadge) -- mêmes variables déjà
+  // calculées plus haut, réutilisées telles quelles, aucun nouveau calcul.
+  const desktopHeaderHtml = !desktop ? '' : `
+    <div class="card fiche-desktop-header">
+      ${iconCircle(ICON_SHEEP, 'green', 'lg')}
+      <div style="flex:1;min-width:0;">
+        <div class="fiche-desktop-name">Brebis n°${numeroVisuel(sheep.eid)} <span style="font-weight:500;font-size:13px;color:var(--text-muted);">— EID ${sheep.eid}</span></div>
+        <div class="fiche-desktop-badges">
+          ${attendueTraiteBadge}
+          ${withdrawalBadge}
+          ${statutBadge}
+          <span class="badge badge-muted">${age(sheep.eid)} an(s) (${anneeNaissance(sheep.eid)})</span>
+        </div>
+      </div>
+      ${mereBlock}
+    </div>
+  `;
+
+  app.innerHTML = desktop ? `
+    ${desktopHeaderHtml}
+    <div class="fiche-tabs-desktop-wrap">${ficheBrebisTabsHtml(ficheBrebisTab)}</div>
+    <div class="fiche-desktop-grid">${ficheBrebisTabContent[ficheBrebisTab] || identTabHtml}</div>
+  ` : `
     ${ficheBrebisTabsHtml(ficheBrebisTab)}
     ${ficheBrebisTabContent[ficheBrebisTab] || identTabHtml}
   `;
