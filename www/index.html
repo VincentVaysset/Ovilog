@@ -331,12 +331,24 @@
   .fiche-desktop-grid > button,
   .fiche-desktop-grid > div:not(.card) { grid-column: 1 / -1; }
 
-  /* ---------- Dashboard d'accueil desktop (chantier "Refonte écran
-     d'accueil desktop", plan + maquette validés) -- voir
-     dashboardDesktopHtml, actif uniquement via isDesktopMode(). ---------- */
-  .dashboard-desktop-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
-  .dash-block { display: flex; flex-direction: column; gap: 14px; }
-  @media (max-width: 1100px) { .dashboard-desktop-grid { grid-template-columns: 1fr; } }
+  /* ---------- Écran d'accueil desktop (chantier "Écran d'accueil desktop
+     Ovilog", plan + maquette validés) -- voir accueilDesktopHtml, actif
+     uniquement via isDesktopMode(), indépendant de l'accueil mobile. ---------- */
+  .accueil-compteurs-desktop { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+  .accueil-blocs-desktop { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 1100px) { .accueil-compteurs-desktop { grid-template-columns: repeat(2, 1fr); } .accueil-blocs-desktop { grid-template-columns: 1fr; } }
+  .compteur-case { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; position: relative; }
+  .compteur-label { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px; }
+  .compteur-valeur { font-size: 26px; font-weight: 700; line-height: 1; }
+  .compteur-detail { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  /* .cliquable : affordance visuelle uniquement (curseur, survol, chevron)
+     -- posée sur les compteurs et les blocs Mortalité/Contrôle laitier,
+     sans gestionnaire de clic tant qu'aucune destination n'existe (voir
+     accueilDesktopHtml). */
+  .compteur-case.cliquable, .card.cliquable { cursor: pointer; transition: box-shadow 0.15s, transform 0.15s; }
+  .compteur-case.cliquable:hover, .card.cliquable:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.10); transform: translateY(-1px); }
+  .compteur-chevron { position: absolute; top: 14px; right: 16px; color: var(--accent); opacity: 0.75; font-size: 15px; }
+  .card.cliquable { position: relative; }
   .block-title { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; margin-bottom: 14px; }
   .kpi-row { display: flex; gap: 16px; margin-bottom: 14px; }
   .kpi { flex: 1; }
@@ -354,6 +366,13 @@
   .compare-bar-fill { height: 100%; border-radius: 4px; }
   .compare-bar-val { position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
   .compare-bar-val.muted { color: var(--text-muted); font-weight: 500; }
+  .mvt-table { margin-bottom: 10px; }
+  .mvt-table-header, .mvt-table-row { display: grid; grid-template-columns: 1fr repeat(3, 56px); gap: 4px; font-size: 12.5px; padding: 5px 0; border-top: 1px solid var(--border); }
+  .mvt-table-header { color: var(--text-muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; border-top: none; }
+  .mvt-table-header span:not(:first-child), .mvt-table-row span:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+  .dash-souscarte { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
+  .dash-souscarte-titre { font-size: 11.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 8px; }
+  .dash-callout { background: var(--blue-bg); border-radius: var(--radius); padding: 10px 14px; font-size: 12.5px; }
 
   /* ---------- Bandeau d'accueil (compteurs troupeau) ---------- */
   .home-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
@@ -3339,7 +3358,7 @@ function renderCrashScreen(view) {
 /* Toutes les données chiffrées de l'écran d'accueil (hors pastilles
    effectifs, calculées séparément dans renderHome), extraites de
    dashboardKpiHtml en fonction pure -- réutilisée telle quelle par le
-   dashboard desktop (voir dashboardDesktopHtml/isDesktopMode) pour ne
+   accueil desktop (voir accueilDesktopHtml/isDesktopMode) pour ne
    jamais recalculer différemment les mêmes chiffres entre mobile et
    desktop, seule la mise en page change. */
 function dashboardStatsData() {
@@ -3588,15 +3607,35 @@ function mortaliteSanitaireData() {
     });
   });
 
-  let agneauxMorts = 0;
+  // Béliers morts (chantier "Accueil desktop") : même logique que les
+  // brebis ci-dessus -- aucune cause saisie sur un mouvement de bélier
+  // dans le modèle actuel, donc pas de causesCount pour cette catégorie.
+  let beliersMortsCount = 0;
+  (DB.beliers || []).forEach(b => {
+    (b.mouvements || []).forEach(m => {
+      if (m.type !== 'Mort') return;
+      if (DB.campagneDebut != null && campagneAnneeDebutPourDate(m.date) !== DB.campagneDebut) return;
+      beliersMortsCount++;
+    });
+  });
+
+  // Agneaux morts : aucune cause n'est saisie nulle part dans le modèle de
+  // données pour un agneau (contrairement aux brebis, voir m.cause
+  // ci-dessus) -- seule la distinction mort-né / mort après naissance
+  // (l.statutFinal, voir showLambSortieModal) est une donnée réelle. Le
+  // détail par cause envisagé dans la maquette n'a donc pas d'équivalent
+  // ici ; cette distinction bien réelle la remplace.
+  let agneauxMortNes = 0, agneauxMortsApresNaissance = 0;
   DB.brebis.forEach(s => {
     (s.agnelages || []).forEach(a => {
       if (DB.campagneDebut != null && a.campagne !== DB.campagneDebut) return;
       a.lambs.forEach(l => {
-        if (l.sexe === 'Mort-né' || l.statutFinal === 'mort') agneauxMorts++;
+        if (l.sexe === 'Mort-né') agneauxMortNes++;
+        else if (l.statutFinal === 'mort') agneauxMortsApresNaissance++;
       });
     });
   });
+  const agneauxMorts = agneauxMortNes + agneauxMortsApresNaissance;
 
   const traitementsEnCours = [];
   DB.brebis.filter(s => (s.statut || 'active') === 'active').forEach(s => {
@@ -3604,7 +3643,11 @@ function mortaliteSanitaireData() {
     if (w.laitFin || w.viandeFin) traitementsEnCours.push({ id: s.id, eid: s.eid, laitFin: w.laitFin, viandeFin: w.viandeFin });
   });
 
-  return { brebisMortesCount, causesCount, agneauxMorts, traitementsEnCours };
+  return {
+    brebisMortesCount, causesCount, beliersMortsCount,
+    agneauxMorts, agneauxMortNes, agneauxMortsApresNaissance,
+    traitementsEnCours
+  };
 }
 
 /* Bloc "Contrôle laitier" : moyenne par brebis (litrageTroupeauResume,
@@ -3629,27 +3672,55 @@ function controleLaitierCompareData() {
   }));
 }
 
-/* Bloc "Mouvements & Effectifs" : entrées/ventes/pertes de la campagne en
-   cours, sur les 3 catégories qui suivent des mouvements dans un tableau
-   dédié (brebis/béliers/agnelles) -- campagneAnneeDebutPourDate est déjà
-   utilisée ailleurs pour rattacher une date à une campagne (échographies),
+/* Bloc "Mouvements" (Accueil desktop) : entrées/ventes/mortes de la
+   campagne en cours, PAR TYPE D'ANIMAL (contrairement à l'ancien
+   mouvementsCampagneData, qui cumulait les 3 catégories en un seul total
+   -- remplacé ici, plus utilisé ailleurs). "Ventes" fusionne les deux
+   types de vente réels du modèle (ex: Vendue/Vendue reproduction pour une
+   brebis) en un seul chiffre par catégorie, comme le faisait déjà l'ancien
+   total -- jamais une distinction inventée du type "réforme", qui n'existe
+   nulle part dans les données. Les agneaux mâles n'ont pas de notion
+   d'entrée (nés, jamais achetés) ni de pool propre avec .mouvements : leurs
+   ventes/morts sont comptées via l.mouvements sur chaque agneau
+   individuel, seule source réelle pour cette catégorie (voir
+   showLambSortieModal). campagneAnneeDebutPourDate est déjà utilisée
+   ailleurs pour rattacher une date à une campagne (échographies),
    réutilisée ici telle quelle sur la date de chaque mouvement. */
-function mouvementsCampagneData() {
-  let entrees = 0, vendues = 0, mortes = 0;
-  function compter(pool, venteTypes, morteType) {
+function mouvementsDetailData() {
+  function compterPool(pool, venteTypes, morteType, avecEntrees) {
+    let entrees = 0, ventes = 0, mortes = 0;
     pool.forEach(a => {
       (a.mouvements || []).forEach(m => {
         if (DB.campagneDebut == null || campagneAnneeDebutPourDate(m.date) !== DB.campagneDebut) return;
-        if (m.type === 'Entrée') entrees++;
-        else if (venteTypes.includes(m.type)) vendues++;
+        if (avecEntrees && m.type === 'Entrée') entrees++;
+        else if (venteTypes.includes(m.type)) ventes++;
         else if (m.type === morteType) mortes++;
       });
     });
+    return avecEntrees ? { entrees, ventes, mortes } : { ventes, mortes };
   }
-  compter(DB.brebis, ['Vendue', 'Vendue reproduction'], 'Morte');
-  compter(DB.beliers || [], ['Vendu', 'Vendu reproduction'], 'Mort');
-  compter(DB.agnelles || [], ['Vendue', 'Vendue reproduction'], 'Morte');
-  return { entrees, vendues, mortes };
+  let agneauxVentes = 0, agneauxMortes = 0;
+  DB.brebis.forEach(s => {
+    (s.agnelages || []).forEach(a => {
+      a.lambs.forEach(l => {
+        if (l.sexe === 'Mort-né') return; // déjà compté par mortaliteSanitaireData, jamais un "mouvement"
+        (l.mouvements || []).forEach(m => {
+          if (DB.campagneDebut == null || campagneAnneeDebutPourDate(m.date) !== DB.campagneDebut) return;
+          if (m.type === 'Vendu') agneauxVentes++;
+          else if (m.type === 'Mort') agneauxMortes++;
+        });
+      });
+    });
+  });
+  return {
+    brebis: compterPool(DB.brebis, ['Vendue', 'Vendue reproduction'], 'Morte', true),
+    beliers: compterPool(DB.beliers || [], ['Vendu', 'Vendu reproduction'], 'Mort', true),
+    agnelles: compterPool(DB.agnelles || [], ['Vendue', 'Vendue reproduction'], 'Morte', true),
+    agneaux: { ventes: agneauxVentes, mortes: agneauxMortes },
+    // Même source que "Derniers mouvements" (derniersMouvementsData),
+    // simplement limitée au tout dernier -- jamais un second calcul.
+    dernier: derniersMouvementsData(1)[0] || null
+  };
 }
 
 /* Bloc "Mouvements & Effectifs" (liste) : les derniers événements, tous
@@ -3695,29 +3766,112 @@ function derniersMouvementsData(limite) {
     .slice(0, limite);
 }
 
-function dashboardDesktopHtml() {
+/* Bloc "Résultat dernière écho et stats" (Accueil desktop) : dérivé de
+   dashboardStatsData().stadeCount, jamais recalculé -- même population
+   (dernière échographie de chaque brebis active, tous types "stade de
+   gestation" confondus, voir dashboardStatsData) que la carte "Répartition
+   par stade" déjà affichée côté mobile. Pleines = Début+Milieu+Fin (toute
+   brebis confirmée gestante, quel que soit le stade) ; Vides = Vide. Pas
+   de case "à refaire" : cette valeur n'existe dans aucune échographie du
+   modèle de données (seules Pleine/Vide ou Début/Milieu/Fin/Vide sont
+   saisissables), l'afficher aurait été une donnée inventée. */
+function pleinesVidesDepuisStade(stadeCount) {
+  const pleines = stadeCount['Début'] + stadeCount['Milieu'] + stadeCount['Fin'];
+  const vides = stadeCount['Vide'];
+  const total = pleines + vides;
+  return { pleines, vides, taux: total > 0 ? Math.round((pleines / total) * 1000) / 10 : null };
+}
+
+/* "Dernier lot échographié" (Accueil desktop, nouveau -- aucun équivalent
+   mobile) : l'appli ne stocke aucun identifiant de lot/session sur une
+   échographie (echoRapideSession n'est qu'un état d'écran, jamais
+   persisté, voir renderEchoRapide) -- toutes les échographies de type
+   "stade de gestation" enregistrées à la date la plus récente (toutes
+   brebis confondues) servent donc de repli raisonnable pour reconstituer
+   "le dernier lot scanné", plutôt qu'une vraie entité de lot. Même
+   exclusion du type "constat" que stadeCount/pleinesVidesDepuisStade, pour
+   ne jamais mélanger deux échelles de résultat différentes. */
+function dernierLotEchographieData() {
+  let derniereDate = null;
+  DB.brebis.forEach(s => {
+    (s.echographies || []).forEach(e => {
+      if (e.type === 'constat' || !e.date) return;
+      if (derniereDate === null || e.date > derniereDate) derniereDate = e.date;
+    });
+  });
+  if (derniereDate === null) return null;
+  let pleines = 0, vides = 0;
+  DB.brebis.forEach(s => {
+    (s.echographies || []).forEach(e => {
+      if (e.type === 'constat' || e.date !== derniereDate) return;
+      if (e.stade === 'Vide') vides++;
+      else if (e.stade) pleines++;
+    });
+  });
+  return { date: derniereDate, total: pleines + vides, pleines, vides };
+}
+
+/* Compteur "Agneaux actifs" (Accueil desktop) avec détail mâles/femelles --
+   même population que getAgneauxActifsInventaire() (onglet Inventaire),
+   simple agrégation par sexe dessus, jamais un second filtre. */
+function agneauxActifsSexeData() {
+  const items = getAgneauxActifsInventaire();
+  let males = 0, femelles = 0;
+  items.forEach(it => { if (it.sexe === 'Mâle') males++; else if (it.sexe === 'Femelle') femelles++; });
+  return { total: items.length, males, femelles };
+}
+
+/* Liste "Attendues à la traite" (Accueil desktop) : mêmes brebis actives
+   que attendueTraiteCount (dashboardStatsData, isAttendueTraite) -- ici on
+   a besoin de la liste elle-même, pas seulement du total, donc un second
+   passage sur les mêmes actives avec le même prédicat, jamais une
+   nouvelle règle. Triée comme partout ailleurs (sortByAge). */
+function attendueTraiteListe() {
+  const active = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  return sortByAge(active.filter(s => isAttendueTraite(s, DB.brebis)));
+}
+
+/* Écran d'accueil desktop (chantier "Écran d'accueil desktop Ovilog",
+   plan + maquette validés -- remplace l'ancien dashboardDesktopHtml/4
+   blocs 2x2 ci-dessus, indépendant de l'accueil mobile/tablette, aucune
+   harmonisation prévue). 4 compteurs en tête + 3 rangées de 2 blocs
+   larges. Seuls 3 ÉLÉMENTS DE NAVIGATION sont prévus au final (chaque
+   compteur, Mortalité, Contrôle laitier) mais AUCUNE destination n'existe
+   encore (liste des animaux par catégorie, historique contrôle laitier
+   détaillé, module mortalité) -- classe .cliquable posée pour l'affordance
+   visuelle uniquement (curseur, survol, chevron), sans gestionnaire de
+   clic, comme demandé ("pas besoin de coder la liste, juste
+   l'affordance"). Toutes les données proviennent de fonctions déjà
+   partagées avec le mobile (dashboardStatsData, mortaliteSanitaireData,
+   controleLaitierCompareData...) ou de nouvelles fonctions qui réutilisent
+   les mêmes filtres/prédicats (voir commentaires ci-dessus) -- jamais un
+   second calcul divergent pour la même donnée. */
+function accueilDesktopHtml() {
   const s = dashboardStatsData();
   const mortaSanit = mortaliteSanitaireData();
   const laitCompare = controleLaitierCompareData();
-  const mvtCampagne = mouvementsCampagneData();
-  const derniersMvt = derniersMouvementsData(6);
+  const mvt = mouvementsDetailData();
+  const echoResultat = pleinesVidesDepuisStade(s.stadeCount);
+  const dernierLot = dernierLotEchographieData();
+  const agneauxSexe = agneauxActifsSexeData();
   const nbBeliersActifs = DB.beliers.filter(b => (b.statut || 'actif') === 'actif').length;
   const nbAgnelles = (DB.agnelles || []).length;
+  const attendues = attendueTraiteListe();
 
   const badgeType = t => (t === 'Morte' || t === 'Mort') ? 'badge-coral' : 'badge-muted';
-  const causesRows = Object.entries(mortaSanit.causesCount)
-    .sort((a, b) => b[1] - a[1])
-    .map(([cause, n]) => `<div class="list-row"><span>${cause}</span><span class="badge badge-muted">${n}</span></div>`)
-    .join('') || '<div class="muted" style="font-size:13px;padding:6px 0;">Aucune perte enregistrée cette campagne.</div>';
 
-  const delaisRows = mortaSanit.traitementsEnCours.length === 0
-    ? '<div class="muted" style="font-size:13px;padding:6px 0;">Aucun délai d\'attente actif.</div>'
-    : mortaSanit.traitementsEnCours.map(w => `
-        <div class="list-row dash-eid-link" data-id="${w.id}" style="cursor:pointer;">
-          <span>Brebis n°${numeroVisuel(w.eid)}</span>
-          <span>${w.laitFin ? `<span class="badge badge-coral">Lait jusqu'au ${formatDateFr(w.laitFin)}</span>` : ''}${w.viandeFin ? `<span class="badge badge-coral" style="margin-left:4px;">Viande jusqu'au ${formatDateFr(w.viandeFin)}</span>` : ''}</span>
-        </div>
-      `).join('');
+  const causesBrebisRows = Object.entries(mortaSanit.causesCount).sort((a, b) => b[1] - a[1]);
+  const maxCauseBrebis = Math.max(1, ...causesBrebisRows.map(([, n]) => n), mortaSanit.agneauxMortNes, mortaSanit.agneauxMortsApresNaissance);
+  function barreCause(label, n, max) {
+    return `<div class="bar-row"><span>${label}</span><span class="muted">${n}</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${max > 0 ? Math.round((n / max) * 100) : 0}%;background:var(--danger);"></div></div>`;
+  }
+  const causesBrebisHtml = causesBrebisRows.length === 0
+    ? '<div class="muted" style="font-size:12.5px;padding:4px 0 8px;">Aucune perte enregistrée cette campagne.</div>'
+    : causesBrebisRows.map(([cause, n]) => barreCause(cause, n, maxCauseBrebis)).join('');
+  const causesAgneauxHtml = (mortaSanit.agneauxMortNes + mortaSanit.agneauxMortsApresNaissance) === 0
+    ? '<div class="muted" style="font-size:12.5px;padding:4px 0;">Aucune perte enregistrée cette campagne.</div>'
+    : barreCause('Mort-nés', mortaSanit.agneauxMortNes, maxCauseBrebis) + barreCause('Morts après naissance', mortaSanit.agneauxMortsApresNaissance, maxCauseBrebis);
 
   const maxLitres = Math.max(0.01, ...laitCompare.flatMap(c => [c.actuel || 0, c.precedent || 0]));
   const compareRows = laitCompare.map(c => `
@@ -3730,84 +3884,107 @@ function dashboardDesktopHtml() {
     </div>
   `).join('');
 
-  const mvtRows = derniersMvt.length === 0
-    ? '<div class="muted" style="font-size:13px;padding:6px 0;">Aucun mouvement enregistré.</div>'
-    : derniersMvt.map(e => `<div class="list-row"><span>${e.label}</span><span><span class="badge ${badgeType(e.type)}">${e.type}</span> <span class="muted">${formatDateFr(e.date)}</span></span></div>`).join('');
+  function ligneMvt(label, n) { return `<div class="mvt-table-row"><span>${label}</span><span>${n}</span></div>`; }
+  const mvtTableHtml = `
+    <div class="mvt-table">
+      <div class="mvt-table-header"><span>Catégorie</span><span>Entrées</span><span>Ventes</span><span>Mortes</span></div>
+      <div class="mvt-table-row"><span>Brebis</span><span>${mvt.brebis.entrees}</span><span>${mvt.brebis.ventes}</span><span>${mvt.brebis.mortes}</span></div>
+      <div class="mvt-table-row"><span>Béliers</span><span>${mvt.beliers.entrees}</span><span>${mvt.beliers.ventes}</span><span>${mvt.beliers.mortes}</span></div>
+      <div class="mvt-table-row"><span>Agnelles</span><span>${mvt.agnelles.entrees}</span><span>${mvt.agnelles.ventes}</span><span>${mvt.agnelles.mortes}</span></div>
+      <div class="mvt-table-row"><span>Agneaux</span><span class="muted">—</span><span>${mvt.agneaux.ventes}</span><span>${mvt.agneaux.mortes}</span></div>
+    </div>
+  `;
+  const dernierMvtHtml = mvt.dernier
+    ? `<div class="dash-callout">Dernier mouvement : <span class="badge ${badgeType(mvt.dernier.type)}">${mvt.dernier.type}</span> — ${mvt.dernier.label} — ${formatDateFr(mvt.dernier.date)}</div>`
+    : '<div class="muted" style="font-size:12.5px;padding:4px 0;">Aucun mouvement enregistré.</div>';
+
+  const attenduesRows = attendues.length === 0
+    ? '<div class="muted" style="font-size:12.5px;padding:4px 0;">Aucune brebis concernée pour l\'instant.</div>'
+    : attendues.map(a => `<div class="list-row"><span>Brebis n°${numeroVisuel(a.eid)}</span></div>`).join('');
 
   return `
-    <div class="dashboard-desktop-grid">
-      <div class="dash-block">
-        <div class="card">
-          <div class="block-title">${iconCircle(ICON_ECHO, 'green', 'sm')} Reproduction & Mises bas</div>
-          <div class="kpi-row">
-            <div class="kpi"><div class="kpi-value">${s.tauxReussite.taux} %</div><div class="kpi-label">Taux de réussite</div></div>
-            <div class="kpi"><div class="kpi-value">${s.prolificite}</div><div class="kpi-label">Prolificité réelle</div></div>
-            <div class="kpi"><div class="kpi-value">${s.prolificitePrevisionnelle !== null ? s.prolificitePrevisionnelle : '—'}</div><div class="kpi-label">Prévisionnelle (écho)</div></div>
-          </div>
-          <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">Mises bas réalisées : ${s.misesBasActives} / ${s.troupeauAMettreBas}</div>
-          <div class="bar-track"><div class="bar-fill" style="width:${s.pctMisesBasRealisees}%;background:var(--amber-fg);"></div></div>
-          <div style="font-size:11.5px;color:var(--text-muted);">${s.totalAgneaux} agneaux nés, dont ${s.totalMortNes} mort-né(s) · ${s.totalMales} mâle(s) / ${s.totalFemelles} femelle(s)</div>
+    <div class="accueil-compteurs-desktop">
+      <div class="compteur-case cliquable" id="compteur-brebis-actives">
+        <span class="compteur-chevron">→</span>
+        <div class="compteur-label">Brebis actives</div>
+        <div class="compteur-valeur">${s.total}</div>
+      </div>
+      <div class="compteur-case cliquable" id="compteur-agneaux-actifs">
+        <span class="compteur-chevron">→</span>
+        <div class="compteur-label">Agneaux actifs</div>
+        <div class="compteur-valeur">${agneauxSexe.total}</div>
+        <div class="compteur-detail">${agneauxSexe.males} ♂ · ${agneauxSexe.femelles} ♀</div>
+      </div>
+      <div class="compteur-case cliquable" id="compteur-beliers-actifs">
+        <span class="compteur-chevron">→</span>
+        <div class="compteur-label">Béliers actifs</div>
+        <div class="compteur-valeur">${nbBeliersActifs}</div>
+      </div>
+      <div class="compteur-case cliquable" id="compteur-agnelles-actives">
+        <span class="compteur-chevron">→</span>
+        <div class="compteur-label">Agnelles actives</div>
+        <div class="compteur-valeur">${nbAgnelles}</div>
+      </div>
+    </div>
+
+    <div class="accueil-blocs-desktop">
+      <div class="card">
+        <div class="block-title">${iconCircle(ICON_ECHO, 'green', 'sm')} Repro — Mises bas</div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kpi-value">${s.misesBasActives}</div><div class="kpi-label">Brebis ayant mis bas</div></div>
+          <div class="kpi"><div class="kpi-value">${s.totalAgneaux}</div><div class="kpi-label">Agneaux nés (dont ${s.totalMortNes} mort-né(s))</div></div>
+          <div class="kpi"><div class="kpi-value">${s.totalMales} / ${s.totalFemelles}</div><div class="kpi-label">Mâles / Femelles</div></div>
         </div>
-        <div class="card">
-          <div class="block-title" style="font-size:13px;">Répartition par stade (dernière échographie)</div>
-          ${['Début', 'Milieu', 'Fin', 'Vide'].map(stade => `
-            <div class="bar-row"><span>${stade}</span><span class="muted">${s.stadeCount[stade]} (${s.total > 0 ? Math.round((s.stadeCount[stade] / s.total) * 100) : 0}%)</span></div>
-            <div class="bar-track"><div class="bar-fill" style="width:${s.total > 0 ? Math.round((s.stadeCount[stade] / s.total) * 100) : 0}%;background:${stade === 'Début' ? 'var(--primary-light)' : stade === 'Milieu' ? 'var(--primary)' : stade === 'Fin' ? 'var(--success)' : 'var(--danger)'};"></div></div>
-          `).join('')}
+        <div class="kpi-row">
+          <div class="kpi"><div class="kpi-value">${s.tauxReussite.taux} %</div><div class="kpi-label">Fertilité totale</div></div>
+          <div class="kpi"><div class="kpi-value">${s.prolificite}</div><div class="kpi-label">Prolificité totale</div></div>
         </div>
       </div>
 
-      <div class="dash-block">
-        <div class="card">
-          <div class="block-title">${iconCircle(ICON_SANTE, 'coral', 'sm')} Mortalité & Sanitaire</div>
-          <div class="kpi-row">
-            <div class="kpi"><div class="kpi-value">${mortaSanit.brebisMortesCount}</div><div class="kpi-label">Brebis mortes</div></div>
-            <div class="kpi"><div class="kpi-value">${mortaSanit.agneauxMorts}</div><div class="kpi-label">Agneaux morts</div></div>
-            <div class="kpi"><div class="kpi-value">${mortaSanit.traitementsEnCours.length}</div><div class="kpi-label">Traitements en cours</div></div>
-          </div>
-          <div style="font-size:12.5px;font-weight:600;margin:10px 0 4px;">Causes de mortalité (brebis, campagne)</div>
-          ${causesRows}
+      <div class="card">
+        <div class="block-title">Résultat dernière écho et stats</div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kpi-value">${echoResultat.pleines}</div><div class="kpi-label">Pleines</div></div>
+          <div class="kpi"><div class="kpi-value">${echoResultat.vides}</div><div class="kpi-label">Vides</div></div>
+          <div class="kpi"><div class="kpi-value">${echoResultat.taux !== null ? echoResultat.taux + ' %' : '—'}</div><div class="kpi-label">Taux de réussite</div></div>
         </div>
-        <div class="card">
-          <div class="block-title" style="font-size:13px;">Délais d'attente actifs</div>
-          ${delaisRows}
+        <div class="dash-souscarte">
+          <div class="dash-souscarte-titre">Dernier lot échographié</div>
+          ${dernierLot
+            ? `<div class="dash-callout"><b>${formatDateFr(dernierLot.date)}</b> — ${dernierLot.total} brebis<br>${dernierLot.pleines} pleine(s) · ${dernierLot.vides} vide(s)</div>`
+            : '<div class="muted" style="font-size:12.5px;">Aucune échographie enregistrée.</div>'}
         </div>
       </div>
 
-      <div class="dash-block">
-        <div class="card">
-          <div class="block-title">${iconCircle(ICON_LAIT, 'blue', 'sm')} Contrôle laitier / Production</div>
-          <div class="kpi-row">
-            <div class="kpi"><div class="kpi-value">${s.resume1.litres !== null ? fmtDecimal(s.resume1.litres, 2) + ' L' : '—'}</div><div class="kpi-label">1er contrôle</div></div>
-            <div class="kpi"><div class="kpi-value">${[s.resume1, s.resume2, s.resume3].every(r => r.litres === null) ? '—' : fmtDecimal([s.resume1, s.resume2, s.resume3].reduce((sum, r) => sum + (r.litres || 0), 0), 2) + ' L'}</div><div class="kpi-label">Cumul 3 contrôles</div></div>
-            <div class="kpi"><div class="kpi-value">${s.attendueTraiteCount}</div><div class="kpi-label">Attendues à la traite</div></div>
-          </div>
-          <div style="font-size:12.5px;font-weight:600;margin:12px 0 10px;">Moyenne par brebis · campagne ${DB.campagneDebut != null ? (DB.campagneDebut + 1) : ''} vs ${DB.campagneDebut != null ? DB.campagneDebut : ''}</div>
-          <div style="display:flex;gap:6px;font-size:11px;color:var(--text-muted);margin-bottom:8px;">
-            <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:9px;height:9px;border-radius:2px;background:var(--blue-fg);display:inline-block;"></span>Campagne en cours</span>
-            <span style="display:inline-flex;align-items:center;gap:4px;margin-left:10px;"><span style="width:9px;height:9px;border-radius:2px;background:#c7dcea;display:inline-block;"></span>Campagne précédente</span>
-          </div>
-          ${compareRows}
-        </div>
+      <div class="card">
+        <div class="block-title">${iconCircle(ICON_MOUVEMENT, 'indigo', 'sm')} Mouvements <span class="badge badge-muted" style="font-weight:500;">Campagne en cours</span></div>
+        ${mvtTableHtml}
+        ${dernierMvtHtml}
       </div>
 
-      <div class="dash-block">
-        <div class="card">
-          <div class="block-title">${iconCircle(ICON_MOUVEMENT, 'indigo', 'sm')} Mouvements & Effectifs</div>
-          <div class="kpi-row">
-            <div class="kpi"><div class="kpi-value">${s.total}</div><div class="kpi-label">Brebis actives</div></div>
-            <div class="kpi"><div class="kpi-value">${nbAgnelles}</div><div class="kpi-label">Agnelles</div></div>
-            <div class="kpi"><div class="kpi-value">${nbBeliersActifs}</div><div class="kpi-label">Béliers actifs</div></div>
-          </div>
-          <div style="font-size:12.5px;font-weight:600;margin:10px 0 4px;">Mouvements — campagne en cours</div>
-          <div class="list-row"><span>Entrées</span><span class="badge badge-muted">${mvtCampagne.entrees}</span></div>
-          <div class="list-row"><span>Vendues</span><span class="badge badge-muted">${mvtCampagne.vendues}</span></div>
-          <div class="list-row"><span>Mortes</span><span class="badge badge-muted">${mvtCampagne.mortes}</span></div>
+      <div class="card cliquable" id="bloc-mortalite">
+        <span class="compteur-chevron">→</span>
+        <div class="block-title">${iconCircle(ICON_SANTE, 'coral', 'sm')} Mortalité <span class="badge badge-muted" style="font-weight:500;">Campagne en cours</span></div>
+        <div style="font-size:12.5px;font-weight:600;margin-bottom:4px;">Brebis — ${mortaSanit.brebisMortesCount} perte(s)</div>
+        ${causesBrebisHtml}
+        <div style="font-size:12.5px;font-weight:600;margin:10px 0 4px;">Agneaux — ${mortaSanit.agneauxMorts} perte(s)</div>
+        ${causesAgneauxHtml}
+      </div>
+
+      <div class="card cliquable" id="bloc-controle-laitier">
+        <span class="compteur-chevron">→</span>
+        <div class="block-title">${iconCircle(ICON_LAIT, 'blue', 'sm')} Contrôle laitier — moyenne par brebis</div>
+        <div style="display:flex;gap:6px;font-size:11px;color:var(--text-muted);margin-bottom:8px;">
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:9px;height:9px;border-radius:2px;background:var(--blue-fg);display:inline-block;"></span>Campagne en cours</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;margin-left:10px;"><span style="width:9px;height:9px;border-radius:2px;background:#c7dcea;display:inline-block;"></span>Campagne précédente</span>
         </div>
-        <div class="card">
-          <div class="block-title" style="font-size:13px;">Derniers mouvements</div>
-          ${mvtRows}
-        </div>
+        ${compareRows}
+      </div>
+
+      <div class="card">
+        <div class="block-title">Attendues à la traite <span class="badge badge-blue" style="margin-left:auto;">${attendues.length}</span></div>
+        <div class="muted" style="font-size:12px;margin-bottom:4px;">Brebis dont l'agneau n'est plus actif (vendu, mort ou adopté)</div>
+        ${attenduesRows}
       </div>
     </div>
   `;
@@ -3818,11 +3995,8 @@ function renderHome() {
 
   if (isDesktopMode()) {
     const dashboard = document.createElement('div');
-    dashboard.innerHTML = dashboardDesktopHtml();
+    dashboard.innerHTML = accueilDesktopHtml();
     app.appendChild(dashboard);
-    document.querySelectorAll('.dash-eid-link').forEach(el => {
-      el.onclick = () => { detailOrigin = 'home'; previousDetailId = null; render('detail', el.dataset.id); };
-    });
     return;
   }
 
@@ -5207,7 +5381,10 @@ function getAgneauxActifsInventaire() {
         if (l.sexe === 'Mort-né') return;
         if (!l.eid) return; // pas bouclé — pas d'EID à afficher
         if (l.statutFinal === 'vendu' || l.statutFinal === 'mort') return;
-        items.push({ eid: l.eid, mereEid: sheep.eid });
+        // sexe ajouté (chantier "Accueil desktop") pour le détail mâles/
+        // femelles du compteur -- champ en plus, aucun appelant existant
+        // ne s'en trouve affecté (ils ne lisent que .eid/.mereEid).
+        items.push({ eid: l.eid, mereEid: sheep.eid, sexe: l.sexe });
       });
     });
   });
