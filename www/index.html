@@ -611,10 +611,18 @@ function migrateData(d) {
   // une vue d'ensemble troupeau par campagne sans parcourir DB.brebis).
   if (!d.bilanLactation) d.bilanLactation = [];
   // Lignes SIEOL "sans mise-bas" (ano_repro rempli, date_mise_bas vide)
-  // résolues à une brebis connue -- jamais des lactations, seulement de quoi
-  // alimenter le recoupement "Vides définitives SIEOL vs Ovilog" (voir
-  // renderRecoupementSieol) : { eid, campagne }.
+  // résolues à une brebis connue, posées par renderImportBilanLactation --
+  // { eid, campagne }. Le recoupement "Vides définitives SIEOL vs Ovilog"
+  // qui en faisait usage a été supprimé (refonte Bilan de campagne) ; la
+  // collection reste alimentée par l'import (toujours conservé, seulement
+  // orphelin de cet onglet) et sert encore à campagnesDisponiblesSieol.
   if (!d.sieolSansMiseBas) d.sieolSansMiseBas = [];
+  // Saisie manuelle troupeau du nouveau Bilan de lactation (refonte -- voir
+  // bilanLactationHtml) : une entrée par campagne { campagne, litrageTotal,
+  // brebisTraite }, jamais par brebis (litrageTotal/brebisTraite sont des
+  // agrégats troupeau, typiquement recopiés du récapitulatif SIEOL, pas
+  // dérivables de DB.bilanLactation qui ne couvre que le détail par brebis).
+  if (!d.bilanLactationSaisie) d.bilanLactationSaisie = [];
   // Liste en série (onglet du Chantier de tri) : tableau {eid, espece} de
   // travail, persisté pour survivre à une fermeture de l'appli, mais jamais
   // relié aux fiches brebis/béliers/agnelles (espece n'est qu'une étiquette
@@ -1998,11 +2006,12 @@ function estVideDefinitiveCampagne(sheep) {
   const list = Array.isArray(sheep.videesDefinitives) ? sheep.videesDefinitives : [];
   return list.some(v => v && v.campagne === DB.campagneDebut);
 }
-/* Variante paramétrée par campagne explicite (voir renderRecoupementSieol) :
-   sheep.videesDefinitives n'est jamais remis à zéro d'une campagne à
-   l'autre, donc l'historique complet reste consultable pour une campagne
-   CLOSE, pas seulement la campagne en cours comme estVideDefinitiveCampagne
-   ci-dessus (qui reste inchangée, toujours basée sur DB.campagneDebut). */
+/* Variante paramétrée par campagne explicite (utilisée par
+   marquerVideDefinitive ci-dessous) : sheep.videesDefinitives n'est jamais
+   remis à zéro d'une campagne à l'autre, donc l'historique complet reste
+   consultable pour une campagne CLOSE, pas seulement la campagne en cours
+   comme estVideDefinitiveCampagne ci-dessus (qui reste inchangée, toujours
+   basée sur DB.campagneDebut). */
 function estVideDefinitiveCampagneN(sheep, campagne) {
   const list = Array.isArray(sheep.videesDefinitives) ? sheep.videesDefinitives : [];
   return list.some(v => v && v.campagne === campagne);
@@ -2068,9 +2077,10 @@ function upsertBilanLactation(eid, campagne, champs) {
   if (idx !== -1) DB.bilanLactation[idx] = { eid, campagne, ...champs };
   else DB.bilanLactation.push({ eid, campagne, ...champs });
 }
-/* Écrit une ligne SIEOL "sans mise-bas" résolue à une brebis, pour le
-   recoupement (voir renderRecoupementSieol) -- jamais de doublon sur un
-   ré-import (même brebis, même campagne). */
+/* Écrit une ligne SIEOL "sans mise-bas" résolue à une brebis (posée par
+   l'import, le recoupement qui la consommait a été supprimé -- voir
+   DB.sieolSansMiseBas ci-dessus) -- jamais de doublon sur un ré-import
+   (même brebis, même campagne). */
 function upsertSieolSansMiseBas(eid, campagne) {
   const existe = DB.sieolSansMiseBas.some(l => cleanEid(l.eid) === cleanEid(eid) && l.campagne === campagne);
   if (!existe) DB.sieolSansMiseBas.push({ eid, campagne });
@@ -2637,30 +2647,49 @@ function lotIAConcerneCampagneEnCours(lot) {
   return uneMiseBasCetteCampagne || unMembreEnAttente;
 }
 
-/* Détail par ÂGE EXACT (2 ans, 3 ans, 4 ans... jusqu'au plus vieux
-   réellement présent, sans plafond arbitraire) d'un lot IA ciblant des
-   BREBIS -- réservé à l'export PDF (voir bilanReproductionHtml). Jamais
-   appelé pour un lot ciblant des agnelles (lot.cible === 'Agnelles') :
-   toutes du même âge, ce détail n'apporterait rien -- voir renderAddLotRepro,
-   un lot cible toujours SOIT des brebis SOIT des agnelles, jamais les deux.
-   Mêmes formules que statsLotIA, appliquées indépendamment à chaque année
-   d'âge (âge figé à la date de référence de la campagne, comme
-   statsDetailleesParGroupeAge). */
+/* Équivalent de lotIAConcerneCampagneEnCours pour un lot ÉPONGE -- plus
+   simple, puisqu'une éponge n'a pas de fenêtre de saillie à faire
+   correspondre : "mise bas cette campagne" est directement le tag
+   agnelage.campagne (comme déjà utilisé par la carte à l'écran), pas un
+   rattachement par date comme pour l'IA. */
+function lotEpongeConcerneCampagneEnCours(lot) {
+  let uneMiseBasCetteCampagne = false;
+  let unMembreEnAttente = false;
+  (lot.membres || []).forEach(eid => {
+    const animal = findAnimalReproByEid(eid);
+    if (!animal) return;
+    if (agnelageCampagneActuelleIdx(animal) !== -1) { uneMiseBasCetteCampagne = true; return; }
+    if (estVideDefinitiveCampagne(animal)) return;
+    unMembreEnAttente = true;
+  });
+  return uneMiseBasCetteCampagne || unMembreEnAttente;
+}
+
+/* Détail par MILLÉSIME (année de naissance déduite de l'EID -- voir
+   anneeNaissance -- 2018, 2019, 2020... jusqu'au plus vieux réellement
+   présent, sans plafond arbitraire) d'un lot IA ciblant des BREBIS --
+   réservé à l'export PDF (voir bilanReproductionHtml). Jamais appelé pour
+   un lot ciblant des agnelles (lot.cible === 'Agnelles') : toutes du même
+   millésime, ce détail n'apporterait rien -- voir renderAddLotRepro, un
+   lot cible toujours SOIT des brebis SOIT des agnelles, jamais les deux.
+   Mêmes formules que statsLotIA, appliquées indépendamment à chaque
+   millésime -- demande explicite de l'éleveur, plus parlant que "N ans"
+   pour identifier une cohorte (numéro visuel commençant par le chiffre du
+   millésime, ex : 90059 pour 2019, voir anneeNaissance). */
 function statsLotIAParAgeExact(lot) {
   const min = DB.reproGestationMin !== undefined ? DB.reproGestationMin : 144;
   const max = DB.reproGestationMax !== undefined ? DB.reproGestationMax : 152;
   const retMin = DB.reproRetourMin !== undefined ? DB.reproRetourMin : 160;
   const retMax = DB.reproRetourMax !== undefined ? DB.reproRetourMax : 171;
   const lotDate = new Date(lot.dateEvenement || lot.dateCreation);
-  const refDate = campagneRefDate() || new Date();
   const groupes = {};
   (lot.membres || []).forEach(eid => {
     const animal = findAnimalReproByEid(eid);
     if (!animal) return;
-    const a = ageADate(eid, refDate);
-    if (a === null) return;
-    if (!groupes[a]) groupes[a] = { effectif: 0, misesBasIA: 0, misesBasRetour: 0, agneauxIA: 0, agneauxRetour: 0 };
-    const g = groupes[a];
+    const millesime = anneeNaissance(eid);
+    if (millesime === null) return;
+    if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBasIA: 0, misesBasRetour: 0, agneauxIA: 0, agneauxRetour: 0 };
+    const g = groupes[millesime];
     g.effectif++;
     const ag = agnelageCampagneActuelle(animal);
     if (!ag || !ag.date || isNaN(lotDate.getTime())) return;
@@ -2671,9 +2700,94 @@ function statsLotIAParAgeExact(lot) {
     if (diff >= min && diff <= max) { g.misesBasIA++; g.agneauxIA += nesTotal; }
     else if (diff >= retMin && diff <= retMax) { g.misesBasRetour++; g.agneauxRetour += nesTotal; }
   });
-  return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(ageVal => {
-    const g = groupes[ageVal];
-    return Object.assign({ age: ageVal }, statsLotIAColonnes(g.effectif, g.misesBasIA, g.misesBasRetour, g.agneauxIA, g.agneauxRetour));
+  return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(millesime => {
+    const g = groupes[millesime];
+    // agneauxTotal (brut, jamais reconstruit depuis une prolificité arrondie)
+    // -- sert à resumeLotParGroupeAge pour agréger plusieurs millésimes sans
+    // perte de précision.
+    return Object.assign({ millesime, agneauxTotal: g.agneauxIA + g.agneauxRetour }, statsLotIAColonnes(g.effectif, g.misesBasIA, g.misesBasRetour, g.agneauxIA, g.agneauxRetour));
+  });
+}
+
+/* Équivalent de statsLotIAParAgeExact pour un lot ÉPONGE -- pas de fenêtre
+   IA/1er retour (pas de date de saillie précise pour une éponge, contrairement
+   à l'IA) : une brebis du lot compte "mise bas" dès qu'elle a un agnelage
+   cette campagne, comme le fait déjà le résumé de carte existant (voir
+   bilanReproductionHtml, calcul lotMisesBas). Réservé à l'export PDF,
+   comme pour l'IA. */
+function statsLotEpongeParAgeExact(lot) {
+  const groupes = {};
+  (lot.membres || []).forEach(eid => {
+    const animal = findAnimalReproByEid(eid);
+    if (!animal) return;
+    const millesime = anneeNaissance(eid);
+    if (millesime === null) return;
+    if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBas: 0, agneaux: 0 };
+    const g = groupes[millesime];
+    g.effectif++;
+    const ag = agnelageCampagneActuelle(animal);
+    if (!ag) return;
+    g.misesBas++;
+    g.agneaux += (ag.lambs || []).length;
+  });
+  const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
+  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
+  return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(millesime => {
+    const g = groupes[millesime];
+    // agneaux (brut) exposé au même titre que misesBas, pour permettre à
+    // resumeLotParGroupeAge d'agréger plusieurs millésimes sans jamais
+    // reconstruire un total depuis une prolificité déjà arrondie.
+    return { millesime, effectif: g.effectif, misesBas: g.misesBas, agneaux: g.agneaux, fertilite: pct(g.misesBas, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
+  });
+}
+
+/* Résultat GLOBAL (toutes années confondues) d'un lot Éponge -- même
+   principe que statsLotIA mais sans distinction IA/1er retour, réutilisé à
+   la fois par la carte à l'écran (bilanReproductionHtml) et l'export PDF
+   (buildLotEpongePdfBytes). */
+function statsLotEponge(lot) {
+  let effectif = 0, misesBas = 0, agneaux = 0;
+  (lot.membres || []).forEach(eid => {
+    const animal = findAnimalReproByEid(eid);
+    if (!animal) return;
+    effectif++;
+    const ag = agnelageCampagneActuelle(animal);
+    if (!ag) return;
+    misesBas++;
+    agneaux += (ag.lambs || []).length;
+  });
+  const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
+  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
+  return { effectif, misesBas, fertilite: pct(misesBas, effectif), prolificite: rat(agneaux, misesBas) };
+}
+
+/* Résumé PAR GROUPE D'ÂGE (Antenaises 1 an / Brebis 2 ans et plus, même
+   découpage que statsDetailleesParGroupeAge) d'un lot -- affiché à l'écran
+   dans chaque carte de lot (IA et Éponge), contrairement au détail par
+   millésime ci-dessus qui reste réservé au PDF. Agrège les COMPTEURS BRUTS
+   (misesBas, agneaux) déjà calculés par millésime (parAgeExact), jamais une
+   prolificité déjà arrondie -- pour ne perdre aucune précision en sommant
+   plusieurs millésimes. `parAgeExact` peut être le retour de
+   statsLotIAParAgeExact (mises bas = global.misesBas, agneaux =
+   agneauxTotal) ou statsLotEpongeParAgeExact (à plat) -- géré via un
+   sélecteur commun aux deux formes. */
+function resumeLotParGroupeAge(lot, parAgeExact) {
+  const refDate = campagneRefDate() || new Date();
+  const groupes = { '1 an': { effectif: 0, misesBas: 0, agneaux: 0 }, '2 ans et plus': { effectif: 0, misesBas: 0, agneaux: 0 } };
+  parAgeExact.forEach(ligne => {
+    const ageEnAnnees = refDate.getFullYear() - ligne.millesime;
+    const g = groupes[ageEnAnnees <= 1 ? '1 an' : '2 ans et plus'];
+    const misesBas = ligne.global ? ligne.global.misesBas : ligne.misesBas;
+    const agneaux = ligne.global ? ligne.agneauxTotal : ligne.agneaux;
+    g.effectif += ligne.effectif;
+    g.misesBas += misesBas;
+    g.agneaux += agneaux;
+  });
+  const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
+  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
+  return Object.keys(groupes).map(key => {
+    const g = groupes[key];
+    return { label: key === '1 an' ? 'Antenaises (1 an)' : 'Brebis (2 ans et plus)', effectif: g.effectif, fertilite: pct(g.misesBas, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
   });
 }
 
@@ -2688,8 +2802,10 @@ function statsParAgeExactTroupeau(cohort, refDate) {
   cohort.forEach(s => {
     const a = ageADate(s.eid, refDate);
     if (a === null || a < 1) return;
-    if (!groupes[a]) groupes[a] = { presentes: 0, misesBas: 0, nesTotal: 0, dates: [] };
-    const g = groupes[a];
+    const millesime = anneeNaissance(s.eid);
+    if (millesime === null) return;
+    if (!groupes[millesime]) groupes[millesime] = { presentes: 0, misesBas: 0, nesTotal: 0, dates: [] };
+    const g = groupes[millesime];
     g.presentes++;
     const ag = agnelageCampagneActuelle(s);
     if (!ag) return;
@@ -2699,14 +2815,14 @@ function statsParAgeExactTroupeau(cohort, refDate) {
   });
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
   const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
-  return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(ageVal => {
-    const g = groupes[ageVal];
+  return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(millesime => {
+    const g = groupes[millesime];
     const datesTri = g.dates.slice().sort();
     const dureeMiseBas = datesTri.length >= 2
       ? Math.round((new Date(datesTri[datesTri.length - 1]) - new Date(datesTri[0])) / 86400000)
       : (datesTri.length === 1 ? 0 : null);
     return {
-      age: ageVal, presentes: g.presentes, misesBas: g.misesBas,
+      millesime, presentes: g.presentes, misesBas: g.misesBas,
       fertilite: pct(g.misesBas, g.presentes),
       prolificite: rat(g.nesTotal, g.misesBas),
       dureeMiseBas
@@ -2719,6 +2835,58 @@ function statsParAgeExactTroupeau(cohort, refDate) {
    partout ailleurs dans l'appli (campagneDebut + 1). */
 function campagneLabel(campagneDebutVal) {
   return campagneDebutVal + 1;
+}
+
+/* ---------- Bilan de lactation (refonte troupeau) ---------- */
+
+/* Nombre de brebis ayant mis bas pour une campagne N quelconque (pas
+   forcément la campagne en cours) -- réutilisé par le ratio "brebis
+   traites / brebis ayant mis bas" du nouveau Bilan de lactation. Repose
+   directement sur le tag campagne déjà posé sur chaque agnelage (voir
+   agnelageCampagneActuelleIdx) plutôt que sur une reconstruction de cohorte :
+   un agnelage passé reste vrai quel que soit le statut actuel de la brebis
+   (vendue/morte depuis), donc parcourir TOUTES les brebis suffit ici, sans
+   avoir besoin d'une "population présente au 1er octobre de la campagne N"
+   comme le fait campagneCohortPresente pour la campagne en cours. */
+function misesBasTroupeauCampagne(campagne) {
+  return DB.brebis.filter(s => (s.agnelages || []).some(a => a && a.campagne === campagne)).length;
+}
+
+/* Effectif de brebis présentes à une date quelconque du passé -- même
+   logique que campagneCohortPresente (entrée avant, pas encore sortie),
+   mais paramétrée par date plutôt que figée sur la campagne en cours :
+   sert de brique à moyennePresenceMensuelleCampagne ci-dessous, pour
+   pouvoir échantillonner n'importe quelle campagne (y compris N-1). */
+function effectifPresentADate(dateRef) {
+  return DB.brebis.filter(s => {
+    const mouvements = s.mouvements || [];
+    const entreeMvt = mouvements.find(m => m.type === 'Entrée');
+    const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
+    const entreeDate = entreeDateStr ? new Date(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
+    if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > dateRef) return false;
+    const sortieMvt = [...mouvements].reverse().find(m => ['Vendue', 'Morte', 'Vendue reproduction'].includes(m.type));
+    if (!sortieMvt || !sortieMvt.date) return true;
+    const sortieDate = new Date(sortieMvt.date);
+    return isNaN(sortieDate.getTime()) || sortieDate >= dateRef;
+  }).length;
+}
+
+/* Moyenne de présence sur la campagne (litrage/brebis présente, Bilan de
+   lactation) : moyenne mensuelle de l'effectif sur les 12 mois de la
+   campagne (octobre à septembre), en partant de l'effectif de début de
+   campagne (1er octobre), ajustée chaque mois selon les entrées ET les
+   sorties survenues ce mois-là (choix confirmé -- pas seulement les
+   sorties). Implémentée en ré-échantillonnant effectifPresentADate au 1er
+   de chaque mois plutôt qu'en cumulant des deltas mois par mois : donne
+   exactement le même résultat (chaque échantillon reconstruit l'effectif
+   réel à cette date, entrées et sorties confondues) tout en restant
+   robuste à un historique de mouvements incomplet ou désordonné. */
+function moyennePresenceMensuelleCampagne(campagne) {
+  let total = 0;
+  for (let i = 0; i < 12; i++) {
+    total += effectifPresentADate(new Date(campagne, 9 + i, 1)); // 9 = octobre (0-indexé), déborde proprement sur l'année suivante
+  }
+  return Math.round((total / 12) * 10) / 10;
 }
 
 /* ---------- Sélecteur de campagne à la saisie d'une échographie ----------
@@ -3114,7 +3282,6 @@ btnBack.onclick = () => {
   else if (currentView === 'traitements-collectifs') render('sanitaire');
   else if (currentView === 'import-numero-sieol') render('parametres');
   else if (currentView === 'import-bilan-lactation') { bilanCampagneTab = 'lactation'; render('bilan-campagne'); }
-  else if (currentView === 'recoupement-sieol') render('bilan-campagne');
   else if (currentView === 'import-agnelles') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render(belierDetailOrigin);
@@ -3311,7 +3478,6 @@ function render(view, sheepId) {
     else if (view === 'import-numero-sieol') renderImportNumeroSieol();
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
     else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
-    else if (view === 'recoupement-sieol') renderRecoupementSieol();
     else if (view === 'import-agnelles') renderImportAgnelles();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
@@ -3536,10 +3702,9 @@ function dashboardKpiHtml() {
       <div class="stat-card sc-coral stat-card-wide stat-card-clickable" id="kpi-bilan-campagne" role="button" tabindex="0" style="display:flex;align-items:center;gap:12px;">
         ${iconCircle(ICON_JOURNAL, 'coral', 'sm')}
         <div>
-          <div class="stat-card-label">Bilan de campagne</div>
-          <div class="stat-card-value">${active.filter(s => statutReproductionCampagne(s) === 'Aucune info repro').length}</div>
+          <div class="stat-card-value" style="font-size:15px;">${DB.campagneDebut !== null && DB.campagneDebut !== undefined ? 'Bilan campagne ' + campagneLabel(DB.campagneDebut) : 'Bilan de campagne'}</div>
         </div>
-        <div class="stat-card-sub" style="margin-left:auto;text-align:right;max-width:150px;">Aucune info repro cette campagne</div>
+        <div class="stat-card-sub" style="margin-left:auto;text-align:right;max-width:150px;">Accès direct au module</div>
       </div>
     </div>
 
@@ -4139,7 +4304,7 @@ function renderBilanCampagne() {
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
 
   const tabs = [
-    { key: 'incoherences', label: 'Incohérences fin de campagne' },
+    { key: 'incoherences', label: 'Brebis à régulariser' },
     { key: 'reproduction', label: 'Bilan de reproduction' },
     { key: 'lactation', label: 'Bilan de lactation' }
   ];
@@ -4148,7 +4313,7 @@ function renderBilanCampagne() {
   ).join('')}</div>`;
 
   const bodyHtml = bilanCampagneTab === 'incoherences' ? bilanIncoherencesHtml(actives)
-    : bilanCampagneTab === 'reproduction' ? bilanReproductionHtml(actives)
+    : bilanCampagneTab === 'reproduction' ? bilanReproductionHtml()
     : bilanLactationHtml();
 
   app.innerHTML = tabBarHtml + bodyHtml;
@@ -4162,29 +4327,50 @@ function renderBilanCampagne() {
   if (bilanCampagneTab === 'lactation') {
     const select = document.getElementById('bilan-lactation-campagne-select');
     if (select) select.onchange = () => { bilanLactationCampagneAffichee = parseInt(select.value, 10); render('bilan-campagne'); };
-    const btnImporter = document.getElementById('btn-importer-bilan-lactation');
-    if (btnImporter) btnImporter.onclick = () => render('import-bilan-lactation');
-    const btnRecoupement = document.getElementById('btn-voir-recoupement-sieol');
-    if (btnRecoupement) btnRecoupement.onclick = () => render('recoupement-sieol');
-    const btnSupprimer = document.getElementById('btn-supprimer-bilan-lactation-campagne');
-    if (btnSupprimer) btnSupprimer.onclick = () => {
+    // Saisie manuelle troupeau (litrage total, brebis passées à la traite) --
+    // voir DB.bilanLactationSaisie/bilanLactationHtml. onchange (au blur),
+    // pas oninput : un re-render à chaque frappe couperait la saisie en
+    // cours, alors que les indicateurs affichés doivent de toute façon se
+    // recalculer entièrement (litrage/brebis traite, ratio, etc.).
+    const saveBilanLactationSaisie = () => {
       const campagne = bilanLactationCampagneAffichee;
-      const nbLact = DB.bilanLactation.filter(l => l.campagne === campagne).length;
-      const nbSansMiseBas = (DB.sieolSansMiseBas || []).filter(l => l.campagne === campagne).length;
-      if (!confirm('Supprimer TOUTES les données du Bilan de lactation SIEOL pour la campagne ' + (campagne + 1) + ' ? ' + nbLact + ' lactation(s) et ' + nbSansMiseBas + ' ligne(s) "sans mise-bas" seront définitivement supprimées (le numéro visuel SIEOL déjà enregistré sur les fiches, lui, n\'est pas touché). Cette action est irréversible.')) return;
-      DB.bilanLactation = DB.bilanLactation.filter(l => l.campagne !== campagne);
-      DB.sieolSansMiseBas = (DB.sieolSansMiseBas || []).filter(l => l.campagne !== campagne);
+      const litrageInput = document.getElementById('bilan-lactation-litrage-total');
+      const brebisInput = document.getElementById('bilan-lactation-brebis-traite');
+      const litrageVal = litrageInput && litrageInput.value !== '' ? parseFloat(litrageInput.value) : null;
+      const brebisVal = brebisInput && brebisInput.value !== '' ? parseInt(brebisInput.value, 10) : null;
+      let entry = DB.bilanLactationSaisie.find(e => e.campagne === campagne);
+      if (!entry) { entry = { campagne }; DB.bilanLactationSaisie.push(entry); }
+      entry.litrageTotal = (litrageVal !== null && !isNaN(litrageVal)) ? litrageVal : null;
+      entry.brebisTraite = (brebisVal !== null && !isNaN(brebisVal)) ? brebisVal : null;
       saveData(DB);
       render('bilan-campagne');
     };
+    const litrageInput = document.getElementById('bilan-lactation-litrage-total');
+    if (litrageInput) litrageInput.onchange = saveBilanLactationSaisie;
+    const brebisInput = document.getElementById('bilan-lactation-brebis-traite');
+    if (brebisInput) brebisInput.onchange = saveBilanLactationSaisie;
+    const btnExportLactationPdf = document.getElementById('btn-export-bilan-lactation-pdf');
+    if (btnExportLactationPdf) btnExportLactationPdf.onclick = () => {
+      btnExportLactationPdf.disabled = true;
+      const original = btnExportLactationPdf.textContent;
+      btnExportLactationPdf.textContent = 'Export en cours...';
+      exportBilanLactationPdf(bilanLactationCampagneAffichee).finally(() => { btnExportLactationPdf.disabled = false; btnExportLactationPdf.textContent = original; });
+    };
+    const btnExportLactationXlsx = document.getElementById('btn-export-bilan-lactation-xlsx');
+    if (btnExportLactationXlsx) btnExportLactationXlsx.onclick = () => {
+      btnExportLactationXlsx.disabled = true;
+      const original = btnExportLactationXlsx.textContent;
+      btnExportLactationXlsx.textContent = 'Export en cours...';
+      exportBilanLactationXlsx(bilanLactationCampagneAffichee).finally(() => { btnExportLactationXlsx.disabled = false; btnExportLactationXlsx.textContent = original; });
+    };
   }
   if (bilanCampagneTab === 'reproduction') {
-    // Dépliage d'une carte de lot IA (voir bilanReproductionHtml) : simple
-    // affichage/masquage en DOM, jamais un re-render -- garde le scroll et
-    // l'état des autres cartes déjà dépliées.
-    document.querySelectorAll('.lot-ia-head').forEach(head => {
+    // Dépliage d'une carte de lot IA/Éponge (voir bilanReproductionHtml) :
+    // simple affichage/masquage en DOM, jamais un re-render -- garde le
+    // scroll et l'état des autres cartes déjà dépliées.
+    document.querySelectorAll('.lot-ia-head, .lot-eponge-head').forEach(head => {
       head.onclick = () => {
-        const body = head.parentElement.querySelector('.lot-ia-body');
+        const body = head.parentElement.querySelector('.lot-ia-body, .lot-eponge-body');
         if (body) body.classList.toggle('hidden');
       };
     });
@@ -4199,6 +4385,17 @@ function renderBilanCampagne() {
         exportLotIaPdf(lot).finally(() => { btn.disabled = false; btn.textContent = original; });
       };
     });
+    document.querySelectorAll('.btn-export-lot-eponge-pdf').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const lot = (DB.lots || []).find(l => l.id === btn.dataset.lotId);
+        if (!lot) return;
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Export en cours...';
+        exportLotEpongePdf(lot).finally(() => { btn.disabled = false; btn.textContent = original; });
+      };
+    });
     const btnExportAge = document.getElementById('btn-export-bilan-age-pdf');
     if (btnExportAge) btnExportAge.onclick = () => {
       btnExportAge.disabled = true;
@@ -4209,135 +4406,83 @@ function renderBilanCampagne() {
   }
 }
 
-/* Sous-onglet "Bilan de lactation" de Bilan de campagne : vue d'ensemble
-   troupeau (moyennes, répartition par classe) pour une campagne choisie
-   explicitement (jamais présumée = campagne en cours, voir
-   renderImportBilanLactation pour la même exigence à l'import) + accès à
-   l'import et au recoupement des vides définitives. */
+/* Sous-onglet "Bilan de lactation" de Bilan de campagne (refonte troupeau) :
+   pour une campagne choisie explicitement (jamais présumée = campagne en
+   cours, même exigence qu'avant) -- 2 champs de saisie manuelle éleveur
+   (litrage total, brebis passées à la traite, voir DB.bilanLactationSaisie)
+   plus les indicateurs calculés à partir d'eux et des données déjà
+   présentes dans Ovilog (voir bilanLactationIndicateurs), chacun avec son
+   rappel N-1. Le recoupement vides définitives SIEOL a disparu (voir
+   renderRecoupementSieol, supprimé) et l'import du bilan de lactation
+   détaillé (DB.bilanLactation, par brebis) sort de cet onglet -- traité
+   dans un chantier séparé, ne reste ici accessible par aucun bouton
+   (renderImportBilanLactation garde sa route pour ne pas perdre le code,
+   simplement orpheline en attendant ce chantier). */
 function bilanLactationHtml() {
   const campagnes = campagnesDisponiblesSieol();
   if (bilanLactationCampagneAffichee === null || !campagnes.includes(bilanLactationCampagneAffichee)) {
     // Par défaut, la campagne qui vient de se clôturer (campagneDebut - 1) :
-    // c'est systématiquement celle que porte un bilan SIEOL fraîchement reçu.
+    // c'est celle dont le litrage/effectif de traite est déjà connu et
+    // saisissable en entier (la campagne en cours n'a pas fini de tourner).
     bilanLactationCampagneAffichee = campagnes.length > 1 ? campagnes[1] : campagnes[0];
   }
   const campagne = bilanLactationCampagneAffichee;
-  const entrees = DB.bilanLactation.filter(l => l.campagne === campagne);
-  const sansMiseBasCampagne = (DB.sieolSansMiseBas || []).filter(l => l.campagne === campagne);
-
-  const moyenne = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
-  const lactTotales = entrees.map(e => e.lactTotale).filter(v => v !== null && v !== undefined);
-  const dureesTraite = entrees.map(e => e.dureeTraite).filter(v => v !== null && v !== undefined);
-  const moyenneLact = moyenne(lactTotales);
-  const moyenneDuree = moyenne(dureesTraite);
-  const repartitionClasse = {};
-  entrees.forEach(e => {
-    if (e.classeParQuart === null || e.classeParQuart === undefined) return;
-    repartitionClasse[e.classeParQuart] = (repartitionClasse[e.classeParQuart] || 0) + 1;
-  });
-  const classesTriees = Object.keys(repartitionClasse).sort((a, b) => Number(a) - Number(b));
+  const saisie = bilanLactationSaisieCampagne(campagne);
+  const ind = bilanLactationIndicateurs(campagne);
+  const indN1 = bilanLactationIndicateurs(campagne - 1);
+  const txt = (v, suffix) => v !== null && v !== undefined ? fmtDecimal(v, 1) + (suffix || '') : '—';
 
   return `
-    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan de lactation', "Bilan de lactation SIEOL/UNOTEC, campagne sélectionnée explicitement — jamais présumée être la campagne en cours d'Ovilog (voir import).")}</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan de lactation', "Vue troupeau de la campagne, saisie manuellement par l'éleveur (litrage total, brebis passées à la traite) — campagne sélectionnée explicitement, jamais présumée être la campagne en cours d'Ovilog.")}</div>
 
     <div class="card" style="margin-bottom:10px;">
       <label>Campagne consultée</label>
       <select id="bilan-lactation-campagne-select">
         ${campagnes.map(c => `<option value="${c}" ${c === campagne ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}
       </select>
-      <div class="row" style="margin-top:12px;">
-        <button type="button" class="btn btn-secondary" id="btn-importer-bilan-lactation" style="flex:1;">Importer un bilan de lactation</button>
-        <button type="button" class="btn btn-secondary" id="btn-voir-recoupement-sieol" style="flex:1;">Recoupement vides définitives</button>
-      </div>
-      ${entrees.length + sansMiseBasCampagne.length > 0 ? `
-      <button type="button" class="btn btn-secondary" id="btn-supprimer-bilan-lactation-campagne" style="margin-top:10px;color:var(--danger);border-color:var(--danger);">Supprimer les données de cette campagne</button>
-      ` : ''}
-    </div>
-
-    ${entrees.length === 0 ? `<div class="empty">Aucune donnée de lactation importée pour la campagne ${campagne + 1}.</div>` : `
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Vue d'ensemble troupeau — campagne ${campagne + 1}</div>
-      <div class="grid2">
-        <div><div style="font-size:12px;color:var(--text-muted);">Brebis avec lactation</div><div style="font-size:20px;font-weight:600;">${entrees.length}</div></div>
-        <div><div style="font-size:12px;color:var(--text-muted);">Lactation moyenne</div><div style="font-size:20px;font-weight:600;">${moyenneLact !== null ? fmtDecimal(moyenneLact, 1) + ' L' : '—'}</div></div>
-        <div><div style="font-size:12px;color:var(--text-muted);">Durée de traite moyenne</div><div style="font-size:20px;font-weight:600;">${moyenneDuree !== null ? fmtDecimal(moyenneDuree, 0) + ' j' : '—'}</div></div>
-      </div>
-      ${classesTriees.length > 0 ? `
-      <div style="font-size:12px;color:var(--text-muted);margin-top:14px;margin-bottom:6px;">Répartition par classe par quart</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;">
-        ${classesTriees.map(c => `<span class="badge badge-muted">Classe ${c} : ${repartitionClasse[c]}</span>`).join('')}
-      </div>
-      ` : ''}
-    </div>
-    `}
-  `;
-}
-
-/* Recoupement "Vides définitives SIEOL vs Ovilog" -- voir chantier "Bilan de
-   lactation SIEOL". Compare, pour UNE campagne explicitement choisie
-   (jamais la campagne en cours) :
-   - les vides définitives Ovilog de cette campagne (estVideDefinitiveCampagneN,
-     sur TOUTES les brebis, actives ou non -- une brebis vendue/morte depuis
-     reste pertinente pour une campagne passée) ;
-   - les lignes SIEOL "sans mise-bas" résolues de cette même campagne
-     (DB.sieolSansMiseBas, voir renderImportBilanLactation).
-   Aucune correction automatique : chaque écart renvoie vers la fiche
-   brebis concernée pour trancher à la main. */
-function renderRecoupementSieol() {
-  pageTitle.textContent = 'Recoupement vides définitives SIEOL';
-  const campagnesOptions = campagnesDisponiblesSieol();
-  if (bilanLactationCampagneAffichee === null || !campagnesOptions.includes(bilanLactationCampagneAffichee)) {
-    bilanLactationCampagneAffichee = campagnesOptions.length > 1 ? campagnesOptions[1] : campagnesOptions[0];
-  }
-  const campagne = bilanLactationCampagneAffichee;
-
-  const sieolEids = new Set((DB.sieolSansMiseBas || []).filter(l => l.campagne === campagne).map(l => cleanEid(l.eid)));
-  const videsOvilog = DB.brebis.filter(s => estVideDefinitiveCampagneN(s, campagne));
-  const videsOvilogEids = new Set(videsOvilog.map(s => cleanEid(s.eid)));
-
-  const concordance = videsOvilog.filter(s => sieolEids.has(cleanEid(s.eid)));
-  const ecart1 = videsOvilog.filter(s => !sieolEids.has(cleanEid(s.eid)));
-  const ecart2 = Array.from(sieolEids).filter(eid => !videsOvilogEids.has(eid)).map(eid => DB.brebis.find(s => cleanEid(s.eid) === eid)).filter(Boolean);
-
-  app.innerHTML = `
-    <div class="card">
-      <label>Campagne</label>
-      <select id="recoupement-campagne-select">
-        ${campagnesOptions.map(c => `<option value="${c}" ${c === campagne ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}
-      </select>
     </div>
 
     <div class="card" style="margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-size:14px;font-weight:600;">Concordance</span>
-        <span class="badge badge-green">${concordance.length}</span>
+      <label>Litrage total produit sur la campagne (L)</label>
+      <input type="number" step="0.1" id="bilan-lactation-litrage-total" placeholder="ex: 78450" value="${saisie && saisie.litrageTotal !== null && saisie.litrageTotal !== undefined ? saisie.litrageTotal : ''}">
+      <label style="display:block;margin-top:14px;">Brebis passées à la traite</label>
+      <input type="number" step="1" id="bilan-lactation-brebis-traite" placeholder="ex: 415 (chiffre SIEOL)" value="${saisie && saisie.brebisTraite !== null && saisie.brebisTraite !== undefined ? saisie.brebisTraite : ''}">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Brebis passées à la traite = toutes celles ayant eu au moins un contrôle laitier cette campagne (saisie libre, typiquement le chiffre SIEOL).</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Campagne ${campagneLabel(campagne - 1)} (N-1) : ${txt(indN1.litrageTotal, ' L')} · ${indN1.brebisTraite !== null ? indN1.brebisTraite : '—'} brebis</div>
+    </div>
+
+    <div class="grid2">
+      <div class="card" style="margin-bottom:0;">
+        <div style="font-size:12px;color:var(--text-muted);">Litrage / brebis traite</div>
+        <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${txt(ind.litragePartraite, ' L')}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">N-1 : <b>${txt(indN1.litragePartraite, ' L')}</b></div>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Vide définitive dans les deux systèmes, campagne ${campagne + 1}.</div>
+      <div class="card" style="margin-bottom:0;">
+        <div style="font-size:12px;color:var(--text-muted);">Litrage / brebis présente</div>
+        <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${txt(ind.litrageParPresente, ' L')}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">N-1 : <b>${txt(indN1.litrageParPresente, ' L')}</b></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin:10px 0;">
+      <div style="font-size:12px;color:var(--text-muted);">Ratio brebis traites / brebis ayant mis bas</div>
+      <div style="font-size:20px;font-weight:600;">${txt(ind.ratioTraitesMisesBas, ' %')}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${ind.brebisTraite !== null ? ind.brebisTraite : '—'} traites ÷ ${ind.misesBas} mise${ind.misesBas > 1 ? 's' : ''} bas (Bilan de reproduction troupeau) — un ratio supérieur à 100 % est possible (des brebis restées vides ou achetées en lactation peuvent aussi être traites).</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">N-1 : <b>${txt(indN1.ratioTraitesMisesBas, ' %')}</b></div>
     </div>
 
     <div class="card" style="margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <span style="font-size:14px;font-weight:600;">Écart type 1</span>
-        <span class="badge badge-amber">${ecart1.length}</span>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Vide définitive Ovilog (campagne ${campagne + 1}), absente de la liste "sans mise-bas" SIEOL de cette même campagne.</div>
-      ${ecart1.length > 0 ? bilanBrebisRowsHtml(ecart1) : '<div style="font-size:13px;color:var(--text-muted);">Aucun écart.</div>'}
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Moyenne de présence sur la campagne</div>
+      <div style="font-size:20px;font-weight:600;">${txt(ind.moyennePresence, '')}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Moyenne mensuelle de l'effectif sur les 12 mois de la campagne (octobre à septembre), à partir de l'effectif de début de campagne, ajustée chaque mois selon les sorties ET les entrées survenues ce mois-là.</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">N-1 : <b>${txt(indN1.moyennePresence, '')}</b></div>
     </div>
 
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <span style="font-size:14px;font-weight:600;">Écart type 2</span>
-        <span class="badge badge-amber">${ecart2.length}</span>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">"Sans mise-bas" côté SIEOL (campagne ${campagne + 1}), mais pas marquée vide définitive dans Ovilog pour cette même campagne.</div>
-      ${ecart2.length > 0 ? bilanBrebisRowsHtml(ecart2) : '<div style="font-size:13px;color:var(--text-muted);">Aucun écart.</div>'}
+    <div class="row">
+      <button type="button" class="btn btn-secondary" id="btn-export-bilan-lactation-pdf" style="flex:1;">Export PDF</button>
+      <button type="button" class="btn btn-secondary" id="btn-export-bilan-lactation-xlsx" style="flex:1;">Export Excel</button>
     </div>
   `;
-
-  document.getElementById('recoupement-campagne-select').onchange = (e) => { bilanLactationCampagneAffichee = parseInt(e.target.value, 10); render('recoupement-sieol'); };
-  document.querySelectorAll('.bilan-eid-link').forEach(el => {
-    el.onclick = () => { detailOrigin = 'recoupement-sieol'; previousDetailId = null; render('detail', el.dataset.id); };
-  });
 }
 
 function bilanIncoherencesHtml(actives) {
@@ -4392,9 +4537,7 @@ function bilanIncoherencesHtml(actives) {
   `;
 }
 
-function bilanReproductionHtml(actives) {
-  const { troupeauAMettreBas, misesBasRestantes } = campagneBilanChiffres(actives);
-
+function bilanReproductionHtml() {
   // Population de référence de tout ce bilan (taux global inclus, voir
   // tauxReussiteGlobal) : brebis présentes à la date de référence de la
   // campagne (voir campagneRefDate/campagneCohortPresente), pas les actives
@@ -4402,16 +4545,15 @@ function bilanReproductionHtml(actives) {
   // cours de campagne ne doit pas gonfler "% mises bas").
   const cohort = campagneCohortPresente();
   const { misesBas: misesBasGlobal, videsDefinitives: videsGlobal, taux: tauxReussite } = tauxReussiteGlobal(cohort);
-  const statsParCode = statsReproductionParCode(cohort);
-  // Bloc "Lots IA" (nouveau format, bulletin Unotec) : les lots IA concernés
-  // par la campagne en cours -- voir statsLotIA et lotIAConcerneCampagneEnCours
-  // (mises bas réelles de cette campagne OU encore en attente ; jamais le
-  // champ lot.campagne, informatif seulement depuis la correction du
-  // décalage de campagne). Les lots Éponge gardent l'affichage existant
-  // (barre de progression, ci-dessous) tel quel, non filtré par campagne
-  // comme avant -- chantier séparé à venir pour eux.
+  // Blocs "Lots IA"/"Lots Éponge" (refonte troupeau) : seuls les lots
+  // concernés par la campagne en cours -- voir statsLotIA/statsLotEponge et
+  // lotIAConcerneCampagneEnCours/lotEpongeConcerneCampagneEnCours (mises bas
+  // réelles de cette campagne OU encore en attente ; jamais le champ
+  // lot.campagne, informatif seulement depuis la correction du décalage de
+  // campagne). Chaque encart n'apparaît que s'il y a au moins un lot
+  // concerné -- la MN n'a pas de carte dédiée (pas de notion de lot).
   const lotsIA = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'IA' && lotIAConcerneCampagneEnCours(l));
-  const lotsEponge = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'EP');
+  const lotsEponge = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'EP' && lotEpongeConcerneCampagneEnCours(l));
   // Même date de référence que la population ci-dessus, également utilisée
   // pour figer le groupe d'âge de chaque brebis sur toute la campagne (voir
   // statsDetailleesParGroupeAge/ageADate) : sans repli sur aujourd'hui, une
@@ -4436,17 +4578,47 @@ function bilanReproductionHtml(actives) {
     { label: '% mortalité', v1: g1An.pctMortalite !== null ? g1An.pctMortalite + '%' : '—', v2: g2AnsPlus.pctMortalite !== null ? g2AnsPlus.pctMortalite + '%' : '—' }
   ];
 
+  // Rendu commun aux cartes de lot IA/Éponge (tête pliable + tableau de
+  // résultats + détail par groupe d'âge) : `tableRows` porte les lignes
+  // déjà formatées (2 colonnes IA pour un lot IA, 1 colonne Global pour un
+  // lot Éponge -- seule différence de structure entre les deux modes),
+  // `resume` le détail Antenaises/Brebis (resumeLotParGroupeAge, identique
+  // pour les deux modes). `exportClass`/`exportLabel` distinguent le
+  // bouton d'export (deux gestionnaires différents, voir renderBilanCampagne).
+  const p = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
+  const r = v => v !== null ? fmtDecimal(v, 2) : '—';
+  const lotCardHtml = (lot, headClass, s, tableHeadHtml, tableRowsHtml, noteTxt, resume, exportClass) => `
+    <div class="${headClass}-card" style="background:var(--card);border:1px solid var(--border);border-radius:14px;margin-bottom:8px;overflow:hidden;">
+      <div class="${headClass}-head" data-lot-id="${lot.id}" style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;">
+        <div style="min-width:0;">
+          <div style="font-size:14px;font-weight:700;">${lot.nom || (lot.mode === 'IA' ? 'Lot IA' : 'Éponge') + ' — ' + formatDateFr(lot.dateEvenement || lot.dateCreation)}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.effectif} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}</div>
+        </div>
+        <div style="display:flex;gap:14px;flex-shrink:0;text-align:right;">
+          <div><div style="font-size:16px;font-weight:700;">${p(s.fertilite)}</div><div style="font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;">Fertilité</div></div>
+          <div><div style="font-size:16px;font-weight:700;">${r(s.prolificite)}</div><div style="font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;">Prolif.</div></div>
+        </div>
+      </div>
+      <div class="${headClass}-body hidden" data-lot-id="${lot.id}" style="padding:0 14px 14px;border-top:1px solid var(--border);padding-top:12px;">
+        <div style="overflow-x:auto;">
+          <table style="width:100%;font-size:12.5px;border-collapse:collapse;min-width:180px;">
+            ${tableHeadHtml}
+            ${tableRowsHtml}
+          </table>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">${noteTxt}</div>
+        ${lot.cible !== 'Agnelles' ? `
+        <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);">
+          <div style="font-size:12px;font-weight:700;margin-bottom:6px;">Par groupe d'âge</div>
+          ${resume.map(g => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:4px 0;"><span>${g.label}</span><span style="color:var(--text-muted);">Fertilité ${p(g.fertilite)} · Prolificité ${r(g.prolificite)}</span></div>`).join('')}
+        </div>` : ''}
+        <button type="button" class="btn btn-secondary ${exportClass}" data-lot-id="${lot.id}" style="width:auto;padding:8px 14px;font-size:12.5px;margin-top:10px;">Export PDF de ce lot</button>
+      </div>
+    </div>
+  `;
+
   return `
     <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">Indicateurs de reproduction de la campagne en cours (${DB.campagneDebut ? DB.campagneDebut + 1 : 'année non définie'}) — n'ont de sens qu'une fois la campagne suffisamment avancée.</div>
-
-    <div class="card" style="margin-bottom:10px;">
-      ${sectionHeaderHtml(ICON_SHEEP, 'amber', 'Troupeau à mettre bas')}
-      <div class="grid2">
-        <div><div style="font-size:12px;color:var(--text-muted);">Troupeau à mettre bas</div><div style="font-size:20px;font-weight:600;">${troupeauAMettreBas}</div></div>
-        <div><div style="font-size:12px;color:var(--text-muted);">Mises bas restantes attendues</div><div style="font-size:20px;font-weight:600;">${misesBasRestantes}</div></div>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Troupeau actif total moins les brebis vides définitives ; mises bas restantes = troupeau à mettre bas moins les mises bas déjà réalisées.</div>
-    </div>
 
     <div class="card" style="margin-bottom:10px;">
       ${sectionHeaderHtml(ICON_ECHO, 'green', 'Taux de réussite global')}
@@ -4454,104 +4626,45 @@ function bilanReproductionHtml(actives) {
       <div style="font-size:12px;color:var(--text-muted);">${misesBasGlobal} mise${misesBasGlobal > 1 ? 's' : ''} bas / (${misesBasGlobal} mise${misesBasGlobal > 1 ? 's' : ''} bas + ${videsGlobal} vide${videsGlobal > 1 ? 's' : ''} définitive${videsGlobal > 1 ? 's' : ''}) — sur les brebis présentes depuis le début de la campagne.</div>
     </div>
 
-    <div class="card" style="margin-bottom:10px;">
-      ${sectionHeaderHtml(ICON_JOURNAL, 'indigo', 'Répartition des mises bas par code')}
-      <div class="grid4" style="grid-template-columns:repeat(4,1fr);text-align:center;">
-        ${statsParCode.map(s => `<div><div style="font-size:18px;font-weight:700;">${s.misesBas}</div><div style="font-size:10.5px;color:var(--text-muted);margin-top:2px;">${s.code}</div></div>`).join('')}
-      </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:10px;">IA · Éponge · Retour IA (déduit) · Monte naturelle (déduit, par défaut) — code choisi ou corrigé à la saisie de chaque mise bas.</div>
-    </div>
-
     ${lotsIA.length === 0 ? '' : `
     <div class="card" style="margin-bottom:10px;">
       ${sectionHeaderHtml(ICON_ECHO, 'green', 'Lots IA')}
       ${lotsIA.map(lot => {
         const s = statsLotIA(lot);
-        const p = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
-        const r = v => v !== null ? fmtDecimal(v, 2) : '—';
-        return `
-        <div class="lot-ia-card" style="background:var(--card);border:1px solid var(--border);border-radius:14px;margin-bottom:8px;overflow:hidden;">
-          <div class="lot-ia-head" data-lot-id="${lot.id}" style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;">
-            <div style="min-width:0;">
-              <div style="font-size:14px;font-weight:700;">Lot IA — ${formatDateFr(lot.dateEvenement || lot.dateCreation)}</div>
-              <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.effectif} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}</div>
-            </div>
-            <div style="display:flex;gap:14px;flex-shrink:0;text-align:right;">
-              <div><div style="font-size:16px;font-weight:700;">${p(s.global.fertilite)}</div><div style="font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;">Fertilité</div></div>
-              <div><div style="font-size:16px;font-weight:700;">${r(s.global.prolificite)}</div><div style="font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;">Prolif.</div></div>
-            </div>
-          </div>
-          <div class="lot-ia-body hidden" data-lot-id="${lot.id}" style="padding:0 14px 14px;border-top:1px solid var(--border);padding-top:12px;">
-            <div style="overflow-x:auto;">
-              <table style="width:100%;font-size:12.5px;border-collapse:collapse;min-width:260px;">
-                <tr style="color:var(--text-muted);text-align:right;"><th style="text-align:left;font-weight:500;"></th><th style="font-weight:500;">IA</th><th style="font-weight:500;">1er retour</th><th style="font-weight:600;color:var(--green-fg);">Global</th></tr>
-                <tr style="border-top:1px solid var(--border);"><td>Mises bas</td><td style="text-align:right;">${s.ia.misesBas}</td><td style="text-align:right;">${s.retour.misesBas}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${s.global.misesBas}</td></tr>
-                <tr style="border-top:1px solid var(--border);"><td>Fertilité</td><td style="text-align:right;">${p(s.ia.fertilite)}</td><td style="text-align:right;">${p(s.retour.fertilite)}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${p(s.global.fertilite)}</td></tr>
-                <tr style="border-top:1px solid var(--border);"><td>Prolificité</td><td style="text-align:right;">${r(s.ia.prolificite)}</td><td style="text-align:right;">${r(s.retour.prolificite)}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${r(s.global.prolificite)}</td></tr>
-              </table>
-            </div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">IA : mises bas ÷ effectif du lot (${s.effectif}). 1er retour : mises bas ÷ brebis restantes après l'IA directe (${s.effectif} − ${s.ia.misesBas} = ${s.effectif - s.ia.misesBas}). Global : total ÷ effectif du lot — comme le bulletin insémination Unotec. Détail par âge exact réservé à l'export PDF.</div>
-            <button type="button" class="btn btn-secondary btn-export-lot-ia-pdf" data-lot-id="${lot.id}" style="width:auto;padding:8px 14px;font-size:12.5px;margin-top:10px;">Export PDF de ce lot</button>
-          </div>
-        </div>
-      `; }).join('')}
+        const resume = resumeLotParGroupeAge(lot, statsLotIAParAgeExact(lot));
+        const tableHeadHtml = `<tr style="color:var(--text-muted);text-align:right;"><th style="text-align:left;font-weight:500;"></th><th style="font-weight:500;">IA</th><th style="font-weight:500;">1er retour</th><th style="font-weight:600;color:var(--green-fg);">Global</th></tr>`;
+        const tableRowsHtml = `
+          <tr style="border-top:1px solid var(--border);"><td>Mises bas</td><td style="text-align:right;">${s.ia.misesBas}</td><td style="text-align:right;">${s.retour.misesBas}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${s.global.misesBas}</td></tr>
+          <tr style="border-top:1px solid var(--border);"><td>Fertilité</td><td style="text-align:right;">${p(s.ia.fertilite)}</td><td style="text-align:right;">${p(s.retour.fertilite)}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${p(s.global.fertilite)}</td></tr>
+          <tr style="border-top:1px solid var(--border);"><td>Prolificité</td><td style="text-align:right;">${r(s.ia.prolificite)}</td><td style="text-align:right;">${r(s.retour.prolificite)}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${r(s.global.prolificite)}</td></tr>
+        `;
+        const note = `IA : mises bas ÷ effectif du lot (${s.effectif}). 1er retour : mises bas ÷ brebis restantes après l'IA directe (${s.effectif} − ${s.ia.misesBas} = ${s.effectif - s.ia.misesBas}). Global : total ÷ effectif du lot — comme le bulletin insémination Unotec. Détail par millésime réservé à l'export PDF.`;
+        const headStats = { effectif: s.effectif, fertilite: s.global.fertilite, prolificite: s.global.prolificite };
+        return lotCardHtml(lot, 'lot-ia', headStats, tableHeadHtml, tableRowsHtml, note, resume, 'btn-export-lot-ia-pdf');
+      }).join('')}
+    </div>`}
+
+    ${lotsEponge.length === 0 ? '' : `
+    <div class="card" style="margin-bottom:10px;">
+      ${sectionHeaderHtml(ICON_SEARCH, 'blue', 'Lots Éponge')}
+      ${lotsEponge.map(lot => {
+        const s = statsLotEponge(lot);
+        const resume = resumeLotParGroupeAge(lot, statsLotEpongeParAgeExact(lot));
+        const tableHeadHtml = `<tr style="color:var(--text-muted);text-align:right;"><th style="text-align:left;font-weight:500;"></th><th style="font-weight:600;color:var(--green-fg);">Global</th></tr>`;
+        const tableRowsHtml = `
+          <tr style="border-top:1px solid var(--border);"><td>Mises bas</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${s.misesBas}</td></tr>
+          <tr style="border-top:1px solid var(--border);"><td>Fertilité</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${p(s.fertilite)}</td></tr>
+          <tr style="border-top:1px solid var(--border);"><td>Prolificité</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${r(s.prolificite)}</td></tr>
+        `;
+        const note = `Pas de distinction IA/1er retour pour une éponge (pas de fenêtre de saillie précise, contrairement à l'IA) : mises bas ÷ effectif du lot (${s.effectif}). Détail par millésime réservé à l'export PDF.`;
+        return lotCardHtml(lot, 'lot-eponge', s, tableHeadHtml, tableRowsHtml, note, resume, 'btn-export-lot-eponge-pdf');
+      }).join('')}
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">La monte naturelle (MN) n'a pas de carte dédiée (pas de notion de lot) — sa fertilité/prolificité par âge reste couverte par le tableau ci-dessous.</div>
     </div>`}
 
     <div class="card" style="margin-bottom:10px;">
-      ${sectionHeaderHtml(ICON_SEARCH, 'blue', 'Lots Éponge')}
-      ${lotsEponge.length === 0 ? '<div style="font-size:13px;color:var(--text-muted);">Aucun lot Éponge pour l\'instant — voir Chantier de tri.</div>' : lotsEponge.map(lot => {
-        let lotMisesBas = 0, lotVides = 0, lotAttente = 0;
-        lot.membres.forEach(eid => {
-          const animal = findAnimalReproByEid(eid);
-          if (animal && Array.isArray(animal.agnelages) && agnelageCampagneActuelleIdx(animal) !== -1) { lotMisesBas++; return; }
-          if (animal && Array.isArray(animal.agnelages) && estVideDefinitiveCampagne(animal)) { lotVides++; return; }
-          lotAttente++;
-        });
-        const lotTotal = lot.membres.length || 1;
-        const pct = n => Math.round((n / lotTotal) * 1000) / 10;
-        return `
-          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:8px;">
-            <div style="font-size:13px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px;">${reproTagHtml(lot.mode, 'attente')}${lot.nom} — ${lot.membres.length} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}</div>
-            <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin:8px 0 6px;background:var(--gray-bg);">
-              <span style="display:block;height:100%;width:${pct(lotMisesBas)}%;background:var(--green-fg);"></span>
-              <span style="display:block;height:100%;width:${pct(lotVides)}%;background:var(--coral-fg);"></span>
-              <span style="display:block;height:100%;width:${pct(lotAttente)}%;background:var(--amber-fg);"></span>
-            </div>
-            <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:10.5px;color:var(--text-muted);">
-              <span>${lotMisesBas} mise${lotMisesBas > 1 ? 's' : ''} bas</span>
-              <span>${lotVides} vide${lotVides > 1 ? 's' : ''}</span>
-              <span>${lotAttente} en attente</span>
-            </div>
-          </div>
-        `;
-      }).join('')}
-      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Retour IA et Monte naturelle n'ont pas de lot dédié (codes toujours déduits) — comptés seulement dans la répartition ci-dessus et le tableau ci-dessous.</div>
-    </div>
-
-    <div class="card" style="margin-bottom:10px;">
-      ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Taux de réussite par mode')}
-      <div style="overflow-x:auto;">
-        <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:300px;">
-          <tr style="color:var(--text-muted);text-align:left;">
-            <th style="padding:4px 4px;font-weight:500;">Mode</th>
-            <th style="padding:4px 4px;font-weight:500;text-align:right;">Réussite</th>
-            <th style="padding:4px 4px;font-weight:500;text-align:right;">Prolificité</th>
-          </tr>
-          ${statsParCode.map(s => `
-            <tr style="border-top:1px solid var(--border);">
-              <td style="padding:6px 4px;">${s.label}</td>
-              <td style="padding:6px 4px;text-align:right;">${s.taux !== null ? s.taux + '%' : '—'}</td>
-              <td style="padding:6px 4px;text-align:right;">${s.prolificite !== null ? s.prolificite : '—'}</td>
-            </tr>
-          `).join('')}
-        </table>
-      </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Réussite = mises bas de ce code ÷ (mises bas + vides définitives de ce code). Prolificité = agneaux nés ÷ mises bas de ce code.</div>
-    </div>
-
-    <div class="card" style="margin-bottom:10px;">
-      ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Bilan détaillé par groupe d\'âge')}
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Population de référence : brebis présentes le ${refDateLabel || 'campagne non définie, brebis actives aujourd\'hui utilisées à la place'}. Colonnes : antenaises (1 an, première reproduction) / brebis (2 ans et plus).</div>
+      ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Bilan de reproduction troupeau')}
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Population de référence : brebis présentes le ${refDateLabel || 'campagne non définie, brebis actives aujourd\'hui utilisées à la place'}. Colonnes : antenaises (1 an, première reproduction) / brebis (2 ans et plus) — tout le troupeau (IA, Éponge, retour IA et monte naturelle confondus).</div>
       <div style="overflow-x:auto;">
         <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:300px;">
           <tr style="color:var(--text-muted);text-align:left;">
@@ -4559,18 +4672,18 @@ function bilanReproductionHtml(actives) {
             <th style="padding:4px 4px;font-weight:500;text-align:right;">Antenaises</th>
             <th style="padding:4px 4px;font-weight:500;text-align:right;">Brebis</th>
           </tr>
-          ${rows.map(r => `
+          ${rows.map(r2 => `
             <tr style="border-top:1px solid var(--border);">
-              <td style="padding:6px 4px;">${r.label}</td>
-              <td style="padding:6px 4px;text-align:right;">${r.v1}</td>
-              <td style="padding:6px 4px;text-align:right;">${r.v2}</td>
+              <td style="padding:6px 4px;">${r2.label}</td>
+              <td style="padding:6px 4px;text-align:right;">${r2.v1}</td>
+              <td style="padding:6px 4px;text-align:right;">${r2.v2}</td>
             </tr>
           `).join('')}
         </table>
       </div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">% mises bas = brebis ayant mis bas ÷ brebis présentes. Prolificité = agneaux nés totaux ÷ brebis ayant mis bas. % mortalité = agneaux morts totaux ÷ agneaux nés totaux.</div>
       <button type="button" class="btn btn-secondary" id="btn-export-bilan-age-pdf" style="width:auto;padding:8px 14px;font-size:12.5px;margin-top:10px;">Export PDF — bilan par âge</button>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Le PDF détaille par année d'âge exacte (2 ans, 3 ans, 4 ans... jusqu'au plus âgé du troupeau), avec la durée de mise bas de chaque âge — non affiché à l'écran.</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Le PDF détaille par millésime (année de naissance déduite de l'EID), avec la durée de mise bas de chaque millésime — non affiché à l'écran.</div>
     </div>
   `;
 }
@@ -13815,19 +13928,19 @@ function buildLotIaPdfBytes(lot) {
 
   if (lot.cible !== 'Agnelles') {
     const parAge = statsLotIAParAgeExact(lot);
-    content += pdfTextOp(PDF_MARGIN, y, 'DÉTAIL PAR ÂGE EXACT, AU SEIN DE CE LOT', 'FB', 10.5);
+    content += pdfTextOp(PDF_MARGIN, y, 'DÉTAIL PAR MILLÉSIME, AU SEIN DE CE LOT', 'FB', 10.5);
     y -= 5;
     content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
     y -= 18;
     const colsAge = [
-      { label: 'Âge', x: 0 }, { label: 'Effectif', x: 60 },
-      { label: 'MB', x: 130 }, { label: 'Fert.', x: 175 }, { label: 'Prol.', x: 225 },
-      { label: 'MB', x: 290 }, { label: 'Fert.', x: 335 }, { label: 'Prol.', x: 385 },
-      { label: 'MB', x: 450 }, { label: 'Fert.', x: 495 }, { label: 'Prol.', x: 545 }
+      { label: 'Millésime', x: 0 }, { label: 'Effectif', x: 75 },
+      { label: 'MB', x: 145 }, { label: 'Fert.', x: 190 }, { label: 'Prol.', x: 240 },
+      { label: 'MB', x: 305 }, { label: 'Fert.', x: 350 }, { label: 'Prol.', x: 400 },
+      { label: 'MB', x: 465 }, { label: 'Fert.', x: 510 }, { label: 'Prol.', x: 560 }
     ];
-    content += pdfTextOp(PDF_MARGIN + 130, y + 14, 'IA', 'FB', 8.5);
-    content += pdfTextOp(PDF_MARGIN + 290, y + 14, '1er retour', 'FB', 8.5);
-    content += pdfTextOp(PDF_MARGIN + 450, y + 14, 'Global', 'FB', 8.5);
+    content += pdfTextOp(PDF_MARGIN + 145, y + 14, 'IA', 'FB', 8.5);
+    content += pdfTextOp(PDF_MARGIN + 305, y + 14, '1er retour', 'FB', 8.5);
+    content += pdfTextOp(PDF_MARGIN + 465, y + 14, 'Global', 'FB', 8.5);
     colsAge.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 8.5); });
     y -= 5;
     content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
@@ -13838,7 +13951,7 @@ function buildLotIaPdfBytes(lot) {
     } else {
       parAge.forEach(g => {
         const row = [
-          g.age + ' an' + (g.age > 1 ? 's' : ''), String(g.effectif),
+          'Millésime ' + g.millesime, String(g.effectif),
           String(g.ia.misesBas), pctTxt(g.ia.fertilite), ratTxt(g.ia.prolificite),
           String(g.retour.misesBas), pctTxt(g.retour.fertilite), ratTxt(g.retour.prolificite),
           String(g.global.misesBas), pctTxt(g.global.fertilite), ratTxt(g.global.prolificite)
@@ -13848,9 +13961,9 @@ function buildLotIaPdfBytes(lot) {
       });
     }
     y -= 6;
-    content += pdfTextOp(PDF_MARGIN, y, "MB = mises bas, Fert. = fertilité, Prol. = prolificité — mêmes formules qu'au-dessus, par année d'âge exacte.", 'F1', 8);
+    content += pdfTextOp(PDF_MARGIN, y, "MB = mises bas, Fert. = fertilité, Prol. = prolificité — mêmes formules qu'au-dessus, par millésime (année de naissance déduite de l'EID).", 'F1', 8);
   } else {
-    content += pdfTextOp(PDF_MARGIN, y, "Pas de détail par âge pour un lot d'antenaises : toutes du même âge (1 an).", 'F1', 9);
+    content += pdfTextOp(PDF_MARGIN, y, "Pas de détail par millésime pour un lot d'antenaises : toutes nées la même année.", 'F1', 9);
   }
 
   content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
@@ -13860,6 +13973,97 @@ function buildLotIaPdfBytes(lot) {
 async function exportLotIaPdf(lot) {
   const bytes = buildLotIaPdfBytes(lot);
   const filename = 'lot-ia_' + slugifyFiltre(lot.nom || lot.id) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
+/* Export PDF d'un lot ÉPONGE (voir bouton "Export PDF de ce lot" sur la
+   carte dépliée, bilanReproductionHtml) : même structure que
+   buildLotIaPdfBytes, mais tableau "RÉSULTATS DU LOT" à une seule colonne
+   Global (statsLotEponge, pas de distinction IA/1er retour -- une éponge n'a
+   pas de fenêtre de saillie précise) et détail par millésime
+   (statsLotEpongeParAgeExact) sans les sous-colonnes IA/1er retour non plus.
+   Portrait (5 colonnes seulement dans le détail par millésime, contrairement
+   au lot IA qui en a 11 et reste donc en paysage). */
+function buildLotEpongePdfBytes(lot) {
+  const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
+  const rightEdge = pageW - PDF_MARGIN;
+  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
+  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const stats = statsLotEponge(lot);
+  const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
+  const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
+
+  let y = pageH - PDF_MARGIN;
+  let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Lot de reproduction Éponge', 'FB', 14);
+  content += pdfTextOp(PDF_MARGIN + 280, y, 'Éponge — ' + (lot.nom || formatDateFr(lot.dateEvenement || lot.dateCreation)), 'FB', 10);
+  y -= 14;
+  content += pdfTextOp(PDF_MARGIN, y, exploitationNom, 'F1', 9);
+  content += pdfTextOp(PDF_MARGIN + 280, y, stats.effectif + ' ' + (lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis') + ' · édité le ' + aujourdhui, 'F1', 9);
+  y -= 10;
+  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+  y -= 24;
+
+  content += pdfTextOp(PDF_MARGIN, y, 'RÉSULTATS DU LOT', 'FB', 10.5);
+  y -= 20;
+  const cols1 = [{ label: '', x: 0 }, { label: 'Global', x: 160 }];
+  cols1.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
+  y -= 5;
+  content += pdfLineOp(PDF_MARGIN, y, PDF_MARGIN + 260, y);
+  y -= 16;
+  const rows1 = [
+    ['Mises bas', String(stats.misesBas)],
+    ['Fertilité', pctTxt(stats.fertilite)],
+    ['Prolificité', ratTxt(stats.prolificite)]
+  ];
+  rows1.forEach(row => {
+    cols1.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], ci === 1 ? 'FB' : 'F1', 9.5); });
+    y -= PDF_ROW_HEIGHT;
+  });
+  y -= 6;
+  pdfWrapLines("Pas de distinction IA/1er retour pour une éponge (pas de fenêtre de saillie précise, contrairement à l'IA) : mises bas ÷ effectif du lot (" + stats.effectif + ").", 95)
+    .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
+  y -= 16;
+
+  if (lot.cible !== 'Agnelles') {
+    const parAge = statsLotEpongeParAgeExact(lot);
+    content += pdfTextOp(PDF_MARGIN, y, 'DÉTAIL PAR MILLÉSIME, AU SEIN DE CE LOT', 'FB', 10.5);
+    y -= 5;
+    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+    y -= 18;
+    const colsAge = [
+      { label: 'Millésime', x: 0 }, { label: 'Effectif', x: 90 },
+      { label: 'Mises bas', x: 180 }, { label: 'Fertilité', x: 270 }, { label: 'Prolificité', x: 360 }
+    ];
+    colsAge.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 8.5); });
+    y -= 5;
+    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+    y -= 14;
+    if (parAge.length === 0) {
+      content += pdfTextOp(PDF_MARGIN, y, "Aucune mise bas enregistrée pour ce lot pour l'instant.", 'F1', 9);
+      y -= PDF_ROW_HEIGHT;
+    } else {
+      parAge.forEach(g => {
+        const row = [
+          'Millésime ' + g.millesime, String(g.effectif),
+          String(g.misesBas), pctTxt(g.fertilite), ratTxt(g.prolificite)
+        ];
+        colsAge.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], 'F1', 8.5); });
+        y -= PDF_ROW_HEIGHT;
+      });
+    }
+    y -= 6;
+    content += pdfTextOp(PDF_MARGIN, y, "Fertilité = mises bas ÷ effectif de ce millésime dans le lot. Prolificité = agneaux nés ÷ mises bas de ce millésime.", 'F1', 8);
+  } else {
+    content += pdfTextOp(PDF_MARGIN, y, "Pas de détail par millésime pour un lot d'antenaises : toutes nées la même année.", 'F1', 9);
+  }
+
+  content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
+  return buildSinglePagePdfBytes(content, false);
+}
+
+async function exportLotEpongePdf(lot) {
+  const bytes = buildLotEpongePdfBytes(lot);
+  const filename = 'lot-eponge_' + slugifyFiltre(lot.nom || lot.id) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -13889,10 +14093,10 @@ function buildBilanAgeExactPdfBytes() {
   content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
   y -= 24;
 
-  content += pdfTextOp(PDF_MARGIN, y, "DÉTAIL PAR ANNÉE D'ÂGE EXACTE", 'FB', 10.5);
+  content += pdfTextOp(PDF_MARGIN, y, "DÉTAIL PAR MILLÉSIME", 'FB', 10.5);
   y -= 20;
   const cols = [
-    { label: 'Âge', x: 0 }, { label: 'Présentes', x: 90 }, { label: 'Mises bas', x: 180 },
+    { label: 'Millésime', x: 0 }, { label: 'Présentes', x: 90 }, { label: 'Mises bas', x: 180 },
     { label: 'Fertilité', x: 270 }, { label: 'Prolificité', x: 360 }, { label: 'Durée mise bas', x: 450 }
   ];
   cols.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
@@ -13905,7 +14109,7 @@ function buildBilanAgeExactPdfBytes() {
   } else {
     parAge.forEach(g => {
       const row = [
-        g.age + ' an' + (g.age > 1 ? 's' : ''), String(g.presentes), String(g.misesBas),
+        'Millésime ' + g.millesime, String(g.presentes), String(g.misesBas),
         pctTxt(g.fertilite), ratTxt(g.prolificite),
         g.dureeMiseBas !== null ? g.dureeMiseBas + ' j' : '—'
       ];
@@ -13914,7 +14118,7 @@ function buildBilanAgeExactPdfBytes() {
     });
   }
   y -= 10;
-  pdfWrapLines("Le tableau à l'écran (Agnelles 1 an / Brebis 2 ans et plus) reste le regroupement de référence pour la lecture courante — ce détail par année d'âge exacte n'existe que dans cet export.", 95)
+  pdfWrapLines("Le tableau à l'écran (Agnelles 1 an / Brebis 2 ans et plus) reste le regroupement de référence pour la lecture courante — ce détail par millésime (année de naissance déduite de l'EID) n'existe que dans cet export.", 95)
     .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
 
   content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
@@ -13925,6 +14129,116 @@ async function exportBilanAgeExactPdf() {
   const bytes = buildBilanAgeExactPdfBytes();
   const filename = 'bilan-reproduction-par-age_' + new Date().toISOString().slice(0, 10) + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
+/* Récupère la saisie manuelle troupeau (litrage total, brebis passées à la
+   traite) d'une campagne -- voir DB.bilanLactationSaisie et
+   bilanLactationHtml (refonte). null si rien saisi pour cette campagne
+   (jamais 0 par défaut : 0 serait une vraie valeur saisie, à distinguer
+   d'une absence de saisie -- voir les indicateurs ci-dessous). */
+function bilanLactationSaisieCampagne(campagne) {
+  return (DB.bilanLactationSaisie || []).find(e => e.campagne === campagne) || null;
+}
+
+/* Indicateurs troupeau du Bilan de lactation (refonte) pour UNE campagne
+   donnée -- réutilisé à la fois par l'écran (campagne affichée + rappel
+   N-1) et les exports PDF/Excel (mêmes chiffres, jamais recalculés
+   séparément). litrageTotal/brebisTraite viennent de la saisie manuelle de
+   l'éleveur (bilanLactationSaisieCampagne) ; misesBas et moyennePresence
+   sont recalculés depuis les données déjà présentes dans Ovilog
+   (misesBasTroupeauCampagne / moyennePresenceMensuelleCampagne) -- jamais
+   ressaisis à la main. Un indicateur reste null tant que la saisie
+   manquante l'empêche de se calculer (jamais une division par une valeur
+   absente présentée comme 0). */
+function bilanLactationIndicateurs(campagne) {
+  const saisie = bilanLactationSaisieCampagne(campagne);
+  const litrageTotal = saisie && typeof saisie.litrageTotal === 'number' ? saisie.litrageTotal : null;
+  const brebisTraite = saisie && typeof saisie.brebisTraite === 'number' ? saisie.brebisTraite : null;
+  const misesBas = misesBasTroupeauCampagne(campagne);
+  const moyennePresence = moyennePresenceMensuelleCampagne(campagne);
+  const litragePartraite = (litrageTotal !== null && brebisTraite > 0) ? Math.round((litrageTotal / brebisTraite) * 10) / 10 : null;
+  const litrageParPresente = (litrageTotal !== null && moyennePresence > 0) ? Math.round((litrageTotal / moyennePresence) * 10) / 10 : null;
+  const ratioTraitesMisesBas = (brebisTraite !== null && misesBas > 0) ? Math.round((brebisTraite / misesBas) * 1000) / 10 : null;
+  return { litrageTotal, brebisTraite, misesBas, moyennePresence, litragePartraite, litrageParPresente, ratioTraitesMisesBas };
+}
+
+/* Export PDF du Bilan de lactation (refonte troupeau, voir bouton "Export
+   PDF" de bilanLactationHtml) : les mêmes indicateurs qu'à l'écran pour la
+   campagne affichée, avec leur rappel N-1 côte à côte (nécessaire pour
+   retrouver un rappel après un changement de campagne affichée, d'où
+   l'export "conservé par campagne" demandé). */
+function buildBilanLactationPdfBytes(campagne) {
+  const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
+  const rightEdge = pageW - PDF_MARGIN;
+  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
+  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const ind = bilanLactationIndicateurs(campagne);
+  const indN1 = bilanLactationIndicateurs(campagne - 1);
+  const txt = (v, suffix) => v !== null && v !== undefined ? fmtDecimal(v, 1) + (suffix || '') : '—';
+  const txtInt = (v, suffix) => v !== null && v !== undefined ? v + (suffix || '') : '—';
+
+  let y = pageH - PDF_MARGIN;
+  let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Bilan de lactation', 'FB', 14);
+  y -= 16;
+  content += pdfTextOp(PDF_MARGIN, y, exploitationNom + ' · Campagne ' + campagneLabel(campagne), 'F1', 9);
+  y -= 12;
+  content += pdfTextOp(PDF_MARGIN, y, 'Édité le ' + aujourdhui, 'F1', 9);
+  y -= 10;
+  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+  y -= 24;
+
+  const cols = [{ label: '', x: 0 }, { label: 'Campagne ' + campagneLabel(campagne), x: 260 }, { label: 'Campagne ' + campagneLabel(campagne - 1), x: 400 }];
+  cols.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
+  y -= 5;
+  content += pdfLineOp(PDF_MARGIN, y, PDF_MARGIN + 480, y);
+  y -= 16;
+  const rows = [
+    ['Litrage total produit', txt(ind.litrageTotal, ' L'), txt(indN1.litrageTotal, ' L')],
+    ['Brebis passées à la traite', txtInt(ind.brebisTraite), txtInt(indN1.brebisTraite)],
+    ['Litrage / brebis traite', txt(ind.litragePartraite, ' L'), txt(indN1.litragePartraite, ' L')],
+    ['Litrage / brebis présente', txt(ind.litrageParPresente, ' L'), txt(indN1.litrageParPresente, ' L')],
+    ['Moyenne de présence sur la campagne', txt(ind.moyennePresence), txt(indN1.moyennePresence)],
+    ['Brebis ayant mis bas', txtInt(ind.misesBas), txtInt(indN1.misesBas)],
+    ['Ratio traites / mises bas', txt(ind.ratioTraitesMisesBas, ' %'), txt(indN1.ratioTraitesMisesBas, ' %')]
+  ];
+  rows.forEach(row => {
+    cols.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], ci === 0 ? 'F1' : 'FB', 9.5); });
+    y -= PDF_ROW_HEIGHT;
+  });
+  y -= 10;
+  pdfWrapLines("Litrage total et brebis passées à la traite : saisie manuelle de l'éleveur (typiquement le récapitulatif SIEOL). Moyenne de présence = moyenne mensuelle de l'effectif sur les 12 mois de la campagne (octobre à septembre), entrées et sorties incluses. Ratio traites / mises bas = brebis passées à la traite ÷ brebis ayant mis bas (donnée reprise du Bilan de reproduction troupeau) — un ratio supérieur à 100 % est possible (des brebis restées vides ou ayant avorté peuvent aussi être traites).", 105)
+    .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
+
+  content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
+  return buildSinglePagePdfBytes(content, false);
+}
+
+async function exportBilanLactationPdf(campagne) {
+  const bytes = buildBilanLactationPdfBytes(campagne);
+  const filename = 'bilan-lactation_' + campagneLabel(campagne) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
+/* Export Excel du Bilan de lactation (refonte troupeau) -- même contenu que
+   le PDF ci-dessus (mêmes indicateurs, même rappel N-1), format tableur
+   pour l'éleveur qui voudrait ses propres calculs/graphiques d'une
+   campagne à l'autre. */
+async function exportBilanLactationXlsx(campagne) {
+  const ind = bilanLactationIndicateurs(campagne);
+  const indN1 = bilanLactationIndicateurs(campagne - 1);
+  const rows = [
+    ['Indicateur', 'Campagne ' + campagneLabel(campagne), 'Campagne ' + campagneLabel(campagne - 1)],
+    ['Litrage total produit (L)', ind.litrageTotal, indN1.litrageTotal],
+    ['Brebis passées à la traite', ind.brebisTraite, indN1.brebisTraite],
+    ['Litrage / brebis traite (L)', ind.litragePartraite, indN1.litragePartraite],
+    ['Litrage / brebis présente (L)', ind.litrageParPresente, indN1.litrageParPresente],
+    ['Moyenne de présence sur la campagne', ind.moyennePresence, indN1.moyennePresence],
+    ['Brebis ayant mis bas', ind.misesBas, indN1.misesBas],
+    ['Ratio traites / mises bas (%)', ind.ratioTraitesMisesBas, indN1.ratioTraitesMisesBas]
+  ];
+  const bytes = await buildXlsxWorkbook([{ name: 'Bilan lactation', rows }]);
+  const filename = 'bilan-lactation_' + campagneLabel(campagne) + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+  await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
 async function exportRapportCampagnePdf(campagne) {
