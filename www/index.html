@@ -579,6 +579,21 @@ function migrateData(d) {
   if (!d.laitTank) d.laitTank = [];
   if (!d.lots) d.lots = [];
   if (!d.exploitation) d.exploitation = { nom: '', numeroCheptel: '', indicatifMarquage: '', adresse: '', telephone: '' };
+  // Date de démarrage de campagne paramétrable (chantier "Première
+  // configuration") : campagneMoisDebut/campagneJourDebut, dans le profil
+  // exploitation (déjà synchronisé Firestore via META_FIELDS, aucun champ
+  // de synchro à ajouter). Absents des deux = compte réellement vierge, qui
+  // déclenche l'écran de première configuration (voir onAuthStateChanged) --
+  // mais un compte qui a DÉJÀ des données (campagne déjà démarrée au moins
+  // une fois, ou champ rapide "Campagne actuelle" déjà utilisé) doit migrer
+  // silencieusement vers l'ancien comportement implicite (1er octobre),
+  // jamais se voir présenter cet écran après une mise à jour.
+  if (d.exploitation.campagneMoisDebut === undefined || d.exploitation.campagneJourDebut === undefined) {
+    if (d.campagneInitialisee || (d.campagneDebut !== null && d.campagneDebut !== undefined)) {
+      d.exploitation.campagneMoisDebut = 10;
+      d.exploitation.campagneJourDebut = 1;
+    }
+  }
   if (!d.brebis) d.brebis = [];
   // Rétro-tag des agnelages/contrôles laitiers/échographies déjà enregistrés
   // avant l'ajout du champ `campagne` (voir renderAddAgnelage/renderAddControle
@@ -593,13 +608,13 @@ function migrateData(d) {
   // valeur qu'on vient de déduire ici.
   d.brebis.forEach(s => {
     (s.agnelages || []).forEach(a => {
-      if (a.campagne === undefined && a.date) a.campagne = campagneAnneeDebutPourDate(a.date);
+      if (a.campagne === undefined && a.date) a.campagne = campagneAnneeDebutPourDate(a.date, d.exploitation);
     });
     (s.controleLaitier || []).forEach(c => {
-      if (c.campagne === undefined && c.date) c.campagne = campagneAnneeDebutPourDate(c.date);
+      if (c.campagne === undefined && c.date) c.campagne = campagneAnneeDebutPourDate(c.date, d.exploitation);
     });
     (s.echographies || []).forEach(e => {
-      if (e.campagne === undefined && e.date) e.campagne = campagneAnneeDebutPourDate(e.date);
+      if (e.campagne === undefined && e.date) e.campagne = campagneAnneeDebutPourDate(e.date, d.exploitation);
     });
   });
   if (!d.prelevementsQualite) d.prelevementsQualite = [];
@@ -1536,19 +1551,128 @@ function isGestanteEcho(echo) {
    deux coexistent pour la même campagne (mise bas ET vide définitive), on
    ne corrige rien silencieusement — voir l'alerte "Incohérences fin de
    campagne" du Bilan de campagne, à corriger à la main. */
-/* Détermine l'année de "campagneDebut" (1er octobre → 30 septembre) pour une
-   date arbitraire au format 'YYYY-MM-DD' — même règle que celle utilisée pour
-   démarrer une nouvelle campagne (voir renderParametres, bouton "Démarrer une
-   nouvelle campagne"), mais généralisée à n'importe quelle date passée (utile
-   pour regrouper un historique qui s'étale sur plusieurs campagnes, ex. le
-   tank laitier). Travaille directement sur la chaîne plutôt que via
-   new Date(...).getMonth() : le reste de l'appli compare déjà ces dates en
-   texte pour éviter tout décalage de fuseau horaire, on garde la même
-   approche ici. Un "Campagne 2026" (affiché ainsi partout dans l'appli) est
-   donc campagneAnneeDebutPourDate(...) + 1. */
-function campagneAnneeDebutPourDate(dateStr) {
-  const [y, m] = dateStr.split('-').map(Number);
-  return m >= 10 ? y : y - 1;
+/* Mois/jour de démarrage de campagne, paramétrables (chantier "Première
+   configuration") — 1er octobre par défaut (valeur de repli, jamais censée
+   servir une fois DB.exploitation normalisée par migrateData, mais gardée
+   par prudence partout où ces valeurs sont lues). Toujours ces 2 fonctions,
+   jamais DB.exploitation.campagneMoisDebut/campagneJourDebut lus en direct
+   ailleurs dans le code, pour ne jamais dupliquer le repli.
+   `exploitation` (optionnel) : objet à utiliser à la place de DB.exploitation
+   -- INDISPENSABLE pour tout appel fait depuis migrateData(d) (donc depuis
+   campagneAnneeDebutPourDate ci-dessous), qui tourne SUR LA DROITE de
+   `let DB = loadData();` : le global DB est encore en zone morte temporelle
+   (TDZ) à ce moment précis, le lire plante toute l'appli au chargement
+   (plantage silencieux avant même l'affichage de l'écran de démarrage).
+   migrateData doit donc toujours passer explicitement `d.exploitation` ici. */
+function campagneMoisDebutConfig(exploitation) {
+  const e = exploitation !== undefined ? exploitation : DB.exploitation;
+  return (e && e.campagneMoisDebut) || 10;
+}
+function campagneJourDebutConfig(exploitation) {
+  const e = exploitation !== undefined ? exploitation : DB.exploitation;
+  return (e && e.campagneJourDebut) || 1;
+}
+/* Compte réellement vierge = jamais aucune date de démarrage de campagne
+   enregistrée, ni localement ni dans le cloud (voir onSignedIn, script
+   module plus bas) -- c'est le seul cas où l'écran "Première
+   configuration" doit apparaître (voir decideEcranApresConnexion). Placée
+   ici plutôt que dans le script module qui l'utilise : les déclarations de
+   fonctions d'un <script type="module"> restent locales à ce module, alors
+   que ce script classique expose les siennes globalement -- nécessaire ici
+   pour rester testable/appelable comme le reste de ces helpers de
+   campagne. */
+function premiereConfigurationCampagneNecessaire() {
+  return !(DB.exploitation && DB.exploitation.campagneMoisDebut && DB.exploitation.campagneJourDebut);
+}
+const NOMS_MOIS =['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+/* Nombre de jours réel d'un mois (1-indexé, 1=janvier), utilisé pour borner
+   dynamiquement le sélecteur "jour" (Première configuration et Paramètres) --
+   année de référence 2024 (bissextile) pour toujours proposer le 29 février,
+   comme demandé. `new Date(2024, mois, 0)` = jour 0 du mois suivant = dernier
+   jour du mois demandé (mois déjà 1-indexé, donc littéralement le mois
+   suivant en argument 0-indexé de Date). */
+function joursDansMoisConfig(mois) {
+  return new Date(2024, mois, 0).getDate();
+}
+/* Libellé "1er octobre"/"15 novembre" (sans année) de la date de démarrage
+   configurée -- jour == 1 donc "1er", sinon le nombre brut. */
+function campagneDateDebutLabel() {
+  const jour = campagneJourDebutConfig();
+  return (jour === 1 ? '1er' : jour) + ' ' + NOMS_MOIS[campagneMoisDebutConfig() - 1];
+}
+/* Libellé de fin de campagne (sans année) = la veille de la date de
+   démarrage. Année de référence 2024 (bissextile, comme joursDansMoisConfig)
+   pour que ce libellé reste correct même si la date de démarrage est un 29
+   février -- une vraie construction de date (campagneRefDate etc.) reste,
+   elle, sur l'année réelle de la campagne et peut rouler sur le 1er mars les
+   années non bissextiles (comportement documenté, pas un bug). */
+function campagneDateFinLabel() {
+  const d = new Date(2024, campagneMoisDebutConfig() - 1, campagneJourDebutConfig());
+  d.setDate(d.getDate() - 1);
+  const jour = d.getDate();
+  return (jour === 1 ? '1er' : jour) + ' ' + NOMS_MOIS[d.getMonth()];
+}
+
+/* Sélecteurs mois/jour de démarrage de campagne, réutilisés par l'écran
+   "Première configuration" et par Paramètres > Exploitation (chantier
+   "Paramétrage de la date de début de campagne"). Le select jour est
+   toujours régénéré par wireSelectMoisJour ci-dessous au changement de
+   mois -- jamais figé aux options posées ici au premier rendu. */
+function selectMoisHtml(id, moisSelectionne) {
+  return `<select id="${id}">${NOMS_MOIS.map((nom, i) =>
+    `<option value="${i + 1}" ${i + 1 === moisSelectionne ? 'selected' : ''}>${nom.charAt(0).toUpperCase() + nom.slice(1)}</option>`
+  ).join('')}</select>`;
+}
+function selectJourHtml(id, mois, jourSelectionne) {
+  const n = joursDansMoisConfig(mois);
+  let html = `<select id="${id}">`;
+  for (let j = 1; j <= n; j++) html += `<option value="${j}" ${j === jourSelectionne ? 'selected' : ''}>${j}</option>`;
+  html += '</select>';
+  return html;
+}
+/* Repeuple le select jour au changement de mois (nombre de jours variable,
+   28/29/30/31) -- tente de garder le jour déjà choisi, sinon retombe sur le
+   dernier jour du nouveau mois (ex: 31 janvier -> passage à février -> 28
+   ou 29 selon joursDansMoisConfig, toujours calé sur 2024 bissextile). */
+function wireSelectMoisJour(moisSelectId, jourSelectId) {
+  const moisEl = document.getElementById(moisSelectId), jourEl = document.getElementById(jourSelectId);
+  if (!moisEl || !jourEl) return;
+  moisEl.onchange = () => {
+    const mois = parseInt(moisEl.value, 10);
+    const jourActuel = parseInt(jourEl.value, 10);
+    const n = joursDansMoisConfig(mois);
+    const jourAGarder = Math.min(jourActuel, n);
+    jourEl.innerHTML = '';
+    for (let j = 1; j <= n; j++) {
+      const opt = document.createElement('option');
+      opt.value = j; opt.textContent = j;
+      if (j === jourAGarder) opt.selected = true;
+      jourEl.appendChild(opt);
+    }
+  };
+}
+
+/* Détermine l'année de "campagneDebut" (par défaut 1er octobre → 30
+   septembre, mais paramétrable -- voir campagneMoisDebutConfig/
+   campagneJourDebutConfig ci-dessus) pour une date arbitraire au format
+   'YYYY-MM-DD' — même règle que celle utilisée pour démarrer une nouvelle
+   campagne (voir renderParametres, bouton "Démarrer une nouvelle
+   campagne"), mais généralisée à n'importe quelle date passée (utile pour
+   regrouper un historique qui s'étale sur plusieurs campagnes, ex. le tank
+   laitier). Travaille directement sur les nombres extraits de la chaîne
+   plutôt que via new Date(...).getMonth() : le reste de l'appli compare
+   déjà ces dates en texte pour éviter tout décalage de fuseau horaire, on
+   garde la même approche ici. Un "Campagne 2026" (affiché ainsi partout
+   dans l'appli) est donc campagneAnneeDebutPourDate(...) + 1.
+   NOTE : avec le jour de démarrage par défaut (1), "jour >= jourDebut" est
+   toujours vrai (un jour du mois vaut au moins 1) -- la comparaison se
+   réduit alors exactement à l'ancienne règle "mois >= 10", aucun décalage
+   silencieux pour les comptes déjà migrés vers 10/1. */
+function campagneAnneeDebutPourDate(dateStr, exploitation) {
+  const [y, m, jour] = dateStr.split('-').map(Number);
+  const moisDebut = campagneMoisDebutConfig(exploitation), jourDebut = campagneJourDebutConfig(exploitation);
+  const apresDebut = m > moisDebut || (m === moisDebut && jour >= jourDebut);
+  return apresDebut ? y : y - 1;
 }
 
 /* ---------- Suivi qualité du lait ----------
@@ -2270,12 +2394,14 @@ function tauxReussiteGlobal(cohort) {
    (DB.campagneDateDemarrage, posée à la bascule agnelles→brebis) si elle a
    été enregistrée pour cette campagne — plus fidèle que toute date calculée,
    puisque c'est le vrai instant où le troupeau a basculé. À défaut (campagne
-   démarrée avant l'ajout de ce champ), repli sur le 1er octobre calculé de
-   l'année de campagne, comme avant. Jamais recalculée rétroactivement : une
-   campagne déjà en cours garde son 1er octobre calculé pour toujours. */
+   démarrée avant l'ajout de ce champ), repli sur la date de démarrage
+   PARAMÉTRÉE de l'année de campagne (voir campagneMoisDebutConfig/
+   campagneJourDebutConfig -- 1er octobre par défaut, comme avant). Jamais
+   recalculée rétroactivement : une campagne déjà en cours garde sa date
+   calculée pour toujours. */
 function campagneRefDate() {
   if (DB.campagneDateDemarrage) return new Date(DB.campagneDateDemarrage);
-  if (DB.campagneDebut) return new Date(DB.campagneDebut, 9, 1); // 1er octobre (mois 9 = octobre, 0-indexé)
+  if (DB.campagneDebut) return new Date(DB.campagneDebut, campagneMoisDebutConfig() - 1, campagneJourDebutConfig());
   return null;
 }
 
@@ -2873,18 +2999,21 @@ function effectifPresentADate(dateRef) {
 
 /* Moyenne de présence sur la campagne (litrage/brebis présente, Bilan de
    lactation) : moyenne mensuelle de l'effectif sur les 12 mois de la
-   campagne (octobre à septembre), en partant de l'effectif de début de
-   campagne (1er octobre), ajustée chaque mois selon les entrées ET les
-   sorties survenues ce mois-là (choix confirmé -- pas seulement les
-   sorties). Implémentée en ré-échantillonnant effectifPresentADate au 1er
-   de chaque mois plutôt qu'en cumulant des deltas mois par mois : donne
-   exactement le même résultat (chaque échantillon reconstruit l'effectif
-   réel à cette date, entrées et sorties confondues) tout en restant
-   robuste à un historique de mouvements incomplet ou désordonné. */
+   campagne (par défaut octobre à septembre, mais paramétrable -- voir
+   campagneMoisDebutConfig/campagneJourDebutConfig), en partant de
+   l'effectif de début de campagne, ajustée chaque mois selon les entrées ET
+   les sorties survenues ce mois-là (choix confirmé -- pas seulement les
+   sorties). Implémentée en ré-échantillonnant effectifPresentADate au jour
+   de démarrage configuré de chaque mois plutôt qu'en cumulant des deltas
+   mois par mois : donne exactement le même résultat (chaque échantillon
+   reconstruit l'effectif réel à cette date, entrées et sorties confondues)
+   tout en restant robuste à un historique de mouvements incomplet ou
+   désordonné. */
 function moyennePresenceMensuelleCampagne(campagne) {
   let total = 0;
+  const moisDebut = campagneMoisDebutConfig(), jourDebut = campagneJourDebutConfig();
   for (let i = 0; i < 12; i++) {
-    total += effectifPresentADate(new Date(campagne, 9 + i, 1)); // 9 = octobre (0-indexé), déborde proprement sur l'année suivante
+    total += effectifPresentADate(new Date(campagne, (moisDebut - 1) + i, jourDebut)); // déborde proprement sur l'année suivante
   }
   return Math.round((total / 12) * 10) / 10;
 }
@@ -3424,8 +3553,11 @@ function render(view, sheepId) {
   // Écran de démarrage / porte d'authentification (chantier "Écran
   // d'authentification") : ni menu, ni retour, ni nom d'exploitation n'ont
   // de sens tant qu'on n'est pas connecté -- on masque l'en-tête entier
-  // plutôt que de le laisser vide (voir renderBoot/renderAuthGate).
-  const isAuthGate = (view === 'boot' || view === 'auth');
+  // plutôt que de le laisser vide (voir renderBoot/renderAuthGate). Même
+  // traitement pour "Première configuration" (chantier "Paramétrage de la
+  // date de début de campagne") : validation obligatoire avant d'accéder
+  // au reste de l'appli, jamais de menu ni de retour possible non plus.
+  const isAuthGate = (view === 'boot' || view === 'auth' || view === 'premiere-configuration');
   const headerEl = document.querySelector('header');
   if (headerEl) headerEl.classList.toggle('hidden', isAuthGate);
 
@@ -3488,6 +3620,7 @@ function render(view, sheepId) {
     else if (view === 'historique-echo') renderHistoriqueEcho();
     else if (view === 'boot') renderBoot();
     else if (view === 'auth') renderAuthGate();
+    else if (view === 'premiere-configuration') renderPremiereConfiguration();
     else if (view === 'diag-bluetooth') renderDiagBluetooth();
     else if (view === 'maj-inventaire') renderMajInventaire();
     else if (view === 'maj-inventaire-validation') renderMajInventaireValidation();
@@ -4562,7 +4695,7 @@ function bilanReproductionHtml() {
   const refDateLabel = DB.campagneDateDemarrage
     ? refDate.toLocaleDateString('fr-FR') + ' (date du changement de campagne)'
     : DB.campagneDebut
-    ? '1<sup>er</sup> octobre ' + DB.campagneDebut + ' (date calculée, campagne démarrée avant l\'enregistrement de cette date)'
+    ? campagneDateDebutLabel().replace('1er', '1<sup>er</sup>') + ' ' + DB.campagneDebut + ' (date calculée, campagne démarrée avant l\'enregistrement de cette date)'
     : null;
   const [g1An, g2AnsPlus] = statsDetailleesParGroupeAge(cohort, refDate);
   const rows = [
@@ -13666,7 +13799,7 @@ function buildRapportCampagnePdfBytes(campagne) {
 
   // ---------- Page 1 (recto) : KPI + suivi mensuel ----------
   let p1 = lettrehead(
-    'Campagne ' + (campagne + 1) + ' — 1er octobre ' + campagne + ' au 30 septembre ' + (campagne + 1),
+    'Campagne ' + (campagne + 1) + ' — ' + campagneDateDebutLabel() + ' ' + campagne + ' au ' + campagneDateFinLabel() + ' ' + (campagne + 1),
     'Rapport de synthèse — Qualité du lait'
   );
   let content1 = p1.content, y = p1.y;
@@ -15726,6 +15859,41 @@ function renderImportAgnelles() {
   };
 }
 
+/* Écran "Première configuration" (chantier "Paramétrage de la date de
+   début de campagne au premier lancement") : affiché avant l'accueil
+   UNIQUEMENT sur un compte réellement vierge (voir decideEcranDemarrage,
+   plus bas dans le script module) -- jamais pour une install qui a déjà
+   des données, migrées silencieusement vers 10/1 par migrateData. Traité
+   comme boot/auth (voir isAuthGate dans render()) : ni menu, ni retour, la
+   validation est obligatoire pour continuer. */
+function renderPremiereConfiguration() {
+  pageTitle.textContent = '';
+  app.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:16px;padding:24px;">
+      <img src="${OVILOG_LOGO_DATA_URI}" alt="Ovilog" style="width:72px;height:72px;border-radius:16px;">
+      <div style="font-size:18px;font-weight:700;text-align:center;">Bienvenue sur Ovilog</div>
+      <div style="font-size:13px;color:var(--text-muted);text-align:center;max-width:340px;">Avant de commencer, indique la date de démarrage de ta campagne agricole — le jour où ta campagne bascule d'une année sur l'autre (souvent la bascule agnelles → brebis).</div>
+      <div style="width:100%;max-width:340px;">
+        <label>Mois de démarrage</label>
+        ${selectMoisHtml('f-premconf-mois', 10)}
+        <label style="margin-top:14px;">Jour de démarrage</label>
+        ${selectJourHtml('f-premconf-jour', 10, 1)}
+        <button class="btn btn-primary" id="btn-premconf-valider" style="margin-top:20px;">Valider et continuer</button>
+      </div>
+    </div>
+  `;
+  wireSelectMoisJour('f-premconf-mois', 'f-premconf-jour');
+  document.getElementById('btn-premconf-valider').onclick = () => {
+    const mois = parseInt(document.getElementById('f-premconf-mois').value, 10);
+    const jour = parseInt(document.getElementById('f-premconf-jour').value, 10);
+    if (!DB.exploitation) DB.exploitation = {};
+    DB.exploitation.campagneMoisDebut = mois;
+    DB.exploitation.campagneJourDebut = jour;
+    saveData(DB);
+    render('home');
+  };
+}
+
 function renderParametres() {
   pageTitle.textContent = 'Paramètres';
   const syncState = window.OvilogSync ? window.OvilogSync.getState() : { loggedIn: false };
@@ -15758,7 +15926,24 @@ function renderParametres() {
       <input type="text" id="f-exp-tel" value="${DB.exploitation.telephone || ''}">
       <button class="btn btn-secondary" id="btn-save-exploitation" style="margin-top:8px;margin-bottom:16px;">Enregistrer</button>
 
-      <label>Campagne actuelle (année de fin — ex: 2026 pour la campagne du 1er octobre 2025 au 30 septembre 2026)</label>
+      <div style="padding-top:4px;border-top:1px solid var(--border);margin-bottom:16px;">
+        <label style="display:flex;align-items:center;margin-top:14px;">Date de démarrage de la campagne${infoBulleHtml('Date de démarrage de la campagne', "Le jour où ta campagne bascule d'une année sur l'autre — sert de référence à tous les calculs et libellés \"Campagne AAAA\" de l'application (Bilan de reproduction, Bilan de lactation, filtres par campagne...).")}</label>
+        <div class="row">
+          ${selectMoisHtml('f-exp-campagne-mois', campagneMoisDebutConfig())}
+          ${selectJourHtml('f-exp-campagne-jour', campagneMoisDebutConfig(), campagneJourDebutConfig())}
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Campagne en cours : ${campagneDateDebutLabel()} au ${campagneDateFinLabel()}.</div>
+        <div style="margin-top:10px;padding:10px;border:1px solid var(--danger);border-radius:10px;">
+          <div style="font-size:12.5px;color:var(--danger);margin-bottom:8px;">Changer cette date peut décaler les campagnes déjà enregistrées (bilans, statuts vide définitive, contrôle laitier, etc.) — aucune correction automatique ne sera appliquée aux données existantes.</div>
+          <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);margin-bottom:0;">
+            <input type="checkbox" id="f-exp-campagne-confirm" style="width:16px;height:16px;margin-top:1px;flex-shrink:0;">
+            <span>Je comprends le risque et je confirme</span>
+          </label>
+        </div>
+        <button class="btn btn-secondary" id="btn-save-exp-campagne-date" style="margin-top:10px;" disabled>Enregistrer</button>
+      </div>
+
+      <label>Campagne actuelle (année de fin — ex: 2026 pour la campagne du ${campagneDateDebutLabel()} 2025 au ${campagneDateFinLabel()} 2026)</label>
       <div class="row">
         <input type="number" id="f-campagne-annee" value="${DB.campagneDebut ? DB.campagneDebut + 1 : ''}" placeholder="ex: 2026" ${DB.campagneInitialisee ? 'disabled' : ''}>
         <button type="button" class="btn btn-secondary" id="btn-save-campagne-annee" style="width:auto;padding:0 16px;" ${DB.campagneInitialisee ? 'disabled' : ''}>OK</button>
@@ -15770,7 +15955,7 @@ function renderParametres() {
 
     <div class="card" style="border-color:var(--accent);">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Changement de campagne</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? ('Campagne ' + (DB.campagneDebut + 1) + ' (1er octobre ' + DB.campagneDebut + ' au 30 septembre ' + (DB.campagneDebut + 1) + ')') : 'non définie'}. À déclencher au 1er octobre : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis. Un écran de vérification détaillé s'affiche avant toute validation.</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? ('Campagne ' + (DB.campagneDebut + 1) + ' (' + campagneDateDebutLabel() + ' ' + DB.campagneDebut + ' au ' + campagneDateFinLabel() + ' ' + (DB.campagneDebut + 1) + ')') : 'non définie'}. À déclencher le ${campagneDateDebutLabel()} : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis. Un écran de vérification détaillé s'affiche avant toute validation.</div>
       <button class="btn btn-secondary" id="btn-nouvelle-campagne" style="color:var(--accent);border-color:var(--accent);">Démarrer une nouvelle campagne</button>
     </div>
 
@@ -15851,7 +16036,13 @@ function renderParametres() {
   document.getElementById('btn-nouvelle-campagne').onclick = () => render('confirmation-nouvelle-campagne');
 
   document.getElementById('btn-save-exploitation').onclick = () => {
+    // Étale DB.exploitation existant plutôt que de le remplacer entièrement
+    // -- sans ça, ce bouton écraserait silencieusement campagneMoisDebut/
+    // campagneJourDebut (voir chantier "Paramétrage de la date de début de
+    // campagne"), qui vivent dans ce même objet mais ont leur propre
+    // bouton "Enregistrer" juste au-dessus.
     DB.exploitation = {
+      ...DB.exploitation,
       nom: document.getElementById('f-exp-nom').value.trim(),
       numeroCheptel: document.getElementById('f-exp-cheptel').value.trim(),
       indicatifMarquage: document.getElementById('f-exp-marquage').value.trim(),
@@ -15860,6 +16051,23 @@ function renderParametres() {
     };
     saveData(DB);
     alert('Informations enregistrées.');
+  };
+  wireSelectMoisJour('f-exp-campagne-mois', 'f-exp-campagne-jour');
+  document.getElementById('f-exp-campagne-confirm').onchange = (e) => {
+    document.getElementById('btn-save-exp-campagne-date').disabled = !e.target.checked;
+  };
+  document.getElementById('btn-save-exp-campagne-date').onclick = () => {
+    // Double confirmation obligatoire (avertissement + case cochée) --
+    // voir le chantier "Paramétrage de la date de début de campagne" :
+    // aucune correction rétroactive des données existantes n'est appliquée,
+    // l'éleveur assume la conséquence en connaissance de cause.
+    if (!document.getElementById('f-exp-campagne-confirm').checked) return;
+    const mois = parseInt(document.getElementById('f-exp-campagne-mois').value, 10);
+    const jour = parseInt(document.getElementById('f-exp-campagne-jour').value, 10);
+    DB.exploitation.campagneMoisDebut = mois;
+    DB.exploitation.campagneJourDebut = jour;
+    saveData(DB);
+    render('parametres');
   };
   document.getElementById('btn-save-repro-gestation').onclick = () => {
     const min = parseInt(document.getElementById('f-repro-gestation-min').value, 10);
@@ -16575,9 +16783,13 @@ function renderAuthGate() {
     if (mode === 'login') {
       if (!email || !password) { showError("Renseigne l'e-mail et le mot de passe."); return; }
       setBusy(true, 'Connexion en cours...');
-      window.OvilogSync.login(email, password).then(() => {
-        render('home');
-      }).catch(e => {
+      // Ne navigue plus ici : onAuthStateChanged (decideEcranApresConnexion,
+      // voir plus bas) est désormais l'unique décideur de l'écran
+      // d'atterrissage (accueil ou "Première configuration") -- il se
+      // déclenche de toute façon juste après ce login réussi. Naviguer
+      // aussi ici risquerait d'atterrir sur l'accueil AVANT que ce
+      // décideur n'ait eu la chance de trancher pour un compte vierge.
+      window.OvilogSync.login(email, password).catch(e => {
         showError(e.message || 'Connexion impossible.');
         setBusy(false); btn.textContent = 'Se connecter';
       });
@@ -16586,9 +16798,8 @@ function renderAuthGate() {
       if (!email || !password || !password2) { showError("Renseigne l'e-mail et les deux mots de passe."); return; }
       if (password !== password2) { showError('Les mots de passe ne correspondent pas.'); return; }
       setBusy(true, 'Création en cours...');
-      window.OvilogSync.signup(email, password).then(() => {
-        render('home');
-      }).catch(e => {
+      // Même remarque que login ci-dessus.
+      window.OvilogSync.signup(email, password).catch(e => {
         showError(e.message || 'Création de compte impossible.');
         setBusy(false); btn.textContent = 'Créer le compte';
       });
@@ -17139,16 +17350,31 @@ async function bootstrapDevice(uid) {
     await exportBackupFile(DB, 'avant-synchronisation-cloud');
   }
   localStorage.setItem(BOOTSTRAP_FLAG_KEY, uid);
+  // Signale si le compte avait DÉJÀ un document meta côté cloud avant ce
+  // bootstrap (avant le push ci-dessus, qui en crée un si absent) -- voir
+  // onSignedIn/decideEcranApresConnexion, chantier "Paramétrage de la date
+  // de début de campagne" : décide si l'écran "Première configuration"
+  // doit s'afficher (jamais pour un compte qui avait déjà des données,
+  // même si ce document meta vient tout juste d'être créé par ce push).
+  return metaSnap.exists();
 }
 
+/* Détermine si le compte a DÉJÀ des données connues -- soit localement
+   (déjà bootstrappé au moins une fois sur cet appareil, ce qui implique
+   forcément qu'un document meta cloud a été posé à ce moment-là), soit
+   côté cloud (nouvel appareil connecté à un compte existant -- voir
+   bootstrapDevice). Sert exclusivement à decideEcranApresConnexion,
+   ci-dessous, pour ne jamais afficher "Première configuration" à tort sur
+   un compte qui a déjà des données, même si le cache local de CET appareil
+   est encore vide au moment de la décision (le vrai risque que ce chantier
+   cherche à éliminer). */
 async function onSignedIn(user) {
   sync.uid = user.uid;
   sync.email = user.email;
   const alreadyBootstrapped = localStorage.getItem(BOOTSTRAP_FLAG_KEY) === user.uid;
-  if (!alreadyBootstrapped) {
-    await bootstrapDevice(user.uid);
-  }
+  const hadDonneesExistantes = alreadyBootstrapped ? true : await bootstrapDevice(user.uid);
   startListeners();
+  return hadDonneesExistantes;
 }
 
 function onSignedOut() {
@@ -17157,24 +17383,37 @@ function onSignedOut() {
   sync.email = null;
 }
 
-// true dès que le tout premier verdict d'onAuthStateChanged (session
-// persistée ou non) a été traité -- distingue ce verdict initial (qui
-// décide accueil vs porte de connexion, voir render('boot') au démarrage)
-// des changements ultérieurs (connexion/déconnexion réellement déclenchées
-// pendant que l'appli tourne, ou simple rafraîchissement de jeton avec le
-// même utilisateur, qu'on ne doit surtout pas traiter comme une navigation).
-let authResolved = false;
+/* Décide l'écran d'atterrissage juste après une connexion réussie (session
+   persistée retrouvée au démarrage OU connexion/inscription interactive
+   depuis l'écran d'authentification) : 'premiere-configuration'
+   UNIQUEMENT si le compte est réellement vierge, sinon 'home'. Centralisée
+   ici et appelée depuis le seul onAuthStateChanged ci-dessous (jamais
+   dupliquée dans les .then() de login/signup, voir plus bas) pour ne
+   jamais risquer de diverger entre les deux déclencheurs possibles d'une
+   connexion. */
+async function decideEcranApresConnexion(user) {
+  const hadDonneesExistantes = await onSignedIn(user);
+  render(!hadDonneesExistantes && premiereConfigurationCampagneNecessaire() ? 'premiere-configuration' : 'home');
+}
 
 onAuthStateChanged(fbAuth, user => {
   if (user) {
-    onSignedIn(user).catch(e => console.error('Erreur de connexion à la synchronisation :', e));
-    // Le verdict initial "session active" doit afficher l'accueil ; une
-    // connexion déclenchée depuis l'écran de connexion/inscription
-    // s'en charge déjà elle-même dans son .then() (voir OvilogSync.login/
-    // signup ci-dessous) -- pas la peine de re-naviguer ici, ce qui
-    // couperait sinon court à tout écran ouvert lors d'un simple
-    // rafraîchissement de jeton.
-    if (!authResolved) render('home');
+    // Distingue une vraie transition déconnecté -> connecté (qui doit
+    // décider l'écran d'atterrissage) d'un simple rafraîchissement de
+    // jeton pour un utilisateur déjà connu (sync.uid déjà posé à cette
+    // même valeur) -- ce dernier ne doit jamais renaviguer, au risque de
+    // couper court à un écran déjà ouvert. Couvre à la fois le démarrage
+    // avec session persistée ET une connexion/inscription interactive
+    // (dans les deux cas sync.uid vaut encore null juste avant).
+    const etaitDejaConnecte = sync.uid === user.uid;
+    if (etaitDejaConnecte) {
+      onSignedIn(user).catch(e => console.error('Erreur de connexion à la synchronisation :', e));
+    } else {
+      decideEcranApresConnexion(user).catch(e => {
+        console.error('Erreur de connexion à la synchronisation :', e);
+        render('home');
+      });
+    }
   } else {
     onSignedOut();
     // Pas de session (premier démarrage jamais connecté) ou déconnexion
@@ -17184,7 +17423,6 @@ onAuthStateChanged(fbAuth, user => {
     currentAuthMode = 'login';
     render('auth');
   }
-  authResolved = true;
 });
 
 function friendlyAuthError(e) {
