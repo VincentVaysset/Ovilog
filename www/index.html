@@ -1028,31 +1028,6 @@ function eidDepuisNumeroOfficiel(numeroOfficiel) {
   return '2500' + c.padStart(11, '0');
 }
 
-/* Numéro visuel SIEOL/UNOTEC calculé depuis le numéro officiel individuel
-   (5 derniers chiffres du numéro officiel) -- voir chantier "Import
-   agnelles". Vérifié sur un exemple réel fourni par l'éleveur (officiel
-   individuel 62001 -> numéro visuel 601, cohorte 2025) et cohérent avec le
-   format des numéros historiques (2 chiffres minimum après le chiffre de
-   cohorte, ex: 808, 855 dans le Bilan de lactation). Table volontairement
-   limitée au seul préfixe vérifié : une cohorte non couverte ici retourne
-   null plutôt que de deviner. Ne couvre pas non plus un "reste" >= 212
-   (branche haute jamais rencontrée dans nos fichiers réels, valeur alors
-   inconnue -- voir suggererOfficielDepuisSieol pour ce même seuil côté
-   SIEOL -> officiel). TOUJOURS affiché pour validation manuelle avant
-   écriture (voir renderImportAgnelles), jamais utilisé pour retrouver une
-   fiche automatiquement. */
-function numeroVisuelDepuisOfficielIndividuel(numeroOfficiel) {
-  const c = String(numeroOfficiel || '').replace(/\D/g, '');
-  if (c.length < 5) return null;
-  const individuel = c.slice(-5);
-  const prefixe = individuel.slice(0, 2);
-  const reste = parseInt(individuel.slice(2), 10);
-  const table = { '62': '6' };
-  const chiffreCohorte = table[prefixe];
-  if (!chiffreCohorte || isNaN(reste) || reste >= 212) return null;
-  return chiffreCohorte + String(reste).padStart(2, '0');
-}
-
 /* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, TOUS
    statuts et catégories confondus : brebis (actives, vendues ou mortes),
    béliers (actifs, vendus ou morts), agnelles actives, agneaux (bouclés,
@@ -3277,17 +3252,14 @@ btnBack.onclick = () => {
   else if (currentView === 'mouvements-collectifs') render('inventaire');
   else if (currentView === 'traitement-collectif') render('sanitaire');
   else if (currentView === 'traitements-collectifs') render('sanitaire');
-  else if (currentView === 'import-numero-sieol') render('parametres');
   else if (currentView === 'import-bilan-lactation') { bilanCampagneTab = 'lactation'; render('bilan-campagne'); }
-  else if (currentView === 'import-agnelles') render('parametres');
-  else if (currentView === 'import-achat-agnelles') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render(belierDetailOrigin);
   else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
   else if (currentView === 'add-echo' || currentView === 'add-agnelage' || currentView === 'add-sanitaire' || currentView === 'add-mouvement' || currentView === 'add-controle') render('detail', currentSheepId);
   else if (currentView === 'echo-rapide' || currentView === 'misebas-rapide') render('home');
   else if (currentView === 'bilan-campagne') render('home');
-  else if (currentView === 'gerer-produits') render('sanitaire');
+  else if (currentView === 'gerer-produits') render('parametres');
   else if (currentView === 'historique-echo') render('echo-rapide');
   else if (currentView === 'diag-bluetooth') { btDiagLeaveScreen(); render('parametres'); }
   else if (currentView === 'maj-inventaire') render('inventaire-actifs');
@@ -3476,11 +3448,8 @@ function render(view, sheepId) {
     else if (view === 'traitement-collectif') renderTraitementCollectif();
     else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
     else if (view === 'sanitaire') renderSanitaire();
-    else if (view === 'import-numero-sieol') renderImportNumeroSieol();
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
     else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
-    else if (view === 'import-agnelles') renderImportAgnelles();
-    else if (view === 'import-achat-agnelles') renderImportAchatAgnelles();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
     else if (view === 'registre') renderRegistre();
@@ -12055,12 +12024,10 @@ function renderSanitaire() {
   app.innerHTML = `
     <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Sanitaire', "Applique un soin à plusieurs brebis en une fois, et retrouve l'historique des traitements déjà appliqués en masse.")}</div>
     <button class="btn btn-secondary" id="btn-traitement-collectif" style="border-color:var(--danger);color:var(--danger);margin-bottom:10px;">Traitement collectif (nouveau)</button>
-    <button class="btn btn-secondary" id="btn-historique-collectif" style="margin-bottom:10px;">Gérer / supprimer un traitement collectif</button>
-    <button class="btn btn-secondary" id="btn-gerer-produits">Gérer les produits (vaccins, traitements...)</button>
+    <button class="btn btn-secondary" id="btn-historique-collectif">Gérer / supprimer un traitement collectif</button>
   `;
   document.getElementById('btn-traitement-collectif').onclick = () => render('traitement-collectif');
   document.getElementById('btn-historique-collectif').onclick = () => render('traitements-collectifs');
-  document.getElementById('btn-gerer-produits').onclick = () => render('gerer-produits');
 }
 
 /* ---------- Gestion de la liste modulable des produits (vaccins, traitements) ----------
@@ -14653,102 +14620,38 @@ async function readXlsxRows(buffer) {
   return rows;
 }
 
-/* Import ponctuel (mais réutilisable à volonté, voir renderParametres) du
-   fichier de correspondance numéro visuel SIEOL, vérifié manuellement par
-   l'éleveur : numero_visuel_sieol;numero_officiel_ovilog;eid_complet.
-   Résolution par EID complet (le plus fiable, colonne 3) -- le numéro
-   officiel Ovilog (colonne 2) n'est là que pour référence humaine, jamais
-   utilisé pour la résolution (voir chantier "Bilan de lactation SIEOL" :
-   deux brebis différentes peuvent partager le même numéro officiel court).
-   Une fiche non trouvée ne bloque jamais le reste de l'import. */
-function renderImportNumeroSieol() {
-  pageTitle.textContent = 'Correspondance numéro visuel SIEOL';
+/* Écran "Première configuration" (chantier "Paramétrage de la date de
+   début de campagne au premier lancement") : affiché avant l'accueil
+   UNIQUEMENT sur un compte réellement vierge (voir decideEcranDemarrage,
+   plus bas dans le script module) -- jamais pour une install qui a déjà
+   des données, migrées silencieusement vers 10/1 par migrateData. Traité
+   comme boot/auth (voir isAuthGate dans render()) : ni menu, ni retour, la
+   validation est obligatoire pour continuer. */
+function renderPremiereConfiguration() {
+  pageTitle.textContent = '';
   app.innerHTML = `
-    <div class="card">
-      <label style="display:flex;align-items:center;">Fichier CSV${infoBulleHtml('Format du fichier', 'Fichier CSV avec 3 colonnes : numéro visuel SIEOL, numéro officiel Ovilog, EID complet. La 1re ligne peut être un en-tête ou déjà une donnée. Traite le numéro visuel comme du texte (les zéros initiaux sont significatifs).')}</label>
-      <!-- accept volontairement large (extension + plusieurs types MIME) : sur
-           certains téléphones Android, un CSV reçu par messagerie/mail est
-           étiqueté avec un type MIME générique (text/plain, voire
-           application/octet-stream) plutôt que text/csv -- un accept=".csv"
-           seul grise alors le fichier dans le sélecteur, sans qu'aucune
-           erreur ne s'affiche (signalé en usage réel). decodeCsvBuffer gère
-           déjà l'erreur si le fichier choisi n'est finalement pas lisible. -->
-      <input type="file" id="import-sieol-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
-      <div id="import-sieol-err" class="error-box hidden"></div>
-      <div id="import-sieol-preview" style="margin-top:14px;"></div>
-      <button class="btn btn-primary hidden" id="btn-confirm-import-sieol" style="margin-top:14px;">Confirmer l'import</button>
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:16px;padding:24px;">
+      <img src="${OVILOG_LOGO_DATA_URI}" alt="Ovilog" style="width:72px;height:72px;border-radius:16px;">
+      <div style="font-size:18px;font-weight:700;text-align:center;">Bienvenue sur Ovilog</div>
+      <div style="font-size:13px;color:var(--text-muted);text-align:center;max-width:340px;">Avant de commencer, indique la date de démarrage de ta campagne agricole — le jour où ta campagne bascule d'une année sur l'autre (souvent la bascule agnelles → brebis).</div>
+      <div style="width:100%;max-width:340px;">
+        <label>Mois de démarrage</label>
+        ${selectMoisHtml('f-premconf-mois', 10)}
+        <label style="margin-top:14px;">Jour de démarrage</label>
+        ${selectJourHtml('f-premconf-jour', 10, 1)}
+        <button class="btn btn-primary" id="btn-premconf-valider" style="margin-top:20px;">Valider et continuer</button>
+      </div>
     </div>
   `;
-
-  let parsedRows = null;
-
-  function processTableRows(tableRows) {
-    // Ignore la 1re ligne seulement si elle ressemble à un en-tête (EID en
-    // colonne 3 pas assez long pour être un EID réel).
-    let dataRows = tableRows;
-    if (tableRows.length > 0 && !/^\d{11,}$/.test(cleanEid(String((tableRows[0][2] || ''))))) {
-      dataRows = tableRows.slice(1);
-    }
-    const rows = [];
-    const nonTrouvees = [];
-    dataRows.forEach((parts, i) => {
-      if (!parts || parts.length < 3 || (!parts[0] && !parts[1] && !parts[2])) return;
-      const numeroSieol = String(parts[0] || '').trim();
-      const eidComplet = String(parts[2] || '').trim();
-      if (!numeroSieol || cleanEid(eidComplet).length < 11) { nonTrouvees.push('Ligne ' + (i + 2) + ' : ligne incomplète (numéro visuel ou EID manquant)'); return; }
-      const sheep = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eidComplet));
-      if (!sheep) { nonTrouvees.push('Ligne ' + (i + 2) + ' : aucune fiche pour l\'EID ' + eidComplet + ' (numéro visuel ' + numeroSieol + ')'); return; }
-      rows.push({ sheep, numeroSieol });
-    });
-    parsedRows = rows;
-    const err = document.getElementById('import-sieol-err');
-    err.classList.add('hidden');
-    const preview = document.getElementById('import-sieol-preview');
-    preview.innerHTML = `
-      <div class="grid2">
-        <div class="stat-card sc-green">
-          <div class="stat-card-label">Fiches à peupler</div>
-          <div class="stat-card-value" style="font-size:20px;">${rows.length}</div>
-        </div>
-        <div class="stat-card sc-amber">
-          <div class="stat-card-label">Non trouvées</div>
-          <div class="stat-card-value" style="font-size:20px;">${nonTrouvees.length}</div>
-        </div>
-      </div>
-      ${nonTrouvees.length > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;white-space:pre-line;">${nonTrouvees.slice(0, 15).join('\n')}${nonTrouvees.length > 15 ? '\n... (' + (nonTrouvees.length - 15) + ' de plus)' : ''}</div>` : ''}
-    `;
-    document.getElementById('btn-confirm-import-sieol').classList.toggle('hidden', rows.length === 0);
-  }
-
-  document.getElementById('import-sieol-file').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const err = document.getElementById('import-sieol-err');
-    err.classList.add('hidden');
-    document.getElementById('import-sieol-preview').innerHTML = '';
-    document.getElementById('btn-confirm-import-sieol').classList.add('hidden');
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        processTableRows(decodeCsvBuffer(reader.result));
-      } catch (ex) {
-        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
-        err.classList.remove('hidden');
-      }
-    };
-    reader.onerror = () => {
-      err.textContent = "Erreur de lecture du fichier.";
-      err.classList.remove('hidden');
-    };
-    reader.readAsArrayBuffer(file);
-  });
-
-  document.getElementById('btn-confirm-import-sieol').onclick = () => {
-    if (!parsedRows || parsedRows.length === 0) return;
-    parsedRows.forEach(row => { row.sheep.numeroSieol = row.numeroSieol; });
+  wireSelectMoisJour('f-premconf-mois', 'f-premconf-jour');
+  document.getElementById('btn-premconf-valider').onclick = () => {
+    const mois = parseInt(document.getElementById('f-premconf-mois').value, 10);
+    const jour = parseInt(document.getElementById('f-premconf-jour').value, 10);
+    if (!DB.exploitation) DB.exploitation = {};
+    DB.exploitation.campagneMoisDebut = mois;
+    DB.exploitation.campagneJourDebut = jour;
     saveData(DB);
-    alert(parsedRows.length + ' fiche(s) mise(s) à jour avec leur numéro visuel SIEOL.');
-    render('parametres');
+    render('home');
   };
 }
 
@@ -15543,379 +15446,44 @@ function renderConfirmationNouvelleCampagne() {
   };
 }
 
-/* Écran d'import des agnelles gardées de l'année depuis un CSV dérivé du
-   rapport UNOTEC "Généalogies" -- voir chantier "Import agnelles". Le
-   fichier UNOTEC lui-même est un PDF (mise en page fixe, pas d'export
-   CSV/Excel côté UNOTEC) : chaque année, l'éleveur transmet le PDF, qui est
-   converti en CSV à 3 colonnes (numero_officiel;date_naissance;
-   numero_officiel_mere) avant d'être importé ici -- voir commit initial
-   pour le script de conversion. Interactif comme les autres imports SIEOL :
-   rien n'est écrit dans DB.agnelles avant "Confirmer l'import". Chaque
-   agnelle est ajoutée à DB.agnelles (jamais directement à DB.brebis) --
-   elle ne rejoindra le troupeau qu'au prochain "changement de campagne",
-   exactement comme une agnelle gardée via le Chantier de tri normal (voir
-   garderAgnelle). */
-function renderImportAgnelles() {
-  pageTitle.textContent = 'Import agnelles (généalogie UNOTEC)';
-  app.innerHTML = `
-    <div class="card">
-      <label style="display:flex;align-items:center;">Fichier CSV${infoBulleHtml('Format du fichier', "Fichier CSV avec 3 colonnes : numéro officiel (11 chiffres), date de naissance (jj/mm/aaaa), numéro officiel de la mère (facultatif). La 1re ligne peut être un en-tête ou déjà une donnée.")}</label>
-      <input type="file" id="import-agnelles-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
-      <div id="import-agnelles-err" class="error-box hidden"></div>
-      <div id="import-agnelles-preview" style="margin-top:14px;"></div>
-      <button class="btn btn-primary hidden" id="btn-confirm-import-agnelles" style="margin-top:14px;">Confirmer l'import</button>
-    </div>
-  `;
-
-  let parsedRows = null; // [{ eid, dateNaissance, numeroVisuelCalcule, motherEid, mereLibre }]
-
-  function processTableRows(tableRows) {
-    let dataRows = tableRows;
-    if (tableRows.length > 0 && !/^\d+$/.test(String((tableRows[0][0] || '')).replace(/\D/g, ''))) {
-      dataRows = tableRows.slice(1);
-    }
-    const rows = [];
-    const problemes = [];
-    let dejaPresentes = 0;
-    let meresLiees = 0;
-    let meresInconnues = 0;
-    dataRows.forEach((parts, i) => {
-      if (!parts || parts.length < 1 || !parts.some(Boolean)) return;
-      const numeroOfficiel = String(parts[0] || '').trim();
-      const dateNaissanceStr = String(parts[1] || '').trim();
-      const numeroOfficielMere = String(parts[2] || '').trim();
-      const ligneLabel = 'Ligne ' + (i + 2);
-      if (!numeroOfficiel) { problemes.push(ligneLabel + ' : numéro officiel manquant, ignorée.'); return; }
-      const eid = eidDepuisNumeroOfficiel(numeroOfficiel);
-      const dateNaissance = parseDateFrSlash(dateNaissanceStr);
-      if (!dateNaissance) { problemes.push(ligneLabel + ' (n°' + numeroVisuel(eid) + ') : date de naissance invalide ou manquante, ignorée.'); return; }
-      const conflit = verifierEidUnique(eid);
-      if (conflit) { problemes.push(ligneLabel + ' (n°' + numeroVisuel(eid) + ') : déjà présente dans Ovilog (' + conflit.statutLabel + '), ignorée.'); dejaPresentes++; return; }
-      const numeroVisuelCalcule = numeroVisuelDepuisOfficielIndividuel(numeroOfficiel);
-      let motherEid = null, mereLibre = '';
-      if (numeroOfficielMere) {
-        const eidMere = eidDepuisNumeroOfficiel(numeroOfficielMere);
-        const mere = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eidMere));
-        if (mere) { motherEid = mere.eid; meresLiees++; }
-        else { mereLibre = 'n°' + numeroVisuel(eidMere) + ' (généalogie UNOTEC, hors Ovilog)'; meresInconnues++; }
-      }
-      rows.push({ eid, dateNaissance, dateNaissanceLabel: dateNaissanceStr, numeroVisuelCalcule, motherEid, mereLibre });
-    });
-    parsedRows = rows;
-    const err = document.getElementById('import-agnelles-err');
-    err.classList.add('hidden');
-    const preview = document.getElementById('import-agnelles-preview');
-    const lignesHtml = rows.map(r => `
-      <div class="history-item">
-        <div class="content">
-          n°${numeroVisuel(r.eid)} — né(e) le ${formatDateFr(r.dateNaissance)}
-          <div style="font-size:12px;color:var(--text-muted);">Numéro visuel SIEOL/UNOTEC calculé : ${r.numeroVisuelCalcule ? r.numeroVisuelCalcule : '(non calculable, à compléter manuellement)'}${r.motherEid ? ' — Mère : n°' + numeroVisuel(r.motherEid) + ' (fiche trouvée)' : r.mereLibre ? ' — Mère : ' + r.mereLibre : ''}</div>
-        </div>
-      </div>
-    `).join('');
-    preview.innerHTML = `
-      <div class="grid2">
-        <div class="stat-card sc-green">
-          <div class="stat-card-label">Agnelles à créer</div>
-          <div class="stat-card-value" style="font-size:20px;">${rows.length}</div>
-        </div>
-        <div class="stat-card sc-amber">
-          <div class="stat-card-label">Ignorées</div>
-          <div class="stat-card-value" style="font-size:20px;">${problemes.length}</div>
-        </div>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Mères retrouvées dans Ovilog : ${meresLiees} — mères hors Ovilog (généalogie en texte libre) : ${meresInconnues}${dejaPresentes > 0 ? ' — déjà présentes (ignorées) : ' + dejaPresentes : ''}.</div>
-      ${problemes.length > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;white-space:pre-line;">${problemes.slice(0, 15).join('\n')}${problemes.length > 15 ? '\n... (' + (problemes.length - 15) + ' de plus)' : ''}</div>` : ''}
-      <div style="margin-top:12px;max-height:340px;overflow-y:auto;">${lignesHtml}</div>
-    `;
-    document.getElementById('btn-confirm-import-agnelles').classList.toggle('hidden', rows.length === 0);
-  }
-
-  document.getElementById('import-agnelles-file').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const err = document.getElementById('import-agnelles-err');
-    err.classList.add('hidden');
-    document.getElementById('import-agnelles-preview').innerHTML = '';
-    document.getElementById('btn-confirm-import-agnelles').classList.add('hidden');
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        processTableRows(decodeCsvBuffer(reader.result));
-      } catch (ex) {
-        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
-        err.classList.remove('hidden');
-      }
-    };
-    reader.onerror = () => {
-      err.textContent = "Erreur de lecture du fichier.";
-      err.classList.remove('hidden');
-    };
-    reader.readAsArrayBuffer(file);
-  });
-
-  document.getElementById('btn-confirm-import-agnelles').onclick = () => {
-    if (!parsedRows || parsedRows.length === 0) return;
-    const dateEntree = new Date().toISOString().slice(0,10);
-    parsedRows.forEach(r => {
-      DB.agnelles.push({
-        id: Date.now().toString() + Math.random().toString(36).slice(2,6),
-        eid: r.eid, origine: 'née', motherEid: r.motherEid, mere: r.mereLibre, pere: '',
-        numeroSieol: r.numeroVisuelCalcule || null,
-        dateEntree, sanitaire: [],
-        mouvements: [
-          { type: 'Naissance', cause: null, date: r.dateNaissance },
-          { type: 'Entrée', cause: 'Import (fichier généalogie UNOTEC)', date: dateEntree }
-        ]
-      });
-    });
-    saveData(DB);
-    alert(parsedRows.length + ' agnelle(s) ajoutée(s) à l\'inventaire.');
-    render('parametres');
-  };
-}
-
-/* ---------- Import Généalogie/achat agnelles (chantier "Import
-   Généalogie/achat agnelles") ----------
-   Fichier CSV transmis par le technicien du GAEC vendeur (agnelles achetées
-   à l'extérieur pour le renouvellement, ~30/an) -- DISTINCT de
-   renderImportAgnelles ci-dessus (généalogie UNOTEC, agnelles NÉES sur
-   l'exploitation, numeroSieol CALCULÉ par formule) : ici origine="achetée"
-   systématiquement, et numeroSieol est la valeur BRUTE de la colonne "N°
-   travail" du fichier (numéro de travail SIEOL du technicien -- même champ
-   que la correspondance SIEOL↔Ovilog déjà en place, voir
-   renderImportNumeroSieol/computeWithdrawalAlerts... non, voir plutôt la
-   fiche brebis "Numéro visuel SIEOL/UNOTEC").
-   Encodage Latin-1, séparateur ';' : decodeCsvBuffer gère déjà les deux
-   (repli windows-1252 si le décodage UTF-8 strict échoue, détection auto du
-   délimiteur) et filtre déjà les lignes vides -- il ne reste donc qu'à
-   sauter la ligne de titre puis la ligne d'en-tête (positions 0 et 1).
-   Mapping PAR POSITION (jamais par nom d'en-tête, contrairement à l'import
-   contrôle laitier SIEOL) : 0 N° officiel, 1 N° travail, 2 Race (lue puis
-   jetée, jamais stockée ni normalisée -- une race "10"/"010" incohérente
-   observée dans un vrai fichier ne doit jamais être silencieusement
-   corrigée puisqu'elle n'est de toute façon pas conservée), 3 Date de
-   naissance, 4 N° Officiel Père (texte brut, jamais de recherche), 5 Code
-   IA Père (jetée), 6 N° Officiel Mère (correspondance tentée dans les
-   brebis ACTIVES uniquement -- la mère reste normalement chez le vendeur,
-   cas non trouvé attendu), 7-9 N° Travail Mère/Indicatif/N° Cheptel
-   (jetées).
-   Unicité EID (verifierEidUnique, tous statuts/catégories confondus) ET
-   unicité numeroSieol (nouveau : un numéro de travail dupliqué ferait
-   affecter le contrôle laitier de deux brebis différentes à la même
-   fiche) sont vérifiées de façon CUMULATIVE au fil du fichier, pas
-   seulement contre la base déjà enregistrée -- un fichier réel fourni par
-   l'éleveur contient deux lignes strictement identiques consécutives, qui
-   doivent produire 1 création + 1 doublon bloqué, jamais 2 créations. */
-function renderImportAchatAgnelles() {
-  pageTitle.textContent = 'Import généalogie / achat agnelles';
-  const todayIso = new Date().toISOString().slice(0, 10);
-  app.innerHTML = `
-    <div class="card">
-      <label style="display:flex;align-items:center;">Fichier CSV${infoBulleHtml('Format du fichier', "Fichier CSV du technicien du GAEC vendeur, encodage Latin-1, séparateur ';'. 2 premières lignes (titre + ligne vide) ignorées, en-tête en ligne 3 : N° officiel;N° travail;Race;Date de naissance;N° Officiel Père;Code IA Père;N° Officiel Mère;N° Travail Mère;Indicatif de marquage;N° Cheptel.")}</label>
-      <input type="file" id="import-achat-agnelles-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
-      <label style="margin-top:14px;">Date d'entrée sur l'exploitation (date d'achat)</label>
-      <input type="date" id="import-achat-agnelles-date-entree" value="${todayIso}">
-      <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Appliquée à toutes les agnelles créées -- distincte de leur date de naissance, propre à chacune.</div>
-      <div id="import-achat-agnelles-err" class="error-box hidden" style="margin-top:14px;"></div>
-      <div id="import-achat-agnelles-preview" style="margin-top:14px;"></div>
-      <button class="btn btn-primary hidden" id="btn-confirm-import-achat-agnelles" style="margin-top:14px;">Confirmer l'import</button>
-    </div>
-  `;
-
-  let parsedRows = null; // [{ eid, numeroSieol, dateNaissance, pere, motherEid, mereLibre }]
-
-  function processTableRows(tableRows) {
-    // Ligne 0 = titre, ligne 1 = en-tête -- les données commencent en ligne
-    // 2 du tableau, soit la "ligne 4" réelle du fichier (label affiché
-    // ci-dessous, cohérent avec ce que l'éleveur voit dans son tableur).
-    // ATTENTION : la "ligne vide" du fichier réel n'est PAS une ligne
-    // réellement vide -- c'est une ligne de N points-virgules (N champs CSV
-    // vides), qui SURVIT au filtre l.trim() de decodeCsvBuffer (le trim ne
-    // retire que les espaces, jamais les délimiteurs). Sans ce filtre ici,
-    // elle décale l'en-tête d'un cran dans les données et fait planter tout
-    // le parsing (numéro officiel = "N° officiel" -> aucun chiffre -> EID
-    // null -> cleanEid(null) explose) -- corrigé après un vrai fichier
-    // fourni par l'éleveur qui a révélé le bug. On filtre donc TOUTE ligne
-    // dont aucun champ n'est renseigné, quel que soit le nombre de
-    // délimiteurs, avant de sauter les 2 lignes titre+en-tête.
-    const lignesNonVides = tableRows.filter(parts => parts && parts.some(Boolean));
-    const dataRows = lignesNonVides.slice(2);
-    const rows = [];
-    const problemes = [];
-    let eidDoublons = 0;
-    let sieolConflits = 0;
-    let meresLiees = 0;
-    let meresInconnues = 0;
-    const eidVusDansFichier = new Map(); // eid nettoyé -> n° de ligne fichier
-    const sieolVusDansFichier = new Map(); // numeroSieol -> n° de ligne fichier
-
-    dataRows.forEach((parts, i) => {
-      if (!parts || parts.length < 1 || !parts.some(Boolean)) return;
-      const ligneFichier = i + 4; // 2 lignes ignorées + en-tête + index 1-based
-      const ligneLabel = 'Ligne ' + ligneFichier;
-      const numeroOfficiel = String(parts[0] || '').trim();
-      const numeroTravail = String(parts[1] || '').trim();
-      // parts[2] = Race : lue puis jamais stockée (cf. commentaire de fonction).
-      const dateNaissanceStr = String(parts[3] || '').trim();
-      const pereRaw = String(parts[4] || '').trim();
-      // parts[5] = Code IA Père : jamais stocké.
-      const numeroOfficielMere = String(parts[6] || '').trim();
-      // parts[7..9] = N° Travail Mère / Indicatif de marquage / N° Cheptel : jamais stockés.
-
-      if (!numeroOfficiel) { problemes.push(ligneLabel + ' : numéro officiel manquant, ignorée.'); return; }
-      const eid = eidDepuisNumeroOfficiel(numeroOfficiel);
-      const eidNettoye = cleanEid(eid);
-      const num = numeroVisuel(eid);
-
-      const dateNaissance = parseDateFrSlash(dateNaissanceStr);
-      if (!dateNaissance) { problemes.push(ligneLabel + ' (n°' + num + ') : date de naissance invalide ou manquante, ignorée.'); return; }
-
-      const conflitBase = verifierEidUnique(eid);
-      if (conflitBase) { problemes.push(ligneLabel + ' (n°' + num + ') : ' + messageEidDejaUtilise(conflitBase) + ' Ignorée.'); eidDoublons++; return; }
-      if (eidVusDansFichier.has(eidNettoye)) { problemes.push(ligneLabel + ' (n°' + num + ') : doublon EID à l\'intérieur du fichier (déjà utilisé ligne ' + eidVusDansFichier.get(eidNettoye) + '), ignorée.'); eidDoublons++; return; }
-
-      if (!numeroTravail) { problemes.push(ligneLabel + ' (n°' + num + ') : n° travail manquant, ignorée.'); return; }
-      const conflitSieolBase = DB.brebis.find(s => s.numeroSieol === numeroTravail) || (DB.agnelles || []).find(a => a.numeroSieol === numeroTravail);
-      if (conflitSieolBase) {
-        const cible = conflitSieolBase.eid ? 'n°' + numeroVisuel(conflitSieolBase.eid) : '';
-        problemes.push(ligneLabel + ' (n°' + num + ') : n° travail "' + numeroTravail + '" déjà utilisé par une autre fiche (' + cible + '), ignorée.');
-        sieolConflits++;
-        return;
-      }
-      if (sieolVusDansFichier.has(numeroTravail)) { problemes.push(ligneLabel + ' (n°' + num + ') : n° travail "' + numeroTravail + '" déjà utilisé plus haut dans ce fichier (ligne ' + sieolVusDansFichier.get(numeroTravail) + '), ignorée.'); sieolConflits++; return; }
-
-      let motherEid = null, mereLibre = '';
-      if (numeroOfficielMere) {
-        const eidMere = eidDepuisNumeroOfficiel(numeroOfficielMere);
-        const mereActive = DB.brebis.find(s => (s.statut || 'active') === 'active' && cleanEid(s.eid) === cleanEid(eidMere));
-        if (mereActive) { motherEid = mereActive.eid; meresLiees++; }
-        else { mereLibre = 'n°' + numeroVisuel(eidMere) + ' (chez le vendeur, hors Ovilog)'; meresInconnues++; }
-      }
-
-      eidVusDansFichier.set(eidNettoye, ligneFichier);
-      sieolVusDansFichier.set(numeroTravail, ligneFichier);
-      rows.push({ eid, numeroSieol: numeroTravail, dateNaissance, dateNaissanceLabel: dateNaissanceStr, pere: pereRaw, motherEid, mereLibre });
-    });
-
-    parsedRows = rows;
-    const err = document.getElementById('import-achat-agnelles-err');
-    err.classList.add('hidden');
-    const preview = document.getElementById('import-achat-agnelles-preview');
-    const lignesHtml = rows.map(r => `
-      <div class="history-item">
-        <div class="content">
-          n°${numeroVisuel(r.eid)} — n° travail ${r.numeroSieol} — né(e) le ${formatDateFr(r.dateNaissance)}
-          <div style="font-size:12px;color:var(--text-muted);">${r.pere ? 'Père : ' + r.pere + ' — ' : ''}${r.motherEid ? 'Mère : n°' + numeroVisuel(r.motherEid) + ' (fiche trouvée)' : r.mereLibre ? 'Mère : ' + r.mereLibre : 'Mère : non renseignée'}</div>
-        </div>
-      </div>
-    `).join('');
-    preview.innerHTML = `
-      <div class="grid2">
-        <div class="stat-card sc-green">
-          <div class="stat-card-label">Agnelles à créer</div>
-          <div class="stat-card-value" style="font-size:20px;">${rows.length}</div>
-        </div>
-        <div class="stat-card sc-amber">
-          <div class="stat-card-label">Lignes ignorées</div>
-          <div class="stat-card-value" style="font-size:20px;">${problemes.length}</div>
-        </div>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Doublons EID bloqués : ${eidDoublons} — conflits n° travail bloqués : ${sieolConflits} — mères retrouvées dans Ovilog : ${meresLiees} — mères hors Ovilog (texte libre) : ${meresInconnues}.</div>
-      <div style="font-size:12.5px;font-weight:600;margin-top:10px;padding:8px 10px;background:#f0efe9;border-radius:var(--radius);">${rows.length} agnelle${rows.length > 1 ? 's' : ''} à créer, sexe F appliqué automatiquement à toutes.</div>
-      ${problemes.length > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;white-space:pre-line;">${problemes.slice(0, 15).join('\n')}${problemes.length > 15 ? '\n... (' + (problemes.length - 15) + ' de plus)' : ''}</div>` : ''}
-      <div style="margin-top:12px;max-height:340px;overflow-y:auto;">${lignesHtml}</div>
-    `;
-    document.getElementById('btn-confirm-import-achat-agnelles').classList.toggle('hidden', rows.length === 0);
-  }
-
-  document.getElementById('import-achat-agnelles-file').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const err = document.getElementById('import-achat-agnelles-err');
-    err.classList.add('hidden');
-    document.getElementById('import-achat-agnelles-preview').innerHTML = '';
-    document.getElementById('btn-confirm-import-achat-agnelles').classList.add('hidden');
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        processTableRows(decodeCsvBuffer(reader.result));
-      } catch (ex) {
-        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
-        err.classList.remove('hidden');
-      }
-    };
-    reader.onerror = () => {
-      err.textContent = "Erreur de lecture du fichier.";
-      err.classList.remove('hidden');
-    };
-    reader.readAsArrayBuffer(file);
-  });
-
-  document.getElementById('btn-confirm-import-achat-agnelles').onclick = () => {
-    if (!parsedRows || parsedRows.length === 0) return;
-    const err = document.getElementById('import-achat-agnelles-err');
-    const dateEntree = document.getElementById('import-achat-agnelles-date-entree').value;
-    if (!dateEntree) { err.textContent = "Renseigne la date d'entrée sur l'exploitation."; err.classList.remove('hidden'); return; }
-    err.classList.add('hidden');
-    parsedRows.forEach(r => {
-      DB.agnelles.push({
-        id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-        eid: r.eid, origine: 'achetée', motherEid: r.motherEid, mere: r.mereLibre, pere: r.pere,
-        numeroSieol: r.numeroSieol,
-        dateEntree, sanitaire: [],
-        mouvements: [
-          { type: 'Naissance', cause: null, date: r.dateNaissance },
-          { type: 'Entrée', cause: 'Achat (import fichier vendeur)', date: dateEntree }
-        ]
-      });
-    });
-    saveData(DB);
-    alert(parsedRows.length + ' agnelle(s) ajoutée(s) à l\'inventaire (achetée).');
-    render('parametres');
-  };
-}
-
-/* Écran "Première configuration" (chantier "Paramétrage de la date de
-   début de campagne au premier lancement") : affiché avant l'accueil
-   UNIQUEMENT sur un compte réellement vierge (voir decideEcranDemarrage,
-   plus bas dans le script module) -- jamais pour une install qui a déjà
-   des données, migrées silencieusement vers 10/1 par migrateData. Traité
-   comme boot/auth (voir isAuthGate dans render()) : ni menu, ni retour, la
-   validation est obligatoire pour continuer. */
-function renderPremiereConfiguration() {
-  pageTitle.textContent = '';
-  app.innerHTML = `
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:16px;padding:24px;">
-      <img src="${OVILOG_LOGO_DATA_URI}" alt="Ovilog" style="width:72px;height:72px;border-radius:16px;">
-      <div style="font-size:18px;font-weight:700;text-align:center;">Bienvenue sur Ovilog</div>
-      <div style="font-size:13px;color:var(--text-muted);text-align:center;max-width:340px;">Avant de commencer, indique la date de démarrage de ta campagne agricole — le jour où ta campagne bascule d'une année sur l'autre (souvent la bascule agnelles → brebis).</div>
-      <div style="width:100%;max-width:340px;">
-        <label>Mois de démarrage</label>
-        ${selectMoisHtml('f-premconf-mois', 10)}
-        <label style="margin-top:14px;">Jour de démarrage</label>
-        ${selectJourHtml('f-premconf-jour', 10, 1)}
-        <button class="btn btn-primary" id="btn-premconf-valider" style="margin-top:20px;">Valider et continuer</button>
-      </div>
-    </div>
-  `;
-  wireSelectMoisJour('f-premconf-mois', 'f-premconf-jour');
-  document.getElementById('btn-premconf-valider').onclick = () => {
-    const mois = parseInt(document.getElementById('f-premconf-mois').value, 10);
-    const jour = parseInt(document.getElementById('f-premconf-jour').value, 10);
-    if (!DB.exploitation) DB.exploitation = {};
-    DB.exploitation.campagneMoisDebut = mois;
-    DB.exploitation.campagneJourDebut = jour;
-    saveData(DB);
-    render('home');
-  };
-}
-
+/* ---------- Écran Paramètres : 5 onglets (chantier "Refonte de l'écran
+   Paramètres en 5 onglets") -- même mécanique de tab-bar que Bilan de
+   campagne/Contrôle laitier, variable d'état locale parametresTab
+   préservée entre deux appels de render('parametres') (persiste tant que
+   l'appli reste ouverte, comme bilanCampagneTab). Chaque onglet a sa
+   propre fonction de rendu et ses propres boutons "Enregistrer" -- aucun
+   d'eux ne réécrit jamais DB.exploitation/DB en entier, toujours étalé
+   (...DB.exploitation) pour ne pas écraser un champ absent du formulaire
+   affiché. */
+let parametresTab = 'exploitation';
+const PARAMETRES_TABS = [
+  { key: 'exploitation', label: 'Exploitation' },
+  { key: 'listes', label: 'Listes' },
+  { key: 'imports', label: 'Imports' },
+  { key: 'campagne', label: 'Campagne' },
+  { key: 'sauvegarde', label: 'Sauvegarde' }
+];
 function renderParametres() {
   pageTitle.textContent = 'Paramètres';
-  const syncState = window.OvilogSync ? window.OvilogSync.getState() : { loggedIn: false };
+  const tabBarHtml = `<div class="tab-bar">${PARAMETRES_TABS.map(t =>
+    `<button type="button" class="tab-btn${parametresTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
+  ).join('')}</div>`;
+  app.innerHTML = `${tabBarHtml}<div id="parametres-tab-content"></div>`;
+  document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
+    btn.onclick = () => { parametresTab = btn.dataset.tab; render('parametres'); };
+  });
+  const content = document.getElementById('parametres-tab-content');
+  if (parametresTab === 'exploitation') renderParametresExploitation(content);
+  else if (parametresTab === 'listes') renderParametresListes(content);
+  else if (parametresTab === 'imports') renderParametresImports(content);
+  else if (parametresTab === 'campagne') renderParametresCampagne(content);
+  else if (parametresTab === 'sauvegarde') renderParametresSauvegarde(content);
+}
 
-  app.innerHTML = `
+/* ---------- Onglet Exploitation ---------- */
+function renderParametresExploitation(content) {
+  const syncState = window.OvilogSync ? window.OvilogSync.getState() : { loggedIn: false };
+  content.innerHTML = `
     <div class="card" id="sync-card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
         ${iconCircle(ICON_SYNC, 'blue', 'sm')}
@@ -15941,26 +15509,198 @@ function renderParametres() {
       <input type="text" id="f-exp-adresse" value="${DB.exploitation.adresse || ''}">
       <label>Numéro de téléphone</label>
       <input type="text" id="f-exp-tel" value="${DB.exploitation.telephone || ''}">
-      <button class="btn btn-secondary" id="btn-save-exploitation" style="margin-top:8px;margin-bottom:16px;">Enregistrer</button>
+      <label style="display:flex;align-items:center;">Préfixe EID de l'exploitation${infoBulleHtml('Préfixe EID de l\'exploitation', "Les 6 premiers chiffres de l'EID des animaux nés/marqués sur cette exploitation (ex: 162991). Pas encore utilisé activement -- servira plus tard à déduire automatiquement l'origine née/achetée d'un animal à partir de son EID, lors de futurs imports.")}</label>
+      <input type="text" id="f-exp-prefixe-eid" value="${DB.exploitation.prefixeEid || ''}" placeholder="ex: 162991">
+      <button class="btn btn-secondary" id="btn-save-exploitation" style="margin-top:8px;">Enregistrer</button>
+    </div>
+  `;
 
-      <div style="padding-top:4px;border-top:1px solid var(--border);margin-bottom:16px;">
-        <label style="display:flex;align-items:center;margin-top:14px;">Date de démarrage de la campagne${infoBulleHtml('Date de démarrage de la campagne', "Le jour où ta campagne bascule d'une année sur l'autre — sert de référence à tous les calculs et libellés \"Campagne AAAA\" de l'application (Bilan de reproduction, Bilan de lactation, filtres par campagne...).")}</label>
-        <div class="row">
-          ${selectMoisHtml('f-exp-campagne-mois', campagneMoisDebutConfig())}
-          ${selectJourHtml('f-exp-campagne-jour', campagneMoisDebutConfig(), campagneJourDebutConfig())}
-        </div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Campagne en cours : ${campagneDateDebutLabel()} au ${campagneDateFinLabel()}.</div>
-        <div style="margin-top:10px;padding:10px;border:1px solid var(--danger);border-radius:10px;">
-          <div style="font-size:12.5px;color:var(--danger);margin-bottom:8px;">Changer cette date peut décaler les campagnes déjà enregistrées (bilans, statuts vide définitive, contrôle laitier, etc.) — aucune correction automatique ne sera appliquée aux données existantes.</div>
-          <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);margin-bottom:0;">
-            <input type="checkbox" id="f-exp-campagne-confirm" style="width:16px;height:16px;margin-top:1px;flex-shrink:0;">
-            <span>Je comprends le risque et je confirme</span>
-          </label>
-        </div>
-        <button class="btn btn-secondary" id="btn-save-exp-campagne-date" style="margin-top:10px;" disabled>Enregistrer</button>
+  document.getElementById('btn-sync-action').onclick = () => {
+    // Paramètres n'est accessible qu'une fois connecté (voir "Écran
+    // d'authentification") : ce bouton est donc toujours une déconnexion.
+    // onAuthStateChanged (script module) prend le relais juste après pour
+    // ramener sur l'écran de connexion -- pas besoin de render() ici.
+    if (!confirm("Se déconnecter ? Tu devras te reconnecter pour retrouver l'appli.")) return;
+    window.OvilogSync.logout();
+  };
+  document.getElementById('btn-save-exploitation').onclick = () => {
+    // Étale DB.exploitation existant plutôt que de le remplacer entièrement
+    // -- sans ça, ce bouton écraserait silencieusement campagneMoisDebut/
+    // campagneJourDebut (voir chantier "Paramétrage de la date de début de
+    // campagne"), qui vivent dans ce même objet mais sont réglés depuis
+    // l'onglet Campagne.
+    DB.exploitation = {
+      ...DB.exploitation,
+      nom: document.getElementById('f-exp-nom').value.trim(),
+      numeroCheptel: document.getElementById('f-exp-cheptel').value.trim(),
+      indicatifMarquage: document.getElementById('f-exp-marquage').value.trim(),
+      adresse: document.getElementById('f-exp-adresse').value.trim(),
+      telephone: document.getElementById('f-exp-tel').value.trim(),
+      prefixeEid: document.getElementById('f-exp-prefixe-eid').value.trim()
+    };
+    saveData(DB);
+    alert('Informations enregistrées.');
+  };
+}
+
+/* ---------- Onglet Listes : listes modulables (ajout + suppression) ----------
+   Produits sanitaires : écran "Gérer les produits" déjà existant
+   (ajout/renommage/suppression), déplacé ici tel quel via son propre
+   bouton -- pas refait. Les 4 autres listes (acheteurs, causes de
+   mortalité, cas particuliers d'échographie, types de journal) étaient
+   jusqu'ici seulement ajoutables à la volée depuis chaque formulaire,
+   sans vue d'ensemble ni suppression -- nouveau composant générique ici :
+   ajout + suppression seulement (pas de renommage), confirmation
+   systématique, avec un compteur d'usage RÉEL (jamais un message
+   générique) calculé en parcourant brebis/béliers/agnelles/agneaux/
+   registre. Aucun blocage, aucune correction rétroactive des fiches
+   existantes qui référencent la valeur supprimée. */
+function compterUsageMouvement(champ, valeur) {
+  let n = 0;
+  const scan = (mvts) => (mvts || []).forEach(m => { if (m[champ] === valeur) n++; });
+  DB.brebis.forEach(s => {
+    scan(s.mouvements);
+    (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => scan(l.mouvements)));
+  });
+  (DB.beliers || []).forEach(b => scan(b.mouvements));
+  (DB.agnelles || []).forEach(a => scan(a.mouvements));
+  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+    const reg = DB.registre && DB.registre[cat];
+    if (reg) Object.values(reg).forEach(entry => scan(entry.mouvements));
+  });
+  return n;
+}
+function compterUsageAcheteur(nom) { return compterUsageMouvement('acheteur', nom); }
+function compterUsageCauseMortalite(nom) { return compterUsageMouvement('cause', nom); }
+function compterUsageCasParticulier(nom) {
+  let n = 0;
+  DB.brebis.forEach(s => (s.echographies || []).forEach(e => { if (e.special === nom) n++; }));
+  return n;
+}
+function compterUsageTypeJournal(nom) {
+  return (DB.journal || []).filter(e => e.type === nom).length;
+}
+const LISTES_GENERALES_CONFIG = [
+  { key: 'acheteurs', label: 'Acheteurs', usage: compterUsageAcheteur },
+  { key: 'causesMortalite', label: 'Causes de mortalité', usage: compterUsageCauseMortalite },
+  { key: 'casParticuliers', label: "Cas particuliers d'échographie", usage: compterUsageCasParticulier },
+  { key: 'typesJournal', label: 'Types de journal', usage: compterUsageTypeJournal }
+];
+function renderParametresListes(content) {
+  const listeGeneraleHtml = (cfg) => {
+    const items = DB[cfg.key] || [];
+    const rows = items.length === 0
+      ? '<div style="font-size:13px;color:var(--text-muted);padding:6px 0;">Aucun élément.</div>'
+      : items.map(val => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+          <span>${val}</span>
+          <button type="button" class="btn btn-secondary btn-del-liste" data-list="${cfg.key}" data-val="${val.replace(/"/g, '&quot;')}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
+        </div>`).join('');
+    return `<div class="card" style="margin-bottom:12px;">
+      <div style="font-weight:600;margin-bottom:4px;">${cfg.label}</div>
+      ${rows}
+      <div class="row" style="margin-top:10px;">
+        <input type="text" class="input-add-liste" data-list="${cfg.key}" placeholder="Ajouter...">
+        <button type="button" class="btn btn-secondary btn-add-liste" data-list="${cfg.key}" style="width:auto;padding:0 16px;">+</button>
       </div>
+    </div>`;
+  };
 
-      <label>Campagne actuelle (année de fin — ex: 2026 pour la campagne du ${campagneDateDebutLabel()} 2025 au ${campagneDateFinLabel()} 2026)</label>
+  content.innerHTML = `
+    <div class="card">
+      <div style="font-weight:600;margin-bottom:6px;">Produits sanitaires</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Vaccins, antibiotiques, antiparasitaires, anti-inflammatoires -- par catégorie, avec renommage.</div>
+      <button class="btn btn-secondary" id="btn-gerer-produits">Gérer les produits</button>
+    </div>
+    ${LISTES_GENERALES_CONFIG.map(listeGeneraleHtml).join('')}
+  `;
+
+  document.getElementById('btn-gerer-produits').onclick = () => render('gerer-produits');
+  document.querySelectorAll('.btn-del-liste').forEach(btn => {
+    btn.onclick = () => {
+      const cfg = LISTES_GENERALES_CONFIG.find(c => c.key === btn.dataset.list);
+      const val = btn.dataset.val;
+      const usage = cfg.usage(val);
+      const msg = usage > 0
+        ? `Utilisé dans ${usage} fiche(s)/mouvement(s) déjà enregistré(s). Le supprimer de la liste ne modifiera aucune donnée déjà saisie. Retirer « ${val} » de la liste ?`
+        : `Retirer « ${val} » de la liste ?`;
+      if (!confirm(msg)) return;
+      DB[cfg.key] = (DB[cfg.key] || []).filter(v => v !== val);
+      saveData(DB);
+      render('parametres');
+    };
+  });
+  document.querySelectorAll('.btn-add-liste').forEach(btn => {
+    btn.onclick = () => {
+      const input = document.querySelector(`.input-add-liste[data-list="${btn.dataset.list}"]`);
+      const val = input.value.trim();
+      if (!val) return;
+      DB[btn.dataset.list] = DB[btn.dataset.list] || [];
+      if (!DB[btn.dataset.list].includes(val)) DB[btn.dataset.list].push(val);
+      saveData(DB);
+      render('parametres');
+    };
+  });
+}
+
+/* ---------- Onglet Imports : structure d'accueil, aucune logique pour
+   l'instant (chantier "Refonte Paramètres" -- les 3 anciens imports SIEOL
+   ont été supprimés, obsolètes après un travail de conception approfondi
+   sur le format réel du travail SIEOL). Placeholders désactivés en
+   attendant des fichiers réels et un format validé. ---------- */
+function renderParametresImports(content) {
+  const placeholder = (label) => `<div class="card" style="margin-bottom:12px;opacity:0.7;">
+    <div style="font-weight:600;margin-bottom:6px;">${label}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Bientôt disponible.</div>
+    <button type="button" class="btn btn-secondary" disabled>Importer le fichier</button>
+  </div>`;
+  content.innerHTML = placeholder('Correspondance SIEOL') + placeholder('Nouveaux animaux') + placeholder('Contrôle laitier');
+}
+
+/* ---------- Onglet Campagne ---------- */
+function renderParametresCampagne(content) {
+  content.innerHTML = `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Date de démarrage de la campagne</div>
+      <label style="display:flex;align-items:center;">Mois / jour${infoBulleHtml('Date de démarrage de la campagne', "Le jour où ta campagne bascule d'une année sur l'autre — sert de référence à tous les calculs et libellés \"Campagne AAAA\" de l'application (Bilan de reproduction, Bilan de lactation, filtres par campagne...).")}</label>
+      <div class="row">
+        ${selectMoisHtml('f-exp-campagne-mois', campagneMoisDebutConfig())}
+        ${selectJourHtml('f-exp-campagne-jour', campagneMoisDebutConfig(), campagneJourDebutConfig())}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Campagne en cours : ${campagneDateDebutLabel()} au ${campagneDateFinLabel()}.</div>
+      <div style="margin-top:10px;padding:10px;border:1px solid var(--danger);border-radius:10px;">
+        <div style="font-size:12.5px;color:var(--danger);margin-bottom:8px;">Changer cette date peut décaler les campagnes déjà enregistrées (bilans, statuts vide définitive, contrôle laitier, etc.) — aucune correction automatique ne sera appliquée aux données existantes.</div>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);margin-bottom:0;">
+          <input type="checkbox" id="f-exp-campagne-confirm" style="width:16px;height:16px;margin-top:1px;flex-shrink:0;">
+          <span>Je comprends le risque et je confirme</span>
+        </label>
+      </div>
+      <button class="btn btn-secondary" id="btn-save-exp-campagne-date" style="margin-top:10px;" disabled>Enregistrer</button>
+    </div>
+
+    <div class="card">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'indigo', 'Fenêtres de reproduction')}
+      <div class="row">
+        <div style="flex:1;"><label style="display:flex;align-items:center;">Min (jours) gestation${infoBulleHtml('Fenêtre de gestation (IA/Éponge)', "Fenêtre de gestation utilisée pour déduire automatiquement le code Repro à la saisie d'une mise bas (dans la fenêtre après un lot IA/Éponge → ce mode ; hors fenêtre → Retour IA).")}</label><input type="number" id="f-repro-gestation-min" value="${DB.reproGestationMin}"></div>
+        <div style="flex:1;"><label>Max (jours) gestation</label><input type="number" id="f-repro-gestation-max" value="${DB.reproGestationMax}"></div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin:12px 0;">Fenêtre "1er retour" utilisée dans le Bilan de reproduction (bloc Lots IA) pour distinguer une mise bas issue de l'IA directe de celle d'une saillie de retour de chaleur — comptée à partir de la même date de lot, jamais une saillie enregistrée séparément.</div>
+      <div class="row">
+        <div style="flex:1;"><label>Min (jours) 1er retour</label><input type="number" id="f-repro-retour-min" value="${DB.reproRetourMin}"></div>
+        <div style="flex:1;"><label>Max (jours) 1er retour</label><input type="number" id="f-repro-retour-max" value="${DB.reproRetourMax}"></div>
+      </div>
+      <div style="margin-top:10px;padding:10px;border:1px solid var(--danger);border-radius:10px;">
+        <div style="font-size:12.5px;color:var(--danger);margin-bottom:8px;">Modifier ces fenêtres change le calcul automatique du code Repro pour les prochaines saisies — aucune correction rétroactive ne sera appliquée aux données déjà enregistrées.</div>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);margin-bottom:0;">
+          <input type="checkbox" id="f-repro-confirm" style="width:16px;height:16px;margin-top:1px;flex-shrink:0;">
+          <span>Je comprends le risque et je confirme</span>
+        </label>
+      </div>
+      <button class="btn btn-secondary" id="btn-save-repro-fenetres" style="margin-top:10px;" disabled>Enregistrer</button>
+    </div>
+
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Campagne actuelle</div>
+      <label>Année de fin — ex: 2026 pour la campagne du ${campagneDateDebutLabel()} 2025 au ${campagneDateFinLabel()} 2026</label>
       <div class="row">
         <input type="number" id="f-campagne-annee" value="${DB.campagneDebut ? DB.campagneDebut + 1 : ''}" placeholder="ex: 2026" ${DB.campagneInitialisee ? 'disabled' : ''}>
         <button type="button" class="btn btn-secondary" id="btn-save-campagne-annee" style="width:auto;padding:0 16px;" ${DB.campagneInitialisee ? 'disabled' : ''}>OK</button>
@@ -15973,111 +15713,10 @@ function renderParametres() {
     <div class="card" style="border-color:var(--accent);">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Changement de campagne</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? ('Campagne ' + (DB.campagneDebut + 1) + ' (' + campagneDateDebutLabel() + ' ' + DB.campagneDebut + ' au ' + campagneDateFinLabel() + ' ' + (DB.campagneDebut + 1) + ')') : 'non définie'}. À déclencher le ${campagneDateDebutLabel()} : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis. Un écran de vérification détaillé s'affiche avant toute validation.</div>
-      <button class="btn btn-secondary" id="btn-nouvelle-campagne" style="color:var(--accent);border-color:var(--accent);">Démarrer une nouvelle campagne</button>
+      <button class="btn btn-secondary" id="btn-nouvelle-campagne" style="color:var(--danger);border-color:var(--danger);">Démarrer une nouvelle campagne</button>
     </div>
-
-    <div class="card">
-      ${sectionHeaderHtml(ICON_JOURNAL, 'indigo', 'Reproduction')}
-      <div class="row">
-        <div style="flex:1;"><label style="display:flex;align-items:center;">Min (jours)${infoBulleHtml('Fenêtre de gestation (IA/Éponge)', "Fenêtre de gestation utilisée pour déduire automatiquement le code Repro à la saisie d'une mise bas (dans la fenêtre après un lot IA/Éponge → ce mode ; hors fenêtre → Retour IA).")}</label><input type="number" id="f-repro-gestation-min" value="${DB.reproGestationMin}"></div>
-        <div style="flex:1;"><label>Max (jours)</label><input type="number" id="f-repro-gestation-max" value="${DB.reproGestationMax}"></div>
-      </div>
-      <button class="btn btn-secondary" id="btn-save-repro-gestation">Enregistrer</button>
-
-      <div style="font-size:12px;color:var(--text-muted);margin:16px 0 12px;">Fenêtre "1er retour" utilisée dans le Bilan de reproduction (bloc Lots IA) pour distinguer une mise bas issue de l'IA directe de celle d'une saillie de retour de chaleur — comptée à partir de la même date de lot, jamais une saillie enregistrée séparément.</div>
-      <div class="row">
-        <div style="flex:1;"><label>Min (jours)</label><input type="number" id="f-repro-retour-min" value="${DB.reproRetourMin}"></div>
-        <div style="flex:1;"><label>Max (jours)</label><input type="number" id="f-repro-retour-max" value="${DB.reproRetourMax}"></div>
-      </div>
-      <button class="btn btn-secondary" id="btn-save-repro-retour">Enregistrer</button>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
-        ${iconCircle(ICON_LAIT, 'blue', 'sm')}
-        <div style="font-size:14px;font-weight:600;display:flex;align-items:center;">Correspondance numéro visuel SIEOL/UNOTEC${infoBulleHtml('Correspondance numéro visuel SIEOL/UNOTEC', "Importe le fichier de correspondance vérifié manuellement (numéro visuel SIEOL, numéro officiel Ovilog, EID complet) pour peupler le numéro visuel SIEOL sur les fiches existantes. Réutilisable à volonté, par exemple pour corriger ou compléter le fichier.")}</div>
-      </div>
-      <button class="btn btn-secondary" id="btn-goto-import-numero-sieol">Importer le fichier de correspondance</button>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
-        ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
-        <div style="font-size:14px;font-weight:600;display:flex;align-items:center;">Import agnelles (généalogie UNOTEC)${infoBulleHtml('Import agnelles (généalogie UNOTEC)', 'Importe un fichier CSV dérivé du rapport UNOTEC "Généalogies" (numéro officiel, date de naissance, numéro officiel de la mère) pour ajouter en une fois les agnelles gardées de l\'année à l\'inventaire.')}</div>
-      </div>
-      <button class="btn btn-secondary" id="btn-goto-import-agnelles">Importer le fichier</button>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
-        ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
-        <div style="font-size:14px;font-weight:600;display:flex;align-items:center;">Import généalogie / achat agnelles${infoBulleHtml('Import généalogie / achat agnelles', "Importe le fichier CSV transmis par le technicien du GAEC vendeur (généalogie des agnelles achetées pour le renouvellement) pour les ajouter en une fois à l'inventaire, origine \"achetée\". Distinct de l'import ci-dessus (généalogie UNOTEC, agnelles nées sur l'exploitation).")}</div>
-      </div>
-      <button class="btn btn-secondary" id="btn-goto-import-achat-agnelles">Importer le fichier</button>
-    </div>
-
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Diagnostic Bluetooth (bâton Allflex)${infoBulleHtml('Diagnostic Bluetooth', "Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID.")}</div>
-      <button class="btn btn-secondary" id="btn-goto-diag-bluetooth">Ouvrir le diagnostic</button>
-    </div>
-
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Sauvegarde des données${infoBulleHtml('Sauvegarde des données', "Important : à chaque fois qu'une nouvelle version du fichier est installée, exporte d'abord tes données ici, puis réimporte-les une fois la nouvelle version ouverte — sinon tout repart à zéro.")}</div>
-      <button class="btn btn-secondary" id="btn-export" style="margin-bottom:10px;">Exporter mes données (sauvegarde)</button>
-      <input type="file" id="import-file" accept=".json" class="hidden">
-      <button class="btn btn-secondary" id="btn-import">Importer une sauvegarde</button>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
-        ${iconCircle(ICON_SYNC, 'blue', 'sm')}
-        <div style="font-size:14px;font-weight:600;">Mises à jour</div>
-      </div>
-      <div id="update-version-installee" style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Version installée : …</div>
-      <button class="btn btn-secondary" id="btn-check-update" disabled>Vérifier les mises à jour</button>
-      <div id="update-check-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
-    </div>
-
-    <div id="version-footer" style="text-align:center;font-size:11px;color:var(--text-muted);padding:6px 0 4px;">${libelleVersion()}</div>
   `;
 
-  document.getElementById('btn-goto-import-numero-sieol').onclick = () => render('import-numero-sieol');
-  document.getElementById('btn-goto-import-agnelles').onclick = () => render('import-agnelles');
-  document.getElementById('btn-goto-import-achat-agnelles').onclick = () => render('import-achat-agnelles');
-  document.getElementById('btn-goto-diag-bluetooth').onclick = () => render('diag-bluetooth');
-
-  document.getElementById('btn-sync-action').onclick = () => {
-    // Paramètres n'est accessible qu'une fois connecté (voir "Écran
-    // d'authentification") : ce bouton est donc toujours une déconnexion.
-    // onAuthStateChanged (script module) prend le relais juste après pour
-    // ramener sur l'écran de connexion -- pas besoin de render() ici.
-    if (!confirm("Se déconnecter ? Tu devras te reconnecter pour retrouver l'appli.")) return;
-    window.OvilogSync.logout();
-  };
-
-  // Remplacé par un véritable écran de vérification à parcourir avant
-  // validation (voir renderConfirmationNouvelleCampagne) plutôt qu'un
-  // simple confirm() natif — l'exécution réelle est dans
-  // executerChangementCampagne(), déclenchée depuis cet écran.
-  document.getElementById('btn-nouvelle-campagne').onclick = () => render('confirmation-nouvelle-campagne');
-
-  document.getElementById('btn-save-exploitation').onclick = () => {
-    // Étale DB.exploitation existant plutôt que de le remplacer entièrement
-    // -- sans ça, ce bouton écraserait silencieusement campagneMoisDebut/
-    // campagneJourDebut (voir chantier "Paramétrage de la date de début de
-    // campagne"), qui vivent dans ce même objet mais ont leur propre
-    // bouton "Enregistrer" juste au-dessus.
-    DB.exploitation = {
-      ...DB.exploitation,
-      nom: document.getElementById('f-exp-nom').value.trim(),
-      numeroCheptel: document.getElementById('f-exp-cheptel').value.trim(),
-      indicatifMarquage: document.getElementById('f-exp-marquage').value.trim(),
-      adresse: document.getElementById('f-exp-adresse').value.trim(),
-      telephone: document.getElementById('f-exp-tel').value.trim()
-    };
-    saveData(DB);
-    alert('Informations enregistrées.');
-  };
   wireSelectMoisJour('f-exp-campagne-mois', 'f-exp-campagne-jour');
   document.getElementById('f-exp-campagne-confirm').onchange = (e) => {
     document.getElementById('btn-save-exp-campagne-date').disabled = !e.target.checked;
@@ -16095,29 +15734,25 @@ function renderParametres() {
     saveData(DB);
     render('parametres');
   };
-  document.getElementById('btn-save-repro-gestation').onclick = () => {
-    const min = parseInt(document.getElementById('f-repro-gestation-min').value, 10);
-    const max = parseInt(document.getElementById('f-repro-gestation-max').value, 10);
-    if (isNaN(min) || isNaN(max) || min <= 0 || max <= 0 || min > max) {
-      alert("Fenêtre invalide — vérifie les valeurs (min doit être inférieur ou égal à max).");
-      return;
-    }
-    DB.reproGestationMin = min;
-    DB.reproGestationMax = max;
-    saveData(DB);
-    alert('Fenêtre de gestation enregistrée.');
+  document.getElementById('f-repro-confirm').onchange = (e) => {
+    document.getElementById('btn-save-repro-fenetres').disabled = !e.target.checked;
   };
-  document.getElementById('btn-save-repro-retour').onclick = () => {
-    const min = parseInt(document.getElementById('f-repro-retour-min').value, 10);
-    const max = parseInt(document.getElementById('f-repro-retour-max').value, 10);
-    if (isNaN(min) || isNaN(max) || min <= 0 || max <= 0 || min > max) {
-      alert("Fenêtre invalide — vérifie les valeurs (min doit être inférieur ou égal à max).");
+  document.getElementById('btn-save-repro-fenetres').onclick = () => {
+    if (!document.getElementById('f-repro-confirm').checked) return;
+    const gMin = parseInt(document.getElementById('f-repro-gestation-min').value, 10);
+    const gMax = parseInt(document.getElementById('f-repro-gestation-max').value, 10);
+    const rMin = parseInt(document.getElementById('f-repro-retour-min').value, 10);
+    const rMax = parseInt(document.getElementById('f-repro-retour-max').value, 10);
+    if (isNaN(gMin) || isNaN(gMax) || gMin <= 0 || gMax <= 0 || gMin > gMax || isNaN(rMin) || isNaN(rMax) || rMin <= 0 || rMax <= 0 || rMin > rMax) {
+      alert("Fenêtres invalides — vérifie les valeurs (chaque min doit être inférieur ou égal à son max).");
       return;
     }
-    DB.reproRetourMin = min;
-    DB.reproRetourMax = max;
+    DB.reproGestationMin = gMin;
+    DB.reproGestationMax = gMax;
+    DB.reproRetourMin = rMin;
+    DB.reproRetourMax = rMax;
     saveData(DB);
-    alert('Fenêtre "1er retour" enregistrée.');
+    render('parametres');
   };
   document.getElementById('btn-save-campagne-annee').onclick = () => {
     // Verrouillé dès le premier vrai "changement de campagne" (voir
@@ -16141,6 +15776,42 @@ function renderParametres() {
     saveData(DB);
     render('parametres');
   };
+  // Remplacé par un véritable écran de vérification à parcourir avant
+  // validation (voir renderConfirmationNouvelleCampagne) plutôt qu'un
+  // simple confirm() natif — l'exécution réelle est dans
+  // executerChangementCampagne(), déclenchée depuis cet écran.
+  document.getElementById('btn-nouvelle-campagne').onclick = () => render('confirmation-nouvelle-campagne');
+}
+
+/* ---------- Onglet Sauvegarde ---------- */
+function renderParametresSauvegarde(content) {
+  content.innerHTML = `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Sauvegarde des données${infoBulleHtml('Sauvegarde des données', "Important : à chaque fois qu'une nouvelle version du fichier est installée, exporte d'abord tes données ici, puis réimporte-les une fois la nouvelle version ouverte — sinon tout repart à zéro.")}</div>
+      <button class="btn btn-secondary" id="btn-export" style="margin-bottom:10px;">Exporter mes données (sauvegarde)</button>
+      <input type="file" id="import-file" accept=".json" class="hidden">
+      <button class="btn btn-secondary" id="btn-import">Importer une sauvegarde</button>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+        ${iconCircle(ICON_SYNC, 'blue', 'sm')}
+        <div style="font-size:14px;font-weight:600;">Mises à jour</div>
+      </div>
+      <div id="update-version-installee" style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Version installée : …</div>
+      <button class="btn btn-secondary" id="btn-check-update" disabled>Vérifier les mises à jour</button>
+      <div id="update-check-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+    </div>
+
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Diagnostic Bluetooth (bâton Allflex)${infoBulleHtml('Diagnostic Bluetooth', "Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID -- distinct du bouton de connexion du bandeau, qui ne montre jamais ces trames brutes.")}</div>
+      <button class="btn btn-secondary" id="btn-goto-diag-bluetooth">Ouvrir le diagnostic</button>
+    </div>
+
+    <div id="version-footer" style="text-align:center;font-size:11px;color:var(--text-muted);padding:6px 0 4px;">${libelleVersion()}</div>
+  `;
+
+  document.getElementById('btn-goto-diag-bluetooth').onclick = () => render('diag-bluetooth');
 
   document.getElementById('btn-export').onclick = () => {
     const btn = document.getElementById('btn-export');
