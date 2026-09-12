@@ -1,0 +1,207 @@
+name: Build APK Android (Ovilog)
+
+on:
+  push:
+    branches:
+      - main
+      - 'claude/**'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Nécessaire pour que l'étape "Publier la Release GitHub" ci-dessous
+    # puisse créer une release + y attacher l'APK avec le GITHUB_TOKEN
+    # fourni automatiquement par Actions (voir chantier "Mises à jour
+    # automatiques In-App") — sans ce bloc, certains dépôts ont un
+    # GITHUB_TOKEN par défaut en lecture seule.
+    permissions:
+      contents: write
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Installer le SDK Android
+        uses: android-actions/setup-android@v3
+
+      - name: Installer les dépendances npm
+        # --legacy-peer-deps : bluetooth-serial déclare un peerDependency
+        # @capacitor/core ^4.0.0 obsolète dans son package.json publié (le
+        # projet est en Capacitor 6) — l'API JS du plugin reste compatible,
+        # seule cette métadonnée n'a pas été mise à jour par le mainteneur.
+        run: npm install --legacy-peer-deps
+
+      - name: Injecter le numéro de version (date + hash court du commit)
+        # Remplace la sentinelle BUILD_VERSION dans www/index.html sur la
+        # copie de travail du runner UNIQUEMENT — jamais recommis dans le
+        # dépôt. Doit tourner AVANT `npx cap sync android` pour que la
+        # valeur injectée soit bien celle copiée vers les assets Android.
+        run: |
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          sed -i "s/__OVILOG_BUILD_VERSION__/${BUILD_DATE} · ${SHORT_SHA}/" www/index.html
+
+      - name: Synchroniser Capacitor
+        run: npx cap sync android
+
+      - name: Rendre gradlew exécutable
+        run: chmod +x android/gradlew
+
+      - name: Décoder le keystore de signature (secret GitHub)
+        working-directory: android/app
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ovilog-release.keystore
+
+      - name: Builder l'APK signé (release)
+        working-directory: android
+        env:
+          OVILOG_KEYSTORE_PATH: ovilog-release.keystore
+          OVILOG_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          OVILOG_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          OVILOG_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease --stacktrace \
+            -PappVersionCode=${{ github.run_number }} \
+            -PappVersionName=1.0.${{ github.run_number }}
+
+      - name: Publier l'APK comme artefact téléchargeable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovilog-apk-v1.0.${{ github.run_number }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      - name: Publier la Release GitHub (source de la mise à jour in-app)
+        # Contrairement à l'artefact ci-dessus (privé, expire au bout de 30
+        # jours, nécessite une authentification GitHub pour être
+        # téléchargé), une vraie Release est publique et permanente : c'est
+        # elle qu'interroge le mécanisme de mise à jour in-app (voir
+        # verifierMiseAJourDisponible dans www/index.html). Le tag "v<n>"
+        # (n = numéro de run, identique au versionCode Android déjà
+        # strictement croissant) permet la comparaison numérique côté appli
+        # sans avoir besoin d'un fichier de métadonnées séparé. Sur les
+        # branches claude/** (builds de développement), la release est
+        # marquée "prerelease" -- purement indicatif sur GitHub, elle reste
+        # bien détectée par l'appli comme n'importe quelle autre release.
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          # Sans ceci, l'action crée le tag contre la branche par défaut
+          # (main) au lieu du commit réellement buildé -- repéré après coup
+          # via l'API (target_commitish des releases v112/v113 pointant
+          # toutes les deux vers le même vieux commit de main, avec un
+          # created_at identique et donc plus ancien que leur véritable
+          # date de publication). Sans conséquence sur la détection de
+          # mise à jour elle-même (basée sur le tag_name, jamais la date),
+          # mais un tag qui pointe sur le mauvais commit reste trompeur en
+          # navigation GitHub -- épinglé ici sur le commit exact du build.
+          target_commitish: ${{ github.sha }}
+          name: Ovilog 1.0.${{ github.run_number }}
+          prerelease: ${{ github.ref != 'refs/heads/main' }}
+          body: |
+            Build automatique — ${{ github.ref_name }}@${{ github.sha }}
+
+            ${{ github.event.head_commit.message }}
+          files: android/app/build/outputs/apk/release/app-release.apk
+
+  build-windows:
+    # Job séparé (runner + toolchain distincts) : n'installe rien à la
+    # racine du dépôt (electron/ a son propre package.json, voir chantier
+    # "Support Desktop Windows"), donc aucun risque d'interférer avec le
+    # job "build" ci-dessus. `needs: build` : non pas pour dépendre du
+    # résultat du job Android (une éventuelle panne côté Windows ne doit
+    # jamais empêcher la sortie de l'APK, voir ci-dessous), mais
+    # uniquement pour séquencer les deux appels à softprops/action-gh-
+    # release@v2 sur LE MÊME tag_name — en parallèle, les deux jobs
+    # tenteraient de créer la même Release en même temps (risque de
+    # conflit/duplication) ; en séquence, ce job-ci se contente d'ajouter
+    # ses fichiers à la Release déjà créée par le job Android.
+    # `if: always()` : tourne même si le job Android a échoué, pour ne
+    # jamais bloquer silencieusement la sortie de l'installeur Windows à
+    # cause d'un problème côté Android sans rapport.
+    needs: build
+    if: always()
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Injecter le numéro de version (date + hash court du commit)
+        # Même sentinelle que le job Android, sur la copie de travail de
+        # CE runner uniquement — les deux jobs partent chacun d'un
+        # checkout propre, jamais recommis dans le dépôt.
+        shell: bash
+        run: |
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          sed -i "s/__OVILOG_BUILD_VERSION__/${BUILD_DATE} · ${SHORT_SHA}/" www/index.html
+
+      - name: Aligner le numéro de version de l'app Electron
+        # electron-updater compare les versions via le champ "version" de
+        # package.json (feed GitHub Releases) — aligné sur le même
+        # run_number que l'APK pour une numérotation cohérente entre les
+        # deux plateformes, même si chacune a son propre mécanisme de
+        # mise à jour.
+        working-directory: electron
+        shell: bash
+        run: npm pkg set version=1.0.${{ github.run_number }}
+
+      - name: Installer les dépendances npm (electron/)
+        working-directory: electron
+        run: npm install
+
+      - name: Builder l'installeur Windows (NSIS)
+        working-directory: electron
+        # --publish never : la publication vers la Release GitHub se fait
+        # ci-dessous via softprops/action-gh-release@v2 (comme pour
+        # l'APK), pas via le mécanisme de publication propre à
+        # electron-builder — un seul chemin de publication à maintenir.
+        run: npm run dist
+
+      - name: Publier l'installeur comme artefact téléchargeable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovilog-desktop-v1.0.${{ github.run_number }}
+          path: |
+            electron/dist/*.exe
+            electron/dist/latest.yml
+            electron/dist/*.blockmap
+          retention-days: 30
+
+      - name: Publier sur la Release GitHub (source d'electron-updater)
+        # latest.yml et le .blockmap sont indispensables : c'est ce que
+        # lit electron-updater (provider "github") pour savoir qu'une
+        # nouvelle version existe et où télécharger l'installeur — sans
+        # eux, seul l'exe serait présent sur la Release mais jamais
+        # détecté automatiquement par l'appli installée.
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Ovilog 1.0.${{ github.run_number }}
+          prerelease: ${{ github.ref != 'refs/heads/main' }}
+          body: |
+            Build automatique — ${{ github.ref_name }}@${{ github.sha }}
+
+            ${{ github.event.head_commit.message }}
+          files: |
+            electron/dist/*.exe
+            electron/dist/latest.yml
+            electron/dist/*.blockmap

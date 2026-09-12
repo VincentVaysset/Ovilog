@@ -1,0 +1,70 @@
+diff --git a/node_modules/bluetooth-serial/android/build.gradle b/node_modules/bluetooth-serial/android/build.gradle
+index 3de9898..ad06a00 100644
+--- a/node_modules/bluetooth-serial/android/build.gradle
++++ b/node_modules/bluetooth-serial/android/build.gradle
+@@ -18,6 +18,7 @@ buildscript {
+ apply plugin: 'com.android.library'
+ 
+ android {
++    namespace "com.glavotaner.bluetoothserial"
+     compileSdkVersion project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 32
+     defaultConfig {
+         minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 22
+diff --git a/node_modules/bluetooth-serial/android/src/main/AndroidManifest.xml b/node_modules/bluetooth-serial/android/src/main/AndroidManifest.xml
+index 8fded08..13a9981 100644
+--- a/node_modules/bluetooth-serial/android/src/main/AndroidManifest.xml
++++ b/node_modules/bluetooth-serial/android/src/main/AndroidManifest.xml
+@@ -1,3 +1,3 @@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-    package="com.glavotaner.bluetoothserial">
++    >
+ </manifest>
+diff --git a/node_modules/bluetooth-serial/android/src/main/java/com/glavotaner/bluetoothserial/BluetoothSerial.java b/node_modules/bluetooth-serial/android/src/main/java/com/glavotaner/bluetoothserial/BluetoothSerial.java
+index e780929..05be244 100644
+--- a/node_modules/bluetooth-serial/android/src/main/java/com/glavotaner/bluetoothserial/BluetoothSerial.java
++++ b/node_modules/bluetooth-serial/android/src/main/java/com/glavotaner/bluetoothserial/BluetoothSerial.java
+@@ -17,6 +17,7 @@ import androidx.annotation.NonNull;
+ import java.io.IOException;
+ import java.io.InputStream;
+ import java.io.OutputStream;
++import java.nio.charset.StandardCharsets;
+ import java.util.Set;
+ import java.util.UUID;
+ 
+@@ -288,7 +289,15 @@ public class BluetoothSerial {
+         @NonNull
+         private String getBufferData(byte[] buffer) throws IOException {
+             int bytes = mmInStream.read(buffer);
+-            return new String(buffer, 0, bytes);
++            // ISO-8859-1 (Latin-1) plutôt que le charset par défaut (UTF-8 sur
++            // Android) : mappe chaque octet 0x00-0xFF vers un caractère unique
++            // sans jamais échouer ni fusionner d'octets — indispensable pour
++            // transporter fidèlement une trame binaire/EID inconnue jusqu'au
++            // pont JS (voir l'écran de diagnostic Bluetooth), où charCodeAt()
++            // retrouve l'octet d'origine exact. Le charset par défaut (UTF-8)
++            // aurait remplacé silencieusement toute séquence d'octets invalide
++            // par le caractère de remplacement U+FFFD, perdant l'information.
++            return new String(buffer, 0, bytes, StandardCharsets.ISO_8859_1);
+         }
+ 
+         /**
+diff --git a/node_modules/bluetooth-serial/android/src/main/java/com/glavotaner/bluetoothserial/BluetoothSerialPlugin.java b/node_modules/bluetooth-serial/android/src/main/java/com/glavotaner/bluetoothserial/BluetoothSerialPlugin.java
+index 135f561..bbb50cf 100644
+--- a/node_modules/bluetooth-serial/android/src/main/java/com/glavotaner/bluetoothserial/BluetoothSerialPlugin.java
++++ b/node_modules/bluetooth-serial/android/src/main/java/com/glavotaner/bluetoothserial/BluetoothSerialPlugin.java
+@@ -124,7 +124,14 @@ public class BluetoothSerialPlugin extends Plugin {
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+             // SCAN - required for just invoking discovery methods
+             // CONNECT - required for getting data about a discovered device
+-            discoveryPermissions = List.of(SCAN, CONNECT);
++            // new ArrayList<>(...) et non List.of(...) : List.of() renvoie une
++            // liste IMMUABLE, or la branche juste en dessous y fait un .add()
++            // dès que "neverScanForLocation" n'est pas activé — ce qui lève
++            // une UnsupportedOperationException à chaque démarrage sur
++            // Android 12+ et empêche silencieusement l'enregistrement du
++            // plugin (voir capacitor.config.json : neverScanForLocation=true
++            // contourne aussi ce chemin, Ovilog ne fait jamais de découverte).
++            discoveryPermissions = new ArrayList<>(List.of(SCAN, CONNECT));
+             if (getConfig().getBoolean("neverScanForLocation", false)) {
+                 requiresLocationForDiscovery = false;
+             } else {
