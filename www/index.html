@@ -3280,6 +3280,7 @@ btnBack.onclick = () => {
   else if (currentView === 'import-numero-sieol') render('parametres');
   else if (currentView === 'import-bilan-lactation') { bilanCampagneTab = 'lactation'; render('bilan-campagne'); }
   else if (currentView === 'import-agnelles') render('parametres');
+  else if (currentView === 'import-achat-agnelles') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render(belierDetailOrigin);
   else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
@@ -3479,6 +3480,7 @@ function render(view, sheepId) {
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
     else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
     else if (view === 'import-agnelles') renderImportAgnelles();
+    else if (view === 'import-achat-agnelles') renderImportAchatAgnelles();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
     else if (view === 'registre') renderRegistre();
@@ -15673,6 +15675,197 @@ function renderImportAgnelles() {
   };
 }
 
+/* ---------- Import Généalogie/achat agnelles (chantier "Import
+   Généalogie/achat agnelles") ----------
+   Fichier CSV transmis par le technicien du GAEC vendeur (agnelles achetées
+   à l'extérieur pour le renouvellement, ~30/an) -- DISTINCT de
+   renderImportAgnelles ci-dessus (généalogie UNOTEC, agnelles NÉES sur
+   l'exploitation, numeroSieol CALCULÉ par formule) : ici origine="achetée"
+   systématiquement, et numeroSieol est la valeur BRUTE de la colonne "N°
+   travail" du fichier (numéro de travail SIEOL du technicien -- même champ
+   que la correspondance SIEOL↔Ovilog déjà en place, voir
+   renderImportNumeroSieol/computeWithdrawalAlerts... non, voir plutôt la
+   fiche brebis "Numéro visuel SIEOL/UNOTEC").
+   Encodage Latin-1, séparateur ';' : decodeCsvBuffer gère déjà les deux
+   (repli windows-1252 si le décodage UTF-8 strict échoue, détection auto du
+   délimiteur) et filtre déjà les lignes vides -- il ne reste donc qu'à
+   sauter la ligne de titre puis la ligne d'en-tête (positions 0 et 1).
+   Mapping PAR POSITION (jamais par nom d'en-tête, contrairement à l'import
+   contrôle laitier SIEOL) : 0 N° officiel, 1 N° travail, 2 Race (lue puis
+   jetée, jamais stockée ni normalisée -- une race "10"/"010" incohérente
+   observée dans un vrai fichier ne doit jamais être silencieusement
+   corrigée puisqu'elle n'est de toute façon pas conservée), 3 Date de
+   naissance, 4 N° Officiel Père (texte brut, jamais de recherche), 5 Code
+   IA Père (jetée), 6 N° Officiel Mère (correspondance tentée dans les
+   brebis ACTIVES uniquement -- la mère reste normalement chez le vendeur,
+   cas non trouvé attendu), 7-9 N° Travail Mère/Indicatif/N° Cheptel
+   (jetées).
+   Unicité EID (verifierEidUnique, tous statuts/catégories confondus) ET
+   unicité numeroSieol (nouveau : un numéro de travail dupliqué ferait
+   affecter le contrôle laitier de deux brebis différentes à la même
+   fiche) sont vérifiées de façon CUMULATIVE au fil du fichier, pas
+   seulement contre la base déjà enregistrée -- un fichier réel fourni par
+   l'éleveur contient deux lignes strictement identiques consécutives, qui
+   doivent produire 1 création + 1 doublon bloqué, jamais 2 créations. */
+function renderImportAchatAgnelles() {
+  pageTitle.textContent = 'Import généalogie / achat agnelles';
+  const todayIso = new Date().toISOString().slice(0, 10);
+  app.innerHTML = `
+    <div class="card">
+      <label style="display:flex;align-items:center;">Fichier CSV${infoBulleHtml('Format du fichier', "Fichier CSV du technicien du GAEC vendeur, encodage Latin-1, séparateur ';'. 2 premières lignes (titre + ligne vide) ignorées, en-tête en ligne 3 : N° officiel;N° travail;Race;Date de naissance;N° Officiel Père;Code IA Père;N° Officiel Mère;N° Travail Mère;Indicatif de marquage;N° Cheptel.")}</label>
+      <input type="file" id="import-achat-agnelles-file" accept=".csv,text/csv,text/comma-separated-values,text/plain,application/csv,application/vnd.ms-excel,application/octet-stream">
+      <label style="margin-top:14px;">Date d'entrée sur l'exploitation (date d'achat)</label>
+      <input type="date" id="import-achat-agnelles-date-entree" value="${todayIso}">
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Appliquée à toutes les agnelles créées -- distincte de leur date de naissance, propre à chacune.</div>
+      <div id="import-achat-agnelles-err" class="error-box hidden" style="margin-top:14px;"></div>
+      <div id="import-achat-agnelles-preview" style="margin-top:14px;"></div>
+      <button class="btn btn-primary hidden" id="btn-confirm-import-achat-agnelles" style="margin-top:14px;">Confirmer l'import</button>
+    </div>
+  `;
+
+  let parsedRows = null; // [{ eid, numeroSieol, dateNaissance, pere, motherEid, mereLibre }]
+
+  function processTableRows(tableRows) {
+    // Ligne 0 = titre, ligne 1 = en-tête (decodeCsvBuffer a déjà retiré la
+    // ligne vide) -- les données commencent en ligne 2 du tableau, soit la
+    // "ligne 4" réelle du fichier (label affiché ci-dessous, cohérent avec
+    // ce que l'éleveur voit dans son tableur).
+    const dataRows = tableRows.slice(2);
+    const rows = [];
+    const problemes = [];
+    let eidDoublons = 0;
+    let sieolConflits = 0;
+    let meresLiees = 0;
+    let meresInconnues = 0;
+    const eidVusDansFichier = new Map(); // eid nettoyé -> n° de ligne fichier
+    const sieolVusDansFichier = new Map(); // numeroSieol -> n° de ligne fichier
+
+    dataRows.forEach((parts, i) => {
+      if (!parts || parts.length < 1 || !parts.some(Boolean)) return;
+      const ligneFichier = i + 4; // 2 lignes ignorées + en-tête + index 1-based
+      const ligneLabel = 'Ligne ' + ligneFichier;
+      const numeroOfficiel = String(parts[0] || '').trim();
+      const numeroTravail = String(parts[1] || '').trim();
+      // parts[2] = Race : lue puis jamais stockée (cf. commentaire de fonction).
+      const dateNaissanceStr = String(parts[3] || '').trim();
+      const pereRaw = String(parts[4] || '').trim();
+      // parts[5] = Code IA Père : jamais stocké.
+      const numeroOfficielMere = String(parts[6] || '').trim();
+      // parts[7..9] = N° Travail Mère / Indicatif de marquage / N° Cheptel : jamais stockés.
+
+      if (!numeroOfficiel) { problemes.push(ligneLabel + ' : numéro officiel manquant, ignorée.'); return; }
+      const eid = eidDepuisNumeroOfficiel(numeroOfficiel);
+      const eidNettoye = cleanEid(eid);
+      const num = numeroVisuel(eid);
+
+      const dateNaissance = parseDateFrSlash(dateNaissanceStr);
+      if (!dateNaissance) { problemes.push(ligneLabel + ' (n°' + num + ') : date de naissance invalide ou manquante, ignorée.'); return; }
+
+      const conflitBase = verifierEidUnique(eid);
+      if (conflitBase) { problemes.push(ligneLabel + ' (n°' + num + ') : ' + messageEidDejaUtilise(conflitBase) + ' Ignorée.'); eidDoublons++; return; }
+      if (eidVusDansFichier.has(eidNettoye)) { problemes.push(ligneLabel + ' (n°' + num + ') : doublon EID à l\'intérieur du fichier (déjà utilisé ligne ' + eidVusDansFichier.get(eidNettoye) + '), ignorée.'); eidDoublons++; return; }
+
+      if (!numeroTravail) { problemes.push(ligneLabel + ' (n°' + num + ') : n° travail manquant, ignorée.'); return; }
+      const conflitSieolBase = DB.brebis.find(s => s.numeroSieol === numeroTravail) || (DB.agnelles || []).find(a => a.numeroSieol === numeroTravail);
+      if (conflitSieolBase) {
+        const cible = conflitSieolBase.eid ? 'n°' + numeroVisuel(conflitSieolBase.eid) : '';
+        problemes.push(ligneLabel + ' (n°' + num + ') : n° travail "' + numeroTravail + '" déjà utilisé par une autre fiche (' + cible + '), ignorée.');
+        sieolConflits++;
+        return;
+      }
+      if (sieolVusDansFichier.has(numeroTravail)) { problemes.push(ligneLabel + ' (n°' + num + ') : n° travail "' + numeroTravail + '" déjà utilisé plus haut dans ce fichier (ligne ' + sieolVusDansFichier.get(numeroTravail) + '), ignorée.'); sieolConflits++; return; }
+
+      let motherEid = null, mereLibre = '';
+      if (numeroOfficielMere) {
+        const eidMere = eidDepuisNumeroOfficiel(numeroOfficielMere);
+        const mereActive = DB.brebis.find(s => (s.statut || 'active') === 'active' && cleanEid(s.eid) === cleanEid(eidMere));
+        if (mereActive) { motherEid = mereActive.eid; meresLiees++; }
+        else { mereLibre = 'n°' + numeroVisuel(eidMere) + ' (chez le vendeur, hors Ovilog)'; meresInconnues++; }
+      }
+
+      eidVusDansFichier.set(eidNettoye, ligneFichier);
+      sieolVusDansFichier.set(numeroTravail, ligneFichier);
+      rows.push({ eid, numeroSieol: numeroTravail, dateNaissance, dateNaissanceLabel: dateNaissanceStr, pere: pereRaw, motherEid, mereLibre });
+    });
+
+    parsedRows = rows;
+    const err = document.getElementById('import-achat-agnelles-err');
+    err.classList.add('hidden');
+    const preview = document.getElementById('import-achat-agnelles-preview');
+    const lignesHtml = rows.map(r => `
+      <div class="history-item">
+        <div class="content">
+          n°${numeroVisuel(r.eid)} — n° travail ${r.numeroSieol} — né(e) le ${formatDateFr(r.dateNaissance)}
+          <div style="font-size:12px;color:var(--text-muted);">${r.pere ? 'Père : ' + r.pere + ' — ' : ''}${r.motherEid ? 'Mère : n°' + numeroVisuel(r.motherEid) + ' (fiche trouvée)' : r.mereLibre ? 'Mère : ' + r.mereLibre : 'Mère : non renseignée'}</div>
+        </div>
+      </div>
+    `).join('');
+    preview.innerHTML = `
+      <div class="grid2">
+        <div class="stat-card sc-green">
+          <div class="stat-card-label">Agnelles à créer</div>
+          <div class="stat-card-value" style="font-size:20px;">${rows.length}</div>
+        </div>
+        <div class="stat-card sc-amber">
+          <div class="stat-card-label">Lignes ignorées</div>
+          <div class="stat-card-value" style="font-size:20px;">${problemes.length}</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Doublons EID bloqués : ${eidDoublons} — conflits n° travail bloqués : ${sieolConflits} — mères retrouvées dans Ovilog : ${meresLiees} — mères hors Ovilog (texte libre) : ${meresInconnues}.</div>
+      <div style="font-size:12.5px;font-weight:600;margin-top:10px;padding:8px 10px;background:#f0efe9;border-radius:var(--radius);">${rows.length} agnelle${rows.length > 1 ? 's' : ''} à créer, sexe F appliqué automatiquement à toutes.</div>
+      ${problemes.length > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;white-space:pre-line;">${problemes.slice(0, 15).join('\n')}${problemes.length > 15 ? '\n... (' + (problemes.length - 15) + ' de plus)' : ''}</div>` : ''}
+      <div style="margin-top:12px;max-height:340px;overflow-y:auto;">${lignesHtml}</div>
+    `;
+    document.getElementById('btn-confirm-import-achat-agnelles').classList.toggle('hidden', rows.length === 0);
+  }
+
+  document.getElementById('import-achat-agnelles-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-achat-agnelles-err');
+    err.classList.add('hidden');
+    document.getElementById('import-achat-agnelles-preview').innerHTML = '';
+    document.getElementById('btn-confirm-import-achat-agnelles').classList.add('hidden');
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        processTableRows(decodeCsvBuffer(reader.result));
+      } catch (ex) {
+        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import-achat-agnelles').onclick = () => {
+    if (!parsedRows || parsedRows.length === 0) return;
+    const err = document.getElementById('import-achat-agnelles-err');
+    const dateEntree = document.getElementById('import-achat-agnelles-date-entree').value;
+    if (!dateEntree) { err.textContent = "Renseigne la date d'entrée sur l'exploitation."; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    parsedRows.forEach(r => {
+      DB.agnelles.push({
+        id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+        eid: r.eid, origine: 'achetée', motherEid: r.motherEid, mere: r.mereLibre, pere: r.pere,
+        numeroSieol: r.numeroSieol,
+        dateEntree, sanitaire: [],
+        mouvements: [
+          { type: 'Naissance', cause: null, date: r.dateNaissance },
+          { type: 'Entrée', cause: 'Achat (import fichier vendeur)', date: dateEntree }
+        ]
+      });
+    });
+    saveData(DB);
+    alert(parsedRows.length + ' agnelle(s) ajoutée(s) à l\'inventaire (achetée).');
+    render('parametres');
+  };
+}
+
 /* Écran "Première configuration" (chantier "Paramétrage de la date de
    début de campagne au premier lancement") : affiché avant l'accueil
    UNIQUEMENT sur un compte réellement vierge (voir decideEcranDemarrage,
@@ -15806,6 +15999,14 @@ function renderParametres() {
     </div>
 
     <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+        ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
+        <div style="font-size:14px;font-weight:600;display:flex;align-items:center;">Import généalogie / achat agnelles${infoBulleHtml('Import généalogie / achat agnelles', "Importe le fichier CSV transmis par le technicien du GAEC vendeur (généalogie des agnelles achetées pour le renouvellement) pour les ajouter en une fois à l'inventaire, origine \"achetée\". Distinct de l'import ci-dessus (généalogie UNOTEC, agnelles nées sur l'exploitation).")}</div>
+      </div>
+      <button class="btn btn-secondary" id="btn-goto-import-achat-agnelles">Importer le fichier</button>
+    </div>
+
+    <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Diagnostic Bluetooth (bâton Allflex)${infoBulleHtml('Diagnostic Bluetooth', "Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID.")}</div>
       <button class="btn btn-secondary" id="btn-goto-diag-bluetooth">Ouvrir le diagnostic</button>
     </div>
@@ -15832,6 +16033,7 @@ function renderParametres() {
 
   document.getElementById('btn-goto-import-numero-sieol').onclick = () => render('import-numero-sieol');
   document.getElementById('btn-goto-import-agnelles').onclick = () => render('import-agnelles');
+  document.getElementById('btn-goto-import-achat-agnelles').onclick = () => render('import-achat-agnelles');
   document.getElementById('btn-goto-diag-bluetooth').onclick = () => render('diag-bluetooth');
 
   document.getElementById('btn-sync-action').onclick = () => {
