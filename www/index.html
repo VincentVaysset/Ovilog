@@ -279,6 +279,7 @@
   .compact-tag-green { background: var(--green-bg); color: var(--green-fg); }
   .compact-tag-amber { background: var(--amber-bg); color: var(--amber-fg); }
   .compact-tag-coral { background: var(--coral-bg); color: var(--coral-fg); }
+  .compact-tag-gray { background: var(--gray-bg); color: var(--gray-fg); }
 
   /* ---------- Menu hamburger (drawer) ---------- */
   .drawer-overlay { position: fixed; inset: 0; background: rgba(43,38,28,0.45); z-index: 1000; display: flex; }
@@ -880,6 +881,37 @@ function migrateData(d) {
       Object.values(d.registre[cat] || {}).forEach(entry => corrigerNomSelepherol(entry.sanitaire));
     });
   }
+  // Migration one-shot (chantier "Numéro travail SIEOL") : l'ancien champ
+  // numeroSieol ("Numéro visuel SIEOL/UNOTEC", brebis uniquement à l'écran
+  // mais aussi vu sur des agnelles importées par le passé) est remplacé
+  // par le nouveau modèle numeroLongTravailSieol/numeroCourtTravailSieol.
+  // Classification par LONGUEUR (jamais ambiguë : un long fait toujours
+  // exactement 6 chiffres, un court 3 à 5 -- les deux plages ne se
+  // chevauchent jamais) : audité au préalable sur les vraies données de
+  // l'éleveur (432 animaux, 0 cas ambigu) avant de lancer cette migration.
+  // Une valeur qui ne rentre dans aucun des deux formats (jamais rencontrée
+  // dans l'audit, mais possible sur une base tierce) est conservée telle
+  // quelle côté court plutôt que perdue. Flag one-shot : ne rejoue jamais
+  // une 2e fois (numeroSieol n'existe alors plus nulle part à relire).
+  if (!d.numeroSieolMigreVersTravailSieol) {
+    function migrerNumeroSieol(a) {
+      if (!a.numeroSieol) return;
+      const val = String(a.numeroSieol).trim();
+      if (/^\d{6}$/.test(val)) {
+        if (!a.numeroLongTravailSieol) a.numeroLongTravailSieol = val;
+        if (!a.numeroCourtTravailSieol) a.numeroCourtTravailSieol = sieolLongVersCourt(val);
+      } else if (/^\d{3,5}$/.test(val)) {
+        if (!a.numeroCourtTravailSieol) a.numeroCourtTravailSieol = val;
+        if (!a.numeroLongTravailSieol) a.numeroLongTravailSieol = sieolCourtVersLong(val);
+      } else if (!a.numeroCourtTravailSieol) {
+        a.numeroCourtTravailSieol = val; // format non reconnu : conservé tel quel plutôt que perdu
+      }
+      delete a.numeroSieol;
+    }
+    (d.brebis || []).forEach(migrerNumeroSieol);
+    (d.agnelles || []).forEach(migrerNumeroSieol);
+    d.numeroSieolMigreVersTravailSieol = true;
+  }
   return d;
 }
 
@@ -930,7 +962,8 @@ function loadData() {
     registrePurgeExceptionnelle20260902: true, // nouvelle installation : registre déjà vide, rien à purger
     campagneDateDemarrageCorrigee20260904: true, // nouvelle installation : campagneDateDemarrage encore vide, rien à corriger
     lecteurBluetooth: null, // { address, name } — lecteur par défaut, voir bandeau/btEnsureConnectionListener
-    controleLaitierMigreMl: true // nouvelle installation : jamais de données en litres à convertir
+    controleLaitierMigreMl: true, // nouvelle installation : jamais de données en litres à convertir
+    numeroSieolMigreVersTravailSieol: true // nouvelle installation : jamais de numeroSieol à migrer
   };
 }
 /* Déclenche le téléchargement d'un fichier JSON de sauvegarde — utilisée à
@@ -1075,6 +1108,46 @@ function ageADate(eid, refDate) {
 function eidAffichageCourt(eid) {
   const c = cleanEid(eid || '');
   return c.length > 11 ? c.slice(-11) : c;
+}
+
+/* ---------- Numéro de travail SIEOL (brebis/agnelles uniquement) ----------
+   Chantier "Numéro travail SIEOL" -- alias de travail utilisé par
+   l'éleveur/le technicien SIEOL sur le terrain, distinct du numéro
+   officiel Ovilog. Format : long = 6 chiffres (un chiffre fixe '2' + le
+   chiffre d'année + un numéro sur 4 chiffres zéro-paddé) ; court = le
+   chiffre d'année + le numéro réduit (zéros de tête retirés, jamais moins
+   de 2 chiffres gardés). Exemples validés par l'éleveur :
+   250001<->501, 259001<->59001, 258291<->58291, 543<->250043.
+   Sans lien avec les béliers (numeroTravailSieol, texte libre, sans
+   déduction ni validation de format -- numérotation propre à l'élevage de
+   provenance). Retournent null si le format ne correspond pas -- jamais
+   d'erreur, la déduction se contente alors de ne rien proposer. */
+function sieolLongVersCourt(long) {
+  const v = String(long || '').trim();
+  if (!/^\d{6}$/.test(v)) return null;
+  const anneeDigit = v.charAt(1);
+  const numero = v.slice(2);
+  let reduit = numero.replace(/^0+/, '');
+  if (reduit.length < 2) reduit = numero.slice(-2);
+  return anneeDigit + reduit;
+}
+function sieolCourtVersLong(court) {
+  const v = String(court || '').trim();
+  if (!/^\d{3,5}$/.test(v)) return null;
+  const anneeDigit = v.charAt(0);
+  const numero = v.slice(1).padStart(4, '0');
+  return '2' + anneeDigit + numero;
+}
+/* Alerte non bloquante (voir fiche brebis/agnelle) quand long ET court sont
+   renseignés mais ne se correspondent pas par la règle ci-dessus -- jamais
+   de correction automatique (l'éleveur choisit lequel garder), jamais de
+   comparaison si l'un des deux est vide ou de format non reconnu (rien à
+   contredire dans ce cas). Recalculée à chaque affichage, jamais stockée. */
+function incoherenceSieolTravail(long, court) {
+  if (!long || !court) return false;
+  const courtDeduit = sieolLongVersCourt(long);
+  if (courtDeduit === null) return false;
+  return courtDeduit !== String(court).trim();
 }
 
 /* Suggestion (jamais une écriture automatique) d'un numéro officiel Ovilog
@@ -1282,29 +1355,69 @@ function openCorrigerEidSheet(animal, onSaved) {
   };
 }
 
-/* Fiche "Numéro visuel SIEOL/UNOTEC" (même gabarit sheet-overlay) -- champ
-   texte libre, sans contrainte d'unicité (voir chantier "Bilan de
-   lactation SIEOL") : contrairement à l'EID, aucune vérification de
-   conflit ni confirm() ici, delibérément simple. Un champ vidé retire le
-   numéro (sheep.numeroSieol = null), jamais une chaîne vide stockée. */
-function openCorrigerNumeroSieolSheet(sheep, onSaved) {
+/* Fiche "Numéro de travail SIEOL" (même gabarit sheet-overlay que l'ancien
+   "Numéro visuel SIEOL/UNOTEC", remplacé par ce nouveau modèle long/court --
+   voir chantier "Numéro travail SIEOL") -- brebis ET agnelles uniquement.
+   Champs libres, sans contrainte d'unicité, jamais grisés/lecture seule :
+   si un seul des deux est rempli à l'enregistrement, l'autre est déduit et
+   pré-rempli (sieolLongVersCourt/sieolCourtVersLong) -- mais reste un champ
+   normal, modifiable ensuite comme n'importe quel autre. Si le format ne
+   permet pas de déduire (ex: valeur non numérique), le champ vide reste
+   vide, sans erreur. Aucun recalcul si les deux sont déjà remplis, même
+   incohérents entre eux (voir incoherenceSieolTravail, affichée sur la
+   fiche) : la valeur posée par l'éleveur fait foi. Un champ vidé retire le
+   numéro (jamais une chaîne vide stockée). */
+function openCorrigerNumerosTravailSieolSheet(animal, onSaved) {
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
   overlay.innerHTML = `
     <div class="sheet-card">
-      <button type="button" class="sheet-close-btn" id="cns-close">✕</button>
-      <div style="font-weight:700;font-size:15px;margin-bottom:4px;">Numéro visuel SIEOL/UNOTEC</div>
-      <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">Numéro de boucle utilisé par le rapport SIEOL/UNOTEC, distinct du numéro officiel Ovilog (n°${numeroVisuel(sheep.eid)}).</div>
-      <label>Numéro visuel SIEOL</label>
-      <input type="text" id="cns-valeur" value="${sheep.numeroSieol || ''}" placeholder="ex: 540, 9213, 033">
-      <button type="button" class="btn btn-primary" id="cns-save" style="margin-top:12px;">Enregistrer</button>
+      <button type="button" class="sheet-close-btn" id="cnts-close">✕</button>
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px;">Numéro de travail SIEOL</div>
+      <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">Alias de travail SIEOL, distinct du numéro officiel Ovilog (n°${numeroVisuel(animal.eid)}). Un seul des deux champs suffit : l'autre est calculé automatiquement.</div>
+      <label>Numéro long</label>
+      <input type="text" id="cnts-long" value="${animal.numeroLongTravailSieol || ''}" placeholder="ex: 250043">
+      <label>Numéro court</label>
+      <input type="text" id="cnts-court" value="${animal.numeroCourtTravailSieol || ''}" placeholder="ex: 543">
+      <button type="button" class="btn btn-primary" id="cnts-save" style="margin-top:12px;">Enregistrer</button>
     </div>
   `;
   document.body.appendChild(overlay);
-  overlay.querySelector('#cns-close').onclick = () => document.body.removeChild(overlay);
-  overlay.querySelector('#cns-save').onclick = () => {
-    const valeur = overlay.querySelector('#cns-valeur').value.trim();
-    sheep.numeroSieol = valeur || null;
+  overlay.querySelector('#cnts-close').onclick = () => document.body.removeChild(overlay);
+  overlay.querySelector('#cnts-save').onclick = () => {
+    let long = overlay.querySelector('#cnts-long').value.trim();
+    let court = overlay.querySelector('#cnts-court').value.trim();
+    if (long && !court) court = sieolLongVersCourt(long) || '';
+    else if (court && !long) long = sieolCourtVersLong(court) || '';
+    animal.numeroLongTravailSieol = long || null;
+    animal.numeroCourtTravailSieol = court || null;
+    if (!saveData(DB)) return;
+    document.body.removeChild(overlay);
+    onSaved();
+  };
+}
+
+/* Variante bélier : un seul champ texte libre (numeroTravailSieol), sans
+   déduction ni validation de format -- numérotation propre à l'élevage de
+   provenance du bélier (voir chantier "Numéro travail SIEOL"). */
+function openCorrigerNumeroTravailSieolBelierSheet(belier, onSaved) {
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.innerHTML = `
+    <div class="sheet-card">
+      <button type="button" class="sheet-close-btn" id="cntsb-close">✕</button>
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px;">Numéro de travail SIEOL</div>
+      <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">Alias de travail, distinct du numéro officiel Ovilog (n°${numeroVisuel(belier.eid)}). Texte libre, propre à l'élevage de provenance.</div>
+      <label>Numéro de travail SIEOL</label>
+      <input type="text" id="cntsb-valeur" value="${belier.numeroTravailSieol || ''}" placeholder="ex: 540, 9213, 033">
+      <button type="button" class="btn btn-primary" id="cntsb-save" style="margin-top:12px;">Enregistrer</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#cntsb-close').onclick = () => document.body.removeChild(overlay);
+  overlay.querySelector('#cntsb-save').onclick = () => {
+    const valeur = overlay.querySelector('#cntsb-valeur').value.trim();
+    belier.numeroTravailSieol = valeur || null;
     if (!saveData(DB)) return;
     document.body.removeChild(overlay);
     onSaved();
@@ -1320,12 +1433,22 @@ function openCorrigerNumeroSieolSheet(sheep, onSaved) {
    `getEid` en extrait l'EID (par défaut it.eid — ex. `m => m` pour un pool
    de simples chaînes d'EID comme lot.membres). Ne devine JAMAIS
    automatiquement en cas de numéro ambigu : à charge de l'appelant de
-   proposer le choix (voir renderCandidatsEidChips / wireEidLookupField). */
+   proposer le choix (voir renderCandidatsEidChips / wireEidLookupField).
+   Depuis le chantier "Numéro travail SIEOL" : reconnaît aussi le numéro
+   long/court de travail SIEOL (numeroLongTravailSieol/
+   numeroCourtTravailSieol) sur les éléments du pool qui les portent --
+   brebis et agnelles uniquement, jamais les béliers (champ différent,
+   numeroTravailSieol, jamais testé ici) ni un pool de simples chaînes
+   d'EID (numeroLongTravailSieol y est alors undefined, sans effet). Une
+   collision entre les deux systèmes de numérotation (ex: un numéro court
+   SIEOL qui coïncide avec le numéro officiel Ovilog d'un autre animal)
+   retombe naturellement dans la liste de candidats ci-dessus (voir
+   wireEidLookupField), sans code spécifique. */
 function trouverParNumero(pool, numero, getEid) {
   getEid = getEid || (it => it.eid);
   const v = cleanEid(numero || '');
   if (!v || v.length >= 11) return [];
-  return pool.filter(it => numeroVisuel(getEid(it)) === v);
+  return pool.filter(it => numeroVisuel(getEid(it)) === v || it.numeroLongTravailSieol === v || it.numeroCourtTravailSieol === v);
 }
 function trouverUnParEidOuNumero(pool, val, getEid) {
   getEid = getEid || (it => it.eid);
@@ -2582,6 +2705,19 @@ function deduireCodeRepro(sheep, dateMiseBas) {
 function reproTagHtml(code, style) {
   const cls = style === 'ok' ? 'compact-tag-green' : style === 'echec' ? 'compact-tag-coral' : 'compact-tag-amber';
   return `<span class="compact-tag ${cls}" title="Repro : ${libelleModeRepro(code)}">${code}</span>`;
+}
+
+/* Badge discret "SIEOL" (même principe visuel que reproTagHtml ci-dessus)
+   sur une ligne de liste Brebis/Agnelles/Béliers quand un alias de travail
+   SIEOL est renseigné (voir chantier "Numéro travail SIEOL") -- pas de
+   colonne dédiée (la plupart des animaux n'en ont pas), juste ce badge. La
+   ligne entière ouvre déjà la fiche au clic, rien à câbler de plus ici.
+   `numeroLong`/`numeroCourt` pour brebis/agnelles, `numeroBelier` pour le
+   champ libre des béliers -- un seul badge, peu importe combien de champs
+   sont renseignés. */
+function sieolTravailBadgeHtml(numeroLong, numeroCourt, numeroBelier) {
+  if (!numeroLong && !numeroCourt && !numeroBelier) return '';
+  return `<span class="compact-tag compact-tag-gray" title="Numéro de travail SIEOL renseigné">SIEOL</span>`;
 }
 
 /* Retrouve une brebis OU une agnelle par EID — utilisé par le Bilan de
@@ -4378,7 +4514,7 @@ function renderList() {
       const { badgeHtml, reproBadgeHtml } = statutRepro(sheep);
       return `
       <tr class="brebis-desktop-row" data-i="${i}" style="cursor:pointer;">
-        <td style="${REGISTRE_TD}">n°${numeroVisuel(sheep.eid)}</td>
+        <td style="${REGISTRE_TD}">n°${numeroVisuel(sheep.eid)} ${sieolTravailBadgeHtml(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol)}</td>
         <td style="${REGISTRE_TD}">${age(sheep.eid) !== null ? age(sheep.eid) + ' an(s)' : 'âge inconnu'}</td>
         <td style="${REGISTRE_TD}">${badgeHtml}</td>
         <td style="${REGISTRE_TD}">${reproBadgeHtml || '<span style="color:var(--text-muted);">—</span>'}</td>
@@ -4415,7 +4551,7 @@ function renderList() {
       <div class="sheep-item-left">
         ${iconCircle(ICON_SHEEP, 'green')}
         <div>
-          <div class="num">Brebis n°${numeroVisuel(sheep.eid)}</div>
+          <div class="num">Brebis n°${numeroVisuel(sheep.eid)} ${sieolTravailBadgeHtml(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol)}</div>
           <div class="sub">${age(sheep.eid) !== null ? age(sheep.eid) + ' an(s)' : 'âge inconnu'}</div>
         </div>
       </div>
@@ -6188,11 +6324,12 @@ function renderDetail(id) {
       ${sheep.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(sheep.dateEntree)}</strong></div>` : ''}
       <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
         <div>
-          <div style="font-size:12px;color:var(--text-muted);">Numéro visuel SIEOL/UNOTEC</div>
-          <div style="font-weight:600;">${sheep.numeroSieol ? sheep.numeroSieol : '<span style="color:var(--text-muted);font-weight:400;">Non renseigné</span>'}</div>
+          <div style="font-size:12px;color:var(--text-muted);">Numéro de travail SIEOL</div>
+          <div style="font-weight:600;">${(sheep.numeroLongTravailSieol || sheep.numeroCourtTravailSieol) ? [sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol].filter(Boolean).join(' / ') : '<span style="color:var(--text-muted);font-weight:400;">Non renseigné</span>'}</div>
         </div>
-        <button type="button" class="btn btn-secondary" id="btn-modifier-numero-sieol" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">${sheep.numeroSieol ? 'Modifier' : 'Ajouter'}</button>
+        <button type="button" class="btn btn-secondary" id="btn-modifier-numeros-travail-sieol" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">${(sheep.numeroLongTravailSieol || sheep.numeroCourtTravailSieol) ? 'Modifier' : 'Ajouter'}</button>
       </div>
+      ${incoherenceSieolTravail(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le numéro long et le numéro court ne correspondent pas entre eux.</div>` : ''}
       ${brebisSansHistorique(sheep)
         ? `<button type="button" class="btn btn-secondary" id="btn-corriger-eid" style="margin-top:10px;">Corriger l'EID</button>`
         : `<div style="margin-top:10px;font-size:11.5px;color:var(--text-muted);">Modification de l'EID impossible : cet animal a déjà un historique enregistré.</div>`}
@@ -6337,8 +6474,8 @@ function renderDetail(id) {
   if (btnAddControle) btnAddControle.onclick = () => { editContext = null; render('add-controle', sheep.id); };
   const btnCorrigerEid = document.getElementById('btn-corriger-eid');
   if (btnCorrigerEid) btnCorrigerEid.onclick = () => openCorrigerEidSheet(sheep, () => render('detail', sheep.id));
-  const btnModifierNumeroSieol = document.getElementById('btn-modifier-numero-sieol');
-  if (btnModifierNumeroSieol) btnModifierNumeroSieol.onclick = () => openCorrigerNumeroSieolSheet(sheep, () => render('detail', sheep.id));
+  const btnModifierNumerosTravailSieol = document.getElementById('btn-modifier-numeros-travail-sieol');
+  if (btnModifierNumerosTravailSieol) btnModifierNumerosTravailSieol.onclick = () => openCorrigerNumerosTravailSieolSheet(sheep, () => render('detail', sheep.id));
   document.querySelectorAll('.btn-lamb-vendu').forEach(btn => {
     btn.onclick = () => {
       const lamb = allLiveLambs[parseInt(btn.dataset.i, 10)];
@@ -9320,7 +9457,7 @@ function renderAgnellesInventaire() {
       <div class="sheep-item-left">
         ${iconCircle(ICON_SHEEP, 'amber')}
         <div>
-          <div class="num">Agnelle n°${numeroVisuel(ag.eid)}</div>
+          <div class="num">Agnelle n°${numeroVisuel(ag.eid)} ${sieolTravailBadgeHtml(ag.numeroLongTravailSieol, ag.numeroCourtTravailSieol)}</div>
           <div class="sub">${age(ag.eid) !== null ? age(ag.eid) + ' an(s)' : 'âge inconnu'}</div>
         </div>
       </div>
@@ -9400,6 +9537,14 @@ function renderAgnelleDetail(id) {
           ${reproEntryActuelleAg ? `<button type="button" class="btn btn-secondary" id="btn-edit-repro-tag-ag" style="width:auto;padding:2px 8px;font-size:11px;">Modifier</button>` : ''}
         </div>
       </div>
+      <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div>
+          <div style="font-size:12px;color:var(--text-muted);">Numéro de travail SIEOL</div>
+          <div style="font-weight:600;">${(ag.numeroLongTravailSieol || ag.numeroCourtTravailSieol) ? [ag.numeroLongTravailSieol, ag.numeroCourtTravailSieol].filter(Boolean).join(' / ') : '<span style="color:var(--text-muted);font-weight:400;">Non renseigné</span>'}</div>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btn-modifier-numeros-travail-sieol-ag" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">${(ag.numeroLongTravailSieol || ag.numeroCourtTravailSieol) ? 'Modifier' : 'Ajouter'}</button>
+      </div>
+      ${incoherenceSieolTravail(ag.numeroLongTravailSieol, ag.numeroCourtTravailSieol) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le numéro long et le numéro court ne correspondent pas entre eux.</div>` : ''}
     </div>
 
     <div class="card">
@@ -9430,6 +9575,7 @@ function renderAgnelleDetail(id) {
 
   const btnEditReproTagAg = document.getElementById('btn-edit-repro-tag-ag');
   if (btnEditReproTagAg) btnEditReproTagAg.onclick = () => { editReproTarget = { kind: 'agnelle', id: ag.id }; render('edit-repro'); };
+  document.getElementById('btn-modifier-numeros-travail-sieol-ag').onclick = () => openCorrigerNumerosTravailSieolSheet(ag, () => render('agnelle-detail'));
   const btnMere = document.getElementById('btn-voir-mere-agnelle-fiche');
   if (btnMere) btnMere.onclick = () => {
     detailOrigin = 'agnelle-detail';
@@ -9489,7 +9635,7 @@ function renderBeliers() {
       </tr></thead>
       <tbody>${sortedBeliers.map(b => `
       <tr class="sheep-item belier-desktop-row" data-id="${b.id}" style="cursor:pointer;${(b.statut && b.statut!=='actif') ? 'opacity:0.6;' : ''}">
-        <td style="${REGISTRE_TD}">n°${numeroVisuel(b.eid)}</td>
+        <td style="${REGISTRE_TD}">n°${numeroVisuel(b.eid)} ${sieolTravailBadgeHtml(null, null, b.numeroTravailSieol)}</td>
         <td style="${REGISTRE_TD}">${age(b.eid) !== null ? age(b.eid) + ' an(s)' : 'âge inconnu'}</td>
         <td style="${REGISTRE_TD}"><span class="badge ${(b.statut && b.statut!=='actif') ? 'badge-muted' : 'badge-indigo'}">${(b.statut && b.statut!=='actif') ? b.statut : 'Actif'}</span></td>
       </tr>`).join('')}</tbody>
@@ -9499,7 +9645,7 @@ function renderBeliers() {
         <div class="sheep-item-left">
           ${iconCircle(ICON_RAM, 'indigo')}
           <div>
-            <div class="num">Bélier n°${numeroVisuel(b.eid)}</div>
+            <div class="num">Bélier n°${numeroVisuel(b.eid)} ${sieolTravailBadgeHtml(null, null, b.numeroTravailSieol)}</div>
             <div class="sub">${age(b.eid) !== null ? age(b.eid) + ' an(s)' : 'âge inconnu'}</div>
           </div>
         </div>
@@ -9620,6 +9766,13 @@ function renderBelierDetail() {
         <div><div style="font-size:12px;color:var(--text-muted);">Numéro officiel</div><div style="font-weight:600;">n°${numeroVisuel(belier.eid)}</div></div>
       </div>
       ${belier.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(belier.dateEntree)}</strong></div>` : ''}
+      <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div>
+          <div style="font-size:12px;color:var(--text-muted);">Numéro de travail SIEOL</div>
+          <div style="font-weight:600;">${belier.numeroTravailSieol || '<span style="color:var(--text-muted);font-weight:400;">Non renseigné</span>'}</div>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btn-modifier-numero-travail-sieol-belier" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">${belier.numeroTravailSieol ? 'Modifier' : 'Ajouter'}</button>
+      </div>
       ${belierSansHistorique(belier)
         ? `<button type="button" class="btn btn-secondary" id="btn-corriger-eid-belier" style="margin-top:10px;">Corriger l'EID</button>`
         : `<div style="margin-top:10px;font-size:11.5px;color:var(--text-muted);">Modification de l'EID impossible : cet animal a déjà un historique enregistré.</div>`}
@@ -9645,6 +9798,7 @@ function renderBelierDetail() {
   document.getElementById('btn-add-mouvement-belier').onclick = () => { editBelierContext = null; render('add-mouvement-belier'); };
   const btnCorrigerEidBelier = document.getElementById('btn-corriger-eid-belier');
   if (btnCorrigerEidBelier) btnCorrigerEidBelier.onclick = () => openCorrigerEidSheet(belier, () => render('belier-detail'));
+  document.getElementById('btn-modifier-numero-travail-sieol-belier').onclick = () => openCorrigerNumeroTravailSieolBelierSheet(belier, () => render('belier-detail'));
   document.getElementById('btn-delete-belier').onclick = () => {
     if (!confirm('Supprimer le bélier n°' + numeroVisuel(belier.eid) + ' ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
     DB.beliers = DB.beliers.filter(b => b.id !== belier.id);
@@ -15020,30 +15174,45 @@ function renderPremiereConfiguration() {
 
 /* Résout une ligne du bilan de lactation à une brebis, dans l'ordre strict
    demandé -- voir chantier "Bilan de lactation SIEOL" :
-   1. numeroSieol exact déjà stocké sur une fiche -> résolution directe,
-      fiable même en cas de collision de numéro officiel Ovilog (deux
-      brebis peuvent partager le même numéro officiel court, jamais le même
-      numeroSieol).
+   1. numeroCourtTravailSieol exact déjà stocké sur une fiche -> résolution
+      directe, fiable même en cas de collision de numéro officiel Ovilog
+      (deux brebis peuvent partager le même numéro officiel court, jamais
+      le même numeroCourtTravailSieol). Anciennement numeroSieol, remplacé
+      par le nouveau modèle long/court (voir chantier "Numéro travail
+      SIEOL") -- même champ, migré une fois pour toutes (migrateData),
+      jamais recalculé ici.
    2. Sinon, suggestion de cohorte (voir suggererOfficielDepuisSieol) :
       TOUTES les fiches dont le numéro officiel calculé correspond ET qui
-      n'ont pas déjà un numeroSieol différent (donc déjà résolues ailleurs)
-      sont proposées à validation manuelle -- jamais une seule par défaut,
-      exactement pour le cas où 2 brebis réelles partagent ce numéro
-      officiel (ex: 540/55040 -> 51040 chez cet éleveur).
+      n'ont pas déjà un numeroCourtTravailSieol différent (donc déjà
+      résolues ailleurs) sont proposées à validation manuelle -- jamais une
+      seule par défaut, exactement pour le cas où 2 brebis réelles
+      partagent ce numéro officiel (ex: 540/55040 -> 51040 chez cet
+      éleveur).
    3. Aucun candidat -> non résolue. */
 function resoudreLigneSieol(numeroVisuelSieol) {
-  const direct = DB.brebis.find(s => s.numeroSieol && s.numeroSieol === numeroVisuelSieol);
+  const direct = DB.brebis.find(s => s.numeroCourtTravailSieol && s.numeroCourtTravailSieol === numeroVisuelSieol);
   if (direct) return { type: 'direct', sheep: direct, candidats: [] };
   const suggestion = suggererOfficielDepuisSieol(numeroVisuelSieol);
-  const candidats = suggestion ? DB.brebis.filter(s => !s.numeroSieol && numeroVisuel(s.eid) === suggestion) : [];
+  const candidats = suggestion ? DB.brebis.filter(s => !s.numeroCourtTravailSieol && numeroVisuel(s.eid) === suggestion) : [];
   return { type: candidats.length > 0 ? 'candidats' : 'aucune', sheep: null, candidats };
+}
+
+/* Mémorise la résolution manuelle d'une ligne SIEOL (candidat validé par
+   l'éleveur) pour les imports futurs -- résolution directe dès l'étape 1
+   de resoudreLigneSieol au prochain import. numeroVisuelSieol (colonne du
+   fichier CSV) est la forme courte -- déduit aussi le long si possible
+   (même geste qu'une saisie manuelle via openCorrigerNumerosTravailSieolSheet),
+   sans jamais écraser un long déjà renseigné par ailleurs. */
+function memoriserResolutionSieol(sheep, numeroVisuelSieol) {
+  sheep.numeroCourtTravailSieol = numeroVisuelSieol;
+  if (!sheep.numeroLongTravailSieol) sheep.numeroLongTravailSieol = sieolCourtVersLong(numeroVisuelSieol);
 }
 
 /* Écran d'import du Bilan de lactation SIEOL/UNOTEC -- voir résolution dans
    resoudreLigneSieol. Interactif (validation manuelle des candidats de
    secours) : reste sur cet écran tant que l'éleveur n'a pas cliqué
    "Confirmer l'import", qui seul écrit dans DB.bilanLactation/
-   DB.sieolSansMiseBas/numeroSieol. La campagne est TOUJOURS choisie
+   DB.sieolSansMiseBas/numeroCourtTravailSieol. La campagne est TOUJOURS choisie
    explicitement ici, jamais présumée être la campagne en cours d'Ovilog
    (voir chantier : le bilan SIEOL porte sur la campagne qui vient de se
    clôturer, Ovilog peut déjà avoir des échographies de la campagne
@@ -15174,7 +15343,7 @@ function renderImportBilanLactation() {
     parsedRows.forEach(r => {
       const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
       if (!sheep) return; // non résolue ou pas encore validée -- ignorée sans bloquer le reste
-      if (r.resolution.type === 'candidats' && sheep) sheep.numeroSieol = r.numeroVisuelSieol; // mémorise pour les imports futurs (résolution directe, étape 1)
+      if (r.resolution.type === 'candidats' && sheep) memoriserResolutionSieol(sheep, r.numeroVisuelSieol); // mémorise pour les imports futurs (résolution directe, étape 1)
       if (r.sansMiseBas) { upsertSieolSansMiseBas(sheep.eid, campagneImport); nbSansMiseBas++; }
       else if (r.dateMiseBas) { upsertBilanLactation(sheep.eid, campagneImport, { dateMiseBas: r.dateMiseBas, lactTotale: r.lactTotale, dureeTraite: r.dureeTraite, classeParQuart: r.classeParQuart }); nbLactations++; }
     });
@@ -15600,7 +15769,7 @@ function renderImportControleLaitierSieol() {
     (parsedCahier || []).forEach(r => {
       const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
       if (!sheep) return; // non résolue ou pas encore validée -- ignorée sans bloquer le reste
-      if (r.resolution.type === 'candidats') sheep.numeroSieol = r.numeroVisuelSieol;
+      if (r.resolution.type === 'candidats') memoriserResolutionSieol(sheep, r.numeroVisuelSieol);
       controlesSelectionnes.forEach(n => {
         const c = r.controles[n];
         if (!c) return;
@@ -15706,10 +15875,11 @@ async function executerChangementCampagne() {
       id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: ag.eid, mereEid: ag.motherEid || null,
       // Généalogie déclarative (texte libre, cas achat/IA) recopiée depuis
       // l'agnelle — sans quoi elle était perdue à la bascule (voir correctif
-      // Généalogie). numeroSieol : idem pour les agnelles importées via le
-      // fichier généalogie UNOTEC (voir renderImportAgnelles), sans quoi le
-      // numéro visuel calculé à l'import était perdu à la bascule.
-      pere: ag.pere || '', mere: ag.mere || '', numeroSieol: ag.numeroSieol || null,
+      // Généalogie). numeroLongTravailSieol/numeroCourtTravailSieol : même
+      // principe (voir chantier "Numéro travail SIEOL"), sans quoi l'alias
+      // renseigné sur l'agnelle serait perdu à la bascule.
+      pere: ag.pere || '', mere: ag.mere || '',
+      numeroLongTravailSieol: ag.numeroLongTravailSieol || null, numeroCourtTravailSieol: ag.numeroCourtTravailSieol || null,
       createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: ag.sanitaire || [],
       mouvements: [{ type: 'Entrée', cause: 'Renouvellement (agnelle devenue brebis)', date: dateRenouvellement }],
       // modesRepro : une agnelle peut déjà avoir été mise en lot de
