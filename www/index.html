@@ -902,7 +902,13 @@ function migrateData(d) {
         if (!a.numeroCourtTravailSieol) a.numeroCourtTravailSieol = sieolLongVersCourt(val);
       } else if (/^\d{3,5}$/.test(val)) {
         if (!a.numeroCourtTravailSieol) a.numeroCourtTravailSieol = val;
-        if (!a.numeroLongTravailSieol) a.numeroLongTravailSieol = sieolCourtVersLong(val);
+        // sieolCourtVersLong exige la vraie année de naissance (voir
+        // correctif "décennie fixe 2") -- si elle ne peut pas être
+        // déterminée, ou si le chiffre d'année du court ne lui
+        // correspond pas, le long reste simplement non déduit (jamais
+        // une valeur devinée) plutôt que perdu : le court, lui, est
+        // toujours conservé ci-dessus.
+        if (!a.numeroLongTravailSieol) a.numeroLongTravailSieol = sieolCourtVersLong(val, anneeNaissance(a.eid));
       } else if (!a.numeroCourtTravailSieol) {
         a.numeroCourtTravailSieol = val; // format non reconnu : conservé tel quel plutôt que perdu
       }
@@ -1113,11 +1119,24 @@ function eidAffichageCourt(eid) {
 /* ---------- Numéro de travail SIEOL (brebis/agnelles uniquement) ----------
    Chantier "Numéro travail SIEOL" -- alias de travail utilisé par
    l'éleveur/le technicien SIEOL sur le terrain, distinct du numéro
-   officiel Ovilog. Format : long = 6 chiffres (un chiffre fixe '2' + le
-   chiffre d'année + un numéro sur 4 chiffres zéro-paddé) ; court = le
-   chiffre d'année + le numéro réduit (zéros de tête retirés, jamais moins
-   de 2 chiffres gardés). Exemples validés par l'éleveur :
+   officiel Ovilog. Format : long = 6 chiffres (le chiffre de DÉCENNIE de
+   l'année de naissance réelle + le chiffre d'UNITÉ de cette même année +
+   un numéro sur 4 chiffres zéro-paddé) ; court = le chiffre d'unité
+   d'année + le numéro réduit (zéros de tête retirés, jamais moins de 2
+   chiffres gardés). Exemples validés par l'éleveur (tous nés dans les
+   années 2020, d'où le "2" systématique) :
    250001<->501, 259001<->59001, 258291<->58291, 543<->250043.
+   CORRECTIF (bug "décennie fixe 2") : le premier chiffre du long n'est PAS
+   une constante -- ce n'est qu'une coïncidence que tous les exemples
+   connus valent "2", tous les animaux concernés étant nés en 2020-2029.
+   Le court, lui, ne contient QUE le chiffre d'unité (ex: "5" pour 2025
+   OU 2015) -- la décennie est irrécupérable depuis le court seul, il faut
+   la redemander à l'animal via sa vraie année de naissance (déjà connue
+   de façon fiable par anneeNaissance(eid) au moment où la déduction se
+   déclenche : fiche déjà résolue, ou animal déjà identifié par EID à
+   l'import). sieolLongVersCourt() n'a pas cette dépendance : le long
+   contient déjà toute l'info nécessaire (décennie incluse), elle est
+   simplement ignorée puisque le court ne la garde jamais.
    Sans lien avec les béliers (numeroTravailSieol, texte libre, sans
    déduction ni validation de format -- numérotation propre à l'élevage de
    provenance). Retournent null si le format ne correspond pas -- jamais
@@ -1131,12 +1150,26 @@ function sieolLongVersCourt(long) {
   if (reduit.length < 2) reduit = numero.slice(-2);
   return anneeDigit + reduit;
 }
-function sieolCourtVersLong(court) {
+/* `anneeNaissanceReelle` (ex: 2018, 2031) est OBLIGATOIRE pour reconstruire
+   la décennie -- voir le correctif ci-dessus. Sans elle (valeur absente ou
+   année de naissance non déterminable, ex: EID trop court), impossible de
+   déduire quoi que ce soit de fiable : retourne null plutôt que de deviner.
+   Vérifie aussi que le chiffre d'année du court correspond bien au chiffre
+   d'unité de cette année réelle -- sinon le court ne peut pas appartenir à
+   cet animal (ou a été mal saisi) : ne déduit jamais dans ce cas, voir
+   incoherenceAnneeSieolCourt() pour signaler ce cas précis à l'écran
+   plutôt que de le laisser silencieusement vide comme un simple format
+   non reconnu. */
+function sieolCourtVersLong(court, anneeNaissanceReelle) {
   const v = String(court || '').trim();
   if (!/^\d{3,5}$/.test(v)) return null;
+  if (anneeNaissanceReelle == null || !Number.isFinite(anneeNaissanceReelle)) return null;
   const anneeDigit = v.charAt(0);
+  const uniteReelle = String(((anneeNaissanceReelle % 10) + 10) % 10);
+  if (anneeDigit !== uniteReelle) return null;
+  const decennie = String(Math.floor((((anneeNaissanceReelle % 100) + 100) % 100) / 10));
   const numero = v.slice(1).padStart(4, '0');
-  return '2' + anneeDigit + numero;
+  return decennie + anneeDigit + numero;
 }
 /* Alerte non bloquante (voir fiche brebis/agnelle) quand long ET court sont
    renseignés mais ne se correspondent pas par la règle ci-dessus -- jamais
@@ -1148,6 +1181,20 @@ function incoherenceSieolTravail(long, court) {
   const courtDeduit = sieolLongVersCourt(long);
   if (courtDeduit === null) return false;
   return courtDeduit !== String(court).trim();
+}
+/* Signale un numéro court dont le chiffre d'année ne correspond pas au
+   chiffre d'unité de l'année de naissance réelle de l'animal (voir le
+   correctif ci-dessus sur sieolCourtVersLong) -- distinct de
+   incoherenceSieolTravail, qui compare long et court ENTRE EUX : ici on
+   compare le court à une donnée tierce fiable, l'EID. Ne signale rien si
+   le court est vide/de format non reconnu, ou si l'année de naissance
+   n'a pas pu être déterminée (rien de fiable à comparer). Jamais de
+   correction automatique : juste un signal, comme incoherenceSieolTravail. */
+function incoherenceAnneeSieolCourt(court, anneeNaissanceReelle) {
+  const v = String(court || '').trim();
+  if (!/^\d{3,5}$/.test(v) || anneeNaissanceReelle == null || !Number.isFinite(anneeNaissanceReelle)) return false;
+  const uniteReelle = String(((anneeNaissanceReelle % 10) + 10) % 10);
+  return v.charAt(0) !== uniteReelle;
 }
 
 /* Suggestion (jamais une écriture automatique) d'un numéro officiel Ovilog
@@ -1388,7 +1435,7 @@ function openCorrigerNumerosTravailSieolSheet(animal, onSaved) {
     let long = overlay.querySelector('#cnts-long').value.trim();
     let court = overlay.querySelector('#cnts-court').value.trim();
     if (long && !court) court = sieolLongVersCourt(long) || '';
-    else if (court && !long) long = sieolCourtVersLong(court) || '';
+    else if (court && !long) long = sieolCourtVersLong(court, anneeNaissance(animal.eid)) || '';
     animal.numeroLongTravailSieol = long || null;
     animal.numeroCourtTravailSieol = court || null;
     if (!saveData(DB)) return;
@@ -6368,6 +6415,7 @@ function renderDetail(id) {
         <button type="button" class="btn btn-secondary" id="btn-modifier-numeros-travail-sieol" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">${(sheep.numeroLongTravailSieol || sheep.numeroCourtTravailSieol) ? 'Modifier' : 'Ajouter'}</button>
       </div>
       ${incoherenceSieolTravail(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le numéro long et le numéro court ne correspondent pas entre eux.</div>` : ''}
+      ${incoherenceAnneeSieolCourt(sheep.numeroCourtTravailSieol, anneeNaissance(sheep.eid)) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le chiffre d'année du numéro court ne correspond pas à l'année de naissance de cette brebis (${anneeNaissance(sheep.eid)}).</div>` : ''}
       ${brebisSansHistorique(sheep)
         ? `<button type="button" class="btn btn-secondary" id="btn-corriger-eid" style="margin-top:10px;">Corriger l'EID</button>`
         : `<div style="margin-top:10px;font-size:11.5px;color:var(--text-muted);">Modification de l'EID impossible : cet animal a déjà un historique enregistré.</div>`}
@@ -9583,6 +9631,7 @@ function renderAgnelleDetail(id) {
         <button type="button" class="btn btn-secondary" id="btn-modifier-numeros-travail-sieol-ag" style="width:auto;padding:6px 14px;font-size:13px;flex-shrink:0;">${(ag.numeroLongTravailSieol || ag.numeroCourtTravailSieol) ? 'Modifier' : 'Ajouter'}</button>
       </div>
       ${incoherenceSieolTravail(ag.numeroLongTravailSieol, ag.numeroCourtTravailSieol) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le numéro long et le numéro court ne correspondent pas entre eux.</div>` : ''}
+      ${incoherenceAnneeSieolCourt(ag.numeroCourtTravailSieol, anneeNaissance(ag.eid)) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le chiffre d'année du numéro court ne correspond pas à l'année de naissance de cette agnelle (${anneeNaissance(ag.eid)}).</div>` : ''}
     </div>
 
     <div class="card">
@@ -15285,7 +15334,7 @@ function resoudreLigneSieol(numeroVisuelSieol) {
    sans jamais écraser un long déjà renseigné par ailleurs. */
 function memoriserResolutionSieol(sheep, numeroVisuelSieol) {
   sheep.numeroCourtTravailSieol = numeroVisuelSieol;
-  if (!sheep.numeroLongTravailSieol) sheep.numeroLongTravailSieol = sieolCourtVersLong(numeroVisuelSieol);
+  if (!sheep.numeroLongTravailSieol) sheep.numeroLongTravailSieol = sieolCourtVersLong(numeroVisuelSieol, anneeNaissance(sheep.eid));
 }
 
 /* Écran d'import du Bilan de lactation SIEOL/UNOTEC -- voir résolution dans
@@ -15926,11 +15975,15 @@ function classerLignesCorrespondanceSieol(rows) {
     let long = String(row[2] || '').trim() || null;
     let court = String(row[3] || '').trim() || null;
     if (!long && !court) continue; // rien à proposer sur cette ligne -- ignorée silencieusement
-    if (long && !court) court = sieolLongVersCourt(long) || null;
-    else if (court && !long) long = sieolCourtVersLong(court) || null;
 
     const animal = pool.find(a => eidAffichageCourt(a.eid) === eidFichier);
     if (!animal) { nonTrouves.push({ eid: eidFichier }); continue; }
+
+    // Déduction APRÈS résolution de l'animal (jamais avant) : la
+    // reconstruction court->long a besoin de sa vraie année de naissance
+    // (voir correctif "décennie fixe 2" sur sieolCourtVersLong).
+    if (long && !court) court = sieolLongVersCourt(long) || null;
+    else if (court && !long) long = sieolCourtVersLong(court, anneeNaissance(animal.eid)) || null;
 
     const longActuel = animal.numeroLongTravailSieol || null;
     const courtActuel = animal.numeroCourtTravailSieol || null;
