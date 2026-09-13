@@ -16027,50 +16027,118 @@ function renderParametresSauvegarde(content) {
     reader.readAsText(file);
   };
 
-  // Section "Mises à jour" -- désactivée avec un message explicite hors
-  // app installée (navigateur de test), activée dès que la version
-  // installée a pu être lue (voir versionCodeInstalle).
+  // Section "Mises à jour" -- 3 cas distincts (chantier "Correction bouton
+  // grisé sur PC") :
+  // - Android (window.Capacitor.Plugins.App) : flux historique inchangé
+  //   (vérification GitHub Releases + popup + ApkInstaller).
+  // - Bureau/Electron (window.electronAPI) : le vrai mécanisme de mise à
+  //   jour (electron-updater) existait déjà et tournait silencieusement au
+  //   démarrage (voir main.js), mais restait invisible et inactionnable
+  //   depuis cet écran -- le bouton était désactivé pour toujours avec un
+  //   message FAUX ("uniquement sur l'application installée") alors que
+  //   l'app Electron EST l'application installée. Corrigé : le bouton
+  //   déclenche une vérification à la demande, et le statut réel (déjà en
+  //   cours au démarrage ou déclenché ici) s'affiche -- le téléchargement
+  //   automatique en arrière-plan n'est pas modifié, seul un bouton
+  //   "Redémarrer et installer" est ajouté une fois la mise à jour prête.
+  // - Ni l'un ni l'autre (navigateur de test/dev) : bouton désactivé, avec
+  //   un message qui n'exclut plus le Bureau à tort.
   (async () => {
     const versionEl = document.getElementById('update-version-installee');
     const btnCheck = document.getElementById('btn-check-update');
     const statusEl = document.getElementById('update-check-status');
     if (!versionEl || !btnCheck || !statusEl) return; // écran déjà quitté entre-temps
     const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
-    if (!AppPlugin) {
-      versionEl.textContent = 'Version installée : ' + libelleVersion().replace('Version : ', '');
-      statusEl.textContent = "Mise à jour disponible uniquement sur l'application installée.";
+
+    if (AppPlugin) {
+      try {
+        const info = await AppPlugin.getInfo();
+        versionEl.textContent = 'Version installée : ' + info.version;
+      } catch (e) {
+        versionEl.textContent = 'Version installée : inconnue';
+      }
+      btnCheck.disabled = false;
+      btnCheck.onclick = async () => {
+        btnCheck.disabled = true;
+        statusEl.textContent = 'Vérification en cours...';
+        const { ok, release, reason } = await verifierMiseAJourDisponible();
+        btnCheck.disabled = false;
+        if (!ok) {
+          // Distinct de "à jour" : la vérification elle-même a échoué (réseau,
+          // réponse GitHub inattendue) -- ne jamais laisser croire à tort que
+          // tout est à jour dans ce cas (signalé en usage réel). Le détail
+          // technique entre parenthèses (code HTTP, etc.) n'est pas destiné à
+          // l'éleveur mais permet de diagnostiquer à distance si le problème
+          // se reproduit (ex: http_403 = limite de requêtes GitHub atteinte,
+          // fréquent derrière un NAT opérateur mobile partagé).
+          statusEl.textContent = '⚠️ Vérification impossible — vérifie ta connexion internet et réessaie.' + (reason ? ' (' + reason + ')' : '');
+          return;
+        }
+        if (!release) {
+          statusEl.textContent = '✅ Vous êtes à jour.';
+          return;
+        }
+        statusEl.textContent = '🆕 Nouvelle version disponible : ' + release.name;
+        afficherPopupMiseAJour(release);
+      };
       return;
     }
-    try {
-      const info = await AppPlugin.getInfo();
-      versionEl.textContent = 'Version installée : ' + info.version;
-    } catch (e) {
-      versionEl.textContent = 'Version installée : inconnue';
-    }
-    btnCheck.disabled = false;
-    btnCheck.onclick = async () => {
-      btnCheck.disabled = true;
-      statusEl.textContent = 'Vérification en cours...';
-      const { ok, release, reason } = await verifierMiseAJourDisponible();
+
+    if (window.electronAPI && window.electronAPI.checkForUpdates) {
+      versionEl.textContent = 'Version installée : ' + libelleVersion().replace('Version : ', '');
       btnCheck.disabled = false;
-      if (!ok) {
-        // Distinct de "à jour" : la vérification elle-même a échoué (réseau,
-        // réponse GitHub inattendue) -- ne jamais laisser croire à tort que
-        // tout est à jour dans ce cas (signalé en usage réel). Le détail
-        // technique entre parenthèses (code HTTP, etc.) n'est pas destiné à
-        // l'éleveur mais permet de diagnostiquer à distance si le problème
-        // se reproduit (ex: http_403 = limite de requêtes GitHub atteinte,
-        // fréquent derrière un NAT opérateur mobile partagé).
-        statusEl.textContent = '⚠️ Vérification impossible — vérifie ta connexion internet et réessaie.' + (reason ? ' (' + reason + ')' : '');
-        return;
+
+      // Reflète le statut electron-updater réel (checking/available/
+      // not-available/downloading/downloaded/error), poussé depuis le
+      // process principal (voir main.js) -- jamais un chiffre recalculé
+      // ici, jamais une supposition sur l'état du téléchargement en fond.
+      function afficherStatutDesktop(statut) {
+        if (!statut) return;
+        if (statut.status === 'checking') {
+          statusEl.textContent = 'Vérification en cours...';
+        } else if (statut.status === 'not-available') {
+          statusEl.textContent = '✅ Vous êtes à jour.';
+        } else if (statut.status === 'available') {
+          statusEl.textContent = '🆕 Nouvelle version ' + statut.version + ' trouvée — téléchargement en arrière-plan...';
+        } else if (statut.status === 'downloading') {
+          statusEl.textContent = 'Téléchargement en cours' + (statut.percent != null ? ' (' + statut.percent + ' %)' : '...');
+        } else if (statut.status === 'downloaded') {
+          statusEl.innerHTML = '';
+          statusEl.append('Mise à jour ' + statut.version + ' prête à installer.', document.createElement('br'));
+          const btnInstall = document.createElement('button');
+          btnInstall.type = 'button';
+          btnInstall.className = 'btn btn-primary';
+          btnInstall.style.marginTop = '8px';
+          btnInstall.textContent = 'Redémarrer et installer';
+          btnInstall.onclick = () => window.electronAPI.installUpdateNow();
+          statusEl.appendChild(btnInstall);
+        } else if (statut.status === 'error') {
+          statusEl.textContent = '⚠️ ' + (statut.message || 'Erreur inconnue lors de la vérification.');
+        } else if (statut.status === 'unavailable') {
+          statusEl.textContent = "Mise à jour automatique indisponible sur cette installation.";
+        }
       }
-      if (!release) {
-        statusEl.textContent = '✅ Vous êtes à jour.';
-        return;
-      }
-      statusEl.textContent = '🆕 Nouvelle version disponible : ' + release.name;
-      afficherPopupMiseAJour(release);
-    };
+
+      window.electronAPI.onUpdateStatus(afficherStatutDesktop);
+      // Reflète un statut déjà connu (ex: mise à jour trouvée pendant la
+      // vérification silencieuse du démarrage, avant même l'ouverture de
+      // cet écran) plutôt que de repartir d'un statut vide à chaque fois.
+      try { afficherStatutDesktop(await window.electronAPI.getUpdateStatus()); } catch (e) { /* ignoré */ }
+
+      btnCheck.onclick = async () => {
+        btnCheck.disabled = true;
+        statusEl.textContent = 'Vérification en cours...';
+        try { await window.electronAPI.checkForUpdates(); } catch (e) { /* le statut 'error' arrive via onUpdateStatus */ }
+        btnCheck.disabled = false;
+      };
+      return;
+    }
+
+    // Ni Android ni Bureau : navigateur de test/dev, aucun mécanisme de
+    // mise à jour disponible ici -- message honnête, qui n'exclut plus le
+    // Bureau à tort (voir en-tête de ce bloc).
+    versionEl.textContent = 'Version installée : ' + libelleVersion().replace('Version : ', '');
+    statusEl.textContent = "Mise à jour disponible uniquement depuis l'application installée (Android ou Bureau).";
   })();
 }
 

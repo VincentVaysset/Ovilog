@@ -10,7 +10,7 @@
 // le bloc electron-updater plus bas -- voir electron-builder ("build" dans
 // package.json, cible NSIS) et le nouveau job CI build-windows pour la
 // partie publication.
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const log = require('electron-log');
 
@@ -30,6 +30,22 @@ log.transports.file.level = 'info';
 let autoUpdater = null;
 if (app.isPackaged) {
   ({ autoUpdater } = require('electron-updater'));
+}
+
+// Fenêtre courante (une seule à la fois en usage réel -- distribution
+// Windows) et dernier statut electron-updater connu, tous deux nécessaires
+// au bouton "Vérifier les mises à jour" de l'écran Paramètres (chantier
+// "Correction bouton grisé sur PC") : dernierStatutMiseAJour permet à
+// l'écran, rouvert après coup, d'afficher l'état réel sans attendre un
+// nouvel événement ; fenetrePrincipale sert à relayer chaque changement de
+// statut vers la page tant qu'elle est ouverte.
+let fenetrePrincipale = null;
+let dernierStatutMiseAJour = { status: 'idle' };
+function envoyerStatutMiseAJour(statut) {
+  dernierStatutMiseAJour = statut;
+  if (fenetrePrincipale && !fenetrePrincipale.isDestroyed()) {
+    fenetrePrincipale.webContents.send('ovilog-update-status', statut);
+  }
 }
 
 function cheminIndexHtml() {
@@ -67,6 +83,8 @@ function creerFenetrePrincipale() {
     },
   });
   fenetre.loadFile(cheminIndexHtml());
+  fenetrePrincipale = fenetre;
+  fenetre.on('closed', () => { if (fenetrePrincipale === fenetre) fenetrePrincipale = null; });
   return fenetre;
 }
 
@@ -75,6 +93,26 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) creerFenetrePrincipale();
+  });
+
+  // Handlers IPC pour l'écran Paramètres (voir preload.js) -- enregistrés
+  // même hors app packagée (autoUpdater alors null) : chaque handler
+  // répond explicitement 'unavailable' plutôt que de laisser l'appel IPC
+  // échouer faute de handler enregistré (utile en dev, npm start).
+  ipcMain.handle('ovilog-check-for-updates', async () => {
+    if (!autoUpdater) return { status: 'unavailable' };
+    try {
+      await autoUpdater.checkForUpdates();
+    } catch (err) {
+      envoyerStatutMiseAJour({ status: 'error', message: (err && err.message) || 'Erreur inconnue' });
+    }
+    return dernierStatutMiseAJour;
+  });
+  ipcMain.handle('ovilog-get-update-status', () => {
+    return autoUpdater ? dernierStatutMiseAJour : { status: 'unavailable' };
+  });
+  ipcMain.handle('ovilog-install-update', () => {
+    if (autoUpdater) autoUpdater.quitAndInstall();
   });
 
   if (autoUpdater) {
@@ -93,6 +131,22 @@ app.whenReady().then(() => {
     // ne trouve donc jamais rien à installer, silencieusement. À revoir une
     // fois la branche mergée sur main (Releases non-prerelease).
     autoUpdater.allowPrerelease = true;
+
+    // Relaie chaque étape du cycle de vie vers l'écran Paramètres (voir
+    // envoyerStatutMiseAJour/preload.js), que la vérification vienne de
+    // l'appel silencieux au démarrage ci-dessous ou d'un clic manuel sur
+    // "Vérifier les mises à jour" -- un seul jeu d'écouteurs pour les deux
+    // déclencheurs, jamais dupliqué (chantier "Correction bouton grisé sur
+    // PC"). Le téléchargement automatique en tâche de fond n'est pas
+    // modifié : ces écouteurs ne font qu'observer, jamais déclencher quoi
+    // que ce soit eux-mêmes (autoDownload reste à sa valeur par défaut,
+    // true).
+    autoUpdater.on('checking-for-update', () => envoyerStatutMiseAJour({ status: 'checking' }));
+    autoUpdater.on('update-available', (info) => envoyerStatutMiseAJour({ status: 'available', version: info.version }));
+    autoUpdater.on('update-not-available', () => envoyerStatutMiseAJour({ status: 'not-available' }));
+    autoUpdater.on('download-progress', (p) => envoyerStatutMiseAJour({ status: 'downloading', percent: Math.round(p.percent) }));
+    autoUpdater.on('update-downloaded', (info) => envoyerStatutMiseAJour({ status: 'downloaded', version: info.version }));
+    autoUpdater.on('error', (err) => envoyerStatutMiseAJour({ status: 'error', message: (err && err.message) || 'Erreur inconnue' }));
 
     // Vérification silencieuse une seule fois, ici, au démarrage -- comme
     // verifierMiseAJourAuDemarrage() côté Android (voir www/index.html) :
