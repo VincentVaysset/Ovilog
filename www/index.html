@@ -5957,8 +5957,14 @@ function renderAgneaux() {
    tagué "campagne à venir" avant le changement officiel de campagne doit
    rester dans la zone haute éditable, pas remonter comme le plus récent de
    "Historique par campagne" alors qu'il ne s'est même pas encore produit
-   du point de vue de DB.campagneDebut. */
-function historiqueParCampagneHtml(groupes, emptyLabel) {
+   du point de vue de DB.campagneDebut.
+   `campagneExtraHtml(key)` (optionnel, chantier "Onglet Carrière") : HTML
+   affiché à droite du bandeau de campagne -- sert au résumé "Index"
+   (lactation totale + nombre de jours) associé à cette campagne, pour
+   l'avoir sous les yeux sans une entrée de plus dans la liste. Retourne ''
+   si rien à afficher pour cette campagne (ex. campagne "vide", aucune
+   lactation). */
+function historiqueParCampagneHtml(groupes, emptyLabel, campagneExtraHtml) {
   const passees = [];
   groupes.forEach(g => {
     const items = g.exclureCampagneEnCours === false ? g.items : g.items.filter(it => it.campagne == null || it.campagne < DB.campagneDebut);
@@ -5976,10 +5982,14 @@ function historiqueParCampagneHtml(groupes, emptyLabel) {
     if (b === '?') return -1;
     return Number(b) - Number(a);
   });
-  return keys.map(key => {
+  return keys.map((key, i) => {
     const entries = parCampagne[key].sort((a, b) => (b.item.date || '').localeCompare(a.item.date || ''));
+    const extra = campagneExtraHtml ? campagneExtraHtml(key) : '';
     return `
-    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin:14px 0 6px;">${key === '?' ? 'Campagne inconnue' : 'Campagne ' + (Number(key) + 1)}</div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;background:var(--gray-bg);color:var(--gray-fg);padding:7px 12px;border-radius:10px;margin:${i === 0 ? '0' : '14px'} 0 5px;">
+      <span style="font-size:12.5px;font-weight:700;">${key === '?' ? 'Campagne inconnue' : 'Campagne ' + (Number(key) + 1)}</span>
+      ${extra}
+    </div>
     ${entries.map(p => p.renderItem(p.item)).join('')}
   `;
   }).join('');
@@ -6082,6 +6092,18 @@ function renderDetail(id) {
   `;
 
   const sanitaire = sheep.sanitaire || [];
+  // Contrairement aux échographies/agnelages/contrôles laitiers, une entrée
+  // sanitaire n'a jamais été taguée `campagne` (le carnet sanitaire de
+  // sanitTabHtml ci-dessous reste volontairement affiché sur toute la durée
+  // de vie de l'animal, "aucun changement" -- voir chantier "Onglet
+  // Carrière"). Pour pouvoir malgré tout la classer par campagne dans
+  // l'historique Carrière, on déduit sa campagne depuis sa date, comme le
+  // fait déjà le registre d'élevage (voir campagneDeDateRegistre) : même
+  // calcul, réutilisé tel quel plutôt que d'inventer une seconde règle.
+  // Une même entrée peut donc apparaître à la fois ici (une fois sa
+  // campagne passée) ET dans le carnet sanitaire toujours affiché plus
+  // bas -- assumé, pas un doublon à corriger.
+  const sanitaireIndexes = sanitaire.map((s, i) => ({...s, idx: i, campagne: campagneDeDateRegistre(s.date)}));
   const sanitaireHtml = sanitaire.map((s, i) => ({...s, idx: i})).reverse().map(s => `
     <div class="swipe-wrap" data-kind="sanitaire" data-idx="${s.idx}">
       <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
@@ -6168,14 +6190,28 @@ function renderDetail(id) {
   const bilanLactationSheep = (DB.bilanLactation || [])
     .filter(l => cleanEid(l.eid) === cleanEid(sheep.eid))
     .map(l => ({ ...l, date: l.dateMiseBas }));
+  // Résumé "Index" par campagne (chantier "Onglet Carrière", mockup
+  // validé) : lactation totale + nombre de jours affichés directement dans
+  // le bandeau de la campagne concernée -- pas une entrée de plus dans la
+  // liste, juste un repère visible d'un coup d'œil. Une seule entrée de
+  // bilan par brebis+campagne (voir importBilanLactation), donc pas besoin
+  // de choisir entre plusieurs le cas échéant.
+  const bilanParCampagne = {};
+  bilanLactationSheep.forEach(l => { if (l.campagne != null) bilanParCampagne[String(l.campagne)] = l; });
   const historiqueCampagnesHtml = historiqueParCampagneHtml(
     [
       { items: echoIndexes, renderItem: e => `<div class="history-item">${iconCircle(ICON_ECHO, 'green', 'sm')}${echoItemHtml(e)}</div>` },
       { items: agnelagesIndexes, renderItem: a => `<div class="history-item">${iconCircle(ICON_SHEEP, 'amber', 'sm')}${agnelageItemHtml(a, false)}</div>` },
+      { items: sanitaireIndexes, renderItem: s => `<div class="history-item">${iconCircle(ICON_SANTE, 'coral', 'sm')}<div class="content"><div style="font-weight:600;">${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</div>${(s.dose || s.collectif) ? `<div style="margin-top:5px;">${s.dose ? `<span class="badge badge-muted" style="margin-right:6px;">${s.dose}</span>` : ''}${s.collectif ? '<span class="badge badge-gray">Collectif</span>' : ''}</div>` : ''}<div class="date" style="margin-top:4px;">${formatDateFr(s.date)}</div>${s.commentaire ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin-top:2px;">${s.commentaire}</div>` : ''}</div></div>` },
       { items: controleIndexes, renderItem: c => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}${controleItemHtml(c)}</div>` },
       { items: bilanLactationSheep, exclureCampagneEnCours: false, renderItem: l => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}<div class="content"><div style="font-size:11.5px;color:var(--text-muted);">Bilan de lactation</div><div style="font-weight:700;font-size:15px;">${fmtDecimal(l.lactTotale, 1)} L</div><div style="margin-top:5px;">${l.dureeTraite != null ? `<span class="badge badge-muted" style="margin-right:6px;">${l.dureeTraite} j de traite</span>` : ''}${l.classeParQuart != null ? `<span class="badge badge-blue">Classe ${l.classeParQuart}</span>` : ''}</div><div class="date" style="margin-top:4px;">Mise bas le ${formatDateFr(l.dateMiseBas)}</div></div></div>` }
     ],
-    'Aucun historique des campagnes précédentes.'
+    'Aucun historique des campagnes précédentes.',
+    key => {
+      const b = bilanParCampagne[key];
+      if (!b || b.lactTotale == null) return '';
+      return `<span style="font-size:12px;font-weight:700;color:var(--blue-fg);flex-shrink:0;">${fmtDecimal(b.lactTotale, 1)} L${b.dureeTraite != null ? ` <span style="font-weight:500;color:var(--text-muted);">· ${b.dureeTraite} j</span>` : ''}</span>`;
+    }
   );
 
   const statutBadge = (sheep.statut && sheep.statut !== 'active')
