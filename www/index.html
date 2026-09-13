@@ -3499,6 +3499,7 @@ btnBack.onclick = () => {
   else if (currentView === 'traitement-collectif') render('sanitaire');
   else if (currentView === 'traitements-collectifs') render('sanitaire');
   else if (currentView === 'import-bilan-lactation') { bilanCampagneTab = 'lactation'; render('bilan-campagne'); }
+  else if (currentView === 'import-correspondance-sieol') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render(belierDetailOrigin);
   else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
@@ -3697,6 +3698,7 @@ function render(view, sheepId) {
     else if (view === 'sanitaire') renderSanitaire();
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
     else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
+    else if (view === 'import-correspondance-sieol') renderImportCorrespondanceSieol();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
     else if (view === 'registre') renderRegistre();
@@ -15034,7 +15036,7 @@ function decodeCsvBuffer(buffer) {
 }
 
 /* ---------- Lecteur XLSX minimal (ZIP + OOXML), sans dépendance externe ---------- */
-async function readXlsxRows(buffer) {
+async function readXlsxRows(buffer, wantedSheetName) {
   const view = new DataView(buffer);
   const bytes = new Uint8Array(buffer);
   let eocd = -1;
@@ -15094,20 +15096,60 @@ async function readXlsxRows(buffer) {
     }
   }
 
-  let sheetName = 'xl/worksheets/sheet1.xml';
-  if (!files[sheetName]) {
-    sheetName = Object.keys(files)
-      .filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
-      .sort((a, b) => parseInt(a.match(/\d+/)[0], 10) - parseInt(b.match(/\d+/)[0], 10))[0];
+  // Résolution de la feuille par son NOM (ex: "Correspondance SIEOL"),
+  // jamais par sa position physique dans le classeur -- l'ordre des
+  // fichiers sheetN.xml dans le ZIP ne correspond pas forcément à l'ordre
+  // des onglets ni à leur nom (xl/workbook.xml associe chaque nom à un
+  // r:id, xl/_rels/workbook.xml.rels associe ce r:id au fichier réel,
+  // parfois en chemin absolu "/xl/worksheets/sheetN.xml"). Si
+  // `wantedSheetName` est omis ou introuvable, on retombe sur l'ancien
+  // comportement (première feuille physique) -- aucun appelant existant
+  // ne passait ce paramètre avant le chantier "Import Correspondance SIEOL".
+  let sheetFile = null;
+  if (wantedSheetName) {
+    const workbookXml = await getFileText('xl/workbook.xml');
+    const relsXml = await getFileText('xl/_rels/workbook.xml.rels');
+    if (workbookXml && relsXml) {
+      const sheetNodes = new DOMParser().parseFromString(workbookXml, 'application/xml').getElementsByTagName('sheet');
+      let rId = null;
+      for (let i = 0; i < sheetNodes.length; i++) {
+        if (sheetNodes[i].getAttribute('name') === wantedSheetName) { rId = sheetNodes[i].getAttribute('r:id'); break; }
+      }
+      if (rId) {
+        const relNodes = new DOMParser().parseFromString(relsXml, 'application/xml').getElementsByTagName('Relationship');
+        for (let i = 0; i < relNodes.length; i++) {
+          if (relNodes[i].getAttribute('Id') === rId) {
+            const target = (relNodes[i].getAttribute('Target') || '').replace(/^\//, '');
+            sheetFile = target.startsWith('xl/') ? target : 'xl/' + target;
+            break;
+          }
+        }
+      }
+    }
   }
-  const sheetXml = sheetName ? await getFileText(sheetName) : null;
-  if (!sheetXml) throw new Error("Aucune feuille trouvée dans le fichier .xlsx.");
+  if (!sheetFile || !files[sheetFile]) {
+    sheetFile = 'xl/worksheets/sheet1.xml';
+    if (!files[sheetFile]) {
+      sheetFile = Object.keys(files)
+        .filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
+        .sort((a, b) => parseInt(a.match(/\d+/)[0], 10) - parseInt(b.match(/\d+/)[0], 10))[0];
+    }
+  }
+  const sheetXml = sheetFile ? await getFileText(sheetFile) : null;
+  if (!sheetXml) throw new Error(wantedSheetName ? `Onglet "${wantedSheetName}" introuvable dans le fichier .xlsx.` : "Aucune feuille trouvée dans le fichier .xlsx.");
 
   const doc = new DOMParser().parseFromString(sheetXml, 'application/xml');
   const rowNodes = doc.getElementsByTagName('row');
   const rows = [];
+  // Indexé sur le numéro de ligne RÉEL (attribut r="5" du <row>), jamais la
+  // position séquentielle dans le XML : une ligne entièrement vide n'a
+  // souvent aucune balise <row> écrite (Excel/LibreOffice l'omettent), ce
+  // qui décalerait tout le reste du tableau d'un cran si on se basait sur
+  // l'ordre d'apparition -- exactement le cas du modèle "Correspondance
+  // SIEOL" livré (ligne 3 vide, absente du XML).
   for (let i = 0; i < rowNodes.length; i++) {
-    const cellNodes = rowNodes[i].getElementsByTagName('c');
+    const rowNode = rowNodes[i];
+    const cellNodes = rowNode.getElementsByTagName('c');
     const row = [];
     for (let j = 0; j < cellNodes.length; j++) {
       const cell = cellNodes[j];
@@ -15132,8 +15174,10 @@ async function readXlsxRows(buffer) {
       row[colIdx] = value;
     }
     for (let k = 0; k < row.length; k++) if (row[k] === undefined) row[k] = '';
-    rows.push(row);
+    const rowNum = parseInt(rowNode.getAttribute('r'), 10);
+    rows[Number.isFinite(rowNum) && rowNum > 0 ? rowNum - 1 : rows.length] = row;
   }
+  for (let k = 0; k < rows.length; k++) if (rows[k] === undefined) rows[k] = [];
   return rows;
 }
 
@@ -15808,6 +15852,167 @@ function renderImportControleLaitierSieol() {
   };
 }
 
+/* ---------- Import "Correspondance SIEOL" (Paramètres > Imports) ----------
+   Chantier "Import Correspondance SIEOL" -- UNIQUEMENT le mode "fichier
+   modèle Ovilog" (Modele_Correspondance_SIEOL.xlsx) rempli par l'éleveur ;
+   le mode "fichier brut SIEOL" (mapping de colonnes à la volée) reste hors
+   périmètre. Structure du modèle (confirmée sur le fichier réel livré) :
+   onglet "Correspondance SIEOL", en-têtes en ligne 4, données à partir de
+   la ligne 5 -- colonne A = numéro EID (11 chiffres, format
+   eidAffichageCourt), B = numéro officiel Ovilog (informatif, jamais lu),
+   C = numéro long travail SIEOL, D = numéro court travail SIEOL. Lecture
+   arrêtée à la première ligne sans EID (fin du tableau, avant la ligne de
+   note "à supprimer avant l'import" du modèle).
+   Résolution stricte par EID EXACT (jamais trouverParNumero/candidats :
+   l'EID d'un fichier est une clé fiable, pas une saisie utilisateur
+   ambiguë). numeroLongTravailSieol/numeroCourtTravailSieol sont fixes à
+   vie une fois posés (règle métier déjà actée) : seuls les animaux SANS
+   valeur actuelle sont écrits à la confirmation ; un animal qui a déjà une
+   valeur différente de celle du fichier est isolé dans une section à part,
+   jamais appliqué automatiquement ; une valeur identique est ignorée
+   silencieusement. */
+const SIEOL_CORRESP_SHEET = 'Correspondance SIEOL';
+const SIEOL_CORRESP_PREMIERE_LIGNE = 5; // 1-indexé, comme dans le tableur
+
+/* Découpe les lignes lues (voir readXlsxRows) en 3 catégories, sans rien
+   écrire -- pure fonction de classement, réutilisée telle quelle par
+   l'aperçu et par la confirmation (jamais deux logiques différentes). */
+function classerLignesCorrespondanceSieol(rows) {
+  const pool = [...DB.brebis, ...(DB.agnelles || [])];
+  const nouvelles = [];   // { eid, long, court, animal }
+  const conflits = [];    // { eid, long, court, animal, longActuel, courtActuel }
+  const nonTrouves = [];  // { eid }
+  for (let i = SIEOL_CORRESP_PREMIERE_LIGNE - 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const eidFichier = String(row[0] || '').trim();
+    if (!eidFichier) break; // fin du tableau (voir SIEOL_CORRESP_PREMIERE_LIGNE)
+    // Colonne B (numéro officiel Ovilog) volontairement jamais lue (informatif).
+    let long = String(row[2] || '').trim() || null;
+    let court = String(row[3] || '').trim() || null;
+    if (!long && !court) continue; // rien à proposer sur cette ligne -- ignorée silencieusement
+    if (long && !court) court = sieolLongVersCourt(long) || null;
+    else if (court && !long) long = sieolCourtVersLong(court) || null;
+
+    const animal = pool.find(a => eidAffichageCourt(a.eid) === eidFichier);
+    if (!animal) { nonTrouves.push({ eid: eidFichier }); continue; }
+
+    const longActuel = animal.numeroLongTravailSieol || null;
+    const courtActuel = animal.numeroCourtTravailSieol || null;
+    if (!longActuel && !courtActuel) {
+      nouvelles.push({ eid: eidFichier, long, court, animal });
+    } else if (longActuel === long && courtActuel === court) {
+      // Valeur déjà identique -- rien à faire, aucune alerte (voir chantier).
+    } else {
+      conflits.push({ eid: eidFichier, long, court, animal, longActuel, courtActuel });
+    }
+  }
+  return { nouvelles, conflits, nonTrouves };
+}
+
+function renderImportCorrespondanceSieol() {
+  pageTitle.textContent = 'Import Correspondance SIEOL';
+  let classement = null; // { nouvelles, conflits, nonTrouves }
+
+  app.innerHTML = `
+    <div class="card">
+      <label style="display:flex;align-items:center;">Fichier modèle Ovilog${infoBulleHtml('Format du fichier', "Fichier .xlsx basé sur Modele_Correspondance_SIEOL.xlsx, onglet \"Correspondance SIEOL\" -- une ligne par animal (brebis ou agnelle) : numéro EID (11 chiffres), numéro officiel Ovilog (ignoré), numéro long travail SIEOL, numéro court travail SIEOL. Un seul des deux numéros suffit, l'autre est déduit automatiquement.")}</label>
+      <input type="file" id="import-corresp-sieol-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <div id="import-corresp-sieol-err" class="error-box hidden"></div>
+    </div>
+    <div id="import-corresp-sieol-preview"></div>
+    <button class="btn btn-primary hidden" id="btn-confirm-import-corresp-sieol" style="margin-top:14px;">Confirmer l'import</button>
+  `;
+
+  function renderPreview() {
+    const preview = document.getElementById('import-corresp-sieol-preview');
+    const btnConfirm = document.getElementById('btn-confirm-import-corresp-sieol');
+    if (!classement) { preview.innerHTML = ''; btnConfirm.classList.add('hidden'); return; }
+    const { nouvelles, conflits, nonTrouves } = classement;
+
+    preview.innerHTML = `
+      <div class="card" style="margin-top:14px;">
+        <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
+          <div class="stat-card sc-green"><div class="stat-card-label">À mettre à jour</div><div class="stat-card-value" style="font-size:16px;">${nouvelles.length}</div></div>
+          <div class="stat-card sc-coral"><div class="stat-card-label">EID non trouvés</div><div class="stat-card-value" style="font-size:16px;">${nonTrouves.length}</div></div>
+          <div class="stat-card sc-amber"><div class="stat-card-label">Conflits (non appliqués)</div><div class="stat-card-value" style="font-size:16px;">${conflits.length}</div></div>
+        </div>
+      </div>
+
+      ${nonTrouves.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-weight:600;margin-bottom:8px;color:var(--coral-fg);">EID non trouvés (${nonTrouves.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Aucune fiche brebis/agnelle ne correspond à ces numéros EID -- ces lignes ne seront pas traitées.</div>
+        ${nonTrouves.map(x => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">${x.eid}</div>`).join('')}
+      </div>
+      ` : ''}
+
+      ${conflits.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-weight:600;margin-bottom:8px;color:var(--amber-fg);">Valeur déjà existante différente (${conflits.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Le numéro de travail SIEOL est fixe une fois posé : ces animaux ont déjà une valeur différente de celle du fichier -- <strong>non modifiés automatiquement</strong>. À traiter manuellement sur la fiche de l'animal si besoin.</div>
+        ${conflits.map(x => `
+        <div style="font-size:13px;padding:6px 0;border-top:1px solid var(--border);">
+          <div>Brebis/agnelle n°${numeroVisuel(x.animal.eid)} (EID ${x.eid})</div>
+          <div style="color:var(--text-muted);font-size:12px;">Actuel : ${x.longActuel || '—'} / ${x.courtActuel || '—'} &nbsp;→&nbsp; Fichier propose : ${x.long || '—'} / ${x.court || '—'}</div>
+        </div>`).join('')}
+      </div>
+      ` : ''}
+
+      ${nouvelles.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-weight:600;margin-bottom:8px;">Seront mis à jour (${nouvelles.length})</div>
+        ${nouvelles.map(x => `
+        <div style="font-size:13px;padding:6px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;">
+          <span>N°${numeroVisuel(x.animal.eid)} (EID ${x.eid})</span>
+          <span style="color:var(--text-muted);">${x.long || '—'} / ${x.court || '—'}</span>
+        </div>`).join('')}
+      </div>
+      ` : ''}
+    `;
+    btnConfirm.classList.toggle('hidden', nouvelles.length === 0);
+  }
+
+  document.getElementById('import-corresp-sieol-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-corresp-sieol-err');
+    err.classList.add('hidden');
+    classement = null;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const rows = await readXlsxRows(reader.result, SIEOL_CORRESP_SHEET);
+        classement = classerLignesCorrespondanceSieol(rows);
+        renderPreview();
+      } catch (ex) {
+        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import-corresp-sieol').onclick = () => {
+    if (!classement || classement.nouvelles.length === 0) return;
+    classement.nouvelles.forEach(x => {
+      x.animal.numeroLongTravailSieol = x.long || null;
+      x.animal.numeroCourtTravailSieol = x.court || null;
+    });
+    const nbNouvelles = classement.nouvelles.length;
+    const nbConflits = classement.conflits.length;
+    const nbNonTrouves = classement.nonTrouves.length;
+    saveData(DB);
+    alert(nbNouvelles + ' animal(aux) mis à jour.'
+      + (nbConflits > 0 ? ' ' + nbConflits + ' conflit(s) laissé(s) de côté (valeur existante conservée).' : '')
+      + (nbNonTrouves > 0 ? ' ' + nbNonTrouves + ' EID non trouvé(s).' : ''));
+    render('parametres');
+  };
+}
+
 /* Nom + contenu d'un fichier de sauvegarde automatique silencieuse (voir
    writeAutoBackupFile), utilisés avant le changement de campagne ET avant
    l'import d'une sauvegarde JSON (voir renderParametres) — horodaté à la
@@ -16186,7 +16391,17 @@ function renderParametresImports(content) {
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Bientôt disponible.</div>
     <button type="button" class="btn btn-secondary" disabled>Importer le fichier</button>
   </div>`;
-  content.innerHTML = placeholder('Correspondance SIEOL') + placeholder('Nouveaux animaux') + placeholder('Contrôle laitier');
+  // "Correspondance SIEOL" (chantier "Import Correspondance SIEOL") : mode
+  // "fichier modèle Ovilog" uniquement -- le mode "fichier brut SIEOL"
+  // (mapping de colonnes à la volée) reste hors périmètre, en attente d'un
+  // exemple réel. Les deux autres cartes restent des placeholders.
+  const correspondanceSieolCard = `<div class="card" style="margin-bottom:12px;">
+    <div style="font-weight:600;margin-bottom:6px;">Correspondance SIEOL</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (Modele_Correspondance_SIEOL.xlsx) : associe le numéro EID de chaque animal à son numéro de travail SIEOL long et/ou court.</div>
+    <button type="button" class="btn btn-secondary" id="btn-import-correspondance-sieol">Importer le fichier</button>
+  </div>`;
+  content.innerHTML = correspondanceSieolCard + placeholder('Nouveaux animaux') + placeholder('Contrôle laitier');
+  document.getElementById('btn-import-correspondance-sieol').onclick = () => render('import-correspondance-sieol');
 }
 
 /* ---------- Onglet Campagne ---------- */
