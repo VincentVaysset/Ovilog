@@ -296,6 +296,20 @@
   .tab-btn { flex: 1; border: none; background: none; padding: 9px 6px; border-radius: var(--radius-pill); font-size: 13px; font-weight: 600; color: var(--text-muted); cursor: pointer; }
   .tab-btn.active { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
 
+  /* ---------- Grille mensuelle du Calendrier (ex-Agenda) ---------- */
+  .calendrier-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .calendrier-grid-header { margin-bottom: 4px; }
+  .calendrier-cell-label { text-align: center; font-size: 11px; font-weight: 700; color: var(--text-muted); padding: 4px 0; }
+  .calendrier-cell { aspect-ratio: 1; }
+  .calendrier-cell-vide { background: none; }
+  .calendrier-jour-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; width: 100%; height: 100%; border: none; background: #f0efe9; border-radius: 10px; cursor: pointer; padding: 0; }
+  .calendrier-jour-num { font-size: 13px; font-weight: 600; color: var(--text); }
+  .calendrier-jour-today .calendrier-jour-num { color: var(--primary); }
+  .calendrier-jour-selected { background: var(--primary); }
+  .calendrier-jour-selected .calendrier-jour-num { color: #fff; }
+  .calendrier-jour-badge { width: 5px; height: 5px; border-radius: 50%; background: var(--coral-fg); }
+  .calendrier-jour-selected .calendrier-jour-badge { background: #fff; }
+
   /* ---------- Grille d'onglets de la fiche brebis (chantier "Refonte en
      onglets", inspiré Vénus/Psion) ----------
      Même principe que .tab-bar ci-dessus (pilule active sur fond clair),
@@ -1525,9 +1539,9 @@ function campagneAnneeDebutPourDate(dateStr, exploitation) {
    Le volume de chaque prélèvement (prelevementsQualite[].volumeLait) est
    TOUJOURS recopié depuis le relevé tank du même jour (laitTank) — jamais
    saisi à part — pour qu'il n'y ait qu'un seul chiffre de volume par jour
-   dans toute l'appli. Voir renderJournal (case "Prélèvement qualité ce jour")
-   et renderQualite (bouton "+ Nouveau prélèvement qualité" et resynchro
-   automatique quand un relevé tank déjà utilisé est corrigé). */
+   dans toute l'appli. Voir renderQualite (case "Prélèvement qualité ce
+   jour" et bouton "+ Nouveau prélèvement qualité", resynchro automatique
+   quand un relevé tank déjà utilisé est corrigé). */
 function findTankVolumeForDate(date) {
   const l = DB.laitTank.find(x => x.date === date);
   return l ? l.quantite : null;
@@ -1656,7 +1670,7 @@ function noteButyrique(v) { if (v <= 1300) return 3; if (v <= 2400) return 2; re
 
 /* Bornes de vraisemblance (NON bloquantes) sur les champs qualité du lait,
    saisis dans openQualiteSheet et dans le sous-formulaire qualité de
-   renderJournal (Agenda) -- une valeur hors de cette plage n'empêche
+   renderQualite (case "Prélèvement qualité ce jour") -- une valeur hors de cette plage n'empêche
    jamais l'enregistrement (une vraie mammite sévère peut produire des
    chiffres extrêmes), mais demande une confirmation explicite pour écarter
    une simple faute de frappe (chiffre en trop, virgule mal placée...).
@@ -2249,6 +2263,19 @@ function campagneRefDate() {
   if (DB.campagneDateDemarrage) return new Date(DB.campagneDateDemarrage);
   if (DB.campagneDebut) return new Date(DB.campagneDebut, campagneMoisDebutConfig() - 1, campagneJourDebutConfig());
   return null;
+}
+
+/* Date réelle de fin de la campagne en cours (la veille du démarrage de la
+   suivante, ex. 30 septembre par défaut) -- contrairement à
+   campagneDateFinLabel (libellé sans année, calé sur 2024 bissextile),
+   celle-ci porte la vraie année de la campagne en cours et sert de calcul,
+   pas d'affichage (voir evenementsCalendrierDerives, rappel "Vide
+   définitive à confirmer"). null si aucune campagne n'est configurée. */
+function campagneDateFinReelle() {
+  if (DB.campagneDebut == null) return null;
+  const d = new Date(DB.campagneDebut + 1, campagneMoisDebutConfig() - 1, campagneJourDebutConfig());
+  d.setDate(d.getDate() - 1);
+  return d;
 }
 
 /* Reconstruit la population de brebis "présentes" à la date de référence de
@@ -3137,6 +3164,8 @@ let bilanCampagneTab = 'incoherences';
 let bilanLactationCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan de lactation, voir bilanLactationHtml
 let inventaireActifsTab = 'brebis'; // 'brebis' | 'agnelles' | 'beliers' | 'agneaux' — voir renderInventaireActifs
 let declarationAnneeSelectionnee = null; // année civile choisie sur l'écran Déclaration annuelle (voir renderDeclarationAnnuelle), initialisée à l'année en cours au premier rendu
+let calendrierMoisAffiche = null; // 'YYYY-MM' du mois affiché sur le Calendrier (voir renderJournal) -- initialisé au mois en cours au premier rendu, conservé ensuite pour garder la navigation mois précédent/suivant d'un rendu à l'autre
+let calendrierJourSelectionne = null; // 'YYYY-MM-JJ' du jour dont le détail est affiché sous la grille, ou null si aucun
 
 // Vues racines, accessibles directement depuis le menu hamburger : elles
 // affichent le hamburger (pas de flèche retour) dans l'en-tête.
@@ -3197,7 +3226,7 @@ const NAV_ITEMS = [
   { view: 'inventaire', label: "Mouvements d'animaux", icon: ICON_MOUVEMENT, color: 'coral' },
   { view: 'sanitaire', label: 'Carnet sanitaire', icon: ICON_SANTE, color: 'coral' },
   { view: 'qualite', label: 'Qualité', icon: ICON_LAIT, color: 'blue' },
-  { view: 'journal', label: 'Agenda', icon: ICON_JOURNAL, color: 'green' },
+  { view: 'journal', label: 'Calendrier', icon: ICON_JOURNAL, color: 'green' },
   { view: 'registre', label: "Registre d'élevage", icon: ICON_JOURNAL, color: 'coral' },
   { view: 'declaration-annuelle', label: 'Déclaration annuelle', icon: ICON_CALENDAR, color: 'coral' },
   { view: 'parametres', label: 'Paramètres', icon: ICON_SETTINGS, color: 'gray' }
@@ -9709,143 +9738,148 @@ function renderAddMouvementBelier() {
 }
 
 
-/* ---------- Journal / événements ponctuels (Agenda) ---------- */
+/* ---------- Événements dérivés du Calendrier (chantier "Refonte Agenda ->
+   Calendrier") ----------
+   Jamais stockés : recalculés à chaque affichage (voir renderJournal),
+   toujours en lecture seule (jamais éditables/supprimables depuis le
+   Calendrier) :
+   a) une entrée par lot de reproduction (IA/Éponge), à sa date réelle de
+      pose/lutte (lot.dateEvenement) -- toutes campagnes confondues, pour
+      rester cohérent en feuilletant un mois passé ;
+   b) un rappel unique "Vide définitive à confirmer", au niveau de la
+      campagne (jamais par brebis) : date de la dernière échographie
+      enregistrée sur la campagne en cours + 3 jours, ou à défaut (aucune
+      écho cette campagne) date de fin de campagne − 30 jours.
+   Explicitement hors scope : agnelages, filtre par catégorie, lien vers
+   les vrais enregistrements Contrôle laitier/Carnet sanitaire. */
+function evenementsCalendrierDerives() {
+  const events = [];
+  (DB.lots || []).forEach(lot => {
+    if (lot.type !== 'reproduction' || !lot.dateEvenement) return;
+    events.push({
+      date: lot.dateEvenement,
+      icon: '🐑',
+      label: (lot.mode === 'EP' ? 'Lutte Éponge' : 'Lutte IA') + ' — ' + lot.nom,
+      derive: true
+    });
+  });
+  if (DB.campagneDebut != null) {
+    const datesEcho = [];
+    (DB.brebis || []).forEach(s => (s.echographies || []).forEach(e => {
+      if (e.campagne === DB.campagneDebut && e.date) datesEcho.push(e.date);
+    }));
+    let dateRappel = null;
+    if (datesEcho.length > 0) {
+      dateRappel = addDaysToDateStr(datesEcho.sort().slice(-1)[0], 3);
+    } else {
+      const fin = campagneDateFinReelle();
+      if (fin) {
+        fin.setDate(fin.getDate() - 30);
+        dateRappel = fin.toISOString().slice(0, 10);
+      }
+    }
+    if (dateRappel) events.push({ date: dateRappel, icon: '❗', label: 'Vide définitive à confirmer', derive: true });
+  }
+  return events;
+}
+
+/* ---------- Calendrier (ex-Agenda) ----------
+   Chantier "Refonte Agenda -> Calendrier" : l'écran ne garde plus que les
+   notes ponctuelles modulables (DB.journal, aucun lien avec les vraies
+   données d'autres modules -- de simples pense-bêtes) -- toute saisie
+   tank laitier/qualité a été déplacée vers renderQualite (mêmes ids,
+   mêmes règles, rien de dupliqué). Vraie grille mensuelle avec navigation
+   précédent/suivant (calendrierMoisAffiche) et détail au clic sur un jour
+   (calendrierJourSelectionne), combinant notes saisies et événements
+   dérivés ci-dessus. */
+const JOURS_SEMAINE_COURT = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 function renderJournal() {
   DB.journal = DB.journal || [];
   DB.typesJournal = DB.typesJournal || [];
-  DB.laitTank = DB.laitTank || [];
-  pageTitle.textContent = 'Agenda';
+  pageTitle.textContent = 'Calendrier';
 
-  const now = new Date();
-  const dateDuJour = now.toISOString().slice(0,10); // 'YYYY-MM-DD'
-  const moisActuel = dateDuJour.slice(0,7); // 'YYYY-MM' — un mois ne chevauche jamais la bascule de campagne (1er oct), logique inchangée
-  const campagneActuelle = campagneAnneeDebutPourDate(dateDuJour);
-  const totalLaitMois = Math.round(DB.laitTank.filter(l => (l.date||'').startsWith(moisActuel)).reduce((s,l) => s + l.quantite, 0) * 10) / 10;
-  const totalLaitCampagne = Math.round(DB.laitTank.filter(l => l.date && campagneAnneeDebutPourDate(l.date) === campagneActuelle).reduce((s,l) => s + l.quantite, 0) * 10) / 10;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (!calendrierMoisAffiche) calendrierMoisAffiche = todayStr.slice(0, 7); // 'YYYY-MM', mois affiché par défaut = mois en cours
 
-  // Anti-doublon : une saisie par date. On calcule l'index existant pour la
-  // date par défaut (aujourd'hui) au rendu initial ; le champ date a aussi un
-  // écouteur qui refait ce calcul à chaque changement (voir plus bas).
-  const laitIdxPourDateDuJour = DB.laitTank.findIndex(l => l.date === dateDuJour);
+  // Regroupe TOUS les événements (saisis + dérivés) par date 'YYYY-MM-DD'.
+  const parDate = new Map();
+  DB.journal.forEach((e, idx) => {
+    if (!e.date) return;
+    if (!parDate.has(e.date)) parDate.set(e.date, []);
+    parDate.get(e.date).push({ ...e, journalIdx: idx, derive: false });
+  });
+  evenementsCalendrierDerives().forEach(e => {
+    if (!parDate.has(e.date)) parDate.set(e.date, []);
+    parDate.get(e.date).push(e);
+  });
 
-  const sorted = [...DB.journal].sort((a,b) => (b.date || '').localeCompare(a.date || ''));
-  const listHtml = sorted.length === 0
-    ? '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucun évènement enregistré.</div>'
-    : sorted.map(e => {
-        const realIdx = DB.journal.indexOf(e);
-        return `
-        <div class="card">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              ${iconCircle(ICON_JOURNAL, 'green', 'sm')}
-              <div>
-                <div style="font-weight:600;">${e.type}</div>
-                <div style="font-size:12px;color:var(--text-muted);">${formatDateFr(e.date)}${e.note ? ' · ' + e.note : ''}</div>
-              </div>
-            </div>
-            <button type="button" class="btn btn-secondary btn-del-journal" data-idx="${realIdx}" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
-          </div>
+  const [anneeAff, moisAff] = calendrierMoisAffiche.split('-').map(Number); // moisAff 1-indexé
+  const premierJourMois = new Date(anneeAff, moisAff - 1, 1);
+  const nbJoursMois = new Date(anneeAff, moisAff, 0).getDate();
+  const decalageDebut = (premierJourMois.getDay() + 6) % 7; // getDay() 0=dimanche -> décale pour commencer sur Lundi=0
+  const nomMoisAffiche = NOMS_MOIS[moisAff - 1].charAt(0).toUpperCase() + NOMS_MOIS[moisAff - 1].slice(1) + ' ' + anneeAff;
+
+  let cellulesHtml = '';
+  for (let i = 0; i < decalageDebut; i++) cellulesHtml += '<div class="calendrier-cell calendrier-cell-vide"></div>';
+  for (let jour = 1; jour <= nbJoursMois; jour++) {
+    const dateStr = anneeAff + '-' + String(moisAff).padStart(2, '0') + '-' + String(jour).padStart(2, '0');
+    const evenementsJour = parDate.get(dateStr) || [];
+    const estAujourdhui = dateStr === todayStr;
+    const estSelectionne = dateStr === calendrierJourSelectionne;
+    cellulesHtml += `
+      <button type="button" class="calendrier-cell calendrier-jour-btn${estAujourdhui ? ' calendrier-jour-today' : ''}${estSelectionne ? ' calendrier-jour-selected' : ''}" data-date="${dateStr}">
+        <span class="calendrier-jour-num">${jour}</span>
+        ${evenementsJour.length > 0 ? '<span class="calendrier-jour-badge"></span>' : ''}
+      </button>
+    `;
+  }
+
+  const jourDetailHtml = !calendrierJourSelectionne ? '' : (() => {
+    const evenementsJour = (parDate.get(calendrierJourSelectionne) || []).slice().sort((a, b) => (a.derive ? 1 : 0) - (b.derive ? 1 : 0));
+    return `
+      <div class="card" id="calendrier-jour-detail" style="margin-top:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div style="font-size:14px;font-weight:600;">${formatDateFr(calendrierJourSelectionne)}</div>
+          <button type="button" class="btn btn-secondary" id="btn-close-jour-detail" style="width:auto;padding:4px 10px;font-size:12px;">Fermer</button>
         </div>
-      `;
-      }).join('');
+        ${evenementsJour.length === 0
+          ? '<div style="font-size:13px;color:var(--text-muted);">Aucun évènement ce jour-là.</div>'
+          : evenementsJour.map(e => e.derive ? `
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);">
+              <span style="font-size:16px;">${e.icon}</span>
+              <div style="font-size:13px;color:var(--text-muted);">${e.label}</div>
+            </div>
+          ` : `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+              <div>
+                <div style="font-weight:600;font-size:13.5px;">${e.type}</div>
+                ${e.note ? `<div style="font-size:12px;color:var(--text-muted);">${e.note}</div>` : ''}
+              </div>
+              <button type="button" class="btn btn-secondary btn-del-journal" data-idx="${e.journalIdx}" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
+            </div>
+          `).join('')}
+      </div>
+    `;
+  })();
 
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Production laitière (tank)</div>
-      <div class="grid2" style="margin-bottom:12px;">
-        <div>
-          <div style="font-size:12px;color:var(--text-muted);">Ce mois-ci</div>
-          <div style="font-size:22px;font-weight:600;color:var(--blue-fg);">${totalLaitMois} L</div>
-        </div>
-        <div>
-          <div style="font-size:12px;color:var(--text-muted);">Cette campagne</div>
-          <div style="font-size:22px;font-weight:600;color:var(--blue-fg);">${totalLaitCampagne} L</div>
-        </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <button type="button" class="btn btn-secondary" id="btn-mois-prec" style="width:auto;padding:6px 14px;">‹</button>
+        <div style="font-size:15px;font-weight:600;">${nomMoisAffiche}</div>
+        <button type="button" class="btn btn-secondary" id="btn-mois-suiv" style="width:auto;padding:6px 14px;">›</button>
       </div>
-      <label>Ajouter le relevé du jour</label>
-      <div class="row">
-        <input type="date" id="f-lait-date" value="${dateDuJour}" style="flex:1;">
-        <input type="number" step="0.1" id="f-lait-qte" placeholder="Litres" value="${laitIdxPourDateDuJour !== -1 ? DB.laitTank[laitIdxPourDateDuJour].quantite : ''}" style="flex:1;">
+      <div class="calendrier-grid calendrier-grid-header">
+        ${JOURS_SEMAINE_COURT.map(j => `<div class="calendrier-cell-label">${j}</div>`).join('')}
       </div>
-      <div id="lait-doublon-note" class="${laitIdxPourDateDuJour === -1 ? 'hidden' : ''}" style="font-size:12px;color:var(--warning);margin-top:6px;">${laitIdxPourDateDuJour !== -1 ? `Une saisie existe déjà pour le ${formatDateFr(dateDuJour)} (${DB.laitTank[laitIdxPourDateDuJour].quantite} L) — elle sera mise à jour.` : ''}</div>
-
-      <label class="row" style="align-items:center;gap:10px;cursor:pointer;margin:10px 0 4px;">
-        <input type="checkbox" id="q-checkbox" style="width:19px;height:19px;margin:0;flex-shrink:0;">
-        <span style="font-size:14.5px;font-weight:600;">Prélèvement qualité ce jour</span>
-      </label>
-      <div id="q-doublon-note" class="note-warn hidden"></div>
-      <div id="q-panel" class="hidden" style="border-top:1px dashed var(--border);padding-top:14px;margin-bottom:14px;">
-        <div class="row">
-          <div style="flex:1;"><label>TB (g/L)</label><input type="number" step="0.1" id="q-tb"></div>
-          <div style="flex:1;"><label>TP (g/L)</label><input type="number" step="0.1" id="q-tp"></div>
-        </div>
-        <div class="msu-box">
-          <span class="msu-label">MSU (calculé = TB + TP)</span>
-          <span class="msu-value" id="q-msu">—</span>
-        </div>
-        <label>Cellules (cellules/mL)</label>
-        <input type="number" id="q-cellules">
-        <label>Flore totale (UFC/mL)</label>
-        <input type="number" id="q-flore">
-        <div class="row">
-          <div style="flex:1;"><label>Coliformes (milliers/mL)</label><input type="number" id="q-colif"></div>
-          <div style="flex:1;"><label>Butyriques (spores/L)</label><input type="number" id="q-buty"></div>
-        </div>
-        <button type="button" class="disclosure-btn" id="q-disclosure"><span class="arrow">▸</span> Listériose, salmonelles</button>
-        <div class="optional-fields" id="q-optional">
-          <label>Listéria</label>
-          <div class="grid4" id="q-listeria" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px;">
-            <button type="button" class="opt-btn" data-val="negatif">Négatif</button>
-            <button type="button" class="opt-btn" data-val="positif">Positif</button>
-            <button type="button" class="opt-btn" data-val="non_analyse">Non analysé</button>
-          </div>
-          <label>Salmonelles</label>
-          <div class="grid4" id="q-salmonelles" style="grid-template-columns:repeat(3,1fr);margin-bottom:6px;">
-            <button type="button" class="opt-btn" data-val="negatif">Négatif</button>
-            <button type="button" class="opt-btn" data-val="positif">Positif</button>
-            <button type="button" class="opt-btn" data-val="non_analyse">Non analysé</button>
-          </div>
-          <div class="note-danger hidden" id="q-positif-warn">⚠️ Un résultat positif annule le bonus « Super A » de ce mois et déclenche une pénalité (barème à définir en phase 2).</div>
-        </div>
-      </div>
-
-      <div id="lait-err" class="error-box hidden"></div>
-      <div class="row" style="margin-top:8px;">
-        <button class="btn btn-secondary" id="btn-save-lait" style="flex:1;">Enregistrer</button>
-        <button type="button" class="btn btn-secondary" id="btn-goto-import-tank" style="flex:1;">Importer un CSV</button>
-      </div>
-      ${DB.laitTank.length > 0 ? '<div style="font-size:12px;color:var(--text-muted);margin-top:12px;margin-bottom:6px;">Derniers relevés</div>' : ''}
-      <div>
-        ${[...DB.laitTank].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,4).map(l => {
-          const realIdx = DB.laitTank.indexOf(l);
-          const q = findPrelevementQualiteByDate(l.date);
-          // Un relevé litrage seul (pas de prélèvement qualité ce jour-là)
-          // garde l'affichage minimal existant -- rien de plus à montrer.
-          if (!q) {
-            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px;">
-              <span>${formatDateFr(l.date)} — ${l.quantite} L</span>
-              <button type="button" class="btn btn-secondary btn-del-lait" data-idx="${realIdx}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
-            </div>`;
-          }
-          const msu = (q.tb !== null && q.tp !== null) ? q.tb + q.tp : null;
-          const superA = superAPourMois(q.date.slice(0, 7));
-          return `<div style="padding:8px 0;border-top:1px solid var(--border);font-size:13px;">
-            <div style="font-weight:600;margin-bottom:4px;">${formatDateFr(l.date)} — ${l.quantite} L</div>
-            <div style="font-size:11.5px;color:var(--text-muted);line-height:1.6;margin-bottom:8px;">
-              TB ${fmtDecimal(q.tb, 2)} · TP ${fmtDecimal(q.tp, 2)} · MSU ${fmtDecimal(msu, 2)}<br>
-              Cellules ${fmtDecimal(q.cellules, 0)} · Flore ${fmtDecimal(q.floreTotale, 0)} · Colif. ${fmtDecimal(q.coliformes, 0)} · Butyr. ${fmtDecimal(q.butyriques, 0)}<br>
-              Listéria ${labelTriStateCourt(q.listeria)} · Salmonelles ${labelTriStateCourt(q.salmonelles)} · Super A ${superA ? 'Oui' : 'Non'}
-            </div>
-            <div class="row" style="display:flex;gap:8px;">
-              <button type="button" class="btn btn-secondary btn-edit-qualite-journal" data-date="${q.date}" style="flex:1;padding:7px 0;font-size:12px;">Modifier</button>
-              <button type="button" class="btn btn-secondary btn-del-lait" data-idx="${realIdx}" style="flex:1;padding:7px 0;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
-            </div>
-          </div>`;
-        }).join('')}
+      <div class="calendrier-grid">
+        ${cellulesHtml}
       </div>
     </div>
 
-    <div class="card">
+    ${jourDetailHtml}
+
+    <div class="card" style="margin-top:14px;">
       <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Nouvel évènement</div>
       <label>Type d'évènement</label>
       <div class="chip-list" id="journal-type-list"></div>
@@ -9854,158 +9888,39 @@ function renderJournal() {
         <button type="button" class="btn btn-secondary" id="add-journal-type" style="width:auto;padding:0 16px;">+</button>
       </div>
       <label>Date</label>
-      <input type="date" id="f-journal-date" value="${new Date().toISOString().slice(0,10)}">
+      <input type="date" id="f-journal-date" value="${calendrierJourSelectionne || todayStr}">
       <label>Note (facultatif)</label>
       <input type="text" id="f-journal-note" placeholder="ex: lot des agnelles de 2025">
       <div id="journal-err" class="error-box hidden"></div>
       <button class="btn btn-primary" id="btn-save-journal">Enregistrer</button>
     </div>
-
-    <div style="font-size:14px;font-weight:600;margin:20px 0 10px;">Historique</div>
-    ${listHtml}
   `;
 
-  const laitDateInput = document.getElementById('f-lait-date');
-  const laitQteInput = document.getElementById('f-lait-qte');
-  const laitDoublonNote = document.getElementById('lait-doublon-note');
-  laitDateInput.addEventListener('input', () => {
-    const idx = DB.laitTank.findIndex(l => l.date === laitDateInput.value);
-    if (idx !== -1) {
-      laitQteInput.value = DB.laitTank[idx].quantite;
-      laitDoublonNote.textContent = `Une saisie existe déjà pour le ${formatDateFr(laitDateInput.value)} (${DB.laitTank[idx].quantite} L) — elle sera mise à jour.`;
-      laitDoublonNote.classList.remove('hidden');
-    } else {
-      laitQteInput.value = '';
-      laitDoublonNote.classList.add('hidden');
-    }
-  });
-
-  // ---------- Prélèvement qualité (case à cocher pendant la saisie tank) ----------
-  const qCheckbox = document.getElementById('q-checkbox');
-  const qPanel = document.getElementById('q-panel');
-  const qDoublonNote = document.getElementById('q-doublon-note');
-  const qTb = document.getElementById('q-tb'), qTp = document.getElementById('q-tp'), qMsu = document.getElementById('q-msu');
-  const qCellules = document.getElementById('q-cellules'), qFlore = document.getElementById('q-flore'), qColif = document.getElementById('q-colif'), qButy = document.getElementById('q-buty');
-  const qPositifWarn = document.getElementById('q-positif-warn');
-  const qListeriaState = wireTriState(document.getElementById('q-listeria'), null, checkQPositif);
-  const qSalmonellesState = wireTriState(document.getElementById('q-salmonelles'), null, checkQPositif);
-  function checkQPositif() {
-    qPositifWarn.classList.toggle('hidden', qListeriaState.get() !== 'positif' && qSalmonellesState.get() !== 'positif');
-  }
-  function recalcQMsu() {
-    const tb = parseFloat(qTb.value), tp = parseFloat(qTp.value);
-    qMsu.textContent = (isNaN(tb) || isNaN(tp)) ? '—' : fmtDecimal(tb + tp, 2) + ' g/L';
-  }
-  qTb.addEventListener('input', recalcQMsu);
-  qTp.addEventListener('input', recalcQMsu);
-  const qDisclosure = document.getElementById('q-disclosure'), qOptional = document.getElementById('q-optional');
-  qDisclosure.addEventListener('click', () => {
-    const open = qOptional.classList.toggle('open');
-    qDisclosure.classList.toggle('open', open);
-  });
-  function clearQFields() {
-    qTb.value = ''; qTp.value = ''; qCellules.value = ''; qFlore.value = ''; qColif.value = ''; qButy.value = '';
-    qListeriaState.set(null); qSalmonellesState.set(null);
-    checkQPositif();
-    recalcQMsu();
-    qOptional.classList.remove('open');
-    qDisclosure.classList.remove('open');
-  }
-  function fillQFieldsFrom(existing) {
-    if (!existing) { clearQFields(); return; }
-    qTb.value = valOrEmpty(existing.tb); qTp.value = valOrEmpty(existing.tp);
-    qCellules.value = valOrEmpty(existing.cellules); qFlore.value = valOrEmpty(existing.floreTotale);
-    qColif.value = valOrEmpty(existing.coliformes); qButy.value = valOrEmpty(existing.butyriques);
-    qListeriaState.set(existing.listeria || null);
-    qSalmonellesState.set(existing.salmonelles || null);
-    checkQPositif();
-    recalcQMsu();
-  }
-  function syncQDoublon() {
-    const existing = findPrelevementQualiteByDate(laitDateInput.value);
-    if (existing) {
-      const tbTxt = (existing.tb !== null && existing.tb !== undefined) ? existing.tb : '—';
-      const tpTxt = (existing.tp !== null && existing.tp !== undefined) ? existing.tp : '—';
-      qDoublonNote.textContent = `Un prélèvement qualité existe déjà pour le ${formatDateFr(existing.date)} (TB ${tbTxt} g/L, TP ${tpTxt} g/L) — cochez la case pour le compléter.`;
-      qDoublonNote.classList.remove('hidden');
-    } else {
-      qDoublonNote.classList.add('hidden');
-    }
-    if (qCheckbox.checked) fillQFieldsFrom(existing);
-  }
-  laitDateInput.addEventListener('input', syncQDoublon);
-  qCheckbox.addEventListener('change', () => {
-    qPanel.classList.toggle('hidden', !qCheckbox.checked);
-    if (qCheckbox.checked) fillQFieldsFrom(findPrelevementQualiteByDate(laitDateInput.value));
-    else clearQFields(); // décoché après saisie = tout est perdu, assumé (pas de garde-fou)
-  });
-  syncQDoublon();
-
-  document.getElementById('btn-save-lait').onclick = () => {
-    const err = document.getElementById('lait-err');
-    const qte = parseFloat(laitQteInput.value);
-    if (isNaN(qte) || qte < 0) {
-      err.textContent = "Saisis une quantité valide.";
-      err.classList.remove('hidden');
-      return;
-    }
-    err.classList.add('hidden');
-    if (qCheckbox.checked && !confirmerValeursQualiteInhabituelles({
-      tb: numOrNull(qTb), tp: numOrNull(qTp),
-      cellules: numOrNull(qCellules), floreTotale: numOrNull(qFlore),
-      coliformes: numOrNull(qColif), butyriques: numOrNull(qButy)
-    })) return;
-    const date = laitDateInput.value;
-    const quantite = Math.round(qte * 10) / 10;
-    // Anti-doublon : une saisie par date. Recalculé ici indépendamment de
-    // l'écouteur ci-dessus, pour garantir qu'aucune ligne en double ne peut
-    // être créée même si le champ date n'a pas déclenché son évènement.
-    const idx = DB.laitTank.findIndex(l => l.date === date);
-    if (idx !== -1) {
-      // Écrasement d'un relevé existant : confirm() explicite rappelant
-      // l'ancienne et la nouvelle valeur, pour ne jamais remplacer une
-      // quantité déjà saisie sans que l'éleveur l'ait vu (la note passive
-      // ci-dessus peut être manquée si le champ date n'a pas été retouché).
-      if (!confirm('Un relevé existe déjà pour le ' + formatDateFr(date) + ' (' + DB.laitTank[idx].quantite + ' L). Le remplacer par ' + quantite + ' L ?')) return;
-      DB.laitTank[idx].quantite = quantite;
-    } else {
-      DB.laitTank.push({ date, quantite });
-    }
-    // Le volume d'un prélèvement qualité est toujours une copie du relevé
-    // tank du même jour : si on vient de corriger un jour déjà utilisé par
-    // un prélèvement qualité, on le réaligne pour ne jamais laisser dériver
-    // les deux (voir resyncPrelevementQualiteVolume).
-    resyncPrelevementQualiteVolume(date, quantite);
-    if (qCheckbox.checked) {
-      const existing = findPrelevementQualiteByDate(date);
-      const rec = existing || { id: Date.now().toString() + Math.random().toString(36).slice(2, 6), date };
-      rec.volumeLait = quantite;
-      rec.tb = numOrNull(qTb); rec.tp = numOrNull(qTp);
-      rec.cellules = numOrNull(qCellules); rec.floreTotale = numOrNull(qFlore);
-      rec.coliformes = numOrNull(qColif); rec.butyriques = numOrNull(qButy);
-      rec.listeria = qListeriaState.get(); rec.salmonelles = qSalmonellesState.get();
-      rec.campagne = campagneAnneeDebutPourDate(date);
-      if (!existing) DB.prelevementsQualite.push(rec);
-    }
-    saveData(DB);
+  document.getElementById('btn-mois-prec').onclick = () => {
+    const d = new Date(anneeAff, moisAff - 2, 1); // moisAff 1-indexé -> -2 pour reculer d'un mois en 0-indexé
+    calendrierMoisAffiche = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
     render('journal');
   };
-  document.querySelectorAll('.btn-del-lait').forEach(btn => {
+  document.getElementById('btn-mois-suiv').onclick = () => {
+    const d = new Date(anneeAff, moisAff, 1); // moisAff 1-indexé = déjà le mois suivant en 0-indexé
+    calendrierMoisAffiche = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    render('journal');
+  };
+  document.querySelectorAll('.calendrier-jour-btn').forEach(btn => {
     btn.onclick = () => {
-      if (!confirm('Supprimer ce relevé ?')) return;
-      DB.laitTank.splice(parseInt(btn.dataset.idx, 10), 1);
-      saveData(DB);
+      calendrierJourSelectionne = (calendrierJourSelectionne === btn.dataset.date) ? null : btn.dataset.date;
       render('journal');
     };
   });
-  // Réutilise tel quel le formulaire d'édition de renderQualite (mêmes
-  // règles de validation, rien de dupliqué) -- returnView='journal' pour
-  // revenir ici après enregistrement/suppression plutôt que de basculer
-  // sur l'onglet Qualité.
-  document.querySelectorAll('.btn-edit-qualite-journal').forEach(btn => {
+  const btnCloseDetail = document.getElementById('btn-close-jour-detail');
+  if (btnCloseDetail) btnCloseDetail.onclick = () => { calendrierJourSelectionne = null; render('journal'); };
+
+  document.querySelectorAll('.btn-del-journal').forEach(btn => {
     btn.onclick = () => {
-      const record = findPrelevementQualiteByDate(btn.dataset.date);
-      if (record) openQualiteSheet(record, 'journal');
+      if (!confirm('Supprimer cet évènement du calendrier ?')) return;
+      DB.journal.splice(parseInt(btn.dataset.idx, 10), 1);
+      saveData(DB);
+      render('journal');
     };
   });
 
@@ -10043,25 +9958,19 @@ function renderJournal() {
       return;
     }
     err.classList.add('hidden');
+    const dateSaisie = document.getElementById('f-journal-date').value;
     DB.journal.push({
       type: journalType,
-      date: document.getElementById('f-journal-date').value,
+      date: dateSaisie,
       note: document.getElementById('f-journal-note').value.trim()
     });
     saveData(DB);
+    // Fait apparaître directement le jour concerné (utile si la note vient
+    // d'être ajoutée sur une date hors du mois affiché par défaut).
+    calendrierJourSelectionne = dateSaisie;
+    calendrierMoisAffiche = dateSaisie.slice(0, 7);
     render('journal');
   };
-
-  document.querySelectorAll('.btn-del-journal').forEach(btn => {
-    btn.onclick = () => {
-      if (!confirm('Supprimer cet évènement du journal ?')) return;
-      DB.journal.splice(parseInt(btn.dataset.idx, 10), 1);
-      saveData(DB);
-      render('journal');
-    };
-  });
-
-  document.getElementById('btn-goto-import-tank').onclick = () => render('import-tank-laitier');
 }
 
 /* ---------- Import CSV du tank laitier (production journalière) ----------
@@ -10074,7 +9983,7 @@ function renderJournal() {
    déjà le format de stockage interne -- voir DB.laitTank), litrage en
    litres (point ou virgule décimale, voir parseDecimalVirgule).
    Chaque entrée créée a EXACTEMENT la même forme que la saisie manuelle
-   (voir renderJournal, btn-save-lait) : {date, quantite}, arrondie au
+   (voir renderQualite, btn-save-lait) : {date, quantite}, arrondie au
    même 1/10 de litre (jamais 2 décimales -- ce chiffre n'existe que sur
    les moyennes de Contrôle laitier, un champ différent), campagne jamais
    stockée (déduite à la volée par campagneAnneeDebutPourDate comme
@@ -10294,7 +10203,7 @@ function renderImportTankLaitier() {
     saveData(DB);
     const msgConflit = existantes.length === 0 ? '' : (choixConflit === 'ecraser' ? ', ' + nbEcrasees + ' date(s) existante(s) écrasée(s)' : ', ' + existantes.length + ' date(s) existante(s) ignorée(s)');
     alert(nouvelles.length + ' nouvelle(s) date(s) importée(s)' + msgConflit + '.\n\nPar sécurité, tes données précédentes (' + backupResume + ') ont été sauvegardées automatiquement dans le fichier ' + backupFilename + ' avant l\'import.');
-    render('journal');
+    render('qualite');
   };
 }
 
@@ -10310,6 +10219,7 @@ function moisInfoPourIndex(campagneDebut, idx) {
 function renderQualite() {
   DB.prelevementsQualite = DB.prelevementsQualite || [];
   DB.penalitesBacterio = DB.penalitesBacterio || [];
+  DB.laitTank = DB.laitTank || [];
   if (!DB.parametresPrixLait || !Array.isArray(DB.parametresPrixLait)) DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null }];
   pageTitle.textContent = 'Qualité';
 
@@ -10321,7 +10231,120 @@ function renderQualite() {
 
   const state = { campagne: campagnesPresentes.has(campagneAujourdhui) ? campagneAujourdhui : campagnes[campagnes.length - 1], mois: null };
 
+  // ---------- Production laitière (tank) + prélèvement qualité du jour ----------
+  // Déplacé tel quel depuis l'ex-Agenda (chantier "Refonte Agenda ->
+  // Calendrier") : le Calendrier ne garde plus que les notes ponctuelles,
+  // toute saisie tank/qualité vit désormais ici. Mêmes ids, même logique,
+  // rien de dupliqué -- seul le point d'entrée change (voir wiring plus
+  // bas et openQualiteSheet, qui referme toujours sur 'qualite').
+  const dateDuJour = today;
+  const moisActuel = dateDuJour.slice(0, 7); // un mois ne chevauche jamais la bascule de campagne (1er oct)
+  const campagneActuelle = campagneAnneeDebutPourDate(dateDuJour);
+  const totalLaitMois = Math.round(DB.laitTank.filter(l => (l.date||'').startsWith(moisActuel)).reduce((s,l) => s + l.quantite, 0) * 10) / 10;
+  const totalLaitCampagne = Math.round(DB.laitTank.filter(l => l.date && campagneAnneeDebutPourDate(l.date) === campagneActuelle).reduce((s,l) => s + l.quantite, 0) * 10) / 10;
+  // Anti-doublon : une saisie par date. On calcule l'index existant pour la
+  // date par défaut (aujourd'hui) au rendu initial ; le champ date a aussi un
+  // écouteur qui refait ce calcul à chaque changement (voir plus bas).
+  const laitIdxPourDateDuJour = DB.laitTank.findIndex(l => l.date === dateDuJour);
+  const tankCardHtml = `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Production laitière (tank)</div>
+      <div class="grid2" style="margin-bottom:12px;">
+        <div>
+          <div style="font-size:12px;color:var(--text-muted);">Ce mois-ci</div>
+          <div style="font-size:22px;font-weight:600;color:var(--blue-fg);">${totalLaitMois} L</div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--text-muted);">Cette campagne</div>
+          <div style="font-size:22px;font-weight:600;color:var(--blue-fg);">${totalLaitCampagne} L</div>
+        </div>
+      </div>
+      <label>Ajouter le relevé du jour</label>
+      <div class="row">
+        <input type="date" id="f-lait-date" value="${dateDuJour}" style="flex:1;">
+        <input type="number" step="0.1" id="f-lait-qte" placeholder="Litres" value="${laitIdxPourDateDuJour !== -1 ? DB.laitTank[laitIdxPourDateDuJour].quantite : ''}" style="flex:1;">
+      </div>
+      <div id="lait-doublon-note" class="${laitIdxPourDateDuJour === -1 ? 'hidden' : ''}" style="font-size:12px;color:var(--warning);margin-top:6px;">${laitIdxPourDateDuJour !== -1 ? `Une saisie existe déjà pour le ${formatDateFr(dateDuJour)} (${DB.laitTank[laitIdxPourDateDuJour].quantite} L) — elle sera mise à jour.` : ''}</div>
+
+      <label class="row" style="align-items:center;gap:10px;cursor:pointer;margin:10px 0 4px;">
+        <input type="checkbox" id="q-checkbox" style="width:19px;height:19px;margin:0;flex-shrink:0;">
+        <span style="font-size:14.5px;font-weight:600;">Prélèvement qualité ce jour</span>
+      </label>
+      <div id="q-doublon-note" class="note-warn hidden"></div>
+      <div id="q-panel" class="hidden" style="border-top:1px dashed var(--border);padding-top:14px;margin-bottom:14px;">
+        <div class="row">
+          <div style="flex:1;"><label>TB (g/L)</label><input type="number" step="0.1" id="q-tb"></div>
+          <div style="flex:1;"><label>TP (g/L)</label><input type="number" step="0.1" id="q-tp"></div>
+        </div>
+        <div class="msu-box">
+          <span class="msu-label">MSU (calculé = TB + TP)</span>
+          <span class="msu-value" id="q-msu">—</span>
+        </div>
+        <label>Cellules (cellules/mL)</label>
+        <input type="number" id="q-cellules">
+        <label>Flore totale (UFC/mL)</label>
+        <input type="number" id="q-flore">
+        <div class="row">
+          <div style="flex:1;"><label>Coliformes (milliers/mL)</label><input type="number" id="q-colif"></div>
+          <div style="flex:1;"><label>Butyriques (spores/L)</label><input type="number" id="q-buty"></div>
+        </div>
+        <button type="button" class="disclosure-btn" id="q-disclosure"><span class="arrow">▸</span> Listériose, salmonelles</button>
+        <div class="optional-fields" id="q-optional">
+          <label>Listéria</label>
+          <div class="grid4" id="q-listeria" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px;">
+            <button type="button" class="opt-btn" data-val="negatif">Négatif</button>
+            <button type="button" class="opt-btn" data-val="positif">Positif</button>
+            <button type="button" class="opt-btn" data-val="non_analyse">Non analysé</button>
+          </div>
+          <label>Salmonelles</label>
+          <div class="grid4" id="q-salmonelles" style="grid-template-columns:repeat(3,1fr);margin-bottom:6px;">
+            <button type="button" class="opt-btn" data-val="negatif">Négatif</button>
+            <button type="button" class="opt-btn" data-val="positif">Positif</button>
+            <button type="button" class="opt-btn" data-val="non_analyse">Non analysé</button>
+          </div>
+          <div class="note-danger hidden" id="q-positif-warn">⚠️ Un résultat positif annule le bonus « Super A » de ce mois et déclenche une pénalité (barème à définir en phase 2).</div>
+        </div>
+      </div>
+
+      <div id="lait-err" class="error-box hidden"></div>
+      <div class="row" style="margin-top:8px;">
+        <button class="btn btn-secondary" id="btn-save-lait" style="flex:1;">Enregistrer</button>
+        <button type="button" class="btn btn-secondary" id="btn-goto-import-tank" style="flex:1;">Importer un CSV</button>
+      </div>
+      ${DB.laitTank.length > 0 ? '<div style="font-size:12px;color:var(--text-muted);margin-top:12px;margin-bottom:6px;">Derniers relevés</div>' : ''}
+      <div>
+        ${[...DB.laitTank].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,4).map(l => {
+          const realIdx = DB.laitTank.indexOf(l);
+          const q = findPrelevementQualiteByDate(l.date);
+          // Un relevé litrage seul (pas de prélèvement qualité ce jour-là)
+          // garde l'affichage minimal existant -- rien de plus à montrer.
+          if (!q) {
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px;">
+              <span>${formatDateFr(l.date)} — ${l.quantite} L</span>
+              <button type="button" class="btn btn-secondary btn-del-lait" data-idx="${realIdx}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
+            </div>`;
+          }
+          const msu = (q.tb !== null && q.tp !== null) ? q.tb + q.tp : null;
+          const superA = superAPourMois(q.date.slice(0, 7));
+          return `<div style="padding:8px 0;border-top:1px solid var(--border);font-size:13px;">
+            <div style="font-weight:600;margin-bottom:4px;">${formatDateFr(l.date)} — ${l.quantite} L</div>
+            <div style="font-size:11.5px;color:var(--text-muted);line-height:1.6;margin-bottom:8px;">
+              TB ${fmtDecimal(q.tb, 2)} · TP ${fmtDecimal(q.tp, 2)} · MSU ${fmtDecimal(msu, 2)}<br>
+              Cellules ${fmtDecimal(q.cellules, 0)} · Flore ${fmtDecimal(q.floreTotale, 0)} · Colif. ${fmtDecimal(q.coliformes, 0)} · Butyr. ${fmtDecimal(q.butyriques, 0)}<br>
+              Listéria ${labelTriStateCourt(q.listeria)} · Salmonelles ${labelTriStateCourt(q.salmonelles)} · Super A ${superA ? 'Oui' : 'Non'}
+            </div>
+            <div class="row" style="display:flex;gap:8px;">
+              <button type="button" class="btn btn-secondary btn-edit-qualite-journal" data-date="${q.date}" style="flex:1;padding:7px 0;font-size:12px;">Modifier</button>
+              <button type="button" class="btn btn-secondary btn-del-lait" data-idx="${realIdx}" style="flex:1;padding:7px 0;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+
   app.innerHTML = `
+    ${tankCardHtml}
     <div class="tab-bar" id="qualite-campagne-tabs">
       ${campagnes.map(c => `<button type="button" class="tab-btn${c === state.campagne ? ' active' : ''}" data-campagne="${c}">Campagne ${c + 1}</button>`).join('')}
     </div>
@@ -10397,6 +10420,151 @@ function renderQualite() {
     <button type="button" class="btn btn-secondary" id="btn-qualite-print" style="margin-bottom:10px;">🖨️ Imprimer le récapitulatif (PDF)</button>
     <button type="button" class="btn btn-secondary" id="btn-rapport-campagne-print" style="margin-bottom:16px;">🖨️ Rapport de campagne (PDF)</button>
   `;
+
+  // ---------- Wiring de la carte "Production laitière (tank)" (voir tankCardHtml ci-dessus) ----------
+  const laitDateInput = document.getElementById('f-lait-date');
+  const laitQteInput = document.getElementById('f-lait-qte');
+  const laitDoublonNote = document.getElementById('lait-doublon-note');
+  laitDateInput.addEventListener('input', () => {
+    const idx = DB.laitTank.findIndex(l => l.date === laitDateInput.value);
+    if (idx !== -1) {
+      laitQteInput.value = DB.laitTank[idx].quantite;
+      laitDoublonNote.textContent = `Une saisie existe déjà pour le ${formatDateFr(laitDateInput.value)} (${DB.laitTank[idx].quantite} L) — elle sera mise à jour.`;
+      laitDoublonNote.classList.remove('hidden');
+    } else {
+      laitQteInput.value = '';
+      laitDoublonNote.classList.add('hidden');
+    }
+  });
+
+  // ---------- Prélèvement qualité (case à cocher pendant la saisie tank) ----------
+  const qCheckbox = document.getElementById('q-checkbox');
+  const qPanel = document.getElementById('q-panel');
+  const qDoublonNote = document.getElementById('q-doublon-note');
+  const qTb = document.getElementById('q-tb'), qTp = document.getElementById('q-tp'), qMsu = document.getElementById('q-msu');
+  const qCellules = document.getElementById('q-cellules'), qFlore = document.getElementById('q-flore'), qColif = document.getElementById('q-colif'), qButy = document.getElementById('q-buty');
+  const qPositifWarn = document.getElementById('q-positif-warn');
+  const qListeriaState = wireTriState(document.getElementById('q-listeria'), null, checkQPositif);
+  const qSalmonellesState = wireTriState(document.getElementById('q-salmonelles'), null, checkQPositif);
+  function checkQPositif() {
+    qPositifWarn.classList.toggle('hidden', qListeriaState.get() !== 'positif' && qSalmonellesState.get() !== 'positif');
+  }
+  function recalcQMsu() {
+    const tb = parseFloat(qTb.value), tp = parseFloat(qTp.value);
+    qMsu.textContent = (isNaN(tb) || isNaN(tp)) ? '—' : fmtDecimal(tb + tp, 2) + ' g/L';
+  }
+  qTb.addEventListener('input', recalcQMsu);
+  qTp.addEventListener('input', recalcQMsu);
+  const qDisclosure = document.getElementById('q-disclosure'), qOptional = document.getElementById('q-optional');
+  qDisclosure.addEventListener('click', () => {
+    const open = qOptional.classList.toggle('open');
+    qDisclosure.classList.toggle('open', open);
+  });
+  function clearQFields() {
+    qTb.value = ''; qTp.value = ''; qCellules.value = ''; qFlore.value = ''; qColif.value = ''; qButy.value = '';
+    qListeriaState.set(null); qSalmonellesState.set(null);
+    checkQPositif();
+    recalcQMsu();
+    qOptional.classList.remove('open');
+    qDisclosure.classList.remove('open');
+  }
+  function fillQFieldsFrom(existing) {
+    if (!existing) { clearQFields(); return; }
+    qTb.value = valOrEmpty(existing.tb); qTp.value = valOrEmpty(existing.tp);
+    qCellules.value = valOrEmpty(existing.cellules); qFlore.value = valOrEmpty(existing.floreTotale);
+    qColif.value = valOrEmpty(existing.coliformes); qButy.value = valOrEmpty(existing.butyriques);
+    qListeriaState.set(existing.listeria || null);
+    qSalmonellesState.set(existing.salmonelles || null);
+    checkQPositif();
+    recalcQMsu();
+  }
+  function syncQDoublon() {
+    const existing = findPrelevementQualiteByDate(laitDateInput.value);
+    if (existing) {
+      const tbTxt = (existing.tb !== null && existing.tb !== undefined) ? existing.tb : '—';
+      const tpTxt = (existing.tp !== null && existing.tp !== undefined) ? existing.tp : '—';
+      qDoublonNote.textContent = `Un prélèvement qualité existe déjà pour le ${formatDateFr(existing.date)} (TB ${tbTxt} g/L, TP ${tpTxt} g/L) — cochez la case pour le compléter.`;
+      qDoublonNote.classList.remove('hidden');
+    } else {
+      qDoublonNote.classList.add('hidden');
+    }
+    if (qCheckbox.checked) fillQFieldsFrom(existing);
+  }
+  laitDateInput.addEventListener('input', syncQDoublon);
+  qCheckbox.addEventListener('change', () => {
+    qPanel.classList.toggle('hidden', !qCheckbox.checked);
+    if (qCheckbox.checked) fillQFieldsFrom(findPrelevementQualiteByDate(laitDateInput.value));
+    else clearQFields(); // décoché après saisie = tout est perdu, assumé (pas de garde-fou)
+  });
+  syncQDoublon();
+
+  document.getElementById('btn-save-lait').onclick = () => {
+    const err = document.getElementById('lait-err');
+    const qte = parseFloat(laitQteInput.value);
+    if (isNaN(qte) || qte < 0) {
+      err.textContent = "Saisis une quantité valide.";
+      err.classList.remove('hidden');
+      return;
+    }
+    err.classList.add('hidden');
+    if (qCheckbox.checked && !confirmerValeursQualiteInhabituelles({
+      tb: numOrNull(qTb), tp: numOrNull(qTp),
+      cellules: numOrNull(qCellules), floreTotale: numOrNull(qFlore),
+      coliformes: numOrNull(qColif), butyriques: numOrNull(qButy)
+    })) return;
+    const date = laitDateInput.value;
+    const quantite = Math.round(qte * 10) / 10;
+    // Anti-doublon : une saisie par date. Recalculé ici indépendamment de
+    // l'écouteur ci-dessus, pour garantir qu'aucune ligne en double ne peut
+    // être créée même si le champ date n'a pas déclenché son évènement.
+    const idx = DB.laitTank.findIndex(l => l.date === date);
+    if (idx !== -1) {
+      // Écrasement d'un relevé existant : confirm() explicite rappelant
+      // l'ancienne et la nouvelle valeur, pour ne jamais remplacer une
+      // quantité déjà saisie sans que l'éleveur l'ait vu (la note passive
+      // ci-dessus peut être manquée si le champ date n'a pas été retouché).
+      if (!confirm('Un relevé existe déjà pour le ' + formatDateFr(date) + ' (' + DB.laitTank[idx].quantite + ' L). Le remplacer par ' + quantite + ' L ?')) return;
+      DB.laitTank[idx].quantite = quantite;
+    } else {
+      DB.laitTank.push({ date, quantite });
+    }
+    // Le volume d'un prélèvement qualité est toujours une copie du relevé
+    // tank du même jour : si on vient de corriger un jour déjà utilisé par
+    // un prélèvement qualité, on le réaligne pour ne jamais laisser dériver
+    // les deux (voir resyncPrelevementQualiteVolume).
+    resyncPrelevementQualiteVolume(date, quantite);
+    if (qCheckbox.checked) {
+      const existing = findPrelevementQualiteByDate(date);
+      const rec = existing || { id: Date.now().toString() + Math.random().toString(36).slice(2, 6), date };
+      rec.volumeLait = quantite;
+      rec.tb = numOrNull(qTb); rec.tp = numOrNull(qTp);
+      rec.cellules = numOrNull(qCellules); rec.floreTotale = numOrNull(qFlore);
+      rec.coliformes = numOrNull(qColif); rec.butyriques = numOrNull(qButy);
+      rec.listeria = qListeriaState.get(); rec.salmonelles = qSalmonellesState.get();
+      rec.campagne = campagneAnneeDebutPourDate(date);
+      if (!existing) DB.prelevementsQualite.push(rec);
+    }
+    saveData(DB);
+    render('qualite');
+  };
+  document.querySelectorAll('.btn-del-lait').forEach(btn => {
+    btn.onclick = () => {
+      if (!confirm('Supprimer ce relevé ?')) return;
+      DB.laitTank.splice(parseInt(btn.dataset.idx, 10), 1);
+      saveData(DB);
+      render('qualite');
+    };
+  });
+  // Réutilise tel quel le formulaire d'édition (mêmes règles de
+  // validation, rien de dupliqué) -- openQualiteSheet referme toujours sur
+  // 'qualite', qu'on l'ouvre depuis ici ou depuis "Prélèvements du mois".
+  document.querySelectorAll('.btn-edit-qualite-journal').forEach(btn => {
+    btn.onclick = () => {
+      const record = findPrelevementQualiteByDate(btn.dataset.date);
+      if (record) openQualiteSheet(record);
+    };
+  });
+  document.getElementById('btn-goto-import-tank').onclick = () => render('import-tank-laitier');
 
   function moisKeyFromDate(dateStr) { return dateStr.slice(0, 7); }
 
@@ -10656,13 +10824,7 @@ function renderQualite() {
    tank n'existe pour cette date, l'enregistrement reste bloqué. Une date
    qui correspond déjà à un prélèvement existant bascule directement en
    édition (même principe que l'anti-doublon du tank). */
-/* returnView : écran vers lequel revenir après enregistrement/suppression
-   -- 'qualite' par défaut (appel depuis renderQualite lui-même), mais
-   l'Agenda (renderJournal) passe 'journal' pour éditer un relevé sans
-   quitter cet écran-là. Même formulaire, mêmes validations, dans les deux
-   cas -- rien n'est dupliqué. */
-function openQualiteSheet(record, returnView) {
-  returnView = returnView || 'qualite';
+function openQualiteSheet(record) {
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
   const isCreating = !record;
@@ -10821,7 +10983,7 @@ function openQualiteSheet(record, returnView) {
     }
     saveData(DB);
     document.body.removeChild(overlay);
-    render(returnView);
+    render('qualite');
   };
 
   deleteBtn.onclick = () => {
@@ -10831,15 +10993,14 @@ function openQualiteSheet(record, returnView) {
     if (idx !== -1) DB.prelevementsQualite.splice(idx, 1);
     saveData(DB);
     document.body.removeChild(overlay);
-    render(returnView);
+    render('qualite');
   };
 }
 
 /* Fiche en feuille remontant du bas -- même gabarit que openQualiteSheet --
    pour créer/éditer une pénalité bactério (DB.penalitesBacterio). Toujours
-   accessible depuis l'onglet Qualité uniquement (pas d'équivalent Agenda,
-   contrairement aux prélèvements), donc pas de returnView : referme
-   toujours sur render('qualite'). `defaultMoisKey` ne pré-remplit rien
+   accessible depuis l'onglet Qualité uniquement, referme toujours sur
+   render('qualite'). `defaultMoisKey` ne pré-remplit rien
    d'autre que le mois initialement affiché à l'écran (aucune date n'est
    déduite automatiquement -- l'éleveur choisit toujours la date exacte de
    début de pénalité). */
