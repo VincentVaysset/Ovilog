@@ -2399,18 +2399,22 @@ function controleLaitierCampagneIdxN(sheep, controle, campagne) {
 
 /* ---------- Codes d'anomalie du cahier de contrôle laitier SIEOL/UNOTEC ----------
    Un code par contrôle (pas par lactation entière, voir ano_lact sur
-   DB.cahierControleLaitier) -- voir chantier "Cahier de contrôle SIEOL".
-   Codes 1 et 2 : signification inconnue pour l'instant chez cet éleveur,
-   volontairement absents de la table -- le libellé générique de secours
-   ("Anomalie N") s'affiche à leur place, sans bloquer l'import ; la table
-   est prête à recevoir leur vrai libellé le jour où ils sont identifiés.
-   Code 6 (Malade) : confirmé par le technicien actuel, mais peut varier
-   selon le technicien -- libellé volontairement marqué d'une réserve. */
+   DB.cahierControleLaitier) -- voir chantier "Cahier de contrôle SIEOL",
+   table complétée par le chantier "Import Contrôle laitier (reprise
+   complète)" avec les codes 1 et 2 (jusque-là en fallback générique
+   "Anomalie N", signification inconnue). Code 2 : toujours sans
+   signification documentée -- libellé qui l'indique explicitement plutôt
+   que de laisser un "Anomalie 2" générique indiscernable des vrais codes
+   inconnus. Partagée par les DEUX imports (SIEOL brut ET modèle Ovilog) :
+   un même code y a toujours le même libellé, quel que soit le fichier qui
+   l'a écrit. */
 const ANOMALIE_CONTROLE_LABELS = {
+  1: 'Problème de pis',
+  2: 'code 2 (non documenté)',
   3: 'Boucle électronique manquante',
   4: 'Boucle conventionnelle manquante',
   5: 'Réforme',
-  6: 'Malade (?)',
+  6: 'Malade',
   7: 'Contrôle sauté',
   8: 'Mammites',
   9: 'Tarie',
@@ -16208,80 +16212,95 @@ function renderImportCorrespondanceSieol() {
 }
 
 /* ---------- Import "Contrôle laitier" (mode fichier modèle Ovilog) ----------
-   Chantier dédié -- distinct de l'import "Cahier de contrôle laitier SIEOL"
-   déjà existant (renderImportControleLaitierSieol, résumé + cahier au format
-   SIEOL brut, campagne choisie explicitement) : ici un seul fichier .xlsx au
-   format modèle Ovilog (Modele_Controle_Laitier.xlsx), toujours pour la
-   campagne EN COURS (DB.campagneDebut), BREBIS UNIQUEMENT (jamais béliers ni
-   agnelles -- le contrôle laitier ne les concerne pas).
+   REPRISE COMPLÈTE (remplace intégralement les versions précédentes de ce
+   chantier) -- distinct de l'import "Cahier de contrôle laitier SIEOL" déjà
+   existant (renderImportControleLaitierSieol, résumé + cahier au format
+   SIEOL brut, campagne choisie explicitement, écran séparé jamais touché
+   par ce chantier) : ici un seul fichier .xlsx au format modèle Ovilog
+   (Modele_Controle_Laitier.xlsx), toujours pour la campagne EN COURS
+   (DB.campagneDebut), BREBIS UNIQUEMENT (jamais béliers ni agnelles).
 
    Structure du fichier (onglet "Contrôle laitier", voir modèle fourni) :
-   ligne 4 = date de chaque contrôle en C4/D4/E4 (une fois par colonne) ;
-   ligne 5 = en-têtes (non relus -- positions FIXES comme le modèle
-   Correspondance SIEOL, pas de mapping par nom) ; données à partir de la
-   ligne 6 : colonne A = numéro EID (11 chiffres -- au sens historique de ces
-   fichiers modèles Ovilog, c'est en réalité le NUMÉRO OFFICIEL au sens
-   Chantier A, pas l'EID complet à 15 chiffres réellement stocké -- même
-   convention que Modele_Correspondance_SIEOL.xlsx), colonne B = numéro
-   SIEOL (court ou long), colonnes C/D/E = contrôles 1/2/3 en mL.
+   ligne 4 = date de chaque contrôle en C4/D4/E4 (une fois par colonne,
+   texte JJ-MM-AAAA -- une vraie date Excel/série numérique reste tolérée
+   en repli si un tableur la convertit malgré l'avertissement du modèle) ;
+   ligne 5 = en-têtes (non relus -- positions FIXES, pas de mapping par
+   nom) ; données à partir de la ligne 6 : colonne A = numéro EID (11
+   chiffres -- au sens historique de ces fichiers modèles Ovilog, en
+   réalité le NUMÉRO OFFICIEL au sens Chantier A, pas l'EID complet à 15
+   chiffres réellement stocké -- même convention que Modele_Correspondance_
+   SIEOL.xlsx), colonne B = numéro SIEOL (court ou long), colonnes C/D/E =
+   contrôles 1/2/3 (mL et/ou code anomalie, voir plus bas).
 
-   Une colonne de contrôle sans date en en-tête (placeholder "JJ-MM-AAAA"
-   resté tel quel, ou vide) est entièrement ignorée. La date est tapée dans
-   une cellule au format General : un tableur peut la garder en texte
-   "JJ-MM-AAAA" ou la convertir en série Excel selon qu'il la reconnaît
-   comme une date -- les deux formats sont donc acceptés.
+   Une colonne de contrôle sans date valide en en-tête est entièrement
+   ignorée (contrôle pas encore réalisé).
 
-   Lecture : PAS d'arrêt à la première ligne trouée (contrairement à
-   Correspondance SIEOL) -- une ligne sans EID ni numéro SIEOL exploitable
-   est listée à part dans l'aperçu ("ignorée"), la lecture continue jusqu'à
-   la fin réelle des données du fichier. Les lignes entièrement vides (trame
-   du modèle après la dernière ligne saisie) ne sont, elles, jamais listées
-   -- aucune information à signaler.
+   Lecture : ne s'arrête JAMAIS sur une ligne trouée (EID/SIEOL manquants
+   mais quantités présentes) -- listée à part dans l'aperçu ("ignorée"), la
+   lecture continue jusqu'à la fin réelle des données. Une ligne totalement
+   vide (trame du modèle) n'est, elle, jamais signalée.
 
-   Résolution : EID (colonne A) prioritaire si renseigné, sinon numéro SIEOL
-   (colonne B) -- JAMAIS de repli automatique sur B si A ne résout aucun
-   animal (règle explicitement confirmée). Colonne A : comparaison directe à
-   eidAffichageCourt(brebis.eid) (même mécanisme que Correspondance SIEOL
-   pour sa propre colonne EID -- un numéro officiel est unique par
-   construction, jamais ambigu). Colonne B : trouverParNumero() tel quel
-   (numéro court Ovilog + numéro long/court travail SIEOL -- gère nativement
-   l'ambiguïté).
+   Résolution : EID (colonne A) prioritaire si renseigné -- comparaison
+   directe à eidAffichageCourt(brebis.eid), comme Correspondance SIEOL (un
+   numéro officiel est unique par construction, jamais ambigu). Colonne B
+   (numéro SIEOL court/long) utilisée UNIQUEMENT si A est vide sur cette
+   ligne, via trouverParNumero() (numéro court Ovilog + long/court travail
+   SIEOL, gère nativement l'ambiguïté) -- JAMAIS de repli automatique de A
+   vers B si A ne résout aucun animal.
 
-   Quantités : un entier propre est accepté tel quel (mL). Toute valeur qui
-   n'est pas un entier propre (décimale à virgule/point comme "1,8"/"1.8",
-   ou tout autre texte non numérique) n'est JAMAIS devinée -- panier "à
-   clarifier" dédié, rien n'écrit pour cette cellule.
+   Format d'une cellule de contrôle (Contrôle 1/2/3) -- voir
+   parseCelluleControleLaitierModele pour le détail exact, 5 formes
+   reconnues par ordre de priorité : vide ; décimale (virgule/point, avec
+   ou sans code) -> toujours "à clarifier", jamais deviné ; "quantité/CC"
+   (CC = exactement 2 chiffres 01-09) -> quantité + code, valide pour tous
+   les codes ; "0X" seul (X = 1-9) -> code seul, valide seulement pour les
+   codes qui peuvent apparaître sans quantité (voir
+   ANOMALIE_CONTROLE_JAMAIS_SEUL) ; entier seul -> quantité, aucune
+   anomalie. Tout le reste (dont un code à un seul chiffre après le "/",
+   ex "1400/1", ou un code hors 01-09) est un FORMAT INVALIDE, jamais
+   deviné, jamais écrit.
 
    Conflits -- MÊME mécanique Garder/Remplacer inline que le Cahier de
-   contrôle laitier SIEOL (changement demandé par l'éleveur, pour que les
-   deux écrans d'import se comportent pareil) :
-   - Conflit de VALEUR (animal + n° de contrôle déjà rempli différemment) :
-     Garder/Remplacer PAR LIGNE, comme le cahier SIEOL. Un conflit laissé
-     sans réponse au moment de confirmer reste inchangé (valeur existante
-     conservée) -- jamais écrasé par défaut.
+   contrôle laitier SIEOL, dans l'aperçu, jamais de bouton générique qui
+   applique un choix par défaut en masse :
+   - Conflit de VALEUR (animal + n° de contrôle déjà rempli différemment --
+     quantité différente, code différent, ou code ajouté/retiré) :
+     Garder/Remplacer PAR LIGNE. Un conflit laissé sans réponse à la
+     confirmation reste inchangé -- jamais écrasé par défaut. Une valeur
+     déjà identique (quantité ET code tous les deux égaux) est ignorée
+     silencieusement, jamais un conflit.
    - Conflit de DATE (n° de contrôle déjà daté différemment cette
-     campagne) : Garder/Remplacer, mais UNE SEULE FOIS PAR COLONNE (la date
-     est commune à tout le contrôle) -- "Garder" utilise la date déjà
-     enregistrée pour écrire les nouvelles mesures de cette colonne (le
-     fichier est ignoré sur ce point précis) ; "Remplacer" utilise la date
-     du fichier pour les nouvelles mesures. Dans les deux cas, les
-     enregistrements DÉJÀ existants d'autres brebis pour ce contrôle cette
-     campagne ne sont JAMAIS réécrits automatiquement (choix volontairement
-     conservateur : rétro-dater en masse des mesures déjà saisies par
-     ailleurs serait un effet de bord silencieux trop important pour ce
-     chantier -- à signaler si ce n'est pas le comportement voulu). Un
-     conflit de date non tranché bloque toute la colonne : aucune nouvelle
-     mesure n'est écrite pour ce contrôle tant que le choix n'est pas fait.
-   - Valeur déjà identique : ignorée silencieusement (jamais un conflit).
+     campagne) : Garder/Remplacer UNE SEULE FOIS PAR COLONNE ENTIÈRE (la
+     date est commune à tout le contrôle) -- décide uniquement de la date
+     utilisée pour les NOUVELLES mesures de cette colonne ; les
+     enregistrements déjà existants d'autres brebis pour ce contrôle ne
+     sont JAMAIS réécrits automatiquement, même en cas de "Remplacer"
+     (choix conservateur, voir chantier précédent). Conflit non tranché =
+     colonne entière bloquée, rien n'est écrit pour ce contrôle.
+   - Conflit "valeur retirée du fichier" (Ovilog a déjà une valeur pour cet
+     animal/ce contrôle, la cellule du fichier réimporté est VIDE) :
+     Garder/Remplacer PAR LIGNE -- "Remplacer" supprime intégralement
+     l'enregistrement existant (jamais une entrée vide laissée en place,
+     confirmé explicitement). Jamais de suppression ni de conservation
+     automatique silencieuse : aussi visible que les autres conflits.
 
-   Écriture : toujours un push() d'un nouvel enregistrement
-   { controle, quantite, anomalie: null, date, campagne } -- jamais de
-   remplacement, sauf le cas explicite "conflit de valeur -> Remplacer" qui
-   met à jour l'enregistrement existant en place (quantite + date, anomalie
-   jamais touchée -- ce fichier n'en transporte pas). */
+   Codes anomalie (ANOMALIE_CONTROLE_JAMAIS_SEUL ci-dessous, libellés dans
+   la table partagée ANOMALIE_CONTROLE_LABELS, réutilisée telle quelle par
+   le Cahier de contrôle SIEOL -- champ `anomalie` déjà un entier simple
+   des deux côtés, aucune incompatibilité de structure) : 1 (Problème de
+   pis), 2 (non documenté), 3/4 (boucle manquante), 5 (Réforme) ne peuvent
+   JAMAIS apparaître seuls dans une cellule (toujours avec une quantité) ;
+   6 (Malade), 7 (Contrôle sauté), 8 (Mammite), 9 (Tarie) peuvent apparaître
+   seuls, sans quantité.
+
+   Écriture : { controle, quantite (ou null si code seul), anomalie (ou
+   null), date, campagne }. */
 
 const CONTROLE_LAITIER_MODELE_SHEET = 'Contrôle laitier';
 const CONTROLE_LAITIER_MODELE_PREMIERE_LIGNE = 6;
+// Codes qui doivent TOUJOURS être accompagnés d'une quantité -- jamais seuls
+// dans une cellule de contrôle (voir parseCelluleControleLaitierModele).
+const ANOMALIE_CONTROLE_JAMAIS_SEUL = new Set([1, 2, 3, 4, 5]);
 
 // Série de date Excel (système 1900, époque 1899-12-30) -> ISO AAAA-MM-JJ.
 // 25569 = nombre de jours entre l'époque Excel et l'époque Unix (1970-01-01).
@@ -16312,14 +16331,58 @@ function parseDateEnteteControleLaitierModele(raw) {
   if (/^\d+(\.\d+)?$/.test(s)) return excelSerialToIso(parseFloat(s));
   return null;
 }
-// Quantité de lait d'une cellule C/D/E : entier propre accepté tel quel ;
-// toute autre valeur non vide (décimale à virgule/point, texte...) jamais
-// devinée -- ambigue:true, à clarifier avec l'éleveur (voir chantier).
-function parseQuantiteControleLaitierModele(raw) {
+/* Cellule de contrôle (Contrôle 1/2/3) : quantité en mL et/ou code anomalie
+   -- 5 formes reconnues, DANS CET ORDRE DE PRIORITÉ (voir chantier "reprise
+   complète") :
+   1. Vide -> { present: false }.
+   2. Contient une virgule ou un point, avec ou sans code -> jamais deviné
+      (ambigu entre mL et L) -> { ambigue: true }.
+   3. "quantité/CC" (CC = exactement 2 chiffres) -> quantité + code, valide
+      pour tous les codes 01-09 ; CC hors 01-09 ou pas exactement 2
+      chiffres (ex: "1400/1") -> format invalide.
+   4. "0X" seul (X = 1-9) -> code seul ; invalide si ce code doit toujours
+      être accompagné d'une quantité (voir ANOMALIE_CONTROLE_JAMAIS_SEUL).
+   5. Entier seul (n'importe quelle longueur, y compris 1 chiffre) ->
+      quantité, aucune anomalie.
+   6. Tout le reste -> format invalide, jamais deviné, jamais écrit.
+   Un format invalide ({ invalide: true }) et une valeur ambiguë sont deux
+   paniers distincts dans l'aperçu -- la première est un problème de
+   frappe/format à corriger dans le fichier, la seconde une ambiguïté
+   d'unité même si la syntaxe elle-même est par ailleurs correcte. */
+function parseCelluleControleLaitierModele(raw) {
   const s = String(raw === undefined || raw === null ? '' : raw).trim();
   if (!s) return { present: false };
-  if (/^\d+$/.test(s)) return { present: true, quantite: parseInt(s, 10), ambigue: false };
-  return { present: true, quantite: null, ambigue: true, brut: s };
+  if (/[.,]/.test(s)) return { present: true, ambigue: true, brut: s };
+
+  const combo = s.match(/^(\d+)\/(\d+)$/);
+  if (combo) {
+    const codeStr = combo[2];
+    const code = parseInt(codeStr, 10);
+    if (codeStr.length !== 2 || code < 1 || code > 9) return { present: true, invalide: true, brut: s };
+    return { present: true, quantite: parseInt(combo[1], 10), anomalie: code };
+  }
+
+  if (/^0[1-9]$/.test(s)) {
+    const code = parseInt(s, 10);
+    if (ANOMALIE_CONTROLE_JAMAIS_SEUL.has(code)) return { present: true, invalide: true, brut: s };
+    return { present: true, quantite: null, anomalie: code };
+  }
+
+  if (/^\d+$/.test(s)) return { present: true, quantite: parseInt(s, 10), anomalie: null };
+
+  return { present: true, invalide: true, brut: s };
+}
+// Description compacte d'une mesure (quantité et/ou code anomalie) pour
+// l'affichage dans l'aperçu -- réutilise le libellé partagé avec le Cahier
+// de contrôle SIEOL (voir ANOMALIE_CONTROLE_LABELS) pour un affichage
+// cohérent entre les deux imports.
+function descriptionMesureControleLaitier(quantite, anomalie) {
+  const q = (quantite !== null && quantite !== undefined) ? quantite + ' mL' : null;
+  const a = anomalie ? libelleAnomalieControle(anomalie) : null;
+  if (q && a) return q + ' · ' + a;
+  if (q) return q;
+  if (a) return a;
+  return '(aucune valeur)';
 }
 // Résolution d'une ligne : EID (colonne A) prioritaire si renseigné, sinon
 // numéro SIEOL (colonne B) -- jamais les deux à la fois, jamais de repli
@@ -16356,9 +16419,9 @@ function parserFichierControleLaitierModele(rows) {
     const row = rows[i] || [];
     const eidVal = String(row[0] || '').trim();
     const sieolVal = String(row[1] || '').trim();
-    const c1 = parseQuantiteControleLaitierModele(row[2]);
-    const c2 = parseQuantiteControleLaitierModele(row[3]);
-    const c3 = parseQuantiteControleLaitierModele(row[4]);
+    const c1 = parseCelluleControleLaitierModele(row[2]);
+    const c2 = parseCelluleControleLaitierModele(row[3]);
+    const c3 = parseCelluleControleLaitierModele(row[4]);
     if (!eidVal && !sieolVal && !c1.present && !c2.present && !c3.present) continue; // ligne de trame vide -- jamais signalée
     lignes.push({
       __idx: lignes.length, ligne: i + 1, eidVal, sieolVal,
@@ -16388,7 +16451,7 @@ function renderImportControleLaitierModele() {
   app.innerHTML = `
     <div class="card">
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne concernée : <strong>Campagne ${campagne + 1}</strong> (campagne en cours -- pas de sélecteur, cet import ne concerne que la saisie de la campagne actuelle).</div>
-      <label style="display:flex;align-items:center;">Fichier modèle Ovilog${infoBulleHtml('Format du fichier', "Fichier .xlsx basé sur Modele_Controle_Laitier.xlsx, onglet \"Contrôle laitier\" -- ligne 4 : date de chaque contrôle (une fois par colonne) ; à partir de la ligne 6 : numéro EID (11 chiffres) ou numéro SIEOL (court ou long), puis quantités en mL des contrôles 1/2/3. Une colonne sans date valide en en-tête est considérée comme un contrôle pas encore réalisé et entièrement ignorée.")}</label>
+      <label style="display:flex;align-items:center;">Fichier modèle Ovilog${infoBulleHtml('Format du fichier', "Fichier .xlsx basé sur Modele_Controle_Laitier.xlsx, onglet \"Contrôle laitier\" -- ligne 4 : date de chaque contrôle (une fois par colonne) ; à partir de la ligne 6 : numéro EID (11 chiffres) ou numéro SIEOL (court ou long), puis quantité en mL et/ou code anomalie (format \"quantité/code\", ex: 1400/01, ou code seul comme 09 quand rien à mesurer) des contrôles 1/2/3. Une colonne sans date valide en en-tête est considérée comme un contrôle pas encore réalisé et entièrement ignorée.")}</label>
       <input type="file" id="import-cl-modele-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
       <div id="import-cl-modele-err" class="error-box hidden"></div>
     </div>
@@ -16424,6 +16487,7 @@ function renderImportControleLaitierModele() {
     const ignorees = parsed.lignes.filter(r => r.resolution.type === 'ignoree');
 
     const valeursAmbigues = [];
+    const formatsInvalides = [];
     const conflitsValeur = [];
     // Conflit "valeur retirée du fichier" : Ovilog a déjà une mesure pour cet
     // animal/ce contrôle, le fichier réimporté n'en propose plus (cellule
@@ -16450,9 +16514,10 @@ function renderImportControleLaitierModele() {
           return; // cellule vide sans mesure existante -- rien à signaler
         }
         if (c.ambigue) { valeursAmbigues.push({ ligne, controle: n, brut: c.brut }); return; }
+        if (c.invalide) { formatsInvalides.push({ ligne, controle: n, brut: c.brut }); return; }
         if (idx === -1) { aEcrire[n]++; return; }
         const existant = ligne.resolution.sheep.controleLaitier[idx];
-        if (existant.quantite === c.quantite) return; // déjà identique -- ignoré silencieusement
+        if (existant.quantite === c.quantite && (existant.anomalie || null) === (c.anomalie || null)) return; // déjà identique -- ignoré silencieusement
         conflitsValeur.push({ ligne, controle: n, c, existant });
         if (c.resolutionConflit === 'remplacer') aEcrire[n]++;
       });
@@ -16511,8 +16576,8 @@ function renderImportControleLaitierModele() {
         <div style="border-top:1px solid var(--border);padding:10px 0;">
           <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${numeroVisuel(ligne.resolution.sheep.eid)} — Contrôle ${controle} déjà enregistré</div>
           <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
-            <span>Actuel : ${existant.quantite} mL</span>
-            <span style="color:var(--amber-fg);">Fichier propose : ${c.quantite} mL</span>
+            <span>Actuel : ${descriptionMesureControleLaitier(existant.quantite, existant.anomalie)}</span>
+            <span style="color:var(--amber-fg);">Fichier propose : ${descriptionMesureControleLaitier(c.quantite, c.anomalie)}</span>
           </div>
           <div class="row" style="margin-bottom:0;">
             <button type="button" class="btn btn-secondary btn-conflit-valeur-cl" data-ligne="${ligne.__idx}" data-controle="${controle}" data-choix="garder" style="flex:1;">Garder l'actuel</button>
@@ -16531,7 +16596,7 @@ function renderImportControleLaitierModele() {
         <div style="border-top:1px solid var(--border);padding:10px 0;">
           <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${numeroVisuel(ligne.resolution.sheep.eid)} — Contrôle ${controle} déjà enregistré</div>
           <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
-            <span>Actuel : ${existant.quantite} mL</span>
+            <span>Actuel : ${descriptionMesureControleLaitier(existant.quantite, existant.anomalie)}</span>
             <span style="color:var(--coral-fg);">Fichier propose : (aucune valeur)</span>
           </div>
           <div class="row" style="margin-bottom:0;">
@@ -16548,6 +16613,14 @@ function renderImportControleLaitierModele() {
         <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Valeurs à clarifier (${valeursAmbigues.length})</div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Valeur non entière (décimale à virgule/point ou autre) -- ambiguë entre mL et L, jamais devinée. Corrige le fichier ou saisis la valeur à la main.</div>
         ${valeursAmbigues.map(({ ligne, controle, brut }) => `<div style="font-size:13px;padding:5px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${ligne.ligne} — Contrôle ${controle}</span><span style="color:var(--amber-fg);">"${brut}"</span></div>`).join('')}
+      </div>
+      ` : ''}
+
+      ${formatsInvalides.length > 0 ? `
+      <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Formats anomalie invalides (${formatsInvalides.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Code seul non autorisé sans quantité, code hors 01-09, ou "quantité/code" mal formé (ex: un seul chiffre après le "/") -- jamais deviné. Corrige le fichier.</div>
+        ${formatsInvalides.map(({ ligne, controle, brut }) => `<div style="font-size:13px;padding:5px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${ligne.ligne} — Contrôle ${controle}</span><span style="color:var(--amber-fg);">"${brut}"</span></div>`).join('')}
       </div>
       ` : ''}
 
@@ -16635,16 +16708,17 @@ function renderImportControleLaitierModele() {
           }
           return;
         }
-        if (c.ambigue) return;
+        if (c.ambigue || c.invalide) return;
         if (idx === -1) {
           sheep.controleLaitier = sheep.controleLaitier || [];
-          sheep.controleLaitier.push({ controle: n, quantite: c.quantite, anomalie: null, date: info.dateAdoptee, campagne });
+          sheep.controleLaitier.push({ controle: n, quantite: c.quantite, anomalie: c.anomalie || null, date: info.dateAdoptee, campagne });
           nbEcrites++;
         } else {
           const existant = sheep.controleLaitier[idx];
-          if (existant.quantite === c.quantite) return; // déjà identique
+          if (existant.quantite === c.quantite && (existant.anomalie || null) === (c.anomalie || null)) return; // déjà identique
           if (c.resolutionConflit === 'remplacer') {
             existant.quantite = c.quantite;
+            existant.anomalie = c.anomalie || null;
             existant.date = info.dateAdoptee;
             nbEcrites++;
           }
@@ -17096,7 +17170,7 @@ function renderParametresImports(content) {
   // cours, brebis uniquement.
   const controleLaitierModeleCard = `<div class="card" style="margin-bottom:12px;">
     <div style="font-weight:600;margin-bottom:6px;">Contrôle laitier</div>
-    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (Modele_Controle_Laitier.xlsx) : quantités de lait (mL) des contrôles 1/2/3 de la campagne en cours, par brebis (EID ou numéro SIEOL).</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (Modele_Controle_Laitier.xlsx) : quantités de lait (mL) et/ou code anomalie des contrôles 1/2/3 de la campagne en cours, par brebis (EID ou numéro SIEOL).</div>
     <button type="button" class="btn btn-secondary" id="btn-import-controle-laitier-modele">Importer le fichier</button>
   </div>`;
   // Remise à zéro exceptionnelle (chantier dédié) : plusieurs imports/tests
