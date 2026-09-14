@@ -16425,15 +16425,31 @@ function renderImportControleLaitierModele() {
 
     const valeursAmbigues = [];
     const conflitsValeur = [];
+    // Conflit "valeur retirée du fichier" : Ovilog a déjà une mesure pour cet
+    // animal/ce contrôle, le fichier réimporté n'en propose plus (cellule
+    // vide) -- jamais silencieux dans un sens ni dans l'autre (voir chantier
+    // "Remise à zéro"), mêmes boutons Garder/Remplacer que les autres
+    // conflits : "Garder l'actuel" ne touche à rien, "Remplacer" supprime la
+    // mesure existante (le fichier dit qu'elle n'existe plus).
+    const conflitsAbsence = [];
     const aEcrire = { 1: 0, 2: 0, 3: 0 };
+    let nbASupprimer = 0;
     directes.forEach(ligne => {
       [1, 2, 3].forEach(n => {
         const info = infos[n];
         const c = ligne.controles[n];
-        if (!info.actif || !c.present) return;
-        if (c.ambigue) { valeursAmbigues.push({ ligne, controle: n, brut: c.brut }); return; }
+        if (!info.actif) return;
         if (info.conflit && !info.dateAdoptee) return; // colonne bloquée tant que le conflit de date n'est pas tranché
         const idx = controleLaitierCampagneIdxN(ligne.resolution.sheep, n, campagne);
+        if (!c.present) {
+          if (idx !== -1) {
+            const existant = ligne.resolution.sheep.controleLaitier[idx];
+            conflitsAbsence.push({ ligne, controle: n, c, existant });
+            if (c.resolutionAbsence === 'remplacer') nbASupprimer++;
+          }
+          return; // cellule vide sans mesure existante -- rien à signaler
+        }
+        if (c.ambigue) { valeursAmbigues.push({ ligne, controle: n, brut: c.brut }); return; }
         if (idx === -1) { aEcrire[n]++; return; }
         const existant = ligne.resolution.sheep.controleLaitier[idx];
         if (existant.quantite === c.quantite) return; // déjà identique -- ignoré silencieusement
@@ -16443,6 +16459,7 @@ function renderImportControleLaitierModele() {
     });
     const conflitsDateListe = [1, 2, 3].filter(n => infos[n].actif && infos[n].conflit);
     const nbConflitsValeurRestants = conflitsValeur.filter(x => !x.c.resolutionConflit).length;
+    const nbConflitsAbsenceRestants = conflitsAbsence.filter(x => !x.c.resolutionAbsence).length;
     const nbConflitsDateRestants = conflitsDateListe.filter(n => !choixDate[n]).length;
 
     preview.innerHTML = `
@@ -16450,7 +16467,7 @@ function renderImportControleLaitierModele() {
         <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
           <div class="stat-card sc-green"><div class="stat-card-label">À écrire</div><div class="stat-card-value" style="font-size:16px;">${aEcrire[1] + aEcrire[2] + aEcrire[3]}</div></div>
           <div class="stat-card sc-coral"><div class="stat-card-label">Non résolues</div><div class="stat-card-value" style="font-size:16px;">${nonResolues.length}</div></div>
-          <div class="stat-card sc-amber"><div class="stat-card-label">Conflits</div><div class="stat-card-value" style="font-size:16px;">${conflitsValeur.length + conflitsDateListe.length}</div></div>
+          <div class="stat-card sc-amber"><div class="stat-card-label">Conflits</div><div class="stat-card-value" style="font-size:16px;">${conflitsValeur.length + conflitsAbsence.length + conflitsDateListe.length}</div></div>
         </div>
         <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">
           ${[1, 2, 3].map(n => {
@@ -16506,6 +16523,26 @@ function renderImportControleLaitierModele() {
       </div>
       ` : ''}
 
+      ${conflitsAbsence.length > 0 ? `
+      <div class="card" style="margin-top:10px;border-color:var(--coral-fg);">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--coral-fg);">Conflits — valeur retirée du fichier (${conflitsAbsence.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Ovilog a déjà une mesure pour cet animal/ce contrôle, mais la cellule est vide dans le fichier réimporté. Rien n'est modifié sans ton choix explicite ; un conflit laissé sans réponse garde la mesure actuelle.</div>
+        ${conflitsAbsence.map(({ ligne, controle, c, existant }) => `
+        <div style="border-top:1px solid var(--border);padding:10px 0;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${numeroVisuel(ligne.resolution.sheep.eid)} — Contrôle ${controle} déjà enregistré</div>
+          <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
+            <span>Actuel : ${existant.quantite} mL</span>
+            <span style="color:var(--coral-fg);">Fichier propose : (aucune valeur)</span>
+          </div>
+          <div class="row" style="margin-bottom:0;">
+            <button type="button" class="btn btn-secondary btn-conflit-absence-cl" data-ligne="${ligne.__idx}" data-controle="${controle}" data-choix="garder" style="flex:1;">Garder l'actuel</button>
+            <button type="button" class="btn btn-primary btn-conflit-absence-cl" data-ligne="${ligne.__idx}" data-controle="${controle}" data-choix="remplacer" style="flex:1;background:var(--coral-fg);">Remplacer (supprime la mesure)</button>
+          </div>
+          ${c.resolutionAbsence ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Choix actuel : ${c.resolutionAbsence === 'remplacer' ? 'remplacer (suppression)' : "garder l'actuel"}.</div>` : ''}
+        </div>`).join('')}
+      </div>
+      ` : ''}
+
       ${valeursAmbigues.length > 0 ? `
       <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
         <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Valeurs à clarifier (${valeursAmbigues.length})</div>
@@ -16540,9 +16577,16 @@ function renderImportControleLaitierModele() {
         renderPreview();
       };
     });
+    document.querySelectorAll('.btn-conflit-absence-cl').forEach(btn => {
+      btn.onclick = () => {
+        const ligne = parsed.lignes[parseInt(btn.dataset.ligne, 10)];
+        ligne.controles[parseInt(btn.dataset.controle, 10)].resolutionAbsence = btn.dataset.choix;
+        renderPreview();
+      };
+    });
 
-    btnConfirm.classList.toggle('hidden', aEcrire[1] + aEcrire[2] + aEcrire[3] === 0);
-    const nbRestants = nbConflitsValeurRestants + nbConflitsDateRestants;
+    btnConfirm.classList.toggle('hidden', aEcrire[1] + aEcrire[2] + aEcrire[3] + nbASupprimer === 0);
+    const nbRestants = nbConflitsValeurRestants + nbConflitsAbsenceRestants + nbConflitsDateRestants;
     btnConfirm.textContent = nbRestants > 0 ? `Confirmer l'import (${nbRestants} conflit(s) non tranché(s) resteront inchangés)` : "Confirmer l'import";
   }
 
@@ -16572,16 +16616,26 @@ function renderImportControleLaitierModele() {
 
   document.getElementById('btn-confirm-import-cl-modele').onclick = () => {
     if (!parsed) return;
-    let nbEcrites = 0;
+    let nbEcrites = 0, nbSupprimees = 0;
     [1, 2, 3].forEach(n => {
       const info = infosControle(n);
       if (!info.actif || info.dateAdoptee === null) return; // colonne ignorée ou conflit de date non tranché
       parsed.lignes.forEach(ligne => {
         if (ligne.resolution.type !== 'direct') return;
         const c = ligne.controles[n];
-        if (!c.present || c.ambigue) return;
         const sheep = ligne.resolution.sheep;
         const idx = controleLaitierCampagneIdxN(sheep, n, campagne);
+        if (!c.present) {
+          // Cellule vide : rien à faire SAUF si une mesure existante avait
+          // été explicitement marquée "Remplacer" (le fichier dit qu'elle
+          // n'existe plus) -- voir conflitsAbsence dans renderPreview.
+          if (idx !== -1 && c.resolutionAbsence === 'remplacer') {
+            sheep.controleLaitier.splice(idx, 1);
+            nbSupprimees++;
+          }
+          return;
+        }
+        if (c.ambigue) return;
         if (idx === -1) {
           sheep.controleLaitier = sheep.controleLaitier || [];
           sheep.controleLaitier.push({ controle: n, quantite: c.quantite, anomalie: null, date: info.dateAdoptee, campagne });
@@ -16599,7 +16653,7 @@ function renderImportControleLaitierModele() {
       });
     });
     saveData(DB);
-    alert(nbEcrites + ' mesure(s) écrite(s).');
+    alert(nbEcrites + ' mesure(s) écrite(s).' + (nbSupprimees > 0 ? ' ' + nbSupprimees + ' mesure(s) supprimée(s) (valeur retirée du fichier).' : ''));
     render('parametres');
   };
 }
