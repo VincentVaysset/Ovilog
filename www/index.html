@@ -3746,6 +3746,7 @@ function render(view, sheepId) {
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
     else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
     else if (view === 'import-correspondance-sieol') renderImportCorrespondanceSieol();
+    else if (view === 'import-controle-laitier-modele') renderImportControleLaitierModele();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
     else if (view === 'registre') renderRegistre();
@@ -16206,6 +16207,403 @@ function renderImportCorrespondanceSieol() {
   };
 }
 
+/* ---------- Import "Contrôle laitier" (mode fichier modèle Ovilog) ----------
+   Chantier dédié -- distinct de l'import "Cahier de contrôle laitier SIEOL"
+   déjà existant (renderImportControleLaitierSieol, résumé + cahier au format
+   SIEOL brut, campagne choisie explicitement) : ici un seul fichier .xlsx au
+   format modèle Ovilog (Modele_Controle_Laitier.xlsx), toujours pour la
+   campagne EN COURS (DB.campagneDebut), BREBIS UNIQUEMENT (jamais béliers ni
+   agnelles -- le contrôle laitier ne les concerne pas).
+
+   Structure du fichier (onglet "Contrôle laitier", voir modèle fourni) :
+   ligne 4 = date de chaque contrôle en C4/D4/E4 (une fois par colonne) ;
+   ligne 5 = en-têtes (non relus -- positions FIXES comme le modèle
+   Correspondance SIEOL, pas de mapping par nom) ; données à partir de la
+   ligne 6 : colonne A = numéro EID (11 chiffres -- au sens historique de ces
+   fichiers modèles Ovilog, c'est en réalité le NUMÉRO OFFICIEL au sens
+   Chantier A, pas l'EID complet à 15 chiffres réellement stocké -- même
+   convention que Modele_Correspondance_SIEOL.xlsx), colonne B = numéro
+   SIEOL (court ou long), colonnes C/D/E = contrôles 1/2/3 en mL.
+
+   Une colonne de contrôle sans date en en-tête (placeholder "JJ-MM-AAAA"
+   resté tel quel, ou vide) est entièrement ignorée. La date est tapée dans
+   une cellule au format General : un tableur peut la garder en texte
+   "JJ-MM-AAAA" ou la convertir en série Excel selon qu'il la reconnaît
+   comme une date -- les deux formats sont donc acceptés.
+
+   Lecture : PAS d'arrêt à la première ligne trouée (contrairement à
+   Correspondance SIEOL) -- une ligne sans EID ni numéro SIEOL exploitable
+   est listée à part dans l'aperçu ("ignorée"), la lecture continue jusqu'à
+   la fin réelle des données du fichier. Les lignes entièrement vides (trame
+   du modèle après la dernière ligne saisie) ne sont, elles, jamais listées
+   -- aucune information à signaler.
+
+   Résolution : EID (colonne A) prioritaire si renseigné, sinon numéro SIEOL
+   (colonne B) -- JAMAIS de repli automatique sur B si A ne résout aucun
+   animal (règle explicitement confirmée). Colonne A : comparaison directe à
+   eidAffichageCourt(brebis.eid) (même mécanisme que Correspondance SIEOL
+   pour sa propre colonne EID -- un numéro officiel est unique par
+   construction, jamais ambigu). Colonne B : trouverParNumero() tel quel
+   (numéro court Ovilog + numéro long/court travail SIEOL -- gère nativement
+   l'ambiguïté).
+
+   Quantités : un entier propre est accepté tel quel (mL). Toute valeur qui
+   n'est pas un entier propre (décimale à virgule/point comme "1,8"/"1.8",
+   ou tout autre texte non numérique) n'est JAMAIS devinée -- panier "à
+   clarifier" dédié, rien n'écrit pour cette cellule.
+
+   Conflits -- MÊME mécanique Garder/Remplacer inline que le Cahier de
+   contrôle laitier SIEOL (changement demandé par l'éleveur, pour que les
+   deux écrans d'import se comportent pareil) :
+   - Conflit de VALEUR (animal + n° de contrôle déjà rempli différemment) :
+     Garder/Remplacer PAR LIGNE, comme le cahier SIEOL. Un conflit laissé
+     sans réponse au moment de confirmer reste inchangé (valeur existante
+     conservée) -- jamais écrasé par défaut.
+   - Conflit de DATE (n° de contrôle déjà daté différemment cette
+     campagne) : Garder/Remplacer, mais UNE SEULE FOIS PAR COLONNE (la date
+     est commune à tout le contrôle) -- "Garder" utilise la date déjà
+     enregistrée pour écrire les nouvelles mesures de cette colonne (le
+     fichier est ignoré sur ce point précis) ; "Remplacer" utilise la date
+     du fichier pour les nouvelles mesures. Dans les deux cas, les
+     enregistrements DÉJÀ existants d'autres brebis pour ce contrôle cette
+     campagne ne sont JAMAIS réécrits automatiquement (choix volontairement
+     conservateur : rétro-dater en masse des mesures déjà saisies par
+     ailleurs serait un effet de bord silencieux trop important pour ce
+     chantier -- à signaler si ce n'est pas le comportement voulu). Un
+     conflit de date non tranché bloque toute la colonne : aucune nouvelle
+     mesure n'est écrite pour ce contrôle tant que le choix n'est pas fait.
+   - Valeur déjà identique : ignorée silencieusement (jamais un conflit).
+
+   Écriture : toujours un push() d'un nouvel enregistrement
+   { controle, quantite, anomalie: null, date, campagne } -- jamais de
+   remplacement, sauf le cas explicite "conflit de valeur -> Remplacer" qui
+   met à jour l'enregistrement existant en place (quantite + date, anomalie
+   jamais touchée -- ce fichier n'en transporte pas). */
+
+const CONTROLE_LAITIER_MODELE_SHEET = 'Contrôle laitier';
+const CONTROLE_LAITIER_MODELE_PREMIERE_LIGNE = 6;
+
+// Série de date Excel (système 1900, époque 1899-12-30) -> ISO AAAA-MM-JJ.
+// 25569 = nombre de jours entre l'époque Excel et l'époque Unix (1970-01-01).
+function excelSerialToIso(serial) {
+  const n = Number(serial);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const d = new Date(Math.round((n - 25569) * 86400000));
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+// Date JJ-MM-AAAA (tirets -- format du modèle Contrôle laitier, voir
+// parseDateFrSlash pour l'équivalent à barres obliques des CSV SIEOL) ->
+// ISO AAAA-MM-JJ ; null si vide/invalide.
+function parseDateFrTiret(str) {
+  const s = String(str || '').trim();
+  const m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (!m) return null;
+  return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+}
+// Date d'en-tête de colonne (C4/D4/E4) : texte "JJ-MM-AAAA" OU série Excel
+// numérique (voir commentaire du chantier ci-dessus) -- null si ni l'un ni
+// l'autre (placeholder resté tel quel, ou vide -> contrôle pas encore
+// réalisé, colonne entière ignorée par l'appelant).
+function parseDateEnteteControleLaitierModele(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const viaTexte = parseDateFrTiret(s);
+  if (viaTexte) return viaTexte;
+  if (/^\d+(\.\d+)?$/.test(s)) return excelSerialToIso(parseFloat(s));
+  return null;
+}
+// Quantité de lait d'une cellule C/D/E : entier propre accepté tel quel ;
+// toute autre valeur non vide (décimale à virgule/point, texte...) jamais
+// devinée -- ambigue:true, à clarifier avec l'éleveur (voir chantier).
+function parseQuantiteControleLaitierModele(raw) {
+  const s = String(raw === undefined || raw === null ? '' : raw).trim();
+  if (!s) return { present: false };
+  if (/^\d+$/.test(s)) return { present: true, quantite: parseInt(s, 10), ambigue: false };
+  return { present: true, quantite: null, ambigue: true, brut: s };
+}
+// Résolution d'une ligne : EID (colonne A) prioritaire si renseigné, sinon
+// numéro SIEOL (colonne B) -- jamais les deux à la fois, jamais de repli
+// automatique de A vers B (voir chantier). Brebis uniquement.
+function resoudreLigneControleLaitierModele(eidVal, sieolVal) {
+  const eid = String(eidVal || '').trim();
+  const sieol = String(sieolVal || '').trim();
+  if (!eid && !sieol) return { type: 'ignoree' };
+  if (eid) {
+    const sheep = DB.brebis.find(s => eidAffichageCourt(s.eid) === eid);
+    return sheep ? { type: 'direct', sheep } : { type: 'aucune', valeur: eid };
+  }
+  const candidats = trouverParNumero(DB.brebis, sieol);
+  if (candidats.length === 1) return { type: 'direct', sheep: candidats[0] };
+  if (candidats.length > 1) return { type: 'ambigue', candidats, valeur: sieol };
+  return { type: 'aucune', valeur: sieol };
+}
+/* Lecture complète du fichier : dates par contrôle (ligne 4) + lignes de
+   données (à partir de la ligne 6, JUSQU'À LA FIN RÉELLE des données --
+   aucun arrêt anticipé sur une ligne trouée, voir chantier). Une ligne
+   totalement vide (trame du modèle) n'est jamais ajoutée à `lignes` --
+   rien à signaler ; une ligne avec au moins une valeur quelque part mais
+   ni EID ni numéro SIEOL exploitable l'est (resolution.type === 'ignoree'),
+   pour être listée dans l'aperçu comme demandé. */
+function parserFichierControleLaitierModele(rows) {
+  const ligneDates = rows[3] || [];
+  const datesFichier = {
+    1: parseDateEnteteControleLaitierModele(ligneDates[2]),
+    2: parseDateEnteteControleLaitierModele(ligneDates[3]),
+    3: parseDateEnteteControleLaitierModele(ligneDates[4])
+  };
+  const lignes = [];
+  for (let i = CONTROLE_LAITIER_MODELE_PREMIERE_LIGNE - 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const eidVal = String(row[0] || '').trim();
+    const sieolVal = String(row[1] || '').trim();
+    const c1 = parseQuantiteControleLaitierModele(row[2]);
+    const c2 = parseQuantiteControleLaitierModele(row[3]);
+    const c3 = parseQuantiteControleLaitierModele(row[4]);
+    if (!eidVal && !sieolVal && !c1.present && !c2.present && !c3.present) continue; // ligne de trame vide -- jamais signalée
+    lignes.push({
+      __idx: lignes.length, ligne: i + 1, eidVal, sieolVal,
+      resolution: resoudreLigneControleLaitierModele(eidVal, sieolVal),
+      controles: { 1: c1, 2: c2, 3: c3 }
+    });
+  }
+  return { datesFichier, lignes };
+}
+// Dates distinctes déjà enregistrées (toutes brebis confondues) pour ce
+// n° de contrôle + cette campagne -- sert à détecter un conflit de date
+// (voir chantier : la date est censée être commune à toute la colonne).
+function dateActuelleControleLaitierCampagne(controle, campagne) {
+  const dates = new Set();
+  DB.brebis.forEach(s => (s.controleLaitier || []).forEach(c => {
+    if (c && c.controle === controle && c.campagne === campagne && c.date) dates.add(c.date);
+  }));
+  return dates;
+}
+
+function renderImportControleLaitierModele() {
+  pageTitle.textContent = 'Import contrôle laitier';
+  const campagne = DB.campagneDebut;
+  let parsed = null; // { datesFichier, lignes } -- voir parserFichierControleLaitierModele
+  const choixDate = { 1: null, 2: null, 3: null }; // 'garder' | 'remplacer' | null, par n° de contrôle
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne concernée : <strong>Campagne ${campagne + 1}</strong> (campagne en cours -- pas de sélecteur, cet import ne concerne que la saisie de la campagne actuelle).</div>
+      <label style="display:flex;align-items:center;">Fichier modèle Ovilog${infoBulleHtml('Format du fichier', "Fichier .xlsx basé sur Modele_Controle_Laitier.xlsx, onglet \"Contrôle laitier\" -- ligne 4 : date de chaque contrôle (une fois par colonne) ; à partir de la ligne 6 : numéro EID (11 chiffres) ou numéro SIEOL (court ou long), puis quantités en mL des contrôles 1/2/3. Une colonne sans date valide en en-tête est considérée comme un contrôle pas encore réalisé et entièrement ignorée.")}</label>
+      <input type="file" id="import-cl-modele-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <div id="import-cl-modele-err" class="error-box hidden"></div>
+    </div>
+    <div id="import-cl-modele-preview"></div>
+    <button class="btn btn-primary hidden" id="btn-confirm-import-cl-modele" style="margin-top:14px;">Confirmer l'import</button>
+  `;
+
+  // Recalculée à chaque rendu (comme conflitDetail/conflitResume dans
+  // l'import Cahier de contrôle laitier SIEOL) : dépend de l'état courant
+  // de DB.brebis (conflit possible) et du choix Garder/Remplacer en cours.
+  function infosControle(n) {
+    const fileDate = parsed.datesFichier[n];
+    if (!fileDate) return { actif: false };
+    const existantes = dateActuelleControleLaitierCampagne(n, campagne);
+    const conflit = existantes.size > 0 && !existantes.has(fileDate);
+    let dateAdoptee = fileDate;
+    if (conflit) {
+      if (choixDate[n] === 'garder') dateAdoptee = Array.from(existantes)[0];
+      else if (choixDate[n] === 'remplacer') dateAdoptee = fileDate;
+      else dateAdoptee = null; // non tranché -- rien n'est écrit pour ce contrôle
+    }
+    return { actif: true, fileDate, existantes, conflit, dateAdoptee };
+  }
+
+  function renderPreview() {
+    const preview = document.getElementById('import-cl-modele-preview');
+    const btnConfirm = document.getElementById('btn-confirm-import-cl-modele');
+    if (!parsed) { preview.innerHTML = ''; btnConfirm.classList.add('hidden'); return; }
+
+    const infos = { 1: infosControle(1), 2: infosControle(2), 3: infosControle(3) };
+    const directes = parsed.lignes.filter(r => r.resolution.type === 'direct');
+    const nonResolues = parsed.lignes.filter(r => r.resolution.type === 'aucune' || r.resolution.type === 'ambigue');
+    const ignorees = parsed.lignes.filter(r => r.resolution.type === 'ignoree');
+
+    const valeursAmbigues = [];
+    const conflitsValeur = [];
+    const aEcrire = { 1: 0, 2: 0, 3: 0 };
+    directes.forEach(ligne => {
+      [1, 2, 3].forEach(n => {
+        const info = infos[n];
+        const c = ligne.controles[n];
+        if (!info.actif || !c.present) return;
+        if (c.ambigue) { valeursAmbigues.push({ ligne, controle: n, brut: c.brut }); return; }
+        if (info.conflit && !info.dateAdoptee) return; // colonne bloquée tant que le conflit de date n'est pas tranché
+        const idx = controleLaitierCampagneIdxN(ligne.resolution.sheep, n, campagne);
+        if (idx === -1) { aEcrire[n]++; return; }
+        const existant = ligne.resolution.sheep.controleLaitier[idx];
+        if (existant.quantite === c.quantite) return; // déjà identique -- ignoré silencieusement
+        conflitsValeur.push({ ligne, controle: n, c, existant });
+        if (c.resolutionConflit === 'remplacer') aEcrire[n]++;
+      });
+    });
+    const conflitsDateListe = [1, 2, 3].filter(n => infos[n].actif && infos[n].conflit);
+    const nbConflitsValeurRestants = conflitsValeur.filter(x => !x.c.resolutionConflit).length;
+    const nbConflitsDateRestants = conflitsDateListe.filter(n => !choixDate[n]).length;
+
+    preview.innerHTML = `
+      <div class="card" style="margin-top:14px;">
+        <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
+          <div class="stat-card sc-green"><div class="stat-card-label">À écrire</div><div class="stat-card-value" style="font-size:16px;">${aEcrire[1] + aEcrire[2] + aEcrire[3]}</div></div>
+          <div class="stat-card sc-coral"><div class="stat-card-label">Non résolues</div><div class="stat-card-value" style="font-size:16px;">${nonResolues.length}</div></div>
+          <div class="stat-card sc-amber"><div class="stat-card-label">Conflits</div><div class="stat-card-value" style="font-size:16px;">${conflitsValeur.length + conflitsDateListe.length}</div></div>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">
+          ${[1, 2, 3].map(n => {
+            const info = infos[n];
+            if (!info.actif) return 'Contrôle ' + n + ' : aucune date valide en en-tête -- ignoré.';
+            if (info.conflit && !info.dateAdoptee) return 'Contrôle ' + n + ' : date en conflit, en attente de ton choix (voir ci-dessous) -- ' + aEcrire[n] + ' mesure(s) en attente.';
+            return 'Contrôle ' + n + ' : date adoptée ' + formatDateFr(info.dateAdoptee) + ' -- ' + aEcrire[n] + ' mesure(s) à écrire.';
+          }).join('<br>')}
+        </div>
+      </div>
+
+      ${conflitsDateListe.length > 0 ? `
+      <div class="card" style="margin-top:10px;border-color:var(--coral-fg);">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--coral-fg);">Conflits de date (${conflitsDateListe.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">La date de ce contrôle est déjà différente pour au moins une brebis cette campagne. Choix valable pour TOUTE la colonne -- les mesures déjà enregistrées d'autres brebis ne sont jamais modifiées, seule la date des NOUVELLES mesures de cet import en dépend.</div>
+        ${conflitsDateListe.map(n => {
+          const info = infos[n];
+          const dateActuelle = Array.from(info.existantes)[0];
+          return `
+          <div style="border-top:1px solid var(--border);padding:10px 0;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Contrôle ${n}</div>
+            <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
+              <span>Actuel : ${formatDateFr(dateActuelle)}${info.existantes.size > 1 ? ' (+ d\'autres dates déjà présentes)' : ''}</span>
+              <span style="color:var(--coral-fg);">Fichier propose : ${formatDateFr(info.fileDate)}</span>
+            </div>
+            <div class="row" style="margin-bottom:0;">
+              <button type="button" class="btn btn-secondary btn-conflit-date-cl" data-controle="${n}" data-choix="garder" style="flex:1;">Garder l'actuel</button>
+              <button type="button" class="btn btn-primary btn-conflit-date-cl" data-controle="${n}" data-choix="remplacer" style="flex:1;background:var(--coral-fg);">Remplacer</button>
+            </div>
+            ${choixDate[n] ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Choix actuel : ${choixDate[n] === 'remplacer' ? 'remplacer' : "garder l'actuel"}.</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+      ` : ''}
+
+      ${conflitsValeur.length > 0 ? `
+      <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Conflits de valeur (${conflitsValeur.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Une valeur existe déjà. Rien n'est écrasé sans ton choix explicite ; un conflit laissé sans réponse garde la valeur actuelle.</div>
+        ${conflitsValeur.map(({ ligne, controle, c, existant }) => `
+        <div style="border-top:1px solid var(--border);padding:10px 0;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${numeroVisuel(ligne.resolution.sheep.eid)} — Contrôle ${controle} déjà enregistré</div>
+          <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
+            <span>Actuel : ${existant.quantite} mL</span>
+            <span style="color:var(--amber-fg);">Fichier propose : ${c.quantite} mL</span>
+          </div>
+          <div class="row" style="margin-bottom:0;">
+            <button type="button" class="btn btn-secondary btn-conflit-valeur-cl" data-ligne="${ligne.__idx}" data-controle="${controle}" data-choix="garder" style="flex:1;">Garder l'actuel</button>
+            <button type="button" class="btn btn-primary btn-conflit-valeur-cl" data-ligne="${ligne.__idx}" data-controle="${controle}" data-choix="remplacer" style="flex:1;background:var(--amber-fg);">Remplacer</button>
+          </div>
+          ${c.resolutionConflit ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Choix actuel : ${c.resolutionConflit === 'remplacer' ? 'remplacer' : "garder l'actuel"}.</div>` : ''}
+        </div>`).join('')}
+      </div>
+      ` : ''}
+
+      ${valeursAmbigues.length > 0 ? `
+      <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Valeurs à clarifier (${valeursAmbigues.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Valeur non entière (décimale à virgule/point ou autre) -- ambiguë entre mL et L, jamais devinée. Corrige le fichier ou saisis la valeur à la main.</div>
+        ${valeursAmbigues.map(({ ligne, controle, brut }) => `<div style="font-size:13px;padding:5px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${ligne.ligne} — Contrôle ${controle}</span><span style="color:var(--amber-fg);">"${brut}"</span></div>`).join('')}
+      </div>
+      ` : ''}
+
+      ${nonResolues.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-weight:600;margin-bottom:8px;color:var(--coral-fg);">Non résolues (${nonResolues.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Aucune brebis ne correspond (ou plusieurs candidates) -- ces lignes ne sont pas traitées.</div>
+        ${nonResolues.map(r => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${r.ligne} — ${r.resolution.valeur}${r.resolution.type === 'ambigue' ? ' (ambiguë, ' + r.resolution.candidats.length + ' candidates)' : ' (introuvable)'}</div>`).join('')}
+      </div>
+      ` : ''}
+
+      ${ignorees.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-weight:600;margin-bottom:8px;">Ignorées -- ni EID ni numéro SIEOL (${ignorees.length})</div>
+        ${ignorees.map(r => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${r.ligne}</div>`).join('')}
+      </div>
+      ` : ''}
+    `;
+
+    document.querySelectorAll('.btn-conflit-date-cl').forEach(btn => {
+      btn.onclick = () => { choixDate[parseInt(btn.dataset.controle, 10)] = btn.dataset.choix; renderPreview(); };
+    });
+    document.querySelectorAll('.btn-conflit-valeur-cl').forEach(btn => {
+      btn.onclick = () => {
+        const ligne = parsed.lignes[parseInt(btn.dataset.ligne, 10)];
+        ligne.controles[parseInt(btn.dataset.controle, 10)].resolutionConflit = btn.dataset.choix;
+        renderPreview();
+      };
+    });
+
+    btnConfirm.classList.toggle('hidden', aEcrire[1] + aEcrire[2] + aEcrire[3] === 0);
+    const nbRestants = nbConflitsValeurRestants + nbConflitsDateRestants;
+    btnConfirm.textContent = nbRestants > 0 ? `Confirmer l'import (${nbRestants} conflit(s) non tranché(s) resteront inchangés)` : "Confirmer l'import";
+  }
+
+  document.getElementById('import-cl-modele-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-cl-modele-err');
+    err.classList.add('hidden');
+    parsed = null;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const rows = await readXlsxRows(reader.result, CONTROLE_LAITIER_MODELE_SHEET);
+        parsed = parserFichierControleLaitierModele(rows);
+        renderPreview();
+      } catch (ex) {
+        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import-cl-modele').onclick = () => {
+    if (!parsed) return;
+    let nbEcrites = 0;
+    [1, 2, 3].forEach(n => {
+      const info = infosControle(n);
+      if (!info.actif || info.dateAdoptee === null) return; // colonne ignorée ou conflit de date non tranché
+      parsed.lignes.forEach(ligne => {
+        if (ligne.resolution.type !== 'direct') return;
+        const c = ligne.controles[n];
+        if (!c.present || c.ambigue) return;
+        const sheep = ligne.resolution.sheep;
+        const idx = controleLaitierCampagneIdxN(sheep, n, campagne);
+        if (idx === -1) {
+          sheep.controleLaitier = sheep.controleLaitier || [];
+          sheep.controleLaitier.push({ controle: n, quantite: c.quantite, anomalie: null, date: info.dateAdoptee, campagne });
+          nbEcrites++;
+        } else {
+          const existant = sheep.controleLaitier[idx];
+          if (existant.quantite === c.quantite) return; // déjà identique
+          if (c.resolutionConflit === 'remplacer') {
+            existant.quantite = c.quantite;
+            existant.date = info.dateAdoptee;
+            nbEcrites++;
+          }
+          // 'garder' ou non tranché -> valeur existante conservée, jamais écrasée par défaut.
+        }
+      });
+    });
+    saveData(DB);
+    alert(nbEcrites + ' mesure(s) écrite(s).');
+    render('parametres');
+  };
+}
+
 /* Nom + contenu d'un fichier de sauvegarde automatique silencieuse (voir
    writeAutoBackupFile), utilisés avant le changement de campagne ET avant
    l'import d'une sauvegarde JSON (voir renderParametres) — horodaté à la
@@ -16593,8 +16991,20 @@ function renderParametresImports(content) {
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (Modele_Correspondance_SIEOL.xlsx) : associe le numéro EID de chaque animal à son numéro de travail SIEOL long et/ou court.</div>
     <button type="button" class="btn btn-secondary" id="btn-import-correspondance-sieol">Importer le fichier</button>
   </div>`;
-  content.innerHTML = correspondanceSieolCard + placeholder('Nouveaux animaux') + placeholder('Contrôle laitier');
+  // "Contrôle laitier" (chantier "Import Contrôle laitier (mode fichier
+  // modèle Ovilog)") : distinct de l'import "Cahier de contrôle laitier
+  // SIEOL" déjà existant (accessible depuis l'écran Contrôle laitier lui-
+  // même, résumé + cahier au format SIEOL brut, retenu campagne explicite)
+  // -- ici mode fichier modèle Ovilog unique, toujours la campagne en
+  // cours, brebis uniquement.
+  const controleLaitierModeleCard = `<div class="card" style="margin-bottom:12px;">
+    <div style="font-weight:600;margin-bottom:6px;">Contrôle laitier</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (Modele_Controle_Laitier.xlsx) : quantités de lait (mL) des contrôles 1/2/3 de la campagne en cours, par brebis (EID ou numéro SIEOL).</div>
+    <button type="button" class="btn btn-secondary" id="btn-import-controle-laitier-modele">Importer le fichier</button>
+  </div>`;
+  content.innerHTML = correspondanceSieolCard + controleLaitierModeleCard + placeholder('Nouveaux animaux');
   document.getElementById('btn-import-correspondance-sieol').onclick = () => render('import-correspondance-sieol');
+  document.getElementById('btn-import-controle-laitier-modele').onclick = () => render('import-controle-laitier-modele');
 }
 
 /* ---------- Onglet Campagne ---------- */
