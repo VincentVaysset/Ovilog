@@ -16336,24 +16336,28 @@ function excelSerialToIso(serial) {
   const d = new Date(Math.round((n - 25569) * 86400000));
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
-// Date JJ-MM-AAAA (tirets -- format du modèle Contrôle laitier, voir
-// parseDateFrSlash pour l'équivalent à barres obliques des CSV SIEOL) ->
-// ISO AAAA-MM-JJ ; null si vide/invalide.
-function parseDateFrTiret(str) {
-  const s = String(str || '').trim();
-  const m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
-  if (!m) return null;
-  return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
-}
-// Date d'en-tête de colonne (C4/D4/E4) : texte "JJ-MM-AAAA" OU série Excel
-// numérique (voir commentaire du chantier ci-dessus) -- null si ni l'un ni
-// l'autre (placeholder resté tel quel, ou vide -> contrôle pas encore
-// réalisé, colonne entière ignorée par l'appelant).
-function parseDateEnteteControleLaitierModele(raw) {
-  const s = String(raw || '').trim();
+/* Fonction de lecture de date UNIQUE, partagée par TOUS les écrans d'import
+   modèle Ovilog (actuels et à venir -- voir chantier "Fonction de lecture
+   de date unique") : format attendu JJ-MM-AAAA (jour TOUJOURS en premier),
+   séparateur "-", "/" ou "." indifféremment (mais identique des deux côtés
+   -- jamais de mélange type "04-02/2026"), ou série Excel numérique (cellule
+   pas forcée en texte). Renvoie l'ISO AAAA-MM-JJ si reconnu, null sinon --
+   AUCUNE tentative de deviner un format non explicitement supporté ici.
+   Déclenché par un bug réel : un éleveur avait tapé une date avec des "/"
+   dans le modèle Contrôle laitier (qui n'acceptait alors que les tirets),
+   toute la colonne avait été silencieusement ignorée.
+   Ne remplace PAS parseDateFrSlash (imports CSV bruts SIEOL, hors périmètre
+   "modèle Ovilog" -- un format différent, format années comprises, qui n'a
+   jamais eu ce problème).
+   L'ambiguïté JJ/MM inversée (ex: "04-02" = 4 février ou 2 avril ?) n'est
+   PAS du ressort de ce parseur : elle se règle en amont, par le verrouillage
+   en texte des cellules dans les modèles Excel livrés à l'éleveur -- jamais
+   par une heuristique ici. */
+function parserDateModeleOvilog(raw) {
+  const s = String(raw === undefined || raw === null ? '' : raw).trim();
   if (!s) return null;
-  const viaTexte = parseDateFrTiret(s);
-  if (viaTexte) return viaTexte;
+  const m = s.match(/^(\d{1,2})([-/.])(\d{1,2})\2(\d{4})$/);
+  if (m) return m[4] + '-' + m[3].padStart(2, '0') + '-' + m[1].padStart(2, '0');
   if (/^\d+(\.\d+)?$/.test(s)) return excelSerialToIso(parseFloat(s));
   return null;
 }
@@ -16436,9 +16440,9 @@ function resoudreLigneControleLaitierModele(eidVal, sieolVal) {
 function parserFichierControleLaitierModele(rows) {
   const ligneDates = rows[3] || [];
   const datesFichier = {
-    1: parseDateEnteteControleLaitierModele(ligneDates[2]),
-    2: parseDateEnteteControleLaitierModele(ligneDates[3]),
-    3: parseDateEnteteControleLaitierModele(ligneDates[4])
+    1: parserDateModeleOvilog(ligneDates[2]),
+    2: parserDateModeleOvilog(ligneDates[3]),
+    3: parserDateModeleOvilog(ligneDates[4])
   };
   const lignes = [];
   for (let i = CONTROLE_LAITIER_MODELE_PREMIERE_LIGNE - 1; i < rows.length; i++) {
