@@ -16604,6 +16604,49 @@ function renderImportControleLaitierModele() {
   };
 }
 
+/* ---------- Remise à zéro exceptionnelle du Contrôle laitier (campagne en cours) ----------
+   Chantier demandé après que plusieurs imports/tests successifs du modèle
+   "Contrôle laitier" ont laissé des données incohérentes (valeurs
+   fantômes, lignes non résolues, au moins une valeur à 0 suspecte) sur la
+   campagne en cours -- plutôt que de corriger au cas par cas, remise à
+   zéro complète des mesures de CETTE campagne uniquement.
+   Périmètre strict : ne supprime QUE les entrées sheep.controleLaitier[]
+   dont campagne === DB.campagneDebut, sur TOUTES les brebis de DB.brebis
+   (actives ET inactives -- une brebis vendue/morte/réformée entre-temps
+   peut porter des entrées orphelines de cette campagne, à ne pas
+   oublier). Les entrées d'une campagne antérieure sur ces mêmes brebis ne
+   sont JAMAIS touchées, quel que soit leur statut. Ne concerne que les
+   brebis (le contrôle laitier n'existe pas ailleurs, voir chantier "Import
+   Contrôle laitier").
+   Sécurité : sauvegarde JSON automatique complète de la base AVANT toute
+   suppression -- même mécanisme que executerChangementCampagne
+   (writeAutoBackupFile/bytesBackupAuto/nomFichierBackupAuto) : si la
+   sauvegarde échoue, RIEN n'est supprimé. */
+function compterControleLaitierCampagne(campagne) {
+  let entrees = 0, brebisConcernees = 0;
+  (DB.brebis || []).forEach(s => {
+    const n = (s.controleLaitier || []).filter(c => c && c.campagne === campagne).length;
+    if (n > 0) { entrees += n; brebisConcernees++; }
+  });
+  return { entrees, brebisConcernees };
+}
+async function purgerControleLaitierCampagneEnCours() {
+  const campagne = DB.campagneDebut;
+  const backupDate = new Date();
+  const backupOk = await writeAutoBackupFile(nomFichierBackupAuto(backupDate), bytesBackupAuto(DB, backupDate));
+  if (!backupOk) return { ok: false };
+  await purgeOldAutoBackups();
+  let nbSupprimees = 0, nbBrebisConcernees = 0;
+  (DB.brebis || []).forEach(sheep => {
+    const avant = (sheep.controleLaitier || []).length;
+    sheep.controleLaitier = (sheep.controleLaitier || []).filter(c => !(c && c.campagne === campagne));
+    const supprimees = avant - sheep.controleLaitier.length;
+    if (supprimees > 0) { nbSupprimees += supprimees; nbBrebisConcernees++; }
+  });
+  saveData(DB);
+  return { ok: true, nbSupprimees, nbBrebisConcernees };
+}
+
 /* Nom + contenu d'un fichier de sauvegarde automatique silencieuse (voir
    writeAutoBackupFile), utilisés avant le changement de campagne ET avant
    l'import d'une sauvegarde JSON (voir renderParametres) — horodaté à la
@@ -17002,9 +17045,40 @@ function renderParametresImports(content) {
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (Modele_Controle_Laitier.xlsx) : quantités de lait (mL) des contrôles 1/2/3 de la campagne en cours, par brebis (EID ou numéro SIEOL).</div>
     <button type="button" class="btn btn-secondary" id="btn-import-controle-laitier-modele">Importer le fichier</button>
   </div>`;
-  content.innerHTML = correspondanceSieolCard + controleLaitierModeleCard + placeholder('Nouveaux animaux');
+  // Remise à zéro exceptionnelle (chantier dédié) : plusieurs imports/tests
+  // successifs du modèle ci-dessus ont laissé des données incohérentes sur
+  // la campagne en cours -- carte de secours pour repartir propre sur
+  // CETTE campagne uniquement (voir purgerControleLaitierCampagneEnCours).
+  // Masquée quand il n'y a de toute façon rien à supprimer.
+  const compteControleLaitier = compterControleLaitierCampagne(DB.campagneDebut);
+  const purgeControleLaitierCard = compteControleLaitier.entrees > 0 ? `<div class="card" style="margin-bottom:12px;border-color:var(--danger);">
+    <div style="font-weight:600;margin-bottom:6px;color:var(--danger);">Remise à zéro — Contrôle laitier</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Supprime toutes les mesures de contrôle laitier de la Campagne ${DB.campagneDebut + 1} (toutes brebis confondues, actives ou non) -- les campagnes précédentes ne sont jamais touchées. Une sauvegarde complète de la base est faite automatiquement juste avant.</div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:10px;">${compteControleLaitier.entrees} mesure(s) sur ${compteControleLaitier.brebisConcernees} brebis seront supprimées.</div>
+    <button type="button" class="btn btn-secondary" id="btn-purge-controle-laitier-campagne" style="color:var(--danger);border-color:var(--danger);">Réinitialiser les contrôles laitiers de cette campagne</button>
+  </div>` : '';
+  content.innerHTML = correspondanceSieolCard + controleLaitierModeleCard + purgeControleLaitierCard + placeholder('Nouveaux animaux');
   document.getElementById('btn-import-correspondance-sieol').onclick = () => render('import-correspondance-sieol');
   document.getElementById('btn-import-controle-laitier-modele').onclick = () => render('import-controle-laitier-modele');
+  const btnPurgeControleLaitier = document.getElementById('btn-purge-controle-laitier-campagne');
+  if (btnPurgeControleLaitier) {
+    btnPurgeControleLaitier.onclick = async () => {
+      const compte = compterControleLaitierCampagne(DB.campagneDebut);
+      if (compte.entrees === 0) return;
+      if (!confirm('Supprimer les ' + compte.entrees + ' mesure(s) de contrôle laitier de la Campagne ' + (DB.campagneDebut + 1) + ' sur ' + compte.brebisConcernees + ' brebis ? Une sauvegarde complète de la base sera faite automatiquement juste avant. Les campagnes précédentes ne seront jamais touchées. Cette action est irréversible (hors restauration manuelle de la sauvegarde).')) return;
+      btnPurgeControleLaitier.disabled = true;
+      btnPurgeControleLaitier.textContent = 'Sauvegarde en cours...';
+      const res = await purgerControleLaitierCampagneEnCours();
+      if (!res.ok) {
+        alert("La sauvegarde automatique a échoué -- aucune donnée n'a été supprimée par précaution. Réessaie, ou vérifie l'espace de stockage disponible.");
+        btnPurgeControleLaitier.disabled = false;
+        btnPurgeControleLaitier.textContent = 'Réinitialiser les contrôles laitiers de cette campagne';
+        return;
+      }
+      alert(res.nbSupprimees + ' mesure(s) supprimée(s) sur ' + res.nbBrebisConcernees + ' brebis. Sauvegarde effectuée automatiquement avant suppression.');
+      render('parametres');
+    };
+  }
 }
 
 /* ---------- Onglet Campagne ---------- */
