@@ -718,6 +718,14 @@ function migrateData(d) {
   // controleLaitier : demande explicite (collection à part, pour permettre
   // une vue d'ensemble troupeau par campagne sans parcourir DB.brebis).
   if (!d.bilanLactation) d.bilanLactation = [];
+  // Import "Lactation" (modèle Ovilog CLS/CLO, chantier "Import Lactation
+  // + affichage Index/Carrière") : une entrée par brebis ET par campagne --
+  // { eid, campagne, lactationTotale, joursTraite, lactationMoyenne,
+  // indiceCumule|indexIsol (CLS/CLO), classeParQuart|indexProduction
+  // (CLS/CLO) }. Distincte de DB.bilanLactation ci-dessus (format et
+  // origine différents -- Bilan brebis SIEOL brut, colonnes lactTotale/
+  // dureeTraite/classeParQuart) : ne pas fusionner les deux collections.
+  if (!d.lactationModele) d.lactationModele = [];
   // Lignes SIEOL "sans mise-bas" (ano_repro rempli, date_mise_bas vide)
   // résolues à une brebis connue, posées par renderImportBilanLactation --
   // { eid, campagne }. Le recoupement "Vides définitives SIEOL vs Ovilog"
@@ -943,6 +951,7 @@ function loadData() {
     prelevementsQualite: [],
     penalitesBacterio: [],
     bilanLactation: [],
+    lactationModele: [],
     sieolSansMiseBas: [],
     resumeControleLaitier: [],
     cahierControleLaitier: [],
@@ -3428,6 +3437,12 @@ let inventaireTab = 'brebis';
 // re-rendu de la MÊME fiche après une action (ex: suppression d'un item
 // via swipe) -- même principe que bilanCampagneTab ci-dessous.
 let ficheBrebisTab = 'ident';
+// Sous-onglet de l'onglet "Carrière" de la fiche brebis (chantier "Import
+// Lactation + affichage Index/Carrière") : 'historique' (comportement
+// existant, inchangé) ou 'index' (nouveau -- Lactation totale/Jours de
+// traite/Lactation moyenne selon typeSuivi, campagnes PASSÉES uniquement).
+// Même principe de conservation que ficheBrebisTab ci-dessus.
+let ficheCarriereSubTab = 'historique';
 let ficheBrebisTabSheepId = null;
 let bilanCampagneTab = 'incoherences';
 let bilanLactationCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan de lactation, voir bilanLactationHtml
@@ -3756,6 +3771,7 @@ function render(view, sheepId) {
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
     else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
     else if (view === 'import-correspondance-sieol') renderImportCorrespondanceSieol();
+    else if (view === 'import-lactation-modele') renderImportLactationModele();
     else if (view === 'import-controle-laitier-modele') renderImportControleLaitierModele();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
@@ -6103,10 +6119,19 @@ const FICHE_BREBIS_TABS = [
   { key: 'ctrl', label: 'Contrôles', icon: ICON_LAIT, color: 'blue' },
   { key: 'mouv', label: 'Mouv.', icon: ICON_MOUVEMENT, color: 'coral' },
   { key: 'carriere', label: 'Carrière', icon: ICON_CALENDAR, color: 'gray' },
-  { key: 'index', label: 'Index', icon: ICON_JOURNAL, color: 'gray', disabled: true }
+  { key: 'index', label: 'Index', icon: ICON_JOURNAL, color: 'gray' }
 ];
+// L'onglet "Index" (chantier "Import Lactation + affichage Index/
+// Carrière") n'a de sens que pour un élevage suivi en CLS ou CLO -- reste
+// désactivé (jamais un onglet vide) pour "non_suivi"/non défini, calculé à
+// chaque rendu plutôt que figé dans FICHE_BREBIS_TABS (dépend du réglage
+// courant, modifiable à tout moment dans Paramètres > Exploitation).
 function ficheBrebisTabsHtml(active) {
-  const btnHtml = t => `<button type="button" class="fiche-tab-btn${active === t.key ? ' active' : ''}${t.disabled ? ' disabled' : ''}" data-tab="${t.key}"${t.disabled ? ' disabled' : ''}>${iconCircle(t.icon, t.color, 'xs')}${t.label}</button>`;
+  const indexDisponible = DB.exploitation.typeSuivi === 'cls' || DB.exploitation.typeSuivi === 'clo';
+  const btnHtml = t => {
+    const disabled = t.key === 'index' && !indexDisponible;
+    return `<button type="button" class="fiche-tab-btn${active === t.key ? ' active' : ''}${disabled ? ' disabled' : ''}" data-tab="${t.key}"${disabled ? ' disabled' : ''}>${iconCircle(t.icon, t.color, 'xs')}${t.label}</button>`;
+  };
   return `
     <div class="fiche-tabs">${FICHE_BREBIS_TABS.slice(0, 4).map(btnHtml).join('')}</div>
     <div class="fiche-tabs row2">${FICHE_BREBIS_TABS.slice(4).map(btnHtml).join('')}</div>
@@ -6117,7 +6142,7 @@ function renderDetail(id) {
   const sheep = findSheep(id);
   if (!sheep) { render('list'); return; }
   pageTitle.textContent = 'Brebis n°' + numeroVisuel(sheep.eid);
-  if (ficheBrebisTabSheepId !== id) { ficheBrebisTab = 'ident'; ficheBrebisTabSheepId = id; }
+  if (ficheBrebisTabSheepId !== id) { ficheBrebisTab = 'ident'; ficheBrebisTabSheepId = id; ficheCarriereSubTab = 'historique'; }
   // Refonte fiche brebis desktop (option B validée) : identité + badges
   // regroupés dans un bandeau fixe séparé (voir desktopHeaderHtml plus
   // bas) au lieu d'être répétés dans l'onglet Ident./Repro comme sur
@@ -6534,16 +6559,74 @@ function renderDetail(id) {
     </div>
   `;
 
+  // Onglets "Index" (campagne en cours) et "Index" de Carrière (campagnes
+  // précédentes) -- chantier "Import Lactation + affichage Index/Carrière".
+  // N'a de sens que pour un élevage suivi CLS ou CLO -- voir
+  // ficheBrebisTabsHtml pour la désactivation de l'onglet Index lui-même
+  // quand ce n'est pas le cas.
+  const typeSuiviFiche = DB.exploitation.typeSuivi;
+  const indexDisponible = typeSuiviFiche === 'cls' || typeSuiviFiche === 'clo';
+  const libColFiche = libelleColLactationModele(typeSuiviFiche);
+  const lactationCourante = lactationModeleExistant(sheep.eid, DB.campagneDebut);
+  const indexTabHtml = `
+    <div class="card">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'gray', 'Index · campagne en cours')}
+      ${!lactationCourante ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune donnée de lactation importée pour cette campagne.</div>' : (typeSuiviFiche === 'clo' ? `
+        <div class="grid2">
+          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col4}</div><div style="font-weight:600;">${lactationCourante.indexIsol != null ? lactationCourante.indexIsol : '—'}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col5}</div><div style="font-weight:600;">${lactationCourante.indexProduction != null ? lactationCourante.indexProduction : '—'}</div></div>
+        </div>
+      ` : `
+        <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
+          <div><div style="font-size:12px;color:var(--text-muted);">Lactation moyenne</div><div style="font-weight:600;">${lactationCourante.lactationMoyenne != null ? fmtDecimal(lactationCourante.lactationMoyenne, 1) : '—'}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col5}</div><div style="font-weight:600;">${lactationCourante.classeParQuart != null ? lactationCourante.classeParQuart : '—'}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col4}</div><div style="font-weight:600;">${lactationCourante.indiceCumule != null ? lactationCourante.indiceCumule : '—'}</div></div>
+        </div>
+      `)}
+    </div>
+  `;
+
+  // Sous-onglet "Index" de Carrière : lactation totale/jours de traite
+  // (CLS et CLO), + lactation moyenne pour CLO uniquement -- campagnes
+  // PASSÉES uniquement (jamais la campagne en cours, déjà dans l'onglet
+  // Index ci-dessus), alimenté automatiquement au changement de campagne
+  // comme le reste (aucune collection nouvelle : DB.lactationModele déjà
+  // scopé par campagne).
+  const lactationHistorique = (DB.lactationModele || [])
+    .filter(l => cleanEid(l.eid) === cleanEid(sheep.eid) && l.campagne !== DB.campagneDebut)
+    .sort((a, b) => b.campagne - a.campagne);
+  const indexHistoriqueHtml = `
+    <div class="card">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'gray', 'Index · campagnes précédentes')}
+      ${lactationHistorique.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun historique de lactation des campagnes précédentes.</div>' : lactationHistorique.map(l => `
+        <div style="padding:8px 0;border-top:1px solid var(--border);">
+          <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:4px;">Campagne ${l.campagne + 1}</div>
+          <div style="font-size:13.5px;">${[
+            l.lactationTotale != null ? fmtDecimal(l.lactationTotale, 1) + ' L' : null,
+            l.joursTraite != null ? l.joursTraite + ' j de traite' : null,
+            typeSuiviFiche === 'clo' && l.lactationMoyenne != null ? 'moy. ' + fmtDecimal(l.lactationMoyenne, 1) : null
+          ].filter(Boolean).join(' · ') || '—'}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  const carriereSousOngletsHtml = !indexDisponible ? '' : `<div class="tab-bar" style="margin-bottom:10px;">
+    <button type="button" class="tab-btn${ficheCarriereSubTab === 'historique' ? ' active' : ''}" data-carriere-tab="historique">Historique</button>
+    <button type="button" class="tab-btn${ficheCarriereSubTab === 'index' ? ' active' : ''}" data-carriere-tab="index">Index</button>
+  </div>`;
   const carriereTabHtml = `
+    ${carriereSousOngletsHtml}
+    ${(!indexDisponible || ficheCarriereSubTab === 'historique') ? `
     <div class="card">
       ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Historique par campagne')}
       ${historiqueCampagnesHtml}
     </div>
+    ` : indexHistoriqueHtml}
   `;
 
   const ficheBrebisTabContent = {
     ident: identTabHtml, repro: reproTabHtml, sanit: sanitTabHtml,
-    ctrl: ctrlTabHtml, mouv: mouvTabHtml, carriere: carriereTabHtml
+    ctrl: ctrlTabHtml, mouv: mouvTabHtml, carriere: carriereTabHtml, index: indexTabHtml
   };
 
   // Bandeau d'identité desktop : regroupe ce qui, sur mobile, n'apparaît
@@ -6580,6 +6663,9 @@ function renderDetail(id) {
   document.querySelectorAll('.fiche-tab-btn').forEach(btn => {
     if (btn.disabled) return;
     btn.onclick = () => { ficheBrebisTab = btn.dataset.tab; render('detail', sheep.id); };
+  });
+  document.querySelectorAll('[data-carriere-tab]').forEach(btn => {
+    btn.onclick = () => { ficheCarriereSubTab = btn.dataset.carriereTab; render('detail', sheep.id); };
   });
   const btnAddEcho = document.getElementById('btn-add-echo');
   if (btnAddEcho) btnAddEcho.onclick = () => { editContext = null; render('add-echo', sheep.id); };
@@ -16237,6 +16323,289 @@ function renderImportCorrespondanceSieol() {
   };
 }
 
+/* ---------- Import "Lactation" (mode fichier modèle Ovilog, CLS/CLO) ----------
+   Chantier "Import Lactation (modèle Ovilog, CLS et CLO) + affichage
+   Index/Carrière" -- un seul écran, deux fichiers modèles possibles
+   (Modele_Lactation_CLS.xlsx / Modele_Lactation_CLO.xlsx) selon
+   DB.exploitation.typeSuivi ; inaccessible si typeSuivi est "non_suivi" ou
+   non défini (voir carte Paramètres > Imports, renderParametresImports).
+
+   Structure du fichier (feuille "Lactation", confirmée sur les deux
+   modèles joints) : en-têtes en ligne 4, données à partir de la ligne 5.
+   4 colonnes communes (A=numéro SIEOL court, B=lactation totale (L),
+   C=jours de traite, D=lactation moyenne), puis 2 colonnes qui diffèrent
+   selon le mode -- E/F = indice cumulé/classe par quart en CLS, index
+   ISOL/index production en CLO (voir champsLactationModeleParType). La
+   classe par quart est un texte (ex: "4"), jamais une valeur numérique à
+   comparer par magnitude -- toutes les autres colonnes sont numériques.
+
+   Résolution : numéro SIEOL COURT uniquement (pas d'EID sur ce fichier),
+   via trouverParNumero(), brebis uniquement -- jamais d'EID en repli
+   (aucune colonne EID sur ce modèle, à la différence du Contrôle laitier).
+
+   Une ligne dont TOUTES les colonnes de mesure sont vides ou à 0 (brebis
+   pas encore mise bas cette campagne, vide définitive) est ignorée
+   silencieusement, jamais listée, jamais un conflit -- que le numéro SIEOL
+   soit renseigné ou non sur cette ligne. Une ligne SANS numéro SIEOL
+   exploitable mais avec au moins une mesure est listée à part ("ignorée").
+
+   Contrairement au Contrôle laitier (conflit par colonne/contrôle), une
+   ligne de ce fichier est UN SEUL enregistrement par brebis et par
+   campagne : aucun enregistrement existant -> écriture directe des champs
+   renseignés ; un enregistrement existe ET au moins une valeur renseignée
+   diffère -> conflit Garder/Remplacer unique pour toute la ligne
+   ("Remplacer" merge en bloc tous les champs renseignés du fichier, pas
+   colonne par colonne) ; toutes les valeurs renseignées déjà identiques ->
+   ignoré silencieusement. DÉCISION CONFIRMÉE : une colonne blanche du
+   fichier n'est JAMAIS comparée ni ne peut jamais effacer une valeur déjà
+   existante -- une case vide signifie "je n'ai pas cette donnée sous la
+   main" (texte de l'onglet Instructions des modèles), jamais "supprime
+   cette valeur" (à la différence du bug#3 du Contrôle laitier, qui ne
+   s'applique pas ici). */
+const LACTATION_MODELE_SHEET = 'Lactation';
+const LACTATION_MODELE_PREMIERE_LIGNE = 5;
+
+function champsLactationModeleParType(typeSuivi) {
+  return typeSuivi === 'clo'
+    ? { col4: 'indexIsol', col5: 'indexProduction' }
+    : { col4: 'indiceCumule', col5: 'classeParQuart' }; // 'cls' par défaut
+}
+function libelleColLactationModele(typeSuivi) {
+  return typeSuivi === 'clo'
+    ? { col4: 'Index ISOL', col5: 'Index production' }
+    : { col4: 'Indice cumulé', col5: 'Classe par quart' };
+}
+// Nombre décimal ou entier, tolère la virgule -- null si vide/non
+// numérique. Jamais 0 par défaut : un champ non renseigné doit rester
+// distinguable d'une vraie mesure à 0 (voir ligneLactationModeleVide).
+function parseNombreLactationModele(raw) {
+  const s = String(raw === undefined || raw === null ? '' : raw).trim();
+  if (!s) return null;
+  const n = parseFloat(s.replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
+// Vide/zéro, tous types confondus (nombre ou texte "classe par quart") --
+// voir la règle "vide définitive" du chantier.
+function estVideLactationModele(v) { return v === null || v === undefined || v === 0 || v === '0' || v === ''; }
+
+function parserLigneLactationModele(row, typeSuivi) {
+  const { col4, col5 } = champsLactationModeleParType(typeSuivi);
+  const numeroSieol = String(row[0] || '').trim();
+  const lactationTotale = parseNombreLactationModele(row[1]);
+  const joursTraite = parseNombreLactationModele(row[2]);
+  const lactationMoyenne = parseNombreLactationModele(row[3]);
+  const col4Val = parseNombreLactationModele(row[4]);
+  // Classe par quart (CLS) : texte libre tel que fourni par SIEOL (ex: "4"),
+  // jamais reparsé en nombre -- Index production (CLO) : vraie mesure numérique.
+  const col5Val = typeSuivi === 'clo' ? parseNombreLactationModele(row[5]) : (String(row[5] === undefined || row[5] === null ? '' : row[5]).trim() || null);
+  const champs = { lactationTotale, joursTraite, lactationMoyenne, [col4]: col4Val, [col5]: col5Val };
+  const vide = estVideLactationModele(lactationTotale) && estVideLactationModele(joursTraite) && estVideLactationModele(lactationMoyenne) && estVideLactationModele(col4Val) && estVideLactationModele(col5Val);
+  return { numeroSieol, champs, vide };
+}
+
+/* Lecture complète : jusqu'à la fin réelle des données, aucun arrêt
+   anticipé sur une ligne trouée (voir chantier) -- une ligne totalement
+   vide (trame du modèle, ni numéro ni mesure) n'est jamais ajoutée. */
+function parserFichierLactationModele(rows, typeSuivi) {
+  const lignes = [];
+  for (let i = LACTATION_MODELE_PREMIERE_LIGNE - 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const { numeroSieol, champs, vide } = parserLigneLactationModele(row, typeSuivi);
+    if (!numeroSieol) {
+      if (!vide) lignes.push({ __idx: lignes.length, ligne: i + 1, numeroSieol: '', champs, resolution: { type: 'ignoree' } });
+      continue;
+    }
+    if (vide) continue; // vide définitive -- jamais signalée
+    const candidats = trouverParNumero(DB.brebis, numeroSieol);
+    const resolution = candidats.length === 1 ? { type: 'direct', sheep: candidats[0] }
+      : candidats.length > 1 ? { type: 'ambigue', candidats }
+      : { type: 'aucune' };
+    lignes.push({ __idx: lignes.length, ligne: i + 1, numeroSieol, champs, resolution });
+  }
+  return lignes;
+}
+
+// Enregistrement existant DB.lactationModele pour cette brebis+campagne, ou null.
+function lactationModeleExistant(eid, campagne) {
+  return (DB.lactationModele || []).find(l => cleanEid(l.eid) === cleanEid(eid) && l.campagne === campagne) || null;
+}
+// Un champ du fichier absent (null) n'est JAMAIS comparé -- voir décision
+// confirmée du chantier : une case vide ne signale jamais un conflit et
+// n'efface jamais une valeur déjà existante.
+function differeLactationModele(existant, champsFichier) {
+  return Object.keys(champsFichier).some(k => champsFichier[k] !== null && existant[k] !== champsFichier[k]);
+}
+// Ne garde que les champs réellement renseignés dans le fichier -- jamais
+// de `null` explicite écrit sur un enregistrement (nouveau ou existant).
+function champsRenseignesLactationModele(champsFichier) {
+  const out = {};
+  Object.keys(champsFichier).forEach(k => { if (champsFichier[k] !== null) out[k] = champsFichier[k]; });
+  return out;
+}
+
+function renderImportLactationModele() {
+  pageTitle.textContent = 'Import Lactation';
+  const typeSuivi = DB.exploitation.typeSuivi;
+  const campagne = DB.campagneDebut;
+  const { col4: labelCol4, col5: labelCol5 } = libelleColLactationModele(typeSuivi);
+  const nomFichier = typeSuivi === 'clo' ? 'Modele_Lactation_CLO.xlsx' : 'Modele_Lactation_CLS.xlsx';
+  let lignes = null; // [{ __idx, ligne, numeroSieol, champs, resolution, resolutionConflit }]
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne concernée : <strong>Campagne ${campagne + 1}</strong> (campagne en cours -- pas de sélecteur).</div>
+      <label style="display:flex;align-items:center;">Fichier modèle Ovilog${infoBulleHtml('Format du fichier', "Fichier .xlsx basé sur " + nomFichier + ", onglet \"Lactation\" -- une ligne par brebis : numéro SIEOL court, lactation totale (L), jours de traite, lactation moyenne, " + labelCol4.toLowerCase() + ", " + labelCol5.toLowerCase() + ". Toute colonne peut être laissée vide si tu ne l'as pas sous la main -- une case vide n'efface jamais une valeur déjà enregistrée.")}</label>
+      <input type="file" id="import-lact-modele-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <div id="import-lact-modele-err" class="error-box hidden"></div>
+    </div>
+    <div id="import-lact-modele-preview"></div>
+    <button class="btn btn-primary hidden" id="btn-confirm-import-lact-modele" style="margin-top:14px;">Confirmer l'import</button>
+  `;
+
+  function renderPreview() {
+    const preview = document.getElementById('import-lact-modele-preview');
+    const btnConfirm = document.getElementById('btn-confirm-import-lact-modele');
+    if (!lignes) { preview.innerHTML = ''; btnConfirm.classList.add('hidden'); return; }
+
+    const nonResolues = lignes.filter(l => l.resolution.type === 'ignoree');
+    const introuvables = lignes.filter(l => l.resolution.type === 'aucune');
+    const ambigues = lignes.filter(l => l.resolution.type === 'ambigue');
+    const directes = lignes.filter(l => l.resolution.type === 'direct');
+    const aEcrire = [];    // { ligne, texte }
+    const conflits = [];   // { ligne, existant, champsFichier }
+    directes.forEach(l => {
+      const existant = lactationModeleExistant(l.resolution.sheep.eid, campagne);
+      if (!existant) { aEcrire.push(l); return; }
+      if (!differeLactationModele(existant, l.champs)) return; // déjà identique -- silencieux
+      conflits.push(l);
+    });
+
+    const descriptionChamps = (champs) => {
+      const parts = [];
+      if (champs.lactationTotale !== null && champs.lactationTotale !== undefined) parts.push(fmtDecimal(champs.lactationTotale, 1) + ' L');
+      if (champs.joursTraite !== null && champs.joursTraite !== undefined) parts.push(champs.joursTraite + ' j traite');
+      if (champs.lactationMoyenne !== null && champs.lactationMoyenne !== undefined) parts.push('moy. ' + fmtDecimal(champs.lactationMoyenne, 1));
+      const c4 = champs.indiceCumule !== undefined ? champs.indiceCumule : champs.indexIsol;
+      if (c4 !== null && c4 !== undefined) parts.push(labelCol4 + ' ' + c4);
+      const c5 = champs.classeParQuart !== undefined ? champs.classeParQuart : champs.indexProduction;
+      if (c5 !== null && c5 !== undefined) parts.push(labelCol5 + ' ' + c5);
+      return parts.length ? parts.join(' · ') : '(aucune valeur)';
+    };
+
+    preview.innerHTML = `
+      <div class="card" style="margin-top:14px;">
+        <div class="grid2" style="grid-template-columns:repeat(4,1fr);">
+          <div class="stat-card sc-green"><div class="stat-card-label">À écrire</div><div class="stat-card-value" style="font-size:16px;">${aEcrire.length}</div></div>
+          <div class="stat-card sc-amber"><div class="stat-card-label">Conflits</div><div class="stat-card-value" style="font-size:16px;">${conflits.length}</div></div>
+          <div class="stat-card sc-coral"><div class="stat-card-label">Numéro non résolu</div><div class="stat-card-value" style="font-size:16px;">${introuvables.length + ambigues.length}</div></div>
+          <div class="stat-card sc-coral"><div class="stat-card-label">Ignorées</div><div class="stat-card-value" style="font-size:16px;">${nonResolues.length}</div></div>
+        </div>
+      </div>
+
+      ${conflits.length > 0 ? `
+      <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Conflits (${conflits.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Un enregistrement existe déjà pour cette brebis cette campagne, avec au moins une valeur différente de celle du fichier (une case vide du fichier n'est jamais comptée comme une différence).</div>
+        ${conflits.map(l => {
+          const existant = lactationModeleExistant(l.resolution.sheep.eid, campagne);
+          return `
+          <div style="border-top:1px solid var(--border);padding:8px 0;">
+            <div style="font-size:13px;margin-bottom:4px;">Ligne ${l.ligne} — n°${l.numeroSieol} — n°${numeroVisuel(l.resolution.sheep.eid)}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Actuel : ${descriptionChamps(existant)} &nbsp;→&nbsp; Fichier : ${descriptionChamps(l.champs)}</div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <button type="button" class="btn btn-secondary btn-conflit-lact-modele" data-idx="${l.__idx}" data-choix="garder" style="width:auto;padding:5px 12px;font-size:12px;${l.resolutionConflit === 'garder' ? 'background:var(--gray-bg);' : ''}">Garder l'actuel</button>
+              <button type="button" class="btn btn-secondary btn-conflit-lact-modele" data-idx="${l.__idx}" data-choix="remplacer" style="width:auto;padding:5px 12px;font-size:12px;${l.resolutionConflit === 'remplacer' ? 'background:var(--amber-bg);border-color:var(--amber-fg);' : ''}">Remplacer</button>
+              ${l.resolutionConflit ? `<span style="font-size:11.5px;color:var(--text-muted);">Choix actuel : ${l.resolutionConflit === 'garder' ? "garder l'actuel" : 'remplacer (en bloc)'}</span>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+      ` : ''}
+
+      ${(introuvables.length > 0 || ambigues.length > 0) ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--coral-fg);">Numéro non résolu (${introuvables.length + ambigues.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Aucune brebis ne correspond à ce numéro SIEOL, ou plusieurs à la fois -- rien n'est écrit pour ces lignes.</div>
+        ${introuvables.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — n°${l.numeroSieol} — aucune brebis trouvée</div>`).join('')}
+        ${ambigues.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — n°${l.numeroSieol} — ${l.resolution.candidats.length} brebis correspondent, ambigu</div>`).join('')}
+      </div>
+      ` : ''}
+
+      ${nonResolues.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Ignorées (${nonResolues.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Ligne sans numéro SIEOL exploitable, bien qu'elle contienne au moins une valeur.</div>
+        ${nonResolues.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — ${descriptionChamps(l.champs)}</div>`).join('')}
+      </div>
+      ` : ''}
+
+      ${aEcrire.length > 0 ? `
+      <div class="card" style="margin-top:10px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">À écrire (${aEcrire.length})</div>
+        ${aEcrire.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${l.ligne} — n°${numeroVisuel(l.resolution.sheep.eid)}</span><span style="color:var(--text-muted);">${descriptionChamps(l.champs)}</span></div>`).join('')}
+      </div>
+      ` : ''}
+    `;
+
+    document.querySelectorAll('.btn-conflit-lact-modele').forEach(btn => {
+      btn.onclick = () => {
+        const l = lignes[parseInt(btn.dataset.idx, 10)];
+        l.resolutionConflit = btn.dataset.choix;
+        renderPreview();
+      };
+    });
+
+    const nbAEcrire = aEcrire.length + conflits.filter(l => l.resolutionConflit === 'remplacer').length;
+    btnConfirm.classList.toggle('hidden', nbAEcrire === 0);
+    btnConfirm.textContent = 'Confirmer l\'import' + (conflits.some(l => !l.resolutionConflit) ? ' (' + conflits.filter(l => !l.resolutionConflit).length + ' conflit(s) non tranché(s) resteront inchangés)' : '');
+  }
+
+  document.getElementById('import-lact-modele-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-lact-modele-err');
+    err.classList.add('hidden');
+    lignes = null;
+    renderPreview();
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const rows = await readXlsxRows(reader.result, LACTATION_MODELE_SHEET);
+        lignes = parserFichierLactationModele(rows, typeSuivi);
+        renderPreview();
+      } catch (ex) {
+        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import-lact-modele').onclick = () => {
+    if (!lignes) return;
+    let nbEcrites = 0;
+    lignes.filter(l => l.resolution.type === 'direct').forEach(l => {
+      const eid = l.resolution.sheep.eid;
+      const existant = lactationModeleExistant(eid, campagne);
+      const renseignes = champsRenseignesLactationModele(l.champs);
+      if (!existant) {
+        DB.lactationModele.push({ eid, campagne, ...renseignes });
+        nbEcrites++;
+      } else if (differeLactationModele(existant, l.champs) && l.resolutionConflit === 'remplacer') {
+        Object.assign(existant, renseignes);
+        nbEcrites++;
+      }
+    });
+    saveData(DB);
+    alert(nbEcrites + ' enregistrement(s) de lactation écrit(s) pour la campagne ' + (campagne + 1) + '.');
+    render('parametres');
+  };
+}
+
 /* ---------- Import "Contrôle laitier" (mode fichier modèle Ovilog) ----------
    REPRISE COMPLÈTE (remplace intégralement les versions précédentes de ce
    chantier) -- distinct de l'import "Cahier de contrôle laitier SIEOL" déjà
@@ -17223,9 +17592,21 @@ function renderParametresImports(content) {
     <div style="font-size:13px;font-weight:600;margin-bottom:10px;">${compteControleLaitier.entrees} mesure(s) sur ${compteControleLaitier.brebisConcernees} brebis seront supprimées.</div>
     <button type="button" class="btn btn-secondary" id="btn-purge-controle-laitier-campagne" style="color:var(--danger);border-color:var(--danger);">Réinitialiser les contrôles laitiers de cette campagne</button>
   </div>` : '';
-  content.innerHTML = correspondanceSieolCard + controleLaitierModeleCard + purgeControleLaitierCard + placeholder('Nouveaux animaux');
+  // "Lactation" (chantier "Import Lactation") : mode fichier modèle Ovilog
+  // uniquement, CLS ou CLO selon DB.exploitation.typeSuivi -- inaccessible
+  // (carte absente, pas juste désactivée) si "non_suivi" ou non défini,
+  // comme demandé explicitement par le chantier.
+  const typeSuiviImport = DB.exploitation.typeSuivi;
+  const lactationCard = (typeSuiviImport === 'cls' || typeSuiviImport === 'clo') ? `<div class="card" style="margin-bottom:12px;">
+    <div style="font-weight:600;margin-bottom:6px;">Lactation</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (${typeSuiviImport === 'clo' ? 'Modele_Lactation_CLO.xlsx' : 'Modele_Lactation_CLS.xlsx'}) : lactation totale, jours de traite et indicateurs ${typeSuiviImport === 'clo' ? 'CLO (Index ISOL/production)' : 'CLS (indice cumulé/classe par quart)'} de la campagne en cours, par numéro SIEOL court.</div>
+    <button type="button" class="btn btn-secondary" id="btn-import-lactation-modele">Importer le fichier</button>
+  </div>` : '';
+  content.innerHTML = correspondanceSieolCard + controleLaitierModeleCard + lactationCard + purgeControleLaitierCard + placeholder('Nouveaux animaux');
   document.getElementById('btn-import-correspondance-sieol').onclick = () => render('import-correspondance-sieol');
   document.getElementById('btn-import-controle-laitier-modele').onclick = () => render('import-controle-laitier-modele');
+  const btnImportLactationModele = document.getElementById('btn-import-lactation-modele');
+  if (btnImportLactationModele) btnImportLactationModele.onclick = () => render('import-lactation-modele');
   const btnPurgeControleLaitier = document.getElementById('btn-purge-controle-laitier-campagne');
   if (btnPurgeControleLaitier) {
     btnPurgeControleLaitier.onclick = async () => {
@@ -18468,7 +18849,7 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
   'casParticuliers', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   'registre', 'traitementsCollectifs', 'mouvementsCollectifs', 'penalitesBacterio',
-  'listeSerie', 'resumeControleLaitier', 'cahierControleLaitier',
+  'listeSerie', 'resumeControleLaitier', 'cahierControleLaitier', 'lactationModele',
   'reproGestationMin', 'reproGestationMax', 'reproRetourMin', 'reproRetourMax'];
 const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
 const BOOTSTRAP_FLAG_KEY = 'ovilog_sync_bootstrapped_uid';
