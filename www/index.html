@@ -681,6 +681,12 @@ function migrateData(d) {
       d.exploitation.campagneJourDebut = 1;
     }
   }
+  // Type de suivi laitier (chantier "Réglage Type de suivi") : 'non_suivi' /
+  // 'cls' / 'clo', jamais deviné -- reste `null` ("à définir") tant que
+  // l'éleveur ne l'a pas choisi lui-même (écran Première configuration pour
+  // un compte vierge, ou carte Exploitation de Paramètres sinon). S'assure
+  // juste que la clé existe, ne lui invente aucune valeur.
+  if (d.exploitation.typeSuivi === undefined) d.exploitation.typeSuivi = null;
   if (!d.brebis) d.brebis = [];
   // Rétro-tag des agnelages/contrôles laitiers/échographies déjà enregistrés
   // avant l'ajout du champ `campagne` (voir renderAddAgnelage/renderAddControle
@@ -15381,7 +15387,13 @@ async function readXlsxRows(buffer, wantedSheetName) {
    plus bas dans le script module) -- jamais pour une install qui a déjà
    des données, migrées silencieusement vers 10/1 par migrateData. Traité
    comme boot/auth (voir isAuthGate dans render()) : ni menu, ni retour, la
-   validation est obligatoire pour continuer. */
+   validation est obligatoire pour continuer.
+   Complété par le chantier "Réglage Type de suivi" avec un second choix
+   obligatoire (non_suivi/cls/clo) -- ce champ ne doit JAMAIS être deviné
+   (voir migrateData), donc forcé ici comme la date de campagne, pour un
+   compte vierge. Une base déjà existante (qui ne passe jamais par cet
+   écran, voir plus haut) le règle uniquement via la carte Exploitation de
+   Paramètres -- voir renderParametresExploitation. */
 function renderPremiereConfiguration() {
   pageTitle.textContent = '';
   app.innerHTML = `
@@ -15394,17 +15406,31 @@ function renderPremiereConfiguration() {
         ${selectMoisHtml('f-premconf-mois', 10)}
         <label style="margin-top:14px;">Jour de démarrage</label>
         ${selectJourHtml('f-premconf-jour', 10, 1)}
-        <button class="btn btn-primary" id="btn-premconf-valider" style="margin-top:20px;">Valider et continuer</button>
+        <label style="margin-top:14px;display:flex;align-items:center;">Type de suivi laitier${infoBulleHtml('Type de suivi laitier', "Détermine les données de contrôle laitier attendues (import, fiche brebis) : Non suivi (aucun technicien SIEOL), CLS (Contrôle Laitier Simplifié) ou CLO (Contrôle Laitier Officiel). Modifiable plus tard dans Paramètres > Exploitation.")}</label>
+        <select id="f-premconf-type-suivi">
+          <option value="" selected disabled>-- à choisir --</option>
+          <option value="non_suivi">Non suivi (pas de technicien SIEOL)</option>
+          <option value="cls">Suivi CLS (Contrôle Laitier Simplifié)</option>
+          <option value="clo">Suivi CLO (Contrôle Laitier Officiel)</option>
+        </select>
+        <button class="btn btn-primary" id="btn-premconf-valider" style="margin-top:20px;" disabled>Valider et continuer</button>
       </div>
     </div>
   `;
   wireSelectMoisJour('f-premconf-mois', 'f-premconf-jour');
-  document.getElementById('btn-premconf-valider').onclick = () => {
+  const btnValider = document.getElementById('btn-premconf-valider');
+  document.getElementById('f-premconf-type-suivi').onchange = (e) => {
+    btnValider.disabled = !e.target.value;
+  };
+  btnValider.onclick = () => {
+    const typeSuivi = document.getElementById('f-premconf-type-suivi').value;
+    if (!typeSuivi) return;
     const mois = parseInt(document.getElementById('f-premconf-mois').value, 10);
     const jour = parseInt(document.getElementById('f-premconf-jour').value, 10);
     if (!DB.exploitation) DB.exploitation = {};
     DB.exploitation.campagneMoisDebut = mois;
     DB.exploitation.campagneJourDebut = jour;
+    DB.exploitation.typeSuivi = typeSuivi;
     saveData(DB);
     render('home');
   };
@@ -17011,6 +17037,13 @@ function renderParametresExploitation(content) {
       <input type="text" id="f-exp-tel" value="${DB.exploitation.telephone || ''}">
       <label style="display:flex;align-items:center;">Préfixe EID de l'exploitation${infoBulleHtml('Préfixe EID de l\'exploitation', "Les 6 premiers chiffres de l'EID des animaux nés/marqués sur cette exploitation (ex: 162991). Pas encore utilisé activement -- servira plus tard à déduire automatiquement l'origine née/achetée d'un animal à partir de son EID, lors de futurs imports.")}</label>
       <input type="text" id="f-exp-prefixe-eid" value="${DB.exploitation.prefixeEid || ''}" placeholder="ex: 162991">
+      <label style="display:flex;align-items:center;">Type de suivi laitier${infoBulleHtml('Type de suivi laitier', "Détermine les données de contrôle laitier attendues (import, fiche brebis) : Non suivi (aucun technicien SIEOL), CLS (Contrôle Laitier Simplifié) ou CLO (Contrôle Laitier Officiel). Laissé à \"à définir\" tant que tu ne l'as pas réglé toi-même -- jamais deviné.")}</label>
+      <select id="f-exp-type-suivi">
+        <option value="" ${!DB.exploitation.typeSuivi ? 'selected' : ''}>-- à définir --</option>
+        <option value="non_suivi" ${DB.exploitation.typeSuivi === 'non_suivi' ? 'selected' : ''}>Non suivi (pas de technicien SIEOL)</option>
+        <option value="cls" ${DB.exploitation.typeSuivi === 'cls' ? 'selected' : ''}>Suivi CLS (Contrôle Laitier Simplifié)</option>
+        <option value="clo" ${DB.exploitation.typeSuivi === 'clo' ? 'selected' : ''}>Suivi CLO (Contrôle Laitier Officiel)</option>
+      </select>
       <button class="btn btn-secondary" id="btn-save-exploitation" style="margin-top:8px;">Enregistrer</button>
     </div>
   `;
@@ -17036,7 +17069,8 @@ function renderParametresExploitation(content) {
       indicatifMarquage: document.getElementById('f-exp-marquage').value.trim(),
       adresse: document.getElementById('f-exp-adresse').value.trim(),
       telephone: document.getElementById('f-exp-tel').value.trim(),
-      prefixeEid: document.getElementById('f-exp-prefixe-eid').value.trim()
+      prefixeEid: document.getElementById('f-exp-prefixe-eid').value.trim(),
+      typeSuivi: document.getElementById('f-exp-type-suivi').value || null
     };
     saveData(DB);
     alert('Informations enregistrées.');
