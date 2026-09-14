@@ -10799,6 +10799,10 @@ function renderQualite() {
         <button class="btn btn-secondary" id="btn-save-lait" style="flex:1;">Enregistrer</button>
         <button type="button" class="btn btn-secondary" id="btn-goto-import-tank" style="flex:1;">Importer un CSV</button>
       </div>
+      <div class="row" style="margin-top:8px;">
+        <button type="button" class="btn btn-secondary" id="btn-export-tank-pdf" style="flex:1;">Export PDF</button>
+        <button type="button" class="btn btn-secondary" id="btn-export-tank-xlsx" style="flex:1;">Excel (.xlsx)</button>
+      </div>
       ${DB.laitTank.length > 0 ? '<div style="font-size:12px;color:var(--text-muted);margin-top:12px;margin-bottom:6px;">Derniers relevés</div>' : ''}
       <div>
         ${[...DB.laitTank].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,4).map(l => {
@@ -11053,6 +11057,21 @@ function renderQualite() {
     };
   });
   document.getElementById('btn-goto-import-tank').onclick = () => render('import-tank-laitier');
+  // Export du calendrier COMPLET des relevés tank (tous, pas seulement les 4
+  // derniers affichés ci-dessus) -- symétrique de l'import CSV, qui existait
+  // déjà sans export en retour.
+  document.getElementById('btn-export-tank-pdf').onclick = () => {
+    const btn = document.getElementById('btn-export-tank-pdf');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Export...';
+    Promise.resolve(exportLaitTankPdf()).finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
+  document.getElementById('btn-export-tank-xlsx').onclick = () => {
+    const btn = document.getElementById('btn-export-tank-xlsx');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Export...';
+    exportLaitTankXlsx().finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
 
   function moisKeyFromDate(dateStr) { return dateStr.slice(0, 7); }
 
@@ -14854,6 +14873,46 @@ async function exportControleLaitierXlsx(filtered) {
   }];
   const bytes = await buildXlsxWorkbook(sheets);
   const filename = 'controle-laitier_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+  await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+/* Calendrier du lait : export de la TOTALITÉ de DB.laitTank (aucun filtre --
+   contrairement au Contrôle laitier, cet écran n'a pas de sélection/lot en
+   cours), triée chronologiquement du plus ancien au plus récent -- ordre
+   "calendrier", à l'inverse de la liste "Derniers relevés" de l'écran
+   Qualité qui affiche les plus récents en premier. Un relevé = une ligne
+   (date + quantité), sans sous-totaux mensuels/campagne (déjà disponibles
+   ailleurs sur l'écran Qualité et dans le Rapport de campagne PDF -- ce
+   chantier ne couvre que le détail jour par jour qui, lui, n'était nulle
+   part exportable). */
+function laitTankPourExport() {
+  return [...DB.laitTank].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+async function exportLaitTankPdf() {
+  const rows = laitTankPourExport();
+  const columns = [{ label: 'Date', x: 0 }, { label: 'Quantité (L)', x: 150 }];
+  const bytes = buildPdfTable({
+    title: 'Calendrier du lait — relevés tank',
+    subtitle: rows.length + ' relevé(s) — ' + formatDateFr(new Date().toISOString().slice(0, 10)),
+    columns,
+    rows: rows.map(l => [formatDateFr(l.date), fmtDecimal(l.quantite, 1)])
+  });
+  const filename = 'calendrier-lait_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
+async function exportLaitTankXlsx() {
+  const rows = laitTankPourExport();
+  const sheets = [{
+    name: 'Calendrier du lait',
+    rows: [
+      ['Date', 'Quantité (L)'],
+      ...rows.map(l => [formatDateFr(l.date), l.quantite])
+    ]
+  }];
+  const bytes = await buildXlsxWorkbook(sheets);
+  const filename = 'calendrier-lait_' + new Date().toISOString().slice(0, 10) + '.xlsx';
   await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
