@@ -932,6 +932,36 @@ function migrateData(d) {
     (d.agnelles || []).forEach(migrerNumeroSieol);
     d.numeroSieolMigreVersTravailSieol = true;
   }
+  // Migration one-shot (chantier "Normaliser le motif de sortie Vente") :
+  // "Vendue"/"Vendue reproduction" (brebis/agnelles) et "Vendu"/"Vendu
+  // reproduction" (béliers) créaient deux valeurs différentes pour un seul
+  // et même motif réel -- deux entrées distinctes dans le filtre "Type" du
+  // registre d'élevage (voir registreColSelectHtml, qui liste les valeurs
+  // DISTINCTES trouvées dans les mouvements). Renomme en place vers le
+  // motif unifié "Vente"/"Vente reproduction" partout où un mouvement de ce
+  // type existe déjà : brebis/béliers/agnelles actifs, registre archivé
+  // (brebis/beliers/agneaux), et les agneaux (mâles ou femelles non
+  // renouvelées) suivis individuellement via lamb.mouvements dans les
+  // agnelages -- ceux-ci utilisent le motif distinct "Vendu" (masculin,
+  // jamais "Vendue"), volontairement laissé INTACT : c'est un système de
+  // suivi séparé (voir showLambSortieModal/agneauxVendusAnneeCivile), hors
+  // périmètre de ce chantier (uniquement CATEGORIE_ANIMAL_CONFIG :
+  // brebis/béliers/agnelles). Flag one-shot : ne rejoue jamais une 2e fois.
+  if (!d.motifVenteUnifie20260915) {
+    const RENOMMAGE_MOTIF_VENTE = { 'Vendue': 'Vente', 'Vendu': 'Vente', 'Vendue reproduction': 'Vente reproduction', 'Vendu reproduction': 'Vente reproduction' };
+    function renommerMotifsVente(mouvements) {
+      (mouvements || []).forEach(m => { if (m && RENOMMAGE_MOTIF_VENTE[m.type]) m.type = RENOMMAGE_MOTIF_VENTE[m.type]; });
+    }
+    (d.brebis || []).forEach(s => renommerMotifsVente(s.mouvements));
+    (d.beliers || []).forEach(b => renommerMotifsVente(b.mouvements));
+    (d.agnelles || []).forEach(a => renommerMotifsVente(a.mouvements));
+    if (d.registre) {
+      ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+        Object.values(d.registre[cat] || {}).forEach(entry => renommerMotifsVente(entry.mouvements));
+      });
+    }
+    d.motifVenteUnifie20260915 = true;
+  }
   return d;
 }
 
@@ -2534,15 +2564,19 @@ function dernierMouvementParDate(mouvements) {
 function recalculerStatutBrebis(sheep) {
   const last = dernierMouvementParDate(sheep.mouvements);
   if (last && last.type === 'Morte') sheep.statut = 'morte';
-  else if (last && last.type === 'Vendue') sheep.statut = 'vendue';
-  else if (last && last.type === 'Vendue reproduction') sheep.statut = 'vendue reproduction';
+  else if (last && last.type === 'Vente') sheep.statut = 'vendue';
+  else if (last && last.type === 'Vente reproduction') sheep.statut = 'vendue reproduction';
+  else if (last && last.type === 'Perte') sheep.statut = 'perdue';
+  else if (last && last.type === 'Autoconsommation') sheep.statut = 'autoconsommée';
   else sheep.statut = 'active';
 }
 function recalculerStatutBelier(belier) {
   const last = dernierMouvementParDate(belier.mouvements);
   if (last && last.type === 'Mort') belier.statut = 'mort';
-  else if (last && last.type === 'Vendu') belier.statut = 'vendu';
-  else if (last && last.type === 'Vendu reproduction') belier.statut = 'vendu reproduction';
+  else if (last && last.type === 'Vente') belier.statut = 'vendu';
+  else if (last && last.type === 'Vente reproduction') belier.statut = 'vendu reproduction';
+  else if (last && last.type === 'Perte') belier.statut = 'perdu';
+  else if (last && last.type === 'Autoconsommation') belier.statut = 'autoconsommé';
   else belier.statut = 'actif';
 }
 
@@ -2628,7 +2662,7 @@ function campagneCohortPresente() {
     if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > refDate) return false; // entrée après la date de référence : pas présente au démarrage
     if ((s.statut || 'active') === 'active') return true;
     // Inactive aujourd'hui : ne compte que si sa sortie a eu lieu APRÈS la date de référence.
-    const sortieMvt = [...mouvements].reverse().find(m => ['Vendue', 'Morte', 'Vendue reproduction'].includes(m.type));
+    const sortieMvt = [...mouvements].reverse().find(m => ['Vente', 'Morte', 'Vente reproduction', 'Perte', 'Autoconsommation'].includes(m.type));
     if (!sortieMvt || !sortieMvt.date) return true; // pas de mouvement de sortie retrouvé (anomalie de données) : on la compte plutôt que de la perdre silencieusement
     const sortieDate = new Date(sortieMvt.date);
     return isNaN(sortieDate.getTime()) || sortieDate >= refDate;
@@ -3203,7 +3237,7 @@ function effectifPresentADate(dateRef) {
     const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
     const entreeDate = entreeDateStr ? new Date(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
     if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > dateRef) return false;
-    const sortieMvt = [...mouvements].reverse().find(m => ['Vendue', 'Morte', 'Vendue reproduction'].includes(m.type));
+    const sortieMvt = [...mouvements].reverse().find(m => ['Vente', 'Morte', 'Vente reproduction', 'Perte', 'Autoconsommation'].includes(m.type));
     if (!sortieMvt || !sortieMvt.date) return true;
     const sortieDate = new Date(sortieMvt.date);
     return isNaN(sortieDate.getTime()) || sortieDate >= dateRef;
@@ -4193,14 +4227,21 @@ function controleLaitierCompareData() {
    ailleurs pour rattacher une date à une campagne (échographies),
    réutilisée ici telle quelle sur la date de chaque mouvement. */
 function mouvementsDetailData() {
+  // morteTypes inclut, en plus du décès à proprement parler (Morte/Mort),
+  // les motifs Perte/Autoconsommation (traités comme Morte côté UI, voir
+  // CATEGORIE_ANIMAL_CONFIG) : ce sont des sorties non commerciales comme
+  // une mort, jamais une vente -- les compter à part créerait une 3e
+  // colonne pour un motif encore rare, les exclure les ferait disparaître
+  // silencieusement du total de ce bloc.
   function compterPool(pool, venteTypes, morteType, avecEntrees) {
+    const morteTypes = [morteType, 'Perte', 'Autoconsommation'];
     let entrees = 0, ventes = 0, mortes = 0;
     pool.forEach(a => {
       (a.mouvements || []).forEach(m => {
         if (DB.campagneDebut == null || campagneAnneeDebutPourDate(m.date) !== DB.campagneDebut) return;
         if (avecEntrees && m.type === 'Entrée') entrees++;
         else if (venteTypes.includes(m.type)) ventes++;
-        else if (m.type === morteType) mortes++;
+        else if (morteTypes.includes(m.type)) mortes++;
       });
     });
     return avecEntrees ? { entrees, ventes, mortes } : { ventes, mortes };
@@ -4219,9 +4260,9 @@ function mouvementsDetailData() {
     });
   });
   return {
-    brebis: compterPool(DB.brebis, ['Vendue', 'Vendue reproduction'], 'Morte', true),
-    beliers: compterPool(DB.beliers || [], ['Vendu', 'Vendu reproduction'], 'Mort', true),
-    agnelles: compterPool(DB.agnelles || [], ['Vendue', 'Vendue reproduction'], 'Morte', true),
+    brebis: compterPool(DB.brebis, MOTIFS_VENTE, 'Morte', true),
+    beliers: compterPool(DB.beliers || [], MOTIFS_VENTE, 'Mort', true),
+    agnelles: compterPool(DB.agnelles || [], MOTIFS_VENTE, 'Morte', true),
     agneaux: { ventes: agneauxVentes, mortes: agneauxMortes },
     // Même source que "Derniers mouvements" (derniersMouvementsData),
     // simplement limitée au tout dernier -- jamais un second calcul.
@@ -6611,9 +6652,7 @@ function renderDetail(id) {
 
   const mouvTabHtml = `
     <div style="margin-bottom:16px;">
-      ${(sheep.mouvements && sheep.mouvements.length > 0)
-        ? '<div class="badge badge-muted" style="display:block;text-align:center;padding:10px;">Mouvement déjà saisi — modifie-le ci-dessous</div>'
-        : '<button class="btn btn-primary" id="btn-add-mouvement" style="background:var(--danger);">+ Mouvement</button>'}
+      <button class="btn btn-primary" id="btn-add-mouvement" style="background:var(--danger);">+ Mouvement</button>
     </div>
     <div class="card">
       ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
@@ -9098,9 +9137,7 @@ function renderAddMouvement(sheepId) {
 
       <label>Type de mouvement</label>
       <div class="grid2" style="margin-bottom:10px;">
-        <button type="button" class="opt-btn type-opt coral" data-val="Morte">Morte</button>
-        <button type="button" class="opt-btn type-opt coral" data-val="Vendue">Vendue</button>
-        <button type="button" class="opt-btn type-opt coral" data-val="Vendue reproduction">Vendue reproduction</button>
+        ${CATEGORIE_ANIMAL_CONFIG.brebis.typeSortie.map((val, i) => `<button type="button" class="opt-btn type-opt coral" data-val="${val}"${i === 2 ? ' style="grid-column:span 2;"' : ''}>${val}</button>`).join('')}
       </div>
 
       <div id="cause-block" class="hidden" style="margin-bottom:14px;">
@@ -9179,8 +9216,8 @@ function renderAddMouvement(sheepId) {
       cause = null; acheteur = null;
       document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
-      document.getElementById('cause-block').classList.toggle('hidden', type !== 'Morte');
-      document.getElementById('acheteur-block').classList.toggle('hidden', !(type === 'Vendue' || type === 'Vendue reproduction'));
+      document.getElementById('cause-block').classList.toggle('hidden', MOTIFS_VENTE.includes(type));
+      document.getElementById('acheteur-block').classList.toggle('hidden', !MOTIFS_VENTE.includes(type));
       renderCauseChips();
       renderAcheteurChips();
       document.getElementById('err').classList.add('hidden');
@@ -9215,17 +9252,28 @@ function renderAddMouvement(sheepId) {
       err.classList.remove('hidden');
       return;
     }
-    if ((type === 'Vendue' || type === 'Vendue reproduction') && !acheteur) {
+    if (MOTIFS_VENTE.includes(type) && !acheteur) {
       err.textContent = "Sélectionne ou ajoute un acheteur.";
+      err.classList.remove('hidden');
+      return;
+    }
+    const dateMouvement = document.getElementById('f-date').value;
+    // Cohérence chronologique : une Sortie ne peut pas précéder l'Entrée de
+    // l'animal -- ni contrôle bloquant ni message clair n'existaient avant
+    // ce chantier (voir demande "Autoriser Entrée + Sortie dans la même
+    // campagne"), l'erreur passait alors totalement inaperçue.
+    const dateEntreeSheep = premierMouvementDate(editing ? sheep.mouvements.filter((m, i) => i !== editContext.idx) : sheep.mouvements, ['Entrée']);
+    if (dateEntreeSheep && dateMouvement < dateEntreeSheep) {
+      err.textContent = "La date de sortie (" + formatDateFr(dateMouvement) + ") ne peut pas être antérieure à la date d'entrée de la brebis (" + formatDateFr(dateEntreeSheep) + ").";
       err.classList.remove('hidden');
       return;
     }
     err.classList.add('hidden');
     const mouvement = {
       type: type,
-      cause: type === 'Morte' ? cause : null,
+      cause: MOTIFS_VENTE.includes(type) ? null : cause,
       acheteur: acheteur,
-      date: document.getElementById('f-date').value
+      date: dateMouvement
     };
     sheep.mouvements = sheep.mouvements || [];
     const statutAvant = sheep.statut || 'active';
@@ -9303,7 +9351,7 @@ function getEcartees() {
 }
 
 /* Vente d'une agnelle du roster de renouvellement (Chantier de tri) —
-   distincte d'une simple suppression : trace un vrai mouvement "Vendue"
+   distincte d'une simple suppression : trace un vrai mouvement "Vente"
    (acheteur + date) pour le registre, plutôt que de la faire disparaître
    sans motif. */
 function showVendreAgnelleModal(ag, onDone) {
@@ -9360,9 +9408,11 @@ function showVendreAgnelleModal(ag, onDone) {
     const date = overlay.querySelector('#vendre-date').value;
     if (!acheteur) { err.textContent = "Sélectionne ou ajoute un acheteur."; err.classList.remove('hidden'); return; }
     if (!date) { err.textContent = "Choisis une date."; err.classList.remove('hidden'); return; }
+    const dateEntreeAg = premierMouvementDate(ag.mouvements, ['Entrée']);
+    if (dateEntreeAg && date < dateEntreeAg) { err.textContent = "La date de vente (" + formatDateFr(date) + ") ne peut pas être antérieure à la date d'entrée de l'agnelle (" + formatDateFr(dateEntreeAg) + ")."; err.classList.remove('hidden'); return; }
     if (!confirm('Confirmer la vente de la n°' + numeroVisuel(ag.eid) + ' à ' + acheteur + ' ? Cette action est irréversible.')) return;
     ag.mouvements = ag.mouvements || [];
-    ag.mouvements.push({ type: 'Vendue', cause: null, acheteur, date });
+    ag.mouvements.push({ type: 'Vente', cause: null, acheteur, date });
     ag.statut = 'vendue';
     const lamb = findLambByEid(ag.eid);
     if (lamb) lamb.statutFinal = 'vendu';
@@ -10275,9 +10325,7 @@ function renderAddMouvementBelier() {
 
       <label>Type de mouvement</label>
       <div class="grid2" style="margin-bottom:10px;">
-        <button type="button" class="opt-btn type-opt coral" data-val="Mort">Mort</button>
-        <button type="button" class="opt-btn type-opt coral" data-val="Vendu">Vendu</button>
-        <button type="button" class="opt-btn type-opt coral" data-val="Vendu reproduction" style="grid-column:span 2;">Vendu reproduction</button>
+        ${CATEGORIE_ANIMAL_CONFIG.beliers.typeSortie.map((val, i) => `<button type="button" class="opt-btn type-opt coral" data-val="${val}"${i === 2 ? ' style="grid-column:span 2;"' : ''}>${val}</button>`).join('')}
       </div>
 
       <div id="cause-block" class="hidden" style="margin-bottom:14px;">
@@ -10344,14 +10392,14 @@ function renderAddMouvementBelier() {
       cause = null; acheteur = null;
       document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
-      document.getElementById('cause-block').classList.toggle('hidden', type !== 'Mort');
-      document.getElementById('acheteur-block').classList.toggle('hidden', !(type === 'Vendu' || type === 'Vendu reproduction'));
+      document.getElementById('cause-block').classList.toggle('hidden', MOTIFS_VENTE.includes(type));
+      document.getElementById('acheteur-block').classList.toggle('hidden', !MOTIFS_VENTE.includes(type));
       renderCauseChips(); renderAcheteurChips();
       document.getElementById('err').classList.add('hidden');
     };
   });
-  if (type === 'Mort') document.getElementById('cause-block').classList.remove('hidden');
-  if (type === 'Vendu' || type === 'Vendu reproduction') document.getElementById('acheteur-block').classList.remove('hidden');
+  if (type && !MOTIFS_VENTE.includes(type)) document.getElementById('cause-block').classList.remove('hidden');
+  if (MOTIFS_VENTE.includes(type)) document.getElementById('acheteur-block').classList.remove('hidden');
 
   document.getElementById('add-cause').onclick = () => {
     const input = document.getElementById('new-cause');
@@ -10371,9 +10419,17 @@ function renderAddMouvementBelier() {
   document.getElementById('btn-save-mouvement').onclick = () => {
     const err = document.getElementById('err');
     if (!type) { err.textContent = "Choisis un type de mouvement."; err.classList.remove('hidden'); return; }
-    if ((type === 'Vendu' || type === 'Vendu reproduction') && !acheteur) { err.textContent = "Sélectionne ou ajoute un acheteur."; err.classList.remove('hidden'); return; }
+    if (MOTIFS_VENTE.includes(type) && !acheteur) { err.textContent = "Sélectionne ou ajoute un acheteur."; err.classList.remove('hidden'); return; }
+    const dateMouvementBelier = document.getElementById('f-date').value;
+    // Cohérence chronologique : voir renderAddMouvement (brebis).
+    const dateEntreeBelier = premierMouvementDate(editing ? belier.mouvements.filter((m, i) => i !== editBelierContext.idx) : belier.mouvements, ['Entrée']);
+    if (dateEntreeBelier && dateMouvementBelier < dateEntreeBelier) {
+      err.textContent = "La date de sortie (" + formatDateFr(dateMouvementBelier) + ") ne peut pas être antérieure à la date d'entrée du bélier (" + formatDateFr(dateEntreeBelier) + ").";
+      err.classList.remove('hidden');
+      return;
+    }
     err.classList.add('hidden');
-    const mouvement = { type: type, cause: type === 'Mort' ? cause : null, acheteur: acheteur, date: document.getElementById('f-date').value };
+    const mouvement = { type: type, cause: MOTIFS_VENTE.includes(type) ? null : cause, acheteur: acheteur, date: dateMouvementBelier };
     belier.mouvements = belier.mouvements || [];
     const statutAvant = belier.statut || 'actif';
     const ancienMouvement = editing ? belier.mouvements[editBelierContext.idx] : null;
@@ -12008,6 +12064,12 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
           feedback.style.color = 'var(--green-fg)';
           selectedIds.add(item.id);
           renderCounter();
+          // Sans ce renderRows(), la case à cocher de la ligne restait
+          // visuellement décochée après un bip (seul le compteur bougeait) :
+          // selectedIds était pourtant déjà à jour, donnant l'impression
+          // trompeuse que le bip ne coche jamais rien tant qu'on ne clique
+          // pas soi-même sur la ligne.
+          renderRows();
           onChange();
         }
       });
@@ -12592,13 +12654,25 @@ function renderLotSearch(lotId) {
    deux pouvoir s'appliquer à Brebis, Béliers ou Agneaux (agnelles du roster
    de renouvellement, DB.agnelles) — chaque catégorie a son propre réservoir
    d'animaux, son statut "actif" par défaut, et ses accords grammaticaux
-   (bélier est masculin, brebis/agnelle sont féminins). */
+   (bélier est masculin, brebis/agnelle sont féminins).
+   MOTIFS_VENTE : motif "Vente" unifié (auparavant "Vendue"/"Vendu" selon le
+   genre de la catégorie, ce qui créait deux valeurs distinctes et donc deux
+   filtres dans le registre d'élevage pour un seul et même motif réel) —
+   seuls Morte/Mort (accord de genre conservé, ce sont des adjectifs, pas un
+   motif "produit") et le statut interne dérivé restent gendrés. Sert aussi à
+   décider partout (Mouvement groupé, mouvement individuel brebis/bélier) si
+   le bloc "Acheteur" doit s'afficher/être obligatoire (uniquement pour une
+   vente) — la cause de mortalité (chips DB.causesMortalite), elle, reste
+   pertinente pour Morte/Mort ET pour les deux nouveaux motifs Perte/
+   Autoconsommation (traités comme Morte côté UI : cause facultative, jamais
+   d'acheteur), jamais pour une vente. */
+const MOTIFS_VENTE = ['Vente', 'Vente reproduction'];
 const CATEGORIE_ANIMAL_CONFIG = {
   brebis: {
     label: 'Brebis', tous: 'Toutes les', actives: 'actives', singulier: 'une brebis',
     pool: () => DB.brebis,
     isActive: s => (s.statut || 'active') === 'active',
-    typeSortie: ['Morte', 'Vendue', 'Vendue reproduction'],
+    typeSortie: ['Morte', 'Vente', 'Vente reproduction', 'Perte', 'Autoconsommation'],
     // annulable indique si un mouvement groupé appliqué à cette catégorie
     // peut être défait automatiquement (voir renderMouvementsCollectifsHistorique) :
     // vrai pour brebis/béliers (mouvement retiré + statut recalculé), pas
@@ -12607,7 +12681,7 @@ const CATEGORIE_ANIMAL_CONFIG = {
     annulable: true,
     applySortie: (s, type, cause, acheteur, date, collectifId) => {
       s.mouvements = s.mouvements || [];
-      s.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date, collectifId });
+      s.mouvements.push({ type, cause: MOTIFS_VENTE.includes(type) ? null : cause, acheteur, date, collectifId });
       recalculerStatutBrebis(s);
     }
   },
@@ -12615,11 +12689,11 @@ const CATEGORIE_ANIMAL_CONFIG = {
     label: 'Béliers', tous: 'Tous les', actives: 'actifs', singulier: 'un bélier',
     pool: () => DB.beliers || [],
     isActive: b => (b.statut || 'actif') === 'actif',
-    typeSortie: ['Mort', 'Vendu', 'Vendu reproduction'],
+    typeSortie: ['Mort', 'Vente', 'Vente reproduction', 'Perte', 'Autoconsommation'],
     annulable: true,
     applySortie: (b, type, cause, acheteur, date, collectifId) => {
       b.mouvements = b.mouvements || [];
-      b.mouvements.push({ type, cause: type === 'Mort' ? cause : null, acheteur, date, collectifId });
+      b.mouvements.push({ type, cause: MOTIFS_VENTE.includes(type) ? null : cause, acheteur, date, collectifId });
       recalculerStatutBelier(b);
     }
   },
@@ -12627,7 +12701,7 @@ const CATEGORIE_ANIMAL_CONFIG = {
     label: 'Agneaux', tous: 'Toutes les', actives: 'actives', singulier: 'un agneau',
     pool: () => DB.agnelles || [],
     isActive: a => (a.statut || 'active') === 'active',
-    typeSortie: ['Morte', 'Vendue', 'Vendue reproduction'],
+    typeSortie: ['Morte', 'Vente', 'Vente reproduction', 'Perte', 'Autoconsommation'],
     annulable: false,
     // Contrairement à brebis/béliers, il n'existe pas d'onglet "sorties" pour
     // les agnelles dans Inventaire : une sortie les archive dans le registre
@@ -12635,8 +12709,8 @@ const CATEGORIE_ANIMAL_CONFIG = {
     // tri), comme le bouton "Vendre" individuel (voir showVendreAgnelleModal).
     applySortie: (ag, type, cause, acheteur, date, collectifId) => {
       ag.mouvements = ag.mouvements || [];
-      ag.mouvements.push({ type, cause: type === 'Morte' ? cause : null, acheteur, date, collectifId });
-      ag.statut = type === 'Morte' ? 'morte' : type === 'Vendue' ? 'vendue' : 'vendue reproduction';
+      ag.mouvements.push({ type, cause: MOTIFS_VENTE.includes(type) ? null : cause, acheteur, date, collectifId });
+      ag.statut = type === 'Morte' ? 'morte' : type === 'Vente' ? 'vendue' : type === 'Vente reproduction' ? 'vendue reproduction' : type === 'Perte' ? 'perdue' : 'autoconsommée';
       archiverDansRegistre('agneaux', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
       DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
     }
@@ -12739,12 +12813,12 @@ function renderMouvementGroupe() {
         type = btn.dataset.val;
         document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
-        document.getElementById('cause-block').classList.toggle('hidden', type !== cfg.typeSortie[0]);
-        document.getElementById('acheteur-block').classList.toggle('hidden', !(type === cfg.typeSortie[1] || type === cfg.typeSortie[2]));
+        document.getElementById('cause-block').classList.toggle('hidden', MOTIFS_VENTE.includes(type));
+        document.getElementById('acheteur-block').classList.toggle('hidden', !MOTIFS_VENTE.includes(type));
       };
     });
-    if (type === cfg.typeSortie[0]) document.getElementById('cause-block').classList.remove('hidden');
-    if (type === cfg.typeSortie[1] || type === cfg.typeSortie[2]) document.getElementById('acheteur-block').classList.remove('hidden');
+    if (type && !MOTIFS_VENTE.includes(type)) document.getElementById('cause-block').classList.remove('hidden');
+    if (MOTIFS_VENTE.includes(type)) document.getElementById('acheteur-block').classList.remove('hidden');
 
     document.getElementById('add-cause').onclick = () => {
       const input = document.getElementById('new-cause');
@@ -12764,11 +12838,23 @@ function renderMouvementGroupe() {
     document.getElementById('btn-valider-groupe').onclick = () => {
       const errBox = document.getElementById('err');
       if (!type) { errBox.textContent = "Choisis un type de mouvement."; errBox.classList.remove('hidden'); return; }
-      if ((type === cfg.typeSortie[1] || type === cfg.typeSortie[2]) && !acheteur) { errBox.textContent = "Sélectionne ou ajoute un acheteur."; errBox.classList.remove('hidden'); return; }
+      if (MOTIFS_VENTE.includes(type) && !acheteur) { errBox.textContent = "Sélectionne ou ajoute un acheteur."; errBox.classList.remove('hidden'); return; }
       if (selected.size === 0) { errBox.textContent = "Sélectionne au moins " + cfg.singulier + " (à la main ou au bip)."; errBox.classList.remove('hidden'); return; }
-      if (!confirm('Appliquer "' + type + '" à ' + selected.size + ' ' + cfg.label.toLowerCase() + ' ?')) return;
       const date = document.getElementById('f-date').value;
       const concernees = actives.filter(s => selected.has(s.id));
+      // Cohérence chronologique (voir renderAddMouvement) : bloque AVANT
+      // toute application si au moins un animal du lot a une date d'entrée
+      // postérieure à la date de sortie choisie pour le groupe entier.
+      const enAvance = concernees.find(a => {
+        const dateEntreeA = premierMouvementDate(a.mouvements, ['Entrée']);
+        return dateEntreeA && date < dateEntreeA;
+      });
+      if (enAvance) {
+        errBox.textContent = "N°" + numeroVisuel(enAvance.eid) + " est entré(e) le " + formatDateFr(premierMouvementDate(enAvance.mouvements, ['Entrée'])) + ", après la date de sortie choisie (" + formatDateFr(date) + ").";
+        errBox.classList.remove('hidden');
+        return;
+      }
+      if (!confirm('Appliquer "' + type + '" à ' + selected.size + ' ' + cfg.label.toLowerCase() + ' ?')) return;
       const collectifId = 'MC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
       concernees.forEach(animal => cfg.applySortie(animal, type, cause, acheteur, date, collectifId));
       // Voir renderMouvementsCollectifsHistorique : permet de retrouver ce
@@ -13367,7 +13453,14 @@ function dernierMouvementDate(mouvements, types) {
   const dates = (mouvements || []).filter(m => m && types.includes(m.type) && m.date).map(m => m.date);
   return dates.length ? dates.reduce((max, d) => d > max ? d : max) : null;
 }
-const TYPES_SORTIE = ['Vendue', 'Morte', 'Vendue reproduction'];
+// Couvrait auparavant uniquement les motifs féminins (Vendue/Vendue
+// reproduction), ratant donc toute sortie de bélier (Mort/Vendu) alors que
+// animalDateSortie() ci-dessous est appelée pour les 3 catégories
+// (brebis/béliers/agnelles) via effectifADate -- un bélier mort ou vendu
+// restait donc compté à tort dans l'effectif présent à une date donnée.
+// Vente/Vente reproduction (motif désormais commun aux 3 catégories) +
+// Morte/Mort (accord de genre conservé) + Perte/Autoconsommation.
+const TYPES_SORTIE = ['Vente', 'Vente reproduction', 'Morte', 'Mort', 'Perte', 'Autoconsommation'];
 
 /* Fusion actifs + archivés dédiée au Registre PAC — même principe que
    registreEntriesFor() (juste au-dessus) mais SANS y toucher (partagée
@@ -16918,7 +17011,7 @@ function creerBrebisImport(champs, validation) {
   const pereLien = resoudreParentEid(champs.pereVal); if (pereLien) sheep.pereLien = pereLien;
   const mereLien = resoudreParentEid(champs.mereVal); if (mereLien) sheep.mereLien = mereLien;
   if (validation.statutMappe === 'morte') CATEGORIE_ANIMAL_CONFIG.brebis.applySortie(sheep, 'Morte', null, null, dateMouvement, null);
-  else if (validation.statutMappe === 'vendue') CATEGORIE_ANIMAL_CONFIG.brebis.applySortie(sheep, 'Vendue', null, null, dateMouvement, null);
+  else if (validation.statutMappe === 'vendue') CATEGORIE_ANIMAL_CONFIG.brebis.applySortie(sheep, 'Vente', null, null, dateMouvement, null);
   DB.brebis.push(sheep);
 }
 function creerBelierImport(champs, validation) {
@@ -16932,7 +17025,7 @@ function creerBelierImport(champs, validation) {
   const pereLien = resoudreParentEid(champs.pereVal); if (pereLien) belier.pereLien = pereLien;
   const mereLien = resoudreParentEid(champs.mereVal); if (mereLien) belier.mereLien = mereLien;
   if (validation.statutMappe === 'mort') CATEGORIE_ANIMAL_CONFIG.beliers.applySortie(belier, 'Mort', null, null, dateMouvement, null);
-  else if (validation.statutMappe === 'vendu') CATEGORIE_ANIMAL_CONFIG.beliers.applySortie(belier, 'Vendu', null, null, dateMouvement, null);
+  else if (validation.statutMappe === 'vendu') CATEGORIE_ANIMAL_CONFIG.beliers.applySortie(belier, 'Vente', null, null, dateMouvement, null);
   DB.beliers.push(belier);
 }
 function creerAgnelleImport(champs, validation) {
