@@ -1344,6 +1344,68 @@ function messageEidDejaUtilise(conflit) {
   return 'Cet EID appartient déjà à ' + conflit.statutLabel + ' (n°' + conflit.numero + (conflit.dateLabel ? ', ' + conflit.dateLabel : '') + ').';
 }
 
+/* ---------- Généalogie déclarative (Père/Mère) avec lien automatique ----------
+   Chantier "Import Nouveaux animaux" : Père/Mère sont des champs texte
+   déclaratifs sur brebis/agnelles/béliers (valeur telle que saisie ou
+   importée, jamais recalculée après coup) -- mais si la valeur est le
+   numéro EID d'un animal DÉJÀ connu dans Ovilog au moment de l'import, un
+   lien cliquable vers sa fiche est posé une fois pour toutes (sheep.pereLien
+   /mereLien -- { categorie: 'brebis'|'belier', id, numero }), à la
+   différence de mereEid (lien biologique RÉEL posé par un agnelage,
+   sémantique différente, jamais mélangée à celle-ci). Jamais recherché
+   parmi les agnelles : une agnelle, par construction, n'a jamais pu être
+   mère ni père d'un animal déjà présent dans Ovilog. */
+function resoudreParentEid(eidVal) {
+  const v = String(eidVal || '').trim();
+  if (!v) return null;
+  const brebisTrouvee = DB.brebis.find(s => eidAffichageCourt(s.eid) === eidAffichageCourt(v));
+  if (brebisTrouvee) return { categorie: 'brebis', id: brebisTrouvee.id, numero: numeroVisuel(brebisTrouvee.eid) };
+  const belierTrouve = (DB.beliers || []).find(b => eidAffichageCourt(b.eid) === eidAffichageCourt(v));
+  if (belierTrouve) return { categorie: 'belier', id: belierTrouve.id, numero: numeroVisuel(belierTrouve.eid) };
+  return null;
+}
+// Une ligne "Père"/"Mère" de la carte Généalogie -- texte simple si non
+// résolu (valeur telle que saisie/importée), bouton cliquable vers la
+// fiche si un lien a été posé à l'import (voir resoudreParentEid).
+function ligneGenealogieHtml(label, valeur, lien) {
+  if (!valeur) return '';
+  if (lien) {
+    return `<div style="font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;">
+      <span>${label} : <strong>n°${lien.numero}</strong></span>
+      <button type="button" class="btn btn-secondary btn-voir-parent-lie" data-categorie="${lien.categorie}" data-id="${lien.id}" style="width:auto;padding:3px 10px;font-size:11.5px;flex-shrink:0;">Voir la fiche</button>
+    </div>`;
+  }
+  return `<div style="font-size:13px;margin-bottom:4px;">${label} : <strong>${valeur}</strong></div>`;
+}
+// Navigation depuis un bouton "Voir la fiche" d'un parent lié -- cible
+// brebis ou bélier, jamais une agnelle (voir resoudreParentEid). Retour à
+// l'origine géré au mieux avec ce qui existe déjà pour chaque écran
+// d'origine :
+// - depuis la fiche BREBIS elle-même (detail) : `depuisBrebisId` posé ->
+//   retour direct habituel (detailOrigin = 'detail-back'), comme
+//   btn-voir-mere-bio-adopte.
+// - depuis agnelle/bélier (currentAgnelleId/currentBelierId inchangés) :
+//   `depuisOrigin` = 'agnelle-detail'/'belier-detail' -> même mécanique
+//   que btn-voir-mere-agnelle-fiche (render(detailOrigin) au retour).
+// Une cible BÉLIER, elle, n'a pas d'équivalent de detailOrigin/
+// previousDetailId pour revenir précisément à l'origine (belierDetailOrigin
+// ne retient qu'un nom d'écran, jamais un id précis) -- retour à la liste
+// des béliers par défaut, comme tout autre accès à cette fiche.
+function naviguerVersParentLie(categorie, id, depuisBrebisId, depuisOrigin) {
+  if (categorie === 'brebis') {
+    const cible = DB.brebis.find(s => s.id === id);
+    if (!cible) { alert('Fiche introuvable (peut-être supprimée).'); return; }
+    if (depuisBrebisId) { previousDetailId = depuisBrebisId; detailOrigin = 'detail-back'; }
+    else if (depuisOrigin) { detailOrigin = depuisOrigin; }
+    render('detail', cible.id);
+  } else {
+    const cible = (DB.beliers || []).find(b => b.id === id);
+    if (!cible) { alert('Fiche introuvable (peut-être supprimée).'); return; }
+    currentBelierId = cible.id;
+    render('belier-detail');
+  }
+}
+
 /* "Aucun historique" pour la brebis/le bélier -- condition d'affichage du
    bouton "Corriger l'EID" (voir openCorrigerEidSheet) : ignore le(s)
    mouvement(s) de type "Entrée" (toujours présents dès la création de la
@@ -3772,6 +3834,7 @@ function render(view, sheepId) {
     else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
     else if (view === 'import-correspondance-sieol') renderImportCorrespondanceSieol();
     else if (view === 'import-lactation-modele') renderImportLactationModele();
+    else if (view === 'import-nouveaux-animaux') renderImportNouveauxAnimaux();
     else if (view === 'import-controle-laitier-modele') renderImportControleLaitierModele();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
@@ -6399,7 +6462,7 @@ function renderDetail(id) {
   // distincte de mereEid ci-dessus, qui est le vrai lien biologique vers
   // une fiche existante de l'appli.
   const genealogieBlock = (sheep.pere || sheep.mere)
-    ? `<div class="card">${sectionHeaderHtml(ICON_SHEEP, 'gray', 'Généalogie')}${sheep.pere ? `<div style="font-size:13px;">Père : <strong>${sheep.pere}</strong></div>` : ''}${sheep.mere ? `<div style="font-size:13px;">Mère : <strong>${sheep.mere}</strong></div>` : ''}</div>`
+    ? `<div class="card">${sectionHeaderHtml(ICON_SHEEP, 'gray', 'Généalogie')}${ligneGenealogieHtml('Père', sheep.pere, sheep.pereLien)}${ligneGenealogieHtml('Mère', sheep.mere, sheep.mereLien)}</div>`
     : '';
 
   // Agneaux dont cette brebis est la mère ADOPTIVE (sens inverse du lien
@@ -6666,6 +6729,9 @@ function renderDetail(id) {
   });
   document.querySelectorAll('[data-carriere-tab]').forEach(btn => {
     btn.onclick = () => { ficheCarriereSubTab = btn.dataset.carriereTab; render('detail', sheep.id); };
+  });
+  document.querySelectorAll('.btn-voir-parent-lie').forEach(btn => {
+    btn.onclick = () => naviguerVersParentLie(btn.dataset.categorie, btn.dataset.id, sheep.id, null);
   });
   const btnAddEcho = document.getElementById('btn-add-echo');
   if (btnAddEcho) btnAddEcho.onclick = () => { editContext = null; render('add-echo', sheep.id); };
@@ -9781,7 +9847,7 @@ function renderAgnelleDetail(id) {
       ${mother
         ? `<button type="button" class="btn btn-secondary" id="btn-voir-mere-agnelle-fiche" style="margin-bottom:8px;">Voir la fiche de la mère — n°${numeroVisuel(mother.eid)}</button>`
         : (ag.pere || ag.mere)
-          ? `${ag.pere ? `<div style="font-size:13px;margin-bottom:4px;">Père : <strong>${ag.pere}</strong></div>` : ''}${ag.mere ? `<div style="font-size:13px;">Mère : <strong>${ag.mere}</strong></div>` : ''}`
+          ? `${ligneGenealogieHtml('Père', ag.pere, ag.pereLien)}${ligneGenealogieHtml('Mère', ag.mere, ag.mereLien)}`
           : '<div style="font-size:13px;color:var(--text-muted);">Non renseignée.</div>'}
       ${htmlLienMereAdoptive(lamb, 'btn-voir-mere-adoptive-agnelle-fiche')}
     </div>
@@ -9811,6 +9877,9 @@ function renderAgnelleDetail(id) {
     previousDetailId = null;
     render('detail', mother.id);
   };
+  document.querySelectorAll('.btn-voir-parent-lie').forEach(btn => {
+    btn.onclick = () => naviguerVersParentLie(btn.dataset.categorie, btn.dataset.id, null, 'agnelle-detail');
+  });
   const btnAdoptive = document.getElementById('btn-voir-mere-adoptive-agnelle-fiche');
   if (btnAdoptive) btnAdoptive.onclick = () => {
     const m = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(btnAdoptive.dataset.eid));
@@ -10006,6 +10075,7 @@ function renderBelierDetail() {
         ? `<button type="button" class="btn btn-secondary" id="btn-corriger-eid-belier" style="margin-top:10px;">Corriger l'EID</button>`
         : `<div style="margin-top:10px;font-size:11.5px;color:var(--text-muted);">Modification de l'EID impossible : cet animal a déjà un historique enregistré.</div>`}
     </div>
+    ${(belier.pere || belier.mere) ? `<div class="card">${sectionHeaderHtml(ICON_RAM, 'gray', 'Généalogie')}${ligneGenealogieHtml('Père', belier.pere, belier.pereLien)}${ligneGenealogieHtml('Mère', belier.mere, belier.mereLien)}</div>` : ''}
     ${statutBadge}
     <div class="row" style="margin-bottom:16px;">
       <button class="btn btn-primary" id="btn-add-sanitaire-belier" style="background:var(--danger);">+ Carnet sanitaire</button>
@@ -10028,6 +10098,9 @@ function renderBelierDetail() {
   const btnCorrigerEidBelier = document.getElementById('btn-corriger-eid-belier');
   if (btnCorrigerEidBelier) btnCorrigerEidBelier.onclick = () => openCorrigerEidSheet(belier, () => render('belier-detail'));
   document.getElementById('btn-modifier-numero-travail-sieol-belier').onclick = () => openCorrigerNumeroTravailSieolBelierSheet(belier, () => render('belier-detail'));
+  document.querySelectorAll('.btn-voir-parent-lie').forEach(btn => {
+    btn.onclick = () => naviguerVersParentLie(btn.dataset.categorie, btn.dataset.id, null, 'belier-detail');
+  });
   document.getElementById('btn-delete-belier').onclick = () => {
     if (!confirm('Supprimer le bélier n°' + numeroVisuel(belier.eid) + ' ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
     DB.beliers = DB.beliers.filter(b => b.id !== belier.id);
@@ -16606,6 +16679,513 @@ function renderImportLactationModele() {
   };
 }
 
+/* ---------- Import "Nouveaux animaux" (mode fichier modèle Ovilog) ----------
+   Chantier "Import Nouveaux animaux" -- Modele_Nouveaux_Animaux.xlsx, 3
+   onglets indépendants Brebis/Béliers/Agnelles, en-têtes en ligne 4,
+   données à partir de la ligne 5. Crée des animaux qui n'existent PAS
+   encore dans Ovilog (démarrage cheptel ou achat) -- à la différence de
+   Correspondance SIEOL qui complète des fiches déjà existantes ; ici les
+   DEUX à la fois selon que l'EID est déjà connu ou non.
+
+   Colonnes (confirmées sur le fichier joint) :
+   - Brebis  : Origine, EID (11 chiffres), Date d'entrée, Statut, Père,
+     Mère, Numéro long travail SIEOL, Numéro court travail SIEOL.
+   - Béliers : identique sauf le numéro de travail SIEOL, un seul champ
+     texte libre (numeroTravailSieol), sans règle de déduction long/court.
+   - Agnelles: identique à Brebis SANS la colonne Statut (statut propre à
+     l'inventaire agnelles, sans objet ici).
+   Date d'entrée : parserDateModeleOvilog() (fonction partagée, aucune
+   logique de date spécifique réécrite ici).
+
+   Détection de doublon : un EID déjà présent dans Ovilog n'est JAMAIS
+   dupliqué. resoudreDoublonNouvelAnimal() ne cherche que parmi les 3 pools
+   "vivants" complétables (brebis/béliers/agnelles) ; verifierEidUnique()
+   (règle d'unicité EID absolue déjà en place) couvre en plus les agneaux
+   sortis et le registre d'élevage -- un EID trouvé là n'est ni créable ni
+   complétable, seulement signalé.
+
+   Sur une fiche déjà existante, seuls Père/Mère et le(s) numéro(s) de
+   travail SIEOL peuvent être complétés (jamais Origine/Statut/Date, qui ne
+   concernent qu'une création) : case vide côté Ovilog -> écrite
+   automatiquement ; valeur différente -> conflit Garder/Remplacer inline
+   (comme les autres imports) ; déjà identique -> silencieux.
+
+   Sur une nouvelle fiche, avant création : Origine doit être exactement
+   "née" ou "achetée" (jamais devinée si absente/invalide) ; Statut (Brebis/
+   Béliers seulement) "actif" par défaut si vide, "mort"/"vendu" sinon (tout
+   autre texte = invalide) -- une brebis/bélier importé(e) déjà mort(e)/
+   vendu(e) reçoit un vrai mouvement de sortie (CATEGORIE_ANIMAL_CONFIG.
+   applySortie, jamais un statut posé à la main hors du mécanisme habituel)
+   en plus du mouvement d'Entrée ; long/court SIEOL déduits l'un de l'autre
+   si un seul est fourni (sieolLongVersCourt/sieolCourtVersLong, comme
+   Correspondance SIEOL), incohérence entre les deux -> ligne signalée,
+   jamais corrigée automatiquement. Une ligne invalide sur un seul de ces
+   points n'est PAS créée du tout (jamais une création partielle).
+
+   Père/Mère : toujours l'EID tel que saisi/importé (jamais recalculé après
+   coup) -- si résolu à un animal déjà connu (brebis ou bélier, jamais une
+   agnelle, voir resoudreParentEid), lien cliquable posé une fois pour
+   toutes (pereLien/mereLien, voir plus haut) sur la fiche créée OU
+   complétée.
+
+   Écriture : bouton de confirmation UNIQUE pour les 3 onglets à la fois
+   (un seul fichier), n'applique que les créations valides et les
+   complétions/conflits déjà tranchés -- une ligne "nouvelle" valide est
+   re-vérifiée juste avant sa création contre l'état LIVE de la base (pas
+   seulement l'état au moment du chargement du fichier), pour ne jamais
+   créer deux fois le même EID si deux lignes du même fichier (ou deux
+   onglets) le référencent -- cas limite mais jamais silencieusement fautif.
+   Les agnelles créées rejoignent DB.agnelles (jamais DB.brebis), avec un
+   mouvement d'Entrée comme toute création manuelle -- traçabilité
+   identique en tout point à un ajout manuel. */
+const NOUVEAUX_ANIMAUX_PREMIERE_LIGNE = 5;
+const NOUVEAUX_ANIMAUX_FEUILLES = { brebis: 'Brebis', belier: 'Béliers', agnelle: 'Agnelles' };
+const NOUVEAUX_ANIMAUX_COLONNES = {
+  brebis: { origine: 0, eid: 1, date: 2, statut: 3, pere: 4, mere: 5, long: 6, court: 7 },
+  belier: { origine: 0, eid: 1, date: 2, statut: 3, pere: 4, mere: 5, numeroLibre: 6 },
+  agnelle: { origine: 0, eid: 1, date: 2, pere: 3, mere: 4, long: 5, court: 6 }
+};
+const NOUVEAUX_ANIMAUX_ORIGINES_VALIDES = new Set(['née', 'achetée']);
+const NOUVEAUX_ANIMAUX_STATUT_BREBIS = { '': 'active', actif: 'active', mort: 'morte', vendu: 'vendue' };
+const NOUVEAUX_ANIMAUX_STATUT_BELIER = { '': 'actif', actif: 'actif', mort: 'mort', vendu: 'vendu' };
+
+function libelleCategorieNouvelAnimal(categorie) {
+  return categorie === 'brebis' ? 'Brebis' : categorie === 'belier' ? 'Béliers' : 'Agnelles';
+}
+// Lecture brute d'une ligne -- null si ligne de trame totalement vide
+// (jamais signalée), objet plat sinon (même une ligne sans EID exploitable
+// -- listée dans l'aperçu, voir parserFeuilleNouveauxAnimaux).
+function classerLigneNouvelAnimal(row, categorie) {
+  const cols = NOUVEAUX_ANIMAUX_COLONNES[categorie];
+  const get = (i) => i === undefined ? '' : String(row[i] === undefined || row[i] === null ? '' : row[i]).trim();
+  const champs = {
+    categorie,
+    origine: get(cols.origine), eidVal: get(cols.eid), dateVal: get(cols.date),
+    statutVal: get(cols.statut), pereVal: get(cols.pere), mereVal: get(cols.mere),
+    longVal: get(cols.long), courtVal: get(cols.court), numeroLibreVal: get(cols.numeroLibre)
+  };
+  const toutVide = Object.keys(champs).every(k => k === 'categorie' || !champs[k]);
+  return toutVide ? null : champs;
+}
+// EID déjà présent parmi les 3 pools "vivants" complétables -- jamais une
+// agnelle en tant que PARENT potentiel (resoudreParentEid), mais bien une
+// agnelle en tant qu'ANIMAL IMPORTÉ pouvant déjà exister (aucun rapport).
+function resoudreDoublonNouvelAnimal(eidVal) {
+  const brebisTrouvee = DB.brebis.find(s => eidAffichageCourt(s.eid) === eidAffichageCourt(eidVal));
+  if (brebisTrouvee) return { categorie: 'brebis', item: brebisTrouvee };
+  const belierTrouve = (DB.beliers || []).find(b => eidAffichageCourt(b.eid) === eidAffichageCourt(eidVal));
+  if (belierTrouve) return { categorie: 'belier', item: belierTrouve };
+  const agnelleTrouvee = (DB.agnelles || []).find(a => eidAffichageCourt(a.eid) === eidAffichageCourt(eidVal));
+  if (agnelleTrouvee) return { categorie: 'agnelle', item: agnelleTrouvee };
+  return null;
+}
+/* EID déjà connu mais HORS des 3 pools vivants ci-dessus (agneau déjà
+   sorti, ou toute entrée du registre d'élevage) -- ni créable ni
+   complétable, seulement signalé. Ne réutilise PAS verifierEidUnique() :
+   cette fonction compare par cleanEid EXACT, adaptée à une saisie manuelle
+   (toujours l'EID complet réel) -- mais ce fichier ne fournit que le
+   numéro EID COURT (11 chiffres, voir doc du chantier), qui ne
+   correspondrait jamais tel quel à un EID complet stocké plus long. Même
+   contournement qu'ailleurs dans ces imports : comparaison par
+   eidAffichageCourt des deux côtés, jamais cleanEid brut. */
+function verifierDoublonHorsPerimetreNouvelAnimal(eidVal) {
+  const v = eidAffichageCourt(String(eidVal || '').trim());
+  if (!v) return null;
+  const anneeNe = anneeNaissance(v);
+  const dateLabel = anneeNe !== null ? ('née en ' + anneeNe + ', déduit de l\'EID') : null;
+
+  const agneauInfo = getAgneauxInventaire().find(it => eidAffichageCourt(it.lamb.eid) === v);
+  if (agneauInfo) {
+    const { lamb, mereEid } = agneauInfo;
+    const sorti = lamb.statutFinal === 'vendu' || lamb.statutFinal === 'mort';
+    const dateSortie = sorti ? dernierMouvementDate(lamb.mouvements, ['Vendu', 'Mort']) : null;
+    return {
+      categorie: 'agneau', numero: numeroVisuel(lamb.eid),
+      statutLabel: 'un agneau ' + (sorti ? lamb.statutFinal : 'actif') + ' (mère n°' + numeroVisuel(mereEid) + ')',
+      dateLabel: sorti ? (dateSortie ? 'sortie le ' + formatDateFr(dateSortie) : dateLabel) : dateLabel
+    };
+  }
+  const registreCategories = [['brebis', 'une brebis sortie (registre)'], ['beliers', 'un bélier sorti (registre)'], ['agneaux', 'un agneau/une agnelle sorti(e) (registre)']];
+  for (const [cat, label] of registreCategories) {
+    const reg = DB.registre && DB.registre[cat];
+    if (!reg) continue;
+    const key = Object.keys(reg).find(k => eidAffichageCourt(k) === v);
+    if (key) return { categorie: 'registre-' + cat, numero: numeroVisuel(key), statutLabel: label, dateLabel };
+  }
+  return null;
+}
+// Un seul des deux numéros suffit, l'autre déduit -- même logique que
+// Correspondance SIEOL (sieolLongVersCourt/sieolCourtVersLong) ; les deux
+// renseignés et incohérents entre eux -> signalé, jamais deviné.
+function resoudreSieolTravailNouvelAnimal(longVal, courtVal, eidVal) {
+  let long = longVal || null, court = courtVal || null;
+  if (long && court && incoherenceSieolTravail(long, court)) return { incoherent: true, long, court };
+  if (long && !court) court = sieolLongVersCourt(long) || null;
+  else if (court && !long) long = sieolCourtVersLong(court, anneeNaissance(eidVal)) || null;
+  return { incoherent: false, long, court };
+}
+// Validation avant CRÉATION (jamais appliquée à une complétion de fiche
+// existante, voir calculerCompletionDoublon) -- une ligne invalide sur un
+// seul point n'est créée sur AUCUN champ (jamais une création partielle).
+function validerNouvelleLigne(champs) {
+  const origineOk = NOUVEAUX_ANIMAUX_ORIGINES_VALIDES.has(champs.origine.toLowerCase());
+  const dateParsee = champs.dateVal ? parserDateModeleOvilog(champs.dateVal) : null;
+  const dateInvalide = !!champs.dateVal && !dateParsee;
+  let statutMappe = null, statutInvalide = false;
+  if (champs.categorie !== 'agnelle') {
+    const map = champs.categorie === 'brebis' ? NOUVEAUX_ANIMAUX_STATUT_BREBIS : NOUVEAUX_ANIMAUX_STATUT_BELIER;
+    const s = champs.statutVal.toLowerCase();
+    if (s in map) statutMappe = map[s]; else statutInvalide = true;
+  }
+  let sieol = null;
+  if (champs.categorie !== 'belier' && (champs.longVal || champs.courtVal)) {
+    sieol = resoudreSieolTravailNouvelAnimal(champs.longVal, champs.courtVal, champs.eidVal);
+  }
+  const sieolIncoherent = !!(sieol && sieol.incoherent);
+  return { origineOk, dateParsee, dateInvalide, statutMappe, statutInvalide, sieol, sieolIncoherent, valide: origineOk && !dateInvalide && !statutInvalide && !sieolIncoherent };
+}
+// Complétion d'une fiche déjà existante -- champ par champ (Père/Mère/
+// SIEOL), jamais Origine/Statut/Date (voir doc du chantier ci-dessus).
+// Même sémantique à 3 états que Correspondance SIEOL : case vide côté
+// Ovilog -> 'ecriture' (automatique, aucune interaction) ; valeur
+// différente -> 'conflit' (Garder/Remplacer inline) ; déjà identique ->
+// 'rien' (silencieux, jamais listé si les 3 champs sont à 'rien').
+function calculerCompletionDoublon(champs, item) {
+  const out = { pere: 'rien', mere: 'rien', sieol: 'rien', sieolResolu: null, sieolIncoherent: false };
+  if (champs.pereVal) {
+    if (!item.pere) out.pere = 'ecriture';
+    else if (item.pere !== champs.pereVal) out.pere = 'conflit';
+  }
+  if (champs.mereVal) {
+    if (!item.mere) out.mere = 'ecriture';
+    else if (item.mere !== champs.mereVal) out.mere = 'conflit';
+  }
+  if (champs.categorie === 'belier') {
+    if (champs.numeroLibreVal) {
+      if (!item.numeroTravailSieol) out.sieol = 'ecriture';
+      else if (item.numeroTravailSieol !== champs.numeroLibreVal) out.sieol = 'conflit';
+    }
+  } else if (champs.longVal || champs.courtVal) {
+    const resolu = resoudreSieolTravailNouvelAnimal(champs.longVal, champs.courtVal, champs.eidVal);
+    out.sieolResolu = resolu;
+    if (resolu.incoherent) { out.sieolIncoherent = true; }
+    else {
+      const longActuel = item.numeroLongTravailSieol || null;
+      const courtActuel = item.numeroCourtTravailSieol || null;
+      if (!longActuel && !courtActuel) out.sieol = 'ecriture';
+      else if (longActuel === resolu.long && courtActuel === resolu.court) out.sieol = 'rien';
+      else out.sieol = 'conflit';
+    }
+  }
+  return out;
+}
+/* Lecture complète d'une feuille -- jamais d'arrêt anticipé sur une ligne
+   trouée (voir chantier), une ligne totalement vide n'est jamais ajoutée. */
+function parserFeuilleNouveauxAnimaux(rows, categorie) {
+  const lignes = [];
+  for (let i = NOUVEAUX_ANIMAUX_PREMIERE_LIGNE - 1; i < rows.length; i++) {
+    const champs = classerLigneNouvelAnimal(rows[i] || [], categorie);
+    if (!champs) continue;
+    if (!champs.eidVal) { lignes.push({ __idx: lignes.length, ligne: i + 1, champs, type: 'ignoree' }); continue; }
+    const doublon = resoudreDoublonNouvelAnimal(champs.eidVal);
+    if (doublon) {
+      const completion = calculerCompletionDoublon(champs, doublon.item);
+      lignes.push({ __idx: lignes.length, ligne: i + 1, champs, type: 'doublon', doublon, completion, resolutionPere: null, resolutionMere: null, resolutionSieol: null });
+      continue;
+    }
+    const dejaConnuAilleurs = verifierDoublonHorsPerimetreNouvelAnimal(champs.eidVal);
+    if (dejaConnuAilleurs) { lignes.push({ __idx: lignes.length, ligne: i + 1, champs, type: 'doublon-non-completable', conflitInfo: dejaConnuAilleurs }); continue; }
+    lignes.push({ __idx: lignes.length, ligne: i + 1, champs, type: 'nouvelle', validation: validerNouvelleLigne(champs) });
+  }
+  return lignes;
+}
+
+function nouvelIdAnimalImporte() { return Date.now().toString() + Math.random().toString(36).slice(2, 6); }
+
+function creerBrebisImport(champs, validation) {
+  const dateEntree = validation.dateParsee || null;
+  const dateMouvement = dateEntree || new Date().toISOString().slice(0, 10);
+  const sheep = {
+    id: nouvelIdAnimalImporte(), eid: champs.eidVal, createdAt: Date.now(), dateEntree,
+    pere: champs.pereVal || '', mere: champs.mereVal || '',
+    echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active'
+  };
+  sheep.mouvements.push({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement });
+  if (validation.sieol && (validation.sieol.long || validation.sieol.court)) {
+    sheep.numeroLongTravailSieol = validation.sieol.long || null;
+    sheep.numeroCourtTravailSieol = validation.sieol.court || null;
+  }
+  const pereLien = resoudreParentEid(champs.pereVal); if (pereLien) sheep.pereLien = pereLien;
+  const mereLien = resoudreParentEid(champs.mereVal); if (mereLien) sheep.mereLien = mereLien;
+  if (validation.statutMappe === 'morte') CATEGORIE_ANIMAL_CONFIG.brebis.applySortie(sheep, 'Morte', null, null, dateMouvement, null);
+  else if (validation.statutMappe === 'vendue') CATEGORIE_ANIMAL_CONFIG.brebis.applySortie(sheep, 'Vendue', null, null, dateMouvement, null);
+  DB.brebis.push(sheep);
+}
+function creerBelierImport(champs, validation) {
+  const dateEntree = validation.dateParsee || null;
+  const dateMouvement = dateEntree || new Date().toISOString().slice(0, 10);
+  const belier = { id: nouvelIdAnimalImporte(), eid: champs.eidVal, createdAt: Date.now(), dateEntree, sanitaire: [], mouvements: [], statut: 'actif' };
+  belier.mouvements.push({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement });
+  if (champs.numeroLibreVal) belier.numeroTravailSieol = champs.numeroLibreVal;
+  if (champs.pereVal) belier.pere = champs.pereVal;
+  if (champs.mereVal) belier.mere = champs.mereVal;
+  const pereLien = resoudreParentEid(champs.pereVal); if (pereLien) belier.pereLien = pereLien;
+  const mereLien = resoudreParentEid(champs.mereVal); if (mereLien) belier.mereLien = mereLien;
+  if (validation.statutMappe === 'mort') CATEGORIE_ANIMAL_CONFIG.beliers.applySortie(belier, 'Mort', null, null, dateMouvement, null);
+  else if (validation.statutMappe === 'vendu') CATEGORIE_ANIMAL_CONFIG.beliers.applySortie(belier, 'Vendu', null, null, dateMouvement, null);
+  DB.beliers.push(belier);
+}
+function creerAgnelleImport(champs, validation) {
+  const dateEntree = validation.dateParsee || null;
+  const dateMouvement = dateEntree || new Date().toISOString().slice(0, 10);
+  const ag = {
+    id: nouvelIdAnimalImporte(), eid: champs.eidVal, origine: champs.origine.toLowerCase(), dateEntree,
+    pere: champs.pereVal || '', mere: champs.mereVal || '', sanitaire: [], mouvements: []
+  };
+  ag.mouvements.push({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement });
+  if (validation.sieol && (validation.sieol.long || validation.sieol.court)) {
+    ag.numeroLongTravailSieol = validation.sieol.long || null;
+    ag.numeroCourtTravailSieol = validation.sieol.court || null;
+  }
+  const pereLien = resoudreParentEid(champs.pereVal); if (pereLien) ag.pereLien = pereLien;
+  const mereLien = resoudreParentEid(champs.mereVal); if (mereLien) ag.mereLien = mereLien;
+  DB.agnelles.push(ag);
+}
+// Applique la (les) complétion(s) tranchée(s)/automatiques d'une ligne
+// "doublon" -- renvoie true si quelque chose a réellement été écrit.
+function appliquerCompletionDoublon(categorie, ligne) {
+  const { champs, doublon, completion } = ligne;
+  const item = doublon.item;
+  let ecrit = false;
+  if (completion.pere === 'ecriture' || (completion.pere === 'conflit' && ligne.resolutionPere === 'remplacer')) {
+    item.pere = champs.pereVal;
+    const lien = resoudreParentEid(champs.pereVal);
+    if (lien) item.pereLien = lien; else delete item.pereLien;
+    ecrit = true;
+  }
+  if (completion.mere === 'ecriture' || (completion.mere === 'conflit' && ligne.resolutionMere === 'remplacer')) {
+    item.mere = champs.mereVal;
+    const lien = resoudreParentEid(champs.mereVal);
+    if (lien) item.mereLien = lien; else delete item.mereLien;
+    ecrit = true;
+  }
+  if (completion.sieol === 'ecriture' || (completion.sieol === 'conflit' && ligne.resolutionSieol === 'remplacer')) {
+    if (categorie === 'belier') item.numeroTravailSieol = champs.numeroLibreVal;
+    else {
+      item.numeroLongTravailSieol = completion.sieolResolu.long || null;
+      item.numeroCourtTravailSieol = completion.sieolResolu.court || null;
+    }
+    ecrit = true;
+  }
+  return ecrit;
+}
+
+function descriptionChampsNouvelAnimal(champs) {
+  const parts = [];
+  if (champs.origine) parts.push(champs.origine);
+  if (champs.dateVal) parts.push(champs.dateVal);
+  if (champs.pereVal) parts.push('Père : ' + champs.pereVal);
+  if (champs.mereVal) parts.push('Mère : ' + champs.mereVal);
+  return parts.length ? parts.join(' · ') : '(aucune valeur)';
+}
+function renderLigneCompletionNouvelAnimalHtml(categorie, l) {
+  const numero = numeroVisuel(l.doublon.item.eid);
+  const champsBoutons = [];
+  if (l.completion.pere === 'conflit') champsBoutons.push({ champ: 'Pere', label: 'Père', actuel: l.doublon.item.pere, propose: l.champs.pereVal, resolution: l.resolutionPere });
+  if (l.completion.mere === 'conflit') champsBoutons.push({ champ: 'Mere', label: 'Mère', actuel: l.doublon.item.mere, propose: l.champs.mereVal, resolution: l.resolutionMere });
+  if (l.completion.sieol === 'conflit') {
+    const actuel = categorie === 'belier' ? l.doublon.item.numeroTravailSieol : [l.doublon.item.numeroLongTravailSieol, l.doublon.item.numeroCourtTravailSieol].filter(Boolean).join(' / ');
+    const propose = categorie === 'belier' ? l.champs.numeroLibreVal : [l.completion.sieolResolu.long, l.completion.sieolResolu.court].filter(Boolean).join(' / ');
+    champsBoutons.push({ champ: 'Sieol', label: 'Numéro travail SIEOL', actuel, propose, resolution: l.resolutionSieol });
+  }
+  const ecritureAuto = [];
+  if (l.completion.pere === 'ecriture') ecritureAuto.push('Père : ' + l.champs.pereVal);
+  if (l.completion.mere === 'ecriture') ecritureAuto.push('Mère : ' + l.champs.mereVal);
+  if (l.completion.sieol === 'ecriture') {
+    const val = categorie === 'belier' ? l.champs.numeroLibreVal : [l.completion.sieolResolu.long, l.completion.sieolResolu.court].filter(Boolean).join(' / ');
+    ecritureAuto.push('Numéro SIEOL : ' + val);
+  }
+  return `
+    <div style="border-top:1px solid var(--border);padding:8px 0;">
+      <div style="font-size:13px;margin-bottom:4px;">Ligne ${l.ligne} — EID ${l.champs.eidVal} — n°${numero}</div>
+      ${ecritureAuto.length > 0 ? `<div style="font-size:12px;color:var(--blue-fg);margin-bottom:4px;">À compléter automatiquement : ${ecritureAuto.join(' · ')}</div>` : ''}
+      ${l.completion.sieolIncoherent ? `<div style="font-size:12px;color:var(--coral-fg);margin-bottom:4px;">⚠ Numéro long/court travail SIEOL du fichier incohérents entre eux -- ignoré pour cette ligne.</div>` : ''}
+      ${champsBoutons.map(c => `
+        <div style="font-size:12px;color:var(--text-muted);margin:4px 0;">${c.label} — Actuel : <strong style="color:var(--text);">${c.actuel || '—'}</strong> → Fichier propose : <strong style="color:var(--text);">${c.propose || '—'}</strong></div>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+          <button type="button" class="btn btn-secondary btn-conflit-nouvel-animal" data-cat="${categorie}" data-idx="${l.__idx}" data-champ="${c.champ}" data-choix="garder" style="width:auto;padding:4px 10px;font-size:11.5px;${c.resolution === 'garder' ? 'background:var(--gray-bg);' : ''}">Garder l'actuel</button>
+          <button type="button" class="btn btn-secondary btn-conflit-nouvel-animal" data-cat="${categorie}" data-idx="${l.__idx}" data-champ="${c.champ}" data-choix="remplacer" style="width:auto;padding:4px 10px;font-size:11.5px;${c.resolution === 'remplacer' ? 'background:var(--amber-bg);border-color:var(--amber-fg);' : ''}">Remplacer</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+function renderSectionNouveauxAnimaux(categorie, lignes) {
+  if (!lignes || lignes.length === 0) return '';
+  const label = libelleCategorieNouvelAnimal(categorie);
+  const aCreer = lignes.filter(l => l.type === 'nouvelle' && l.validation.valide);
+  const invalides = lignes.filter(l => l.type === 'nouvelle' && !l.validation.valide);
+  const doublonsACompleter = lignes.filter(l => l.type === 'doublon' && (l.completion.pere !== 'rien' || l.completion.mere !== 'rien' || l.completion.sieol !== 'rien' || l.completion.sieolIncoherent));
+  const doublonsNonCompletables = lignes.filter(l => l.type === 'doublon-non-completable');
+  const ignorees = lignes.filter(l => l.type === 'ignoree');
+  if (aCreer.length + invalides.length + doublonsACompleter.length + doublonsNonCompletables.length + ignorees.length === 0) return '';
+
+  const raisonInvalide = (l) => {
+    const raisons = [];
+    if (!l.validation.origineOk) raisons.push('Origine invalide ("' + l.champs.origine + '", attendu "née" ou "achetée")');
+    if (l.validation.dateInvalide) raisons.push('Date invalide ("' + l.champs.dateVal + '")');
+    if (l.validation.statutInvalide) raisons.push('Statut invalide ("' + l.champs.statutVal + '")');
+    if (l.validation.sieolIncoherent) raisons.push('Numéro long/court travail SIEOL incohérents entre eux');
+    return raisons.join(' ; ');
+  };
+
+  return `
+    <div class="card" style="margin-top:14px;">
+      <div style="font-size:15px;font-weight:700;margin-bottom:8px;">${label}</div>
+      <div class="grid2" style="grid-template-columns:repeat(5,1fr);">
+        <div class="stat-card sc-green"><div class="stat-card-label">À créer</div><div class="stat-card-value" style="font-size:15px;">${aCreer.length}</div></div>
+        <div class="stat-card sc-blue"><div class="stat-card-label">À compléter</div><div class="stat-card-value" style="font-size:15px;">${doublonsACompleter.length}</div></div>
+        <div class="stat-card sc-coral"><div class="stat-card-label">Invalides</div><div class="stat-card-value" style="font-size:15px;">${invalides.length}</div></div>
+        <div class="stat-card sc-amber"><div class="stat-card-label">Doublons</div><div class="stat-card-value" style="font-size:15px;">${doublonsNonCompletables.length}</div></div>
+        <div class="stat-card sc-coral"><div class="stat-card-label">Ignorées</div><div class="stat-card-value" style="font-size:15px;">${ignorees.length}</div></div>
+      </div>
+    </div>
+    ${invalides.length > 0 ? `
+    <div class="card" style="margin-top:10px;border-color:var(--coral-fg);">
+      <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;color:var(--coral-fg);">${label} — Invalides, non créées (${invalides.length})</div>
+      ${invalides.map(l => `<div style="font-size:12.5px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — EID ${l.champs.eidVal} — ${raisonInvalide(l)}</div>`).join('')}
+    </div>
+    ` : ''}
+    ${doublonsACompleter.length > 0 ? `
+    <div class="card" style="margin-top:10px;">
+      <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">${label} — Fiches existantes à compléter (${doublonsACompleter.length})</div>
+      ${doublonsACompleter.map(l => renderLigneCompletionNouvelAnimalHtml(categorie, l)).join('')}
+    </div>
+    ` : ''}
+    ${doublonsNonCompletables.length > 0 ? `
+    <div class="card" style="margin-top:10px;">
+      <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;color:var(--amber-fg);">${label} — EID déjà utilisé ailleurs, rien de complétable (${doublonsNonCompletables.length})</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Cet EID appartient déjà à un agneau sorti ou une entrée du registre d'élevage -- ni création ni complément possible ici.</div>
+      ${doublonsNonCompletables.map(l => `<div style="font-size:12.5px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — EID ${l.champs.eidVal} — ${messageEidDejaUtilise(l.conflitInfo)}</div>`).join('')}
+    </div>
+    ` : ''}
+    ${ignorees.length > 0 ? `
+    <div class="card" style="margin-top:10px;">
+      <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">${label} — Ignorées, sans EID exploitable (${ignorees.length})</div>
+      ${ignorees.map(l => `<div style="font-size:12.5px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — ${descriptionChampsNouvelAnimal(l.champs)}</div>`).join('')}
+    </div>
+    ` : ''}
+    ${aCreer.length > 0 ? `
+    <div class="card" style="margin-top:10px;">
+      <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">${label} — Seront créées (${aCreer.length})</div>
+      ${aCreer.map(l => `<div style="font-size:12.5px;padding:4px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${l.ligne} — EID ${l.champs.eidVal}</span><span style="color:var(--text-muted);">${descriptionChampsNouvelAnimal(l.champs)}</span></div>`).join('')}
+    </div>
+    ` : ''}
+  `;
+}
+
+function renderImportNouveauxAnimaux() {
+  pageTitle.textContent = 'Import Nouveaux animaux';
+  let lignesParCategorie = null; // { brebis: [...], belier: [...], agnelle: [...] }
+
+  app.innerHTML = `
+    <div class="card">
+      <label style="display:flex;align-items:center;">Fichier modèle Ovilog${infoBulleHtml('Format du fichier', "Fichier .xlsx basé sur Modele_Nouveaux_Animaux.xlsx -- 3 onglets Brebis/Béliers/Agnelles, en-têtes en ligne 4, données à partir de la ligne 5. Crée les fiches qui n'existent pas encore (numéro EID complet, 11 chiffres) et complète les numéros SIEOL/la généalogie des fiches déjà existantes. Un EID déjà présent dans Ovilog n'est jamais dupliqué.")}</label>
+      <input type="file" id="import-nouveaux-animaux-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <div id="import-nouveaux-animaux-err" class="error-box hidden"></div>
+    </div>
+    <div id="import-nouveaux-animaux-preview"></div>
+    <button class="btn btn-primary hidden" id="btn-confirm-import-nouveaux-animaux" style="margin-top:14px;">Confirmer l'import</button>
+  `;
+
+  function renderPreview() {
+    const preview = document.getElementById('import-nouveaux-animaux-preview');
+    const btnConfirm = document.getElementById('btn-confirm-import-nouveaux-animaux');
+    if (!lignesParCategorie) { preview.innerHTML = ''; btnConfirm.classList.add('hidden'); return; }
+
+    const sections = ['brebis', 'belier', 'agnelle'].map(cat => renderSectionNouveauxAnimaux(cat, lignesParCategorie[cat])).join('');
+    preview.innerHTML = sections || '<div class="card" style="margin-top:14px;"><div style="font-size:13px;color:var(--text-muted);">Aucune ligne exploitable dans ce fichier.</div></div>';
+
+    document.querySelectorAll('.btn-conflit-nouvel-animal').forEach(btn => {
+      btn.onclick = () => {
+        const ligne = lignesParCategorie[btn.dataset.cat][parseInt(btn.dataset.idx, 10)];
+        ligne['resolution' + btn.dataset.champ] = btn.dataset.choix;
+        renderPreview();
+      };
+    });
+
+    const totalAEcrire = ['brebis', 'belier', 'agnelle'].reduce((sum, cat) => {
+      const lignes = lignesParCategorie[cat];
+      const aCreer = lignes.filter(l => l.type === 'nouvelle' && l.validation.valide).length;
+      const aCompleter = lignes.filter(l => l.type === 'doublon' && (
+        l.completion.pere === 'ecriture' || (l.completion.pere === 'conflit' && l.resolutionPere === 'remplacer') ||
+        l.completion.mere === 'ecriture' || (l.completion.mere === 'conflit' && l.resolutionMere === 'remplacer') ||
+        l.completion.sieol === 'ecriture' || (l.completion.sieol === 'conflit' && l.resolutionSieol === 'remplacer')
+      )).length;
+      return sum + aCreer + aCompleter;
+    }, 0);
+    btnConfirm.classList.toggle('hidden', totalAEcrire === 0);
+  }
+
+  document.getElementById('import-nouveaux-animaux-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const err = document.getElementById('import-nouveaux-animaux-err');
+    err.classList.add('hidden');
+    lignesParCategorie = null;
+    renderPreview();
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const buffer = reader.result;
+        const rowsBrebis = await readXlsxRows(buffer, NOUVEAUX_ANIMAUX_FEUILLES.brebis);
+        const rowsBeliers = await readXlsxRows(buffer, NOUVEAUX_ANIMAUX_FEUILLES.belier);
+        const rowsAgnelles = await readXlsxRows(buffer, NOUVEAUX_ANIMAUX_FEUILLES.agnelle);
+        lignesParCategorie = {
+          brebis: parserFeuilleNouveauxAnimaux(rowsBrebis, 'brebis'),
+          belier: parserFeuilleNouveauxAnimaux(rowsBeliers, 'belier'),
+          agnelle: parserFeuilleNouveauxAnimaux(rowsAgnelles, 'agnelle')
+        };
+        renderPreview();
+      } catch (ex) {
+        err.textContent = "Impossible de lire ce fichier : " + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = "Erreur de lecture du fichier.";
+      err.classList.remove('hidden');
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  document.getElementById('btn-confirm-import-nouveaux-animaux').onclick = () => {
+    if (!lignesParCategorie) return;
+    let nbCrees = 0, nbCompletes = 0;
+    ['brebis', 'belier', 'agnelle'].forEach(categorie => {
+      lignesParCategorie[categorie].forEach(ligne => {
+        if (ligne.type === 'nouvelle' && ligne.validation.valide) {
+          // Sécurité anti-doublon interne au fichier : re-vérifie contre
+          // l'état LIVE de la base juste avant de créer, au cas où une
+          // ligne précédente de CE MÊME import (autre onglet ou même
+          // onglet) aurait déjà créé cet EID -- jamais une création en
+          // double silencieuse.
+          if (resoudreDoublonNouvelAnimal(ligne.champs.eidVal)) return;
+          if (categorie === 'brebis') creerBrebisImport(ligne.champs, ligne.validation);
+          else if (categorie === 'belier') creerBelierImport(ligne.champs, ligne.validation);
+          else creerAgnelleImport(ligne.champs, ligne.validation);
+          nbCrees++;
+        } else if (ligne.type === 'doublon') {
+          if (appliquerCompletionDoublon(categorie, ligne)) nbCompletes++;
+        }
+      });
+    });
+    saveData(DB);
+    alert(nbCrees + ' nouvelle(s) fiche(s) créée(s), ' + nbCompletes + ' fiche(s) existante(s) complétée(s).');
+    render('parametres');
+  };
+}
+
 /* ---------- Import "Contrôle laitier" (mode fichier modèle Ovilog) ----------
    REPRISE COMPLÈTE (remplace intégralement les versions précédentes de ce
    chantier) -- distinct de l'import "Cahier de contrôle laitier SIEOL" déjà
@@ -17555,15 +18135,10 @@ function renderParametresListes(content) {
    sur le format réel du travail SIEOL). Placeholders désactivés en
    attendant des fichiers réels et un format validé. ---------- */
 function renderParametresImports(content) {
-  const placeholder = (label) => `<div class="card" style="margin-bottom:12px;opacity:0.7;">
-    <div style="font-weight:600;margin-bottom:6px;">${label}</div>
-    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Bientôt disponible.</div>
-    <button type="button" class="btn btn-secondary" disabled>Importer le fichier</button>
-  </div>`;
   // "Correspondance SIEOL" (chantier "Import Correspondance SIEOL") : mode
   // "fichier modèle Ovilog" uniquement -- le mode "fichier brut SIEOL"
   // (mapping de colonnes à la volée) reste hors périmètre, en attente d'un
-  // exemple réel. Les deux autres cartes restent des placeholders.
+  // exemple réel.
   const correspondanceSieolCard = `<div class="card" style="margin-bottom:12px;">
     <div style="font-weight:600;margin-bottom:6px;">Correspondance SIEOL</div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (Modele_Correspondance_SIEOL.xlsx) : associe le numéro EID de chaque animal à son numéro de travail SIEOL long et/ou court.</div>
@@ -17602,9 +18177,19 @@ function renderParametresImports(content) {
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (${typeSuiviImport === 'clo' ? 'Modele_Lactation_CLO.xlsx' : 'Modele_Lactation_CLS.xlsx'}) : lactation totale, jours de traite et indicateurs ${typeSuiviImport === 'clo' ? 'CLO (Index ISOL/production)' : 'CLS (indice cumulé/classe par quart)'} de la campagne en cours, par numéro SIEOL court.</div>
     <button type="button" class="btn btn-secondary" id="btn-import-lactation-modele">Importer le fichier</button>
   </div>` : '';
-  content.innerHTML = correspondanceSieolCard + controleLaitierModeleCard + lactationCard + purgeControleLaitierCard + placeholder('Nouveaux animaux');
+  // "Nouveaux animaux" (chantier "Import Nouveaux animaux") : mode fichier
+  // modèle Ovilog uniquement -- crée des fiches Brebis/Béliers/Agnelles qui
+  // n'existent pas encore dans Ovilog (démarrage cheptel ou achat), et
+  // complète les fiches déjà existantes (numéros SIEOL, généalogie).
+  const nouveauxAnimauxCard = `<div class="card" style="margin-bottom:12px;">
+    <div style="font-weight:600;margin-bottom:6px;">Nouveaux animaux</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Fichier modèle Ovilog rempli par tes soins (Modele_Nouveaux_Animaux.xlsx, 3 onglets Brebis/Béliers/Agnelles) : crée les fiches qui n'existent pas encore (démarrage cheptel ou achat) et complète les fiches déjà existantes (numéros SIEOL, généalogie).</div>
+    <button type="button" class="btn btn-secondary" id="btn-import-nouveaux-animaux">Importer le fichier</button>
+  </div>`;
+  content.innerHTML = correspondanceSieolCard + controleLaitierModeleCard + lactationCard + nouveauxAnimauxCard + purgeControleLaitierCard;
   document.getElementById('btn-import-correspondance-sieol').onclick = () => render('import-correspondance-sieol');
   document.getElementById('btn-import-controle-laitier-modele').onclick = () => render('import-controle-laitier-modele');
+  document.getElementById('btn-import-nouveaux-animaux').onclick = () => render('import-nouveaux-animaux');
   const btnImportLactationModele = document.getElementById('btn-import-lactation-modele');
   if (btnImportLactationModele) btnImportLactationModele.onclick = () => render('import-lactation-modele');
   const btnPurgeControleLaitier = document.getElementById('btn-purge-controle-laitier-campagne');
