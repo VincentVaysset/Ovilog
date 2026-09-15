@@ -125,9 +125,40 @@ Non traité dans cette V1 — trop de risque d'erreur pour l'instant. À reprend
 - Gestion des **biberons et adoptions** au moment de l'agnelage
 - Fiche brebis qui s'ouvre automatiquement au scan pour enchaîner la saisie
 
+## État d'avancement (v2 — appli Android réelle via Capacitor)
+
+Réalisé et fonctionnel dans l'appli native : fiche brebis, échographie (3 types), agnelage (adoption, mort-nés, Sélépérol automatique), carnet sanitaire (+ traitement collectif), mouvements (+ mouvement groupé), agnelles (tri réversible, généalogie), béliers, lutte, contrôle laitier (par n° de contrôle), production laitière tank, journal, lots avec recherche en bergerie (bip différencié), import CSV inventaire+échographies, profil exploitation, campagne (affichage + changement), sauvegarde/restauration JSON, intégration ANMV (délais d'attente lait/viande par produit).
+
+Reste à faire : refonte navigation (ci-dessous), synchronisation cloud multi-appareils (Firebase), réforme (liste, toujours en attente).
+
+## Refonte de la navigation (à faire par Claude Code directement dans le vrai code)
+
+### Bug à corriger
+- Perte de la position de scroll dans la liste des brebis au retour depuis une fiche détail (revient en haut au lieu de rester où on était)
+
+### En-tête
+- Centre : logo Ovilog + nom "OVILOG"
+- Gauche : nom de l'exploitation
+- Droite : campagne en cours
+- Tout à gauche : menu hamburger (☰) avec les entrées suivantes :
+  - Brebis
+  - Béliers
+  - Agneaux (vue dédiée, à définir plus précisément — probablement les agneaux en attente de statut/devenir)
+  - Inventaire (regroupe les mouvements/sorties de brebis, béliers, agneaux — structure exacte à affiner avec Claude Code)
+  - Chantier de tri (regroupe : lots de recherche, tri des agnelles, réforme — création de lot, affectation de brebis au lot, recherche en bergerie via le lot)
+  - Agenda (renommage de "Journal")
+  - Paramètres (campagne, exploitation, import CSV, sauvegarde)
+
+### Écran d'accueil
+- **L'onglet "Stats" est supprimé en tant qu'onglet séparé — il devient l'écran d'accueil lui-même**, avec un vrai travail visuel (cartes/cadres soignés), tout en gardant les compteurs brebis/agnelles/béliers visibles en haut
+- L'onglet "Sorties" est supprimé — les brebis sorties doivent être consultables via l'inventaire/mouvements plutôt qu'un onglet dédié
+
+### Sauvegarde
+- La fonctionnalité export/import JSON doit être vérifiée et remise en état de marche (fiabilité critique tant qu'il n'y a pas de synchro cloud)
+
 ## Prochaine étape
 
-Une fois ces points validés, on pourra :
-1. Définir précisément le modèle de données (les tables et leurs liens)
-2. Choisir la techno (Kotlin natif ou Flutter/React Native pour rester multiplateforme)
-3. Commencer par un premier module fonctionnel (probablement fiche brebis + scan HID + échographie, puisque c'est ce qu'on a déjà bien cadré)
+1. Vérifier que l'intégration ANMV fonctionne correctement
+2. Appliquer le logo Ovilog (fichier PNG fourni) comme icône de l'application
+3. Réaliser la refonte de navigation décrite ci-dessus
+4. Synchronisation cloud (Firebase) multi-appareils
