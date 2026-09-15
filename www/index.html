@@ -626,6 +626,7 @@ function migrateData(d) {
   }
   if (!d.acheteurs) d.acheteurs = [];
   if (!d.causesMortalite) d.causesMortalite = [];
+  if (!d.intervenants) d.intervenants = [];
   if (!d.casParticuliers) d.casParticuliers = ['Pseudogestation', 'Avortée'];
   if (!d.produitsInfo) d.produitsInfo = {};
   if (!d.agnelles) d.agnelles = [];
@@ -1006,6 +1007,7 @@ function loadData() {
     },
     acheteurs: [],
     causesMortalite: [],
+    intervenants: [],
     produitsInfo: {},
     traitementsCollectifs: [],
     mouvementsCollectifs: [],
@@ -1089,26 +1091,20 @@ function addDaysToDateStr(dateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
-/* Calcule, pour une brebis, les dates de fin de délai d'attente lait/viande
-   encore actives (dans le futur) à partir de son carnet sanitaire. Quand
-   plusieurs soins ont des délais qui se chevauchent, on retient la date la
-   plus tardive (le délai n'est levé que lorsque le dernier soin le permet). */
-function computeWithdrawalAlerts(sheep) {
-  const today = new Date().toISOString().slice(0, 10);
-  let laitFin = null, viandeFin = null;
-  (sheep.sanitaire || []).forEach(s => {
-    const info = DB.produitsInfo[s.produit];
-    if (!info || info.declined || !s.date) return;
-    if (info.lait !== null && info.lait !== undefined) {
-      const fin = addDaysToDateStr(s.date, info.lait);
-      if (fin >= today && (!laitFin || fin > laitFin)) laitFin = fin;
-    }
-    if (info.viande !== null && info.viande !== undefined) {
-      const fin = addDaysToDateStr(s.date, info.viande);
-      if (fin >= today && (!viandeFin || fin > viandeFin)) viandeFin = fin;
-    }
-  });
-  return { laitFin, viandeFin };
+/* Texte affiché pour la date d'une entrée du carnet sanitaire : date de
+   piquage seule si le produit n'a pas de délai d'attente déclaré (voir
+   Gérer les produits), ou date de piquage + date de fin de délai calculée
+   (piquage + délai en jours) sinon -- système déclaratif géré par
+   l'éleveur (DB.produitsInfo[produit].delaiAttente), plus aucun lien avec
+   l'ancienne intégration ANMV (retirée). */
+function sanitaireDateHtml(s) {
+  const dateTxt = formatDateFr(s.date);
+  const info = DB.produitsInfo[s.produit];
+  const delai = info && info.delaiAttente;
+  if (delai !== null && delai !== undefined && s.date) {
+    return dateTxt + ' · délai d\'attente jusqu\'au ' + formatDateFr(addDaysToDateStr(s.date, delai));
+  }
+  return dateTxt;
 }
 
 /* ---------- Utilitaires EID ---------- */
@@ -4124,16 +4120,16 @@ function dashboardKpiHtml() {
    desktop", plan + maquette validés) ----------
    4 blocs en grille, réutilisant EXACTEMENT les mêmes fonctions de calcul
    que l'accueil mobile (dashboardStatsData, tauxReussiteGlobal,
-   computeWithdrawalAlerts, litrageTroupeauResume...) -- rien n'est
-   recalculé différemment, seule la disposition change. Actif UNIQUEMENT
-   si isDesktopMode() (voir renderHome) : l'accueil mobile/Android garde
-   exactement son rendu actuel (hero + dashboardKpiHtml). */
+   litrageTroupeauResume...) -- rien n'est recalculé différemment, seule la
+   disposition change. Actif UNIQUEMENT si isDesktopMode() (voir renderHome) :
+   l'accueil mobile/Android garde exactement son rendu actuel (hero +
+   dashboardKpiHtml). */
 
 /* Bloc "Mortalité & Sanitaire" : pertes de la campagne (brebis mortes +
-   causes, agneaux morts/mort-nés) et traitements en cours dont le délai
-   d'attente lait/viande est encore actif -- computeWithdrawalAlerts est
-   déjà utilisé sur la fiche de chaque brebis (voir renderDetail), simple
-   boucle ici sur toutes les actives, aucune nouvelle règle de calcul. */
+   causes, agneaux morts/mort-nés) -- le délai d'attente lait/viande
+   agrégé (ex-ANMV) a été retiré (voir chantier "Évolution du carnet
+   sanitaire" : système déclaratif désormais affiché par soin, sur chaque
+   entrée du carnet, pas ici). */
 function mortaliteSanitaireData() {
   const causesCount = {};
   let brebisMortesCount = 0;
@@ -4177,16 +4173,9 @@ function mortaliteSanitaireData() {
   });
   const agneauxMorts = agneauxMortNes + agneauxMortsApresNaissance;
 
-  const traitementsEnCours = [];
-  DB.brebis.filter(s => (s.statut || 'active') === 'active').forEach(s => {
-    const w = computeWithdrawalAlerts(s);
-    if (w.laitFin || w.viandeFin) traitementsEnCours.push({ id: s.id, eid: s.eid, laitFin: w.laitFin, viandeFin: w.viandeFin });
-  });
-
   return {
     brebisMortesCount, causesCount, beliersMortsCount,
-    agneauxMorts, agneauxMortNes, agneauxMortsApresNaissance,
-    traitementsEnCours
+    agneauxMorts, agneauxMortNes, agneauxMortsApresNaissance
   };
 }
 
@@ -6250,7 +6239,7 @@ function renderDetail(id) {
   // Refonte fiche brebis desktop (option B validée) : identité + badges
   // regroupés dans un bandeau fixe séparé (voir desktopHeaderHtml plus
   // bas) au lieu d'être répétés dans l'onglet Ident./Repro comme sur
-  // mobile -- statutBadge/mereBlock/attendueTraiteBadge/withdrawalBadge
+  // mobile -- statutBadge/mereBlock/attendueTraiteBadge
   // restent calculés une seule fois plus bas et sont simplement omis de
   // ficheBrebisTabContent quand desktop=true pour éviter un doublon.
   const desktop = isDesktopMode();
@@ -6334,8 +6323,8 @@ function renderDetail(id) {
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
         <div class="content">
           <div style="font-weight:600;">${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</div>
-          ${(s.dose || s.collectif) ? `<div style="margin-top:5px;">${s.dose ? `<span class="badge badge-muted" style="margin-right:6px;">${s.dose}</span>` : ''}${s.collectif ? '<span class="badge badge-gray">Collectif</span>' : ''}</div>` : ''}
-          <div class="date" style="margin-top:4px;">${formatDateFr(s.date)}</div>
+          ${(s.quantiteCc != null || s.dose || s.intervenant || s.collectif) ? `<div style="margin-top:5px;">${s.quantiteCc != null ? `<span class="badge badge-muted" style="margin-right:6px;">${s.quantiteCc} cc</span>` : (s.dose ? `<span class="badge badge-muted" style="margin-right:6px;">${s.dose}</span>` : '')}${s.intervenant ? `<span class="badge badge-muted" style="margin-right:6px;">${s.intervenant}</span>` : ''}${s.collectif ? '<span class="badge badge-gray">Collectif</span>' : ''}</div>` : ''}
+          <div class="date" style="margin-top:4px;">${sanitaireDateHtml(s)}</div>
           ${s.commentaire ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin-top:2px;">${s.commentaire}</div>` : ''}
         </div>
       </div>
@@ -6443,15 +6432,6 @@ function renderDetail(id) {
 
   const attendueTraiteBadge = ((sheep.statut || 'active') === 'active' && isAttendueTraite(sheep, DB.brebis))
     ? `<div style="display:flex;align-items:center;gap:10px;background:var(--blue-bg);color:var(--blue-fg);padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">${iconCircle(ICON_LAIT, 'blue', 'sm')}<span>Attendue à la traite — tous ses agneaux sont partis</span></div>`
-    : '';
-
-  const withdrawal = computeWithdrawalAlerts(sheep);
-  const withdrawalLines = [
-    withdrawal.laitFin ? `Délai d'attente lait jusqu'au ${formatDateFr(withdrawal.laitFin)}` : null,
-    withdrawal.viandeFin ? `Délai d'attente viande jusqu'au ${formatDateFr(withdrawal.viandeFin)}` : null
-  ].filter(Boolean);
-  const withdrawalBadge = withdrawalLines.length
-    ? `<div style="display:flex;align-items:center;gap:10px;background:var(--coral-bg);color:var(--coral-fg);padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">${iconCircle(ICON_SANTE, 'coral', 'sm')}<div>${withdrawalLines.join('<br>')}</div></div>`
     : '';
 
   const allLiveLambs = [];
@@ -6605,7 +6585,6 @@ function renderDetail(id) {
 
   const reproTabHtml = `
     ${desktop ? '' : attendueTraiteBadge}
-    ${desktop ? '' : withdrawalBadge}
     ${reproStatutHtml}
     <div class="row" style="margin-bottom:16px;">
       <button class="btn btn-primary" id="btn-add-echo" style="flex:1;">+ Échographie</button>
@@ -6732,8 +6711,8 @@ function renderDetail(id) {
   };
 
   // Bandeau d'identité desktop : regroupe ce qui, sur mobile, n'apparaît
-  // que sur les onglets Ident./Repro (statutBadge, attendueTraiteBadge,
-  // withdrawalBadge) -- mêmes variables déjà calculées plus haut,
+  // que sur les onglets Ident./Repro (statutBadge, attendueTraiteBadge)
+  // -- mêmes variables déjà calculées plus haut,
   // réutilisées telles quelles, aucun nouveau calcul. mereBlock (lien
   // "Voir la fiche de la mère") n'y est plus affiché depuis le chantier
   // "Version PC desktop" -- il rejoint désormais genealogieBlock dans
@@ -6746,7 +6725,6 @@ function renderDetail(id) {
         <div class="fiche-desktop-name">Brebis n°${numeroVisuel(sheep.eid)} <span style="font-weight:500;font-size:13px;color:var(--text-muted);">— EID ${sheep.eid}</span></div>
         <div class="fiche-desktop-badges">
           ${attendueTraiteBadge}
-          ${withdrawalBadge}
           ${statutBadge}
           <span class="badge badge-muted">${age(sheep.eid)} an(s) (${anneeNaissance(sheep.eid)})</span>
         </div>
@@ -8475,13 +8453,21 @@ function renderAddSanitaire(sheepId) {
           <input type="text" id="new-produit" placeholder="Ajouter un nouveau produit...">
           <button type="button" class="btn btn-secondary" id="add-produit" style="width:auto;padding:0 16px;">+</button>
         </div>
+        <div id="posologie-rappel" class="hidden" style="font-size:12.5px;color:var(--text-muted);margin-top:8px;padding:8px 10px;background:#f0efe9;border-radius:var(--radius);"></div>
       </div>
 
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
 
-      <label>Dose (facultatif)</label>
-      <input type="text" id="f-dose" placeholder="ex: 2 ml" value="${existing ? (existing.dose || '') : ''}">
+      <label>Quantité administrée (cc)</label>
+      <input type="number" id="f-quantite" placeholder="ex: 2" step="0.1" min="0" value="${existing && existing.quantiteCc != null ? existing.quantiteCc : ''}">
+
+      <label>Intervenant</label>
+      <div class="chip-list" id="intervenant-list"></div>
+      <div class="row">
+        <input type="text" id="new-intervenant" placeholder="Ajouter un nouvel intervenant...">
+        <button type="button" class="btn btn-secondary" id="add-intervenant" style="width:auto;padding:0 16px;">+</button>
+      </div>
 
       <label>Commentaire (facultatif)</label>
       <input type="text" id="f-comment" placeholder="ex: rappel dans 3 semaines" value="${existing ? (existing.commentaire || '') : ''}">
@@ -8491,7 +8477,46 @@ function renderAddSanitaire(sheepId) {
     </div>
   `;
 
-  let type = null, sousType = null, produit = null;
+  let type = null, sousType = null, produit = null, intervenant = null;
+
+  function renderIntervenantChips() {
+    const list = document.getElementById('intervenant-list');
+    list.innerHTML = '';
+    (DB.intervenants || []).forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (intervenant === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { intervenant = (intervenant === val) ? null : val; renderIntervenantChips(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+  }
+  renderIntervenantChips();
+  document.getElementById('add-intervenant').onclick = () => {
+    const input = document.getElementById('new-intervenant');
+    const val = input.value.trim();
+    if (!val) return;
+    DB.intervenants = DB.intervenants || [];
+    if (!DB.intervenants.includes(val)) DB.intervenants.push(val);
+    saveData(DB);
+    input.value = '';
+    intervenant = val;
+    renderIntervenantChips();
+  };
+
+  // Rappel de posologie (texte libre déclaré une fois par l'éleveur sur la
+  // fiche produit, voir Gérer les produits) -- jamais de calcul de dose
+  // automatique, uniquement une aide-mémoire au moment du piquage.
+  function updatePosologieRappel() {
+    const box = document.getElementById('posologie-rappel');
+    const info = produit && DB.produitsInfo[produit];
+    if (info && info.posologie) {
+      box.textContent = 'Posologie : ' + info.posologie;
+      box.classList.remove('hidden');
+    } else {
+      box.classList.add('hidden');
+    }
+  }
 
   function categorieKey() {
     if (type === 'Vaccin') return 'vaccins';
@@ -8516,10 +8541,12 @@ function renderAddSanitaire(sheepId) {
         const wasSelected = produit === val;
         produit = wasSelected ? null : val;
         renderProduitChips();
+        updatePosologieRappel();
         document.getElementById('err').classList.add('hidden');
       };
       list.appendChild(chip);
     });
+    updatePosologieRappel();
   }
 
   document.querySelectorAll('.type-opt').forEach(btn => {
@@ -8539,6 +8566,7 @@ function renderAddSanitaire(sheepId) {
       } else {
         document.getElementById('produit-block').classList.add('hidden');
       }
+      updatePosologieRappel();
       document.getElementById('err').classList.add('hidden');
     };
   });
@@ -8584,13 +8612,25 @@ function renderAddSanitaire(sheepId) {
       err.classList.remove('hidden');
       return;
     }
+    const quantiteVal = document.getElementById('f-quantite').value;
+    if (quantiteVal.trim() === '' || isNaN(parseFloat(quantiteVal)) || parseFloat(quantiteVal) < 0) {
+      err.textContent = "Renseigne la quantité administrée (cc).";
+      err.classList.remove('hidden');
+      return;
+    }
+    if (!intervenant) {
+      err.textContent = "Sélectionne ou ajoute un intervenant.";
+      err.classList.remove('hidden');
+      return;
+    }
     err.classList.add('hidden');
     const soin = {
       type: type,
       sousType: sousType,
       produit: type === 'Autre' ? 'Soin de plaie' : produit,
       date: document.getElementById('f-date').value,
-      dose: document.getElementById('f-dose').value.trim(),
+      quantiteCc: parseFloat(quantiteVal),
+      intervenant: intervenant,
       commentaire: document.getElementById('f-comment').value.trim()
     };
     sheep.sanitaire = sheep.sanitaire || [];
@@ -8610,6 +8650,10 @@ function renderAddSanitaire(sheepId) {
     }
     if (existing.produit && existing.type !== 'Autre') {
       const chip = [...document.querySelectorAll('#produit-list .chip')].find(c => c.textContent === existing.produit);
+      if (chip) chip.click();
+    }
+    if (existing.intervenant) {
+      const chip = [...document.querySelectorAll('#intervenant-list .chip')].find(c => c.textContent === existing.intervenant);
       if (chip) chip.click();
     }
   }
@@ -9833,8 +9877,8 @@ function renderAgnelleDetail(id) {
       ${iconCircle(ICON_SANTE, 'coral', 'sm')}
       <div class="content">
         <div style="font-weight:600;">${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</div>
-        ${s.dose ? `<div style="margin-top:5px;"><span class="badge badge-muted">${s.dose}</span></div>` : ''}
-        <div class="date" style="margin-top:4px;">${formatDateFr(s.date)}</div>
+        ${(s.quantiteCc != null || s.dose || s.intervenant || s.collectif) ? `<div style="margin-top:5px;">${s.quantiteCc != null ? `<span class="badge badge-muted" style="margin-right:6px;">${s.quantiteCc} cc</span>` : (s.dose ? `<span class="badge badge-muted" style="margin-right:6px;">${s.dose}</span>` : '')}${s.intervenant ? `<span class="badge badge-muted" style="margin-right:6px;">${s.intervenant}</span>` : ''}${s.collectif ? '<span class="badge badge-gray">Collectif</span>' : ''}</div>` : ''}
+        <div class="date" style="margin-top:4px;">${sanitaireDateHtml(s)}</div>
         ${s.commentaire ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin-top:2px;">${s.commentaire}</div>` : ''}
       </div>
     </div>
@@ -10076,8 +10120,8 @@ function renderBelierDetail() {
         ${iconCircle(ICON_SANTE, 'coral', 'sm')}
         <div class="content">
           <div style="font-weight:600;">${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</div>
-          ${s.dose ? `<div style="margin-top:5px;"><span class="badge badge-muted">${s.dose}</span></div>` : ''}
-          <div class="date" style="margin-top:4px;">${formatDateFr(s.date)}</div>
+          ${(s.quantiteCc != null || s.dose || s.intervenant || s.collectif) ? `<div style="margin-top:5px;">${s.quantiteCc != null ? `<span class="badge badge-muted" style="margin-right:6px;">${s.quantiteCc} cc</span>` : (s.dose ? `<span class="badge badge-muted" style="margin-right:6px;">${s.dose}</span>` : '')}${s.intervenant ? `<span class="badge badge-muted" style="margin-right:6px;">${s.intervenant}</span>` : ''}${s.collectif ? '<span class="badge badge-gray">Collectif</span>' : ''}</div>` : ''}
+          <div class="date" style="margin-top:4px;">${sanitaireDateHtml(s)}</div>
           ${s.commentaire ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin-top:2px;">${s.commentaire}</div>` : ''}
         </div>
       </div>
@@ -10199,13 +10243,21 @@ function renderAddSanitaireBelier() {
           <input type="text" id="new-produit" placeholder="Ajouter un nouveau produit...">
           <button type="button" class="btn btn-secondary" id="add-produit" style="width:auto;padding:0 16px;">+</button>
         </div>
+        <div id="posologie-rappel" class="hidden" style="font-size:12.5px;color:var(--text-muted);margin-top:8px;padding:8px 10px;background:#f0efe9;border-radius:var(--radius);"></div>
       </div>
 
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
 
-      <label>Dose (facultatif)</label>
-      <input type="text" id="f-dose" placeholder="ex: 2 ml" value="${existing ? (existing.dose || '') : ''}">
+      <label>Quantité administrée (cc)</label>
+      <input type="number" id="f-quantite" placeholder="ex: 2" step="0.1" min="0" value="${existing && existing.quantiteCc != null ? existing.quantiteCc : ''}">
+
+      <label>Intervenant</label>
+      <div class="chip-list" id="intervenant-list"></div>
+      <div class="row">
+        <input type="text" id="new-intervenant" placeholder="Ajouter un nouvel intervenant...">
+        <button type="button" class="btn btn-secondary" id="add-intervenant" style="width:auto;padding:0 16px;">+</button>
+      </div>
 
       <label>Commentaire (facultatif)</label>
       <input type="text" id="f-comment" placeholder="ex: rappel dans 3 semaines" value="${existing ? (existing.commentaire || '') : ''}">
@@ -10215,7 +10267,43 @@ function renderAddSanitaireBelier() {
     </div>
   `;
 
-  let type = null, sousType = null, produit = null;
+  let type = null, sousType = null, produit = null, intervenant = null;
+
+  function renderIntervenantChips() {
+    const list = document.getElementById('intervenant-list');
+    list.innerHTML = '';
+    (DB.intervenants || []).forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (intervenant === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { intervenant = (intervenant === val) ? null : val; renderIntervenantChips(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+  }
+  renderIntervenantChips();
+  document.getElementById('add-intervenant').onclick = () => {
+    const input = document.getElementById('new-intervenant');
+    const val = input.value.trim();
+    if (!val) return;
+    DB.intervenants = DB.intervenants || [];
+    if (!DB.intervenants.includes(val)) DB.intervenants.push(val);
+    saveData(DB);
+    input.value = '';
+    intervenant = val;
+    renderIntervenantChips();
+  };
+
+  function updatePosologieRappel() {
+    const box = document.getElementById('posologie-rappel');
+    const info = produit && DB.produitsInfo[produit];
+    if (info && info.posologie) {
+      box.textContent = 'Posologie : ' + info.posologie;
+      box.classList.remove('hidden');
+    } else {
+      box.classList.add('hidden');
+    }
+  }
 
   function categorieKey() {
     if (type === 'Vaccin') return 'vaccins';
@@ -10235,9 +10323,10 @@ function renderAddSanitaireBelier() {
       chip.type = 'button';
       chip.className = 'chip' + (produit === val ? ' selected' : '');
       chip.textContent = val;
-      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); document.getElementById('err').classList.add('hidden'); };
+      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); updatePosologieRappel(); document.getElementById('err').classList.add('hidden'); };
       list.appendChild(chip);
     });
+    updatePosologieRappel();
   }
 
   document.querySelectorAll('.type-opt').forEach(btn => {
@@ -10251,6 +10340,7 @@ function renderAddSanitaireBelier() {
       document.getElementById('autre-note').classList.toggle('hidden', type !== 'Autre');
       if (type === 'Vaccin') renderProduitChips();
       else document.getElementById('produit-block').classList.add('hidden');
+      updatePosologieRappel();
       document.getElementById('err').classList.add('hidden');
     };
   });
@@ -10282,11 +10372,15 @@ function renderAddSanitaireBelier() {
     if (!type) { err.textContent = "Choisis un type d'évènement."; err.classList.remove('hidden'); return; }
     if (type === 'Traitement' && !sousType) { err.textContent = "Choisis une catégorie de traitement."; err.classList.remove('hidden'); return; }
     if (type !== 'Autre' && !produit) { err.textContent = "Sélectionne ou ajoute un produit."; err.classList.remove('hidden'); return; }
+    const quantiteVal = document.getElementById('f-quantite').value;
+    if (quantiteVal.trim() === '' || isNaN(parseFloat(quantiteVal)) || parseFloat(quantiteVal) < 0) { err.textContent = "Renseigne la quantité administrée (cc)."; err.classList.remove('hidden'); return; }
+    if (!intervenant) { err.textContent = "Sélectionne ou ajoute un intervenant."; err.classList.remove('hidden'); return; }
     err.classList.add('hidden');
     const soin = {
       type: type, sousType: sousType, produit: type === 'Autre' ? 'Soin de plaie' : produit,
       date: document.getElementById('f-date').value,
-      dose: document.getElementById('f-dose').value.trim(),
+      quantiteCc: parseFloat(quantiteVal),
+      intervenant: intervenant,
       commentaire: document.getElementById('f-comment').value.trim()
     };
     belier.sanitaire = belier.sanitaire || [];
@@ -10306,6 +10400,10 @@ function renderAddSanitaireBelier() {
     }
     if (existing.produit && existing.type !== 'Autre') {
       const chip = [...document.querySelectorAll('#produit-list .chip')].find(c => c.textContent === existing.produit);
+      if (chip) chip.click();
+    }
+    if (existing.intervenant) {
+      const chip = [...document.querySelectorAll('#intervenant-list .chip')].find(c => c.textContent === existing.intervenant);
       if (chip) chip.click();
     }
   }
@@ -12985,14 +13083,24 @@ function renameProduitPartout(oldName, newName) {
   (DB.traitementsCollectifs || []).forEach(t => { if (t.produit === oldName) t.produit = newName; });
 }
 
+// Posologie/délai d'attente : système déclaratif géré par l'éleveur
+// (aucun lien avec l'ancienne intégration ANMV, retirée) -- les deux
+// facultatifs, remplis une seule fois ici et réutilisés en rappel/calcul
+// partout où ce produit est ensuite sélectionné (voir renderAddSanitaire*
+// et sanitaireDateHtml).
 function showRenommerProduitModal(cat, oldName) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
+  const info = DB.produitsInfo[oldName] || {};
   overlay.innerHTML = `
     <div class="modal-card">
       <div style="font-weight:700;font-size:15px;margin-bottom:12px;">Modifier « ${oldName} »</div>
-      <label>Nouveau nom</label>
+      <label>Nom</label>
       <input type="text" id="renommer-produit-input" value="${oldName}" style="margin-bottom:14px;">
+      <label>Posologie (facultatif)</label>
+      <input type="text" id="renommer-posologie-input" placeholder="ex: 2cc/kg" value="${info.posologie || ''}" style="margin-bottom:14px;">
+      <label>Délai d'attente en jours (facultatif)</label>
+      <input type="number" id="renommer-delai-input" placeholder="ex: 7" min="0" value="${info.delaiAttente != null ? info.delaiAttente : ''}" style="margin-bottom:14px;">
       <div id="renommer-err" class="error-box hidden"></div>
       <button type="button" class="btn btn-primary" id="renommer-confirm" style="margin-bottom:8px;">Enregistrer</button>
       <button type="button" class="btn btn-secondary" id="renommer-cancel">Annuler</button>
@@ -13005,14 +13113,28 @@ function showRenommerProduitModal(cat, oldName) {
     const err = overlay.querySelector('#renommer-err');
     if (!newName) { err.textContent = "Le nom ne peut pas être vide."; err.classList.remove('hidden'); return; }
     if (newName !== oldName && DB.produits[cat].includes(newName)) { err.textContent = "Ce nom existe déjà dans cette catégorie."; err.classList.remove('hidden'); return; }
-    if (newName === oldName) { document.body.removeChild(overlay); return; }
+    const delaiVal = overlay.querySelector('#renommer-delai-input').value.trim();
+    if (delaiVal !== '' && (isNaN(parseInt(delaiVal, 10)) || parseInt(delaiVal, 10) < 0)) { err.textContent = "Le délai d'attente doit être un nombre de jours positif."; err.classList.remove('hidden'); return; }
+    const posologieVal = overlay.querySelector('#renommer-posologie-input').value.trim();
+    const appliquer = () => {
+      if (newName !== oldName) {
+        const idx = DB.produits[cat].indexOf(oldName);
+        if (idx !== -1) DB.produits[cat][idx] = newName;
+        renameProduitPartout(oldName, newName);
+      }
+      DB.produitsInfo = DB.produitsInfo || {};
+      if (posologieVal || delaiVal !== '') {
+        DB.produitsInfo[newName] = { posologie: posologieVal || null, delaiAttente: delaiVal !== '' ? parseInt(delaiVal, 10) : null };
+      } else {
+        delete DB.produitsInfo[newName];
+      }
+      saveData(DB);
+      document.body.removeChild(overlay);
+      render('gerer-produits');
+    };
+    if (newName === oldName) { appliquer(); return; }
     if (!confirm('Renommer « ' + oldName + ' » en « ' + newName + ' » ? Toutes les saisies déjà enregistrées avec ce produit seront mises à jour.')) return;
-    const idx = DB.produits[cat].indexOf(oldName);
-    if (idx !== -1) DB.produits[cat][idx] = newName;
-    renameProduitPartout(oldName, newName);
-    saveData(DB);
-    document.body.removeChild(overlay);
-    render('gerer-produits');
+    appliquer();
   };
 }
 
@@ -13022,13 +13144,23 @@ function renderGererProduits() {
     const items = DB.produits[cat.key] || [];
     const rows = items.length === 0
       ? '<div style="font-size:13px;color:var(--text-muted);padding:6px 0;">Aucun produit.</div>'
-      : items.map(nom => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
-          <span>${nom}</span>
+      : items.map(nom => {
+          const info = DB.produitsInfo[nom];
+          const sousLignes = [
+            info && info.posologie ? 'Posologie : ' + info.posologie : null,
+            info && info.delaiAttente != null ? 'Délai d\'attente : ' + info.delaiAttente + ' j' : null
+          ].filter(Boolean).join(' · ');
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+          <div>
+            <div>${nom}</div>
+            ${sousLignes ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${sousLignes}</div>` : ''}
+          </div>
           <div style="display:flex;gap:6px;">
             <button type="button" class="btn btn-secondary btn-edit-produit" data-cat="${cat.key}" data-nom="${nom}" style="width:auto;padding:4px 10px;font-size:12px;">Modifier</button>
             <button type="button" class="btn btn-secondary btn-del-produit" data-cat="${cat.key}" data-nom="${nom}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
           </div>
-        </div>`).join('');
+        </div>`;
+        }).join('');
     return `<div class="card" style="margin-bottom:12px;">
       <div style="font-weight:600;margin-bottom:4px;">${cat.label}</div>
       ${rows}
@@ -13119,13 +13251,21 @@ function renderTraitementCollectif() {
           <input type="text" id="new-produit" placeholder="Ajouter un nouveau produit...">
           <button type="button" class="btn btn-secondary" id="add-produit" style="width:auto;padding:0 16px;">+</button>
         </div>
+        <div id="posologie-rappel" class="hidden" style="font-size:12.5px;color:var(--text-muted);margin-top:8px;padding:8px 10px;background:#f0efe9;border-radius:var(--radius);"></div>
       </div>
 
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
 
-      <label>Dose (facultatif)</label>
-      <input type="text" id="f-dose" placeholder="ex: 2 ml">
+      <label>Quantité administrée (cc)</label>
+      <input type="number" id="f-quantite" placeholder="ex: 2" step="0.1" min="0">
+
+      <label>Intervenant</label>
+      <div class="chip-list" id="intervenant-list"></div>
+      <div class="row">
+        <input type="text" id="new-intervenant" placeholder="Ajouter un nouvel intervenant...">
+        <button type="button" class="btn btn-secondary" id="add-intervenant" style="width:auto;padding:0 16px;">+</button>
+      </div>
 
       <label>Commentaire (facultatif)</label>
       <input type="text" id="f-comment" placeholder="ex: rappel dans 3 semaines">
@@ -13135,7 +13275,7 @@ function renderTraitementCollectif() {
     </div>
   `;
 
-  let type = null, sousType = null, produit = null;
+  let type = null, sousType = null, produit = null, intervenant = null;
   let cibleMode = 'toutes';
   const selectedCibles = new Set();
 
@@ -13159,6 +13299,42 @@ function renderTraitementCollectif() {
     };
   });
 
+  function renderIntervenantChips() {
+    const list = document.getElementById('intervenant-list');
+    list.innerHTML = '';
+    (DB.intervenants || []).forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (intervenant === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { intervenant = (intervenant === val) ? null : val; renderIntervenantChips(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+  }
+  renderIntervenantChips();
+  document.getElementById('add-intervenant').onclick = () => {
+    const input = document.getElementById('new-intervenant');
+    const val = input.value.trim();
+    if (!val) return;
+    DB.intervenants = DB.intervenants || [];
+    if (!DB.intervenants.includes(val)) DB.intervenants.push(val);
+    saveData(DB);
+    input.value = '';
+    intervenant = val;
+    renderIntervenantChips();
+  };
+
+  function updatePosologieRappel() {
+    const box = document.getElementById('posologie-rappel');
+    const info = produit && DB.produitsInfo[produit];
+    if (info && info.posologie) {
+      box.textContent = 'Posologie : ' + info.posologie;
+      box.classList.remove('hidden');
+    } else {
+      box.classList.add('hidden');
+    }
+  }
+
   function categorieKey() {
     if (type === 'Vaccin') return 'vaccins';
     if (sousType === 'Antibiotique') return 'antibiotiques';
@@ -13177,9 +13353,10 @@ function renderTraitementCollectif() {
       chip.type = 'button';
       chip.className = 'chip' + (produit === val ? ' selected' : '');
       chip.textContent = val;
-      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); document.getElementById('err').classList.add('hidden'); };
+      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); updatePosologieRappel(); document.getElementById('err').classList.add('hidden'); };
       list.appendChild(chip);
     });
+    updatePosologieRappel();
   }
 
   document.querySelectorAll('.type-opt').forEach(btn => {
@@ -13193,6 +13370,7 @@ function renderTraitementCollectif() {
       document.getElementById('autre-note').classList.toggle('hidden', type !== 'Autre');
       if (type === 'Vaccin') renderProduitChips();
       else document.getElementById('produit-block').classList.add('hidden');
+      updatePosologieRappel();
       document.getElementById('err').classList.add('hidden');
     };
   });
@@ -13225,18 +13403,23 @@ function renderTraitementCollectif() {
     if (!type) { err.textContent = "Choisis un type d'évènement."; err.classList.remove('hidden'); return; }
     if (type === 'Traitement' && !sousType) { err.textContent = "Choisis une catégorie de traitement."; err.classList.remove('hidden'); return; }
     if (type !== 'Autre' && !produit) { err.textContent = "Sélectionne ou ajoute un produit."; err.classList.remove('hidden'); return; }
+    const quantiteVal = document.getElementById('f-quantite').value;
+    if (quantiteVal.trim() === '' || isNaN(parseFloat(quantiteVal)) || parseFloat(quantiteVal) < 0) { err.textContent = "Renseigne la quantité administrée (cc)."; err.classList.remove('hidden'); return; }
+    if (!intervenant) { err.textContent = "Sélectionne ou ajoute un intervenant."; err.classList.remove('hidden'); return; }
     if (cible.length === 0) { err.textContent = "Sélectionne au moins " + cfg.singulier + " (à la main ou au bip)."; err.classList.remove('hidden'); return; }
     if (!confirm('Appliquer ce traitement collectif à ' + cible.length + ' ' + cfg.label.toLowerCase() + ' ?')) return;
     err.classList.add('hidden');
     const collectifId = 'TC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
     const soinDate = document.getElementById('f-date').value;
-    const soinDose = document.getElementById('f-dose').value.trim();
+    const soinQuantite = parseFloat(quantiteVal);
+    const soinIntervenant = intervenant;
     const soinComment = document.getElementById('f-comment').value.trim();
     const soinProduit = type === 'Autre' ? 'Soin de plaie' : produit;
     const soin = {
       type: type, sousType: sousType, produit: soinProduit,
       date: soinDate,
-      dose: soinDose,
+      quantiteCc: soinQuantite,
+      intervenant: soinIntervenant,
       commentaire: soinComment,
       collectif: true,
       collectifId: collectifId
@@ -13250,7 +13433,7 @@ function renderTraitementCollectif() {
       id: collectifId,
       categorie: categorie,
       type: type, sousType: sousType, produit: soinProduit,
-      date: soinDate, dose: soinDose, commentaire: soinComment,
+      date: soinDate, quantiteCc: soinQuantite, intervenant: soinIntervenant, commentaire: soinComment,
       membres: cible.map(s => s.eid),
       createdAt: Date.now()
     });
@@ -13660,7 +13843,7 @@ function lambSanitaireRows() {
           rows.push({
             eid: l.eid, categorie: 'Agneau',
             type: (s.type || '') + (s.sousType ? ' · ' + s.sousType : ''),
-            produit: s.produit || '', date: s.date || '', dose: s.dose || '',
+            produit: s.produit || '', date: s.date || '', dose: s.quantiteCc != null ? (s.quantiteCc + ' cc') : (s.dose || ''),
             campagne: campagneDeDateRegistre(s.date)
           });
         });
@@ -13678,7 +13861,7 @@ function registreSanitaireRows() {
         rows.push({
           eid: entry.eid, categorie: c.label,
           type: (s.type || '') + (s.sousType ? ' · ' + s.sousType : ''),
-          produit: s.produit || '', date: s.date || '', dose: s.dose || '',
+          produit: s.produit || '', date: s.date || '', dose: s.quantiteCc != null ? (s.quantiteCc + ' cc') : (s.dose || ''),
           campagne: campagneDeDateRegistre(s.date)
         });
       });
@@ -18152,6 +18335,21 @@ function compterUsageMouvement(champ, valeur) {
 }
 function compterUsageAcheteur(nom) { return compterUsageMouvement('acheteur', nom); }
 function compterUsageCauseMortalite(nom) { return compterUsageMouvement('cause', nom); }
+// Contrairement aux acheteurs/causes (portés par un mouvement), l'intervenant
+// est porté par une entrée du carnet SANITAIRE (voir renderAddSanitaire*) --
+// même principe de comptage, sur sheep.sanitaire plutôt que .mouvements.
+function compterUsageIntervenant(nom) {
+  let n = 0;
+  const scan = (soins) => (soins || []).forEach(s => { if (s.intervenant === nom) n++; });
+  DB.brebis.forEach(s => scan(s.sanitaire));
+  (DB.beliers || []).forEach(b => scan(b.sanitaire));
+  (DB.agnelles || []).forEach(a => scan(a.sanitaire));
+  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+    const reg = DB.registre && DB.registre[cat];
+    if (reg) Object.values(reg).forEach(entry => scan(entry.sanitaire));
+  });
+  return n;
+}
 function compterUsageCasParticulier(nom) {
   let n = 0;
   DB.brebis.forEach(s => (s.echographies || []).forEach(e => { if (e.special === nom) n++; }));
@@ -18163,6 +18361,7 @@ function compterUsageTypeJournal(nom) {
 const LISTES_GENERALES_CONFIG = [
   { key: 'acheteurs', label: 'Acheteurs', usage: compterUsageAcheteur },
   { key: 'causesMortalite', label: 'Causes de mortalité', usage: compterUsageCauseMortalite },
+  { key: 'intervenants', label: 'Intervenants', usage: compterUsageIntervenant },
   { key: 'casParticuliers', label: "Cas particuliers d'échographie", usage: compterUsageCasParticulier },
   { key: 'typesJournal', label: 'Types de journal', usage: compterUsageTypeJournal }
 ];
@@ -19523,7 +19722,7 @@ const fbDb = initializeFirestore(fbApp, {
 // volontairement exclu : propre à l'appareil (appairage physique), il n'a
 // pas de sens partagé entre deux téléphones.
 const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
-  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite',
+  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'intervenants',
   'casParticuliers', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   'registre', 'traitementsCollectifs', 'mouvementsCollectifs', 'penalitesBacterio',
