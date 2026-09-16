@@ -281,6 +281,23 @@
   .compact-tag-coral { background: var(--coral-bg); color: var(--coral-fg); }
   .compact-tag-gray { background: var(--gray-bg); color: var(--gray-fg); }
 
+  /* ---------- Carrière : carte de campagne + accordéons (chantier "Refonte
+     de l'onglet Carrière", mockup validé) -- reprend la structure de la
+     maquette (bandeau de campagne en tête de carte, sections repliables)
+     avec les tokens de couleur déjà utilisés partout ailleurs dans Ovilog
+     plutôt que la palette hexadécimale propre à la maquette. */
+  .campaign-head { margin: -16px -16px 14px; padding: 10px 16px; border-radius: var(--radius) var(--radius) 0 0; background: var(--gray-bg); color: var(--gray-fg); font-size: 13px; font-weight: 700; }
+  .accordion { border-top: 1px solid var(--border); }
+  .accordion:first-of-type { border-top: none; }
+  .accordion-head { display: flex; align-items: center; gap: 10px; padding: 12px 0; cursor: pointer; user-select: none; }
+  .accordion-head .chevron { margin-left: auto; color: var(--text-muted); font-size: 13px; transition: transform 0.15s; }
+  .accordion.open .accordion-head .chevron { transform: rotate(180deg); }
+  .accordion-body { display: none; padding: 0 0 12px 46px; }
+  .accordion.open .accordion-body { display: block; }
+  .row-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px dashed var(--border); font-size: 13.5px; }
+  .row-item:first-child { border-top: none; }
+  .empty-mini { color: var(--text-muted); font-size: 13px; padding: 6px 0; }
+
   /* ---------- Menu hamburger (drawer) ---------- */
   .drawer-overlay { position: fixed; inset: 0; background: rgba(43,38,28,0.45); z-index: 1000; display: flex; }
   .drawer-overlay.hidden { display: none; }
@@ -3530,11 +3547,12 @@ let inventaireTab = 'brebis';
 // via swipe) -- même principe que bilanCampagneTab ci-dessous.
 let ficheBrebisTab = 'ident';
 // Sous-onglet de l'onglet "Carrière" de la fiche brebis (chantier "Import
-// Lactation + affichage Index/Carrière") : 'historique' (comportement
-// existant, inchangé) ou 'index' (nouveau -- Lactation totale/Jours de
-// traite/Lactation moyenne selon typeSuivi, campagnes PASSÉES uniquement).
-// Même principe de conservation que ficheBrebisTab ci-dessus.
-let ficheCarriereSubTab = 'historique';
+// Refonte "Carrière" (chantier "Refonte de l'onglet Carrière") : le
+// sous-onglet "Index" a été supprimé (Carrière ne garde que "Historique",
+// restructuré en accordéons) -- remplacé par l'état ouvert/fermé de ces
+// accordéons, keyé "campagne-section" (ex. "2025-repro"), remis à zéro au
+// changement de brebis comme ficheBrebisTab ci-dessus.
+let ficheCarriereOuverts = {};
 let ficheBrebisTabSheepId = null;
 let bilanCampagneTab = 'incoherences';
 let bilanLactationCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan de lactation, voir bilanLactationHtml
@@ -6133,67 +6151,88 @@ function renderAgneaux() {
   }
 }
 
-/* Regroupe PLUSIEURS catégories d'entrées taguées `campagne` (agnelages,
-   contrôles laitiers, ...) ENSEMBLE par campagne, de la plus récente à la
-   plus ancienne, en EXCLUANT PAR DÉFAUT la campagne en cours (déjà affichée
-   séparément dans les zones hautes, éditables) — alimente la carte unique
-   "Historique par campagne" en lecture seule de la fiche brebis (voir
-   renderDetail). Un seul regroupement par campagne, pas un par catégorie
-   qu'on sous-diviserait ensuite par campagne : à l'intérieur d'une même
-   campagne, les entrées de toutes les catégories sont mélangées et triées
-   par date (la plus récente en premier).
-   `groupes` : [{ items, renderItem, exclureCampagneEnCours? }] — items déjà
-   indexés (voir idx sur chaque entrée pour les swipe-wrap ailleurs, ici on
-   ne fait qu'afficher), renderItem transforme UNE entrée de ce groupe en
-   HTML (pas de swipe-wrap : rien n'est modifiable depuis cette zone).
-   exclureCampagneEnCours (par défaut true, comme avant ce paramètre) :
-   à mettre à false pour un groupe qui n'a PAS de zone "campagne en cours"
-   éditable équivalente ailleurs sur la fiche -- ex. le bilan de lactation
-   SIEOL, dont la campagne importée est presque toujours encore "en cours"
-   au sens de DB.campagneDebut au moment de l'import (le bilan SIEOL arrive
-   après les contrôles laitiers, généralement avant le changement de
-   campagne dans Ovilog) : l'exclure la ferait disparaître silencieusement
-   de la fiche alors qu'elle est bien enregistrée.
-   Exclut la campagne en cours ET toute campagne future (campagne >
-   DB.campagneDebut) -- ce second cas ne concernait aucun groupe avant les
-   échographies (voir campagneEchoOptionsHtml) : un premier constat d'écho
-   tagué "campagne à venir" avant le changement officiel de campagne doit
-   rester dans la zone haute éditable, pas remonter comme le plus récent de
-   "Historique par campagne" alors qu'il ne s'est même pas encore produit
-   du point de vue de DB.campagneDebut.
-   `campagneExtraHtml(key)` (optionnel, chantier "Onglet Carrière") : HTML
-   affiché à droite du bandeau de campagne -- sert au résumé "Index"
-   (lactation totale + nombre de jours) associé à cette campagne, pour
-   l'avoir sous les yeux sans une entrée de plus dans la liste. Retourne ''
-   si rien à afficher pour cette campagne (ex. campagne "vide", aucune
-   lactation). */
-function historiqueParCampagneHtml(groupes, emptyLabel, campagneExtraHtml) {
-  const passees = [];
-  groupes.forEach(g => {
-    const items = g.exclureCampagneEnCours === false ? g.items : g.items.filter(it => it.campagne == null || it.campagne < DB.campagneDebut);
-    items.forEach(it => passees.push({ item: it, renderItem: g.renderItem }));
-  });
-  if (passees.length === 0) return `<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">${emptyLabel}</div>`;
-  const parCampagne = {};
-  passees.forEach(p => {
-    const key = (p.item.campagne === undefined || p.item.campagne === null) ? '?' : String(p.item.campagne);
-    parCampagne[key] = parCampagne[key] || [];
-    parCampagne[key].push(p);
-  });
-  const keys = Object.keys(parCampagne).sort((a, b) => {
-    if (a === '?') return 1;
-    if (b === '?') return -1;
-    return Number(b) - Number(a);
-  });
-  return keys.map((key, i) => {
-    const entries = parCampagne[key].sort((a, b) => (b.item.date || '').localeCompare(a.item.date || ''));
-    const extra = campagneExtraHtml ? campagneExtraHtml(key) : '';
+/* Refonte "Carrière" (chantier "Refonte de l'onglet Carrière", mockup
+   validé) : une carte par campagne passée avec le bilan de lactation
+   toujours visible en tête + 3 accordéons repliés par défaut (Repro,
+   Sanitaire, Contrôles), chacun listant UNIQUEMENT les entrées de sa
+   propre catégorie pour cette campagne (contrairement à l'ancienne
+   "Historique par campagne" qui mélangeait tout dans une seule liste
+   triée par date).
+   `sources` : { agnelages, sanitaire, controles, bilanParCampagne } —
+   tableaux déjà indexés/campagnés (voir appelant dans renderDetail),
+   bilanParCampagne déjà keyé par campagne (une seule entrée par
+   brebis+campagne). Construit la liste des campagnes passées à partir de
+   l'UNION des campagnes présentes dans ces 4 sources (une campagne peut
+   n'avoir, par exemple, qu'un bilan de lactation importé et aucune mise
+   bas/soin/contrôle -- elle doit quand même avoir sa carte). */
+function carriereCampagnesHtml(sources) {
+  const { agnelages, sanitaire, controles, bilanParCampagne } = sources;
+  const campagnes = new Set();
+  agnelages.forEach(a => { if (a.campagne != null) campagnes.add(a.campagne); });
+  sanitaire.forEach(s => { if (s.campagne != null) campagnes.add(s.campagne); });
+  controles.forEach(c => { if (c.campagne != null) campagnes.add(c.campagne); });
+  Object.keys(bilanParCampagne).forEach(k => campagnes.add(Number(k)));
+  if (campagnes.size === 0) return '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun historique des campagnes précédentes.</div>';
+  const keys = Array.from(campagnes).sort((a, b) => b - a);
+  const accordionSection = (campagne, section, icon, color, label, rows, emptyLabel) => {
+    const accKey = campagne + '-' + section;
+    const ouvert = !!ficheCarriereOuverts[accKey];
     return `
-    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;background:var(--gray-bg);color:var(--gray-fg);padding:7px 12px;border-radius:10px;margin:${i === 0 ? '0' : '14px'} 0 5px;">
-      <span style="font-size:12.5px;font-weight:700;">${key === '?' ? 'Campagne inconnue' : 'Campagne ' + (Number(key) + 1)}</span>
-      ${extra}
+    <div class="accordion${ouvert ? ' open' : ''}">
+      <div class="accordion-head" data-accordion-key="${accKey}">
+        ${iconCircle(icon, color, 'sm')}
+        <div style="font-weight:600;font-size:14px;">${label}</div>
+        <span class="chevron">▾</span>
+      </div>
+      <div class="accordion-body">${rows.length ? rows.join('') : `<div class="empty-mini">${emptyLabel}</div>`}</div>
     </div>
-    ${entries.map(p => p.renderItem(p.item)).join('')}
+  `;
+  };
+  return keys.map(campagne => {
+    const bilan = bilanParCampagne[String(campagne)];
+    const bilanHtml = !bilan ? '' : `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      ${iconCircle(ICON_LAIT, 'blue', 'sm')}
+      <div>
+        <div style="font-size:11.5px;color:var(--text-muted);">Bilan de lactation</div>
+        <div style="font-weight:700;font-size:19px;">${bilan.lactTotale != null ? fmtDecimal(bilan.lactTotale, 1) + ' L' : '—'}</div>
+        <div style="margin-top:4px;">
+          ${bilan.dureeTraite != null ? `<span class="badge badge-muted" style="margin-right:6px;">${bilan.dureeTraite} j de traite</span>` : ''}
+          ${bilan.classeParQuart != null ? `<span class="badge badge-blue" style="margin-right:6px;">Classe ${bilan.classeParQuart}</span>` : ''}
+          ${bilan.dateMiseBas ? `<span class="badge badge-muted">Mise bas le ${formatDateFr(bilan.dateMiseBas)}</span>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+    const agnelagesCampagne = agnelages.filter(a => a.campagne === campagne).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const reproRows = agnelagesCampagne.map(a => `
+      <div class="row-item">
+        <span>${formatDateFr(a.date)} · ${a.lambs.length} agneau(x)</span>
+        <span class="badge badge-muted">${libelleModeRepro(a.codeRepro || 'MN')}</span>
+      </div>
+    `);
+    const sanitaireCampagne = sanitaire.filter(s => s.campagne === campagne).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const sanitaireRows = sanitaireCampagne.map(s => `
+      <div class="row-item">
+        <span>${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</span>
+        <span style="color:var(--text-muted);">${formatDateFr(s.date)}</span>
+      </div>
+    `);
+    const controlesCampagne = controles.filter(c => c.campagne === campagne).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const controlesRows = controlesCampagne.map(c => `
+      <div class="row-item">
+        <span>${c.quantite} mL</span>
+        <span style="color:var(--text-muted);">${formatDateFr(c.date)}</span>
+      </div>
+    `);
+    return `
+    <div class="card">
+      <div class="campaign-head">Campagne ${campagne + 1}</div>
+      ${bilanHtml}
+      ${accordionSection(campagne, 'repro', ICON_SHEEP, 'amber', 'Repro', reproRows, 'Aucune mise bas enregistrée cette campagne.')}
+      ${accordionSection(campagne, 'sanitaire', ICON_SANTE, 'coral', 'Sanitaire', sanitaireRows, 'Aucun soin enregistré.')}
+      ${accordionSection(campagne, 'controles', ICON_LAIT, 'blue', 'Contrôles', controlesRows, 'Aucun contrôle laitier enregistré cette campagne.')}
+    </div>
   `;
   }).join('');
 }
@@ -6235,7 +6274,7 @@ function renderDetail(id) {
   const sheep = findSheep(id);
   if (!sheep) { render('list'); return; }
   pageTitle.textContent = 'Brebis n°' + numeroVisuel(sheep.eid);
-  if (ficheBrebisTabSheepId !== id) { ficheBrebisTab = 'ident'; ficheBrebisTabSheepId = id; ficheCarriereSubTab = 'historique'; }
+  if (ficheBrebisTabSheepId !== id) { ficheBrebisTab = 'ident'; ficheBrebisTabSheepId = id; ficheCarriereOuverts = {}; }
   // Refonte fiche brebis desktop (option B validée) : identité + badges
   // regroupés dans un bandeau fixe séparé (voir desktopHeaderHtml plus
   // bas) au lieu d'être répétés dans l'onglet Ident./Repro comme sur
@@ -6401,39 +6440,24 @@ function renderDetail(id) {
       ${cahierCampagne.anoLact ? `<div style="margin-top:8px;"><span class="compact-tag compact-tag-coral">Anomalie lactation : ${cahierCampagne.anoLact}</span></div>` : ''}
     </div>
   `;
-  // Historique combiné : agnelages ET contrôles laitiers des campagnes
-  // précédentes regroupés ENSEMBLE par campagne (pas une sous-liste par
-  // catégorie) — voir historiqueParCampagneHtml.
   // Bilan de lactation SIEOL/UNOTEC (voir importBilanLactation) : toujours
-  // une campagne déjà close, jamais la campagne en cours (contrairement au
-  // contrôle laitier ci-dessus) -- va donc directement dans l'historique
-  // combiné par campagne plutôt qu'une zone haute éditable séparée.
+  // une campagne déjà close, jamais la campagne en cours -- alimente
+  // directement le bloc "Bilan de lactation" en tête de chaque carte de
+  // campagne dans Carrière (voir carriereCampagnesHtml).
   const bilanLactationSheep = (DB.bilanLactation || [])
-    .filter(l => cleanEid(l.eid) === cleanEid(sheep.eid))
-    .map(l => ({ ...l, date: l.dateMiseBas }));
-  // Résumé "Index" par campagne (chantier "Onglet Carrière", mockup
-  // validé) : lactation totale + nombre de jours affichés directement dans
-  // le bandeau de la campagne concernée -- pas une entrée de plus dans la
-  // liste, juste un repère visible d'un coup d'œil. Une seule entrée de
-  // bilan par brebis+campagne (voir importBilanLactation), donc pas besoin
-  // de choisir entre plusieurs le cas échéant.
+    .filter(l => cleanEid(l.eid) === cleanEid(sheep.eid));
+  // Une seule entrée de bilan par brebis+campagne (voir importBilanLactation).
   const bilanParCampagne = {};
   bilanLactationSheep.forEach(l => { if (l.campagne != null) bilanParCampagne[String(l.campagne)] = l; });
-  const historiqueCampagnesHtml = historiqueParCampagneHtml(
-    [
-      { items: echoIndexes, renderItem: e => `<div class="history-item">${iconCircle(ICON_ECHO, 'green', 'sm')}${echoItemHtml(e)}</div>` },
-      { items: agnelagesIndexes, renderItem: a => `<div class="history-item">${iconCircle(ICON_SHEEP, 'amber', 'sm')}${agnelageItemHtml(a, false)}</div>` },
-      { items: sanitaireIndexes, renderItem: s => `<div class="history-item">${iconCircle(ICON_SANTE, 'coral', 'sm')}<div class="content"><div style="font-weight:600;">${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</div>${(s.dose || s.collectif) ? `<div style="margin-top:5px;">${s.dose ? `<span class="badge badge-muted" style="margin-right:6px;">${s.dose}</span>` : ''}${s.collectif ? '<span class="badge badge-gray">Collectif</span>' : ''}</div>` : ''}<div class="date" style="margin-top:4px;">${formatDateFr(s.date)}</div>${s.commentaire ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin-top:2px;">${s.commentaire}</div>` : ''}</div></div>` },
-      { items: controleIndexes, renderItem: c => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}${controleItemHtml(c)}</div>` },
-      { items: bilanLactationSheep, exclureCampagneEnCours: false, renderItem: l => `<div class="history-item">${iconCircle(ICON_LAIT, 'blue', 'sm')}<div class="content"><div style="font-size:11.5px;color:var(--text-muted);">Bilan de lactation</div><div style="font-weight:700;font-size:15px;">${fmtDecimal(l.lactTotale, 1)} L</div><div style="margin-top:5px;">${l.dureeTraite != null ? `<span class="badge badge-muted" style="margin-right:6px;">${l.dureeTraite} j de traite</span>` : ''}${l.classeParQuart != null ? `<span class="badge badge-blue">Classe ${l.classeParQuart}</span>` : ''}</div><div class="date" style="margin-top:4px;">Mise bas le ${formatDateFr(l.dateMiseBas)}</div></div></div>` }
-    ],
-    'Aucun historique des campagnes précédentes.',
-    key => {
-      const b = bilanParCampagne[key];
-      if (!b || b.lactTotale == null) return '';
-      return `<span style="font-size:12px;font-weight:700;color:var(--blue-fg);flex-shrink:0;">${fmtDecimal(b.lactTotale, 1)} L${b.dureeTraite != null ? ` <span style="font-weight:500;color:var(--text-muted);">· ${b.dureeTraite} j</span>` : ''}</span>`;
-    }
-  );
+  const agnelagesPassees = agnelagesIndexes.filter(a => a.campagne != null && a.campagne < DB.campagneDebut);
+  const sanitairePassees = sanitaireIndexes.filter(s => s.campagne != null && s.campagne < DB.campagneDebut);
+  const controlesPassees = controleIndexes.filter(c => c.campagne != null && c.campagne < DB.campagneDebut);
+  const historiqueCampagnesHtml = carriereCampagnesHtml({
+    agnelages: agnelagesPassees,
+    sanitaire: sanitairePassees,
+    controles: controlesPassees,
+    bilanParCampagne
+  });
 
   const statutBadge = (sheep.statut && sheep.statut !== 'active')
     ? `<div style="background:#f0efe9;color:var(--text-muted);padding:8px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;">Statut actuel : <strong>${sheep.statut}</strong></div>`
@@ -6676,42 +6700,13 @@ function renderDetail(id) {
     </div>
   `;
 
-  // Sous-onglet "Index" de Carrière : lactation totale/jours de traite
-  // (CLS et CLO), + lactation moyenne pour CLO uniquement -- campagnes
-  // PASSÉES uniquement (jamais la campagne en cours, déjà dans l'onglet
-  // Index ci-dessus), alimenté automatiquement au changement de campagne
-  // comme le reste (aucune collection nouvelle : DB.lactationModele déjà
-  // scopé par campagne).
-  const lactationHistorique = (DB.lactationModele || [])
-    .filter(l => cleanEid(l.eid) === cleanEid(sheep.eid) && l.campagne !== DB.campagneDebut)
-    .sort((a, b) => b.campagne - a.campagne);
-  const indexHistoriqueHtml = `
-    <div class="card">
-      ${sectionHeaderHtml(ICON_JOURNAL, 'gray', 'Index · campagnes précédentes')}
-      ${lactationHistorique.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun historique de lactation des campagnes précédentes.</div>' : lactationHistorique.map(l => `
-        <div style="padding:8px 0;border-top:1px solid var(--border);">
-          <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:4px;">Campagne ${l.campagne + 1}</div>
-          <div style="font-size:13.5px;">${[
-            l.lactationTotale != null ? fmtDecimal(l.lactationTotale, 1) + ' L' : null,
-            l.joursTraite != null ? l.joursTraite + ' j de traite' : null,
-            typeSuiviFiche === 'clo' && l.lactationMoyenne != null ? 'moy. ' + fmtDecimal(l.lactationMoyenne, 1) : null
-          ].filter(Boolean).join(' · ') || '—'}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
-  const carriereSousOngletsHtml = !indexDisponible ? '' : `<div class="tab-bar" style="margin-bottom:10px;">
-    <button type="button" class="tab-btn${ficheCarriereSubTab === 'historique' ? ' active' : ''}" data-carriere-tab="historique">Historique</button>
-    <button type="button" class="tab-btn${ficheCarriereSubTab === 'index' ? ' active' : ''}" data-carriere-tab="index">Index</button>
-  </div>`;
+  // Refonte "Carrière" (chantier "Refonte de l'onglet Carrière", mockup
+  // validé) : le sous-onglet "Index" a été supprimé, Carrière ne garde
+  // que "Historique" -- une carte par campagne passée (voir
+  // carriereCampagnesHtml), sans le double niveau d'onglets d'avant.
   const carriereTabHtml = `
-    ${carriereSousOngletsHtml}
-    ${(!indexDisponible || ficheCarriereSubTab === 'historique') ? `
-    <div class="card">
-      ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Historique par campagne')}
-      ${historiqueCampagnesHtml}
-    </div>
-    ` : indexHistoriqueHtml}
+    ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Historique par campagne')}
+    ${historiqueCampagnesHtml}
   `;
 
   const ficheBrebisTabContent = {
@@ -6753,8 +6748,8 @@ function renderDetail(id) {
     if (btn.disabled) return;
     btn.onclick = () => { ficheBrebisTab = btn.dataset.tab; render('detail', sheep.id); };
   });
-  document.querySelectorAll('[data-carriere-tab]').forEach(btn => {
-    btn.onclick = () => { ficheCarriereSubTab = btn.dataset.carriereTab; render('detail', sheep.id); };
+  document.querySelectorAll('[data-accordion-key]').forEach(btn => {
+    btn.onclick = () => { ficheCarriereOuverts[btn.dataset.accordionKey] = !ficheCarriereOuverts[btn.dataset.accordionKey]; render('detail', sheep.id); };
   });
   document.querySelectorAll('.btn-voir-parent-lie').forEach(btn => {
     btn.onclick = () => naviguerVersParentLie(btn.dataset.categorie, btn.dataset.id, sheep.id, null);
