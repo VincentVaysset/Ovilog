@@ -3625,6 +3625,7 @@ let ficheBrebisTabSheepId = null;
 let bilanCampagneTab = 'incoherences';
 let bilanLactationCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan de lactation, voir bilanLactationHtml
 let bilanEconomiqueCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan économique, voir bilanEconomiqueHtml
+let bilanEconomiqueMoisAffiche = null; // 'YYYY-MM' du mois consulté pour le détail "Prix du lait" dans Bilan économique, voir bilanEconomiqueHtml
 let inventaireActifsTab = 'brebis'; // 'brebis' | 'agnelles' | 'beliers' | 'agneaux' — voir renderInventaireActifs
 let declarationAnneeSelectionnee = null; // année civile choisie sur l'écran Déclaration annuelle (voir renderDeclarationAnnuelle), initialisée à l'année en cours au premier rendu
 let calendrierMoisAffiche = null; // 'YYYY-MM' du mois affiché sur le Calendrier (voir renderJournal) -- initialisé au mois en cours au premier rendu, conservé ensuite pour garder la navigation mois précédent/suivant d'un rendu à l'autre
@@ -4911,7 +4912,16 @@ function renderBilanCampagne() {
   }
   if (bilanCampagneTab === 'economique') {
     const selectEco = document.getElementById('bilan-eco-campagne-select');
-    if (selectEco) selectEco.onchange = () => { bilanEconomiqueCampagneAffichee = parseInt(selectEco.value, 10); render('bilan-campagne'); };
+    if (selectEco) selectEco.onchange = () => { bilanEconomiqueCampagneAffichee = parseInt(selectEco.value, 10); bilanEconomiqueMoisAffiche = null; render('bilan-campagne'); };
+    // Détail mensuel "Prix du lait" (coupé de Production laitière, qui ne
+    // garde plus que les moyennes techniques et les prélèvements bruts) --
+    // mêmes chips que l'ancien #qualite-months, mais un clic déclenche un
+    // render complet (comme le sélecteur de campagne ci-dessus) plutôt
+    // qu'une mise à jour ciblée du DOM.
+    document.querySelectorAll('#bilan-eco-mois .chip').forEach(chip => {
+      if (chip.classList.contains('chip-empty')) return;
+      chip.onclick = () => { bilanEconomiqueMoisAffiche = chip.dataset.mois; render('bilan-campagne'); };
+    });
     const btnExportEcoPdf = document.getElementById('btn-export-bilan-economique-pdf');
     if (btnExportEcoPdf) btnExportEcoPdf.onclick = () => {
       btnExportEcoPdf.disabled = true;
@@ -5086,13 +5096,18 @@ function bilanLactationHtml() {
    laitière) a été COUPÉ de renderQualite, il ne vit plus qu'ici (même
    fonction bilanCampagneQualite, jamais un second calcul). Le réglage du
    coefficient MSU (paramètre économique du calcul du prix du lait) a
-   rejoint cet onglet pour la même raison -- seule saisie tolérée ici,
-   tout le reste (tank, prélèvements bruts, TB/TP/cellules/MSU) reste
-   exclusivement dans Production laitière. Seul "Lait total produit sur
-   la campagne" est affiché aux deux endroits (utile ici comme
-   dénominateur du prix, et sur Production laitière dans "Moyennes de la
-   campagne") -- la seule duplication volontaire. Visible identiquement
-   sur mobile et desktop. */
+   rejoint cet onglet pour la même raison -- seule saisie tolérée ici.
+   Le détail mensuel "Prix du lait" (grades Cellules/Coliformes/Flore/
+   Butyriques, incidence €, Bonus Super A, pénalités bactério déduites,
+   total du mois) a lui aussi été coupé de Production laitière -- même
+   fonction calculerPrixLaitMois, jamais un second calcul, juste rendu
+   navigable mois par mois ici via les chips #bilan-eco-mois (voir
+   prixLaitMoisDetailHtml). Production laitière ne garde que les moyennes
+   TECHNIQUES mensuelles (TB/TP/MSU/Cellules, sans € ni grade) et les
+   prélèvements bruts du mois. Seul "Lait total produit sur la campagne"
+   est affiché aux deux endroits (utile ici comme dénominateur du prix, et
+   sur Production laitière dans "Moyennes de la campagne") -- la seule
+   duplication volontaire. Visible identiquement sur mobile et desktop. */
 function bilanEconomiqueHtml() {
   const campagnes = campagnesDisponiblesSieol();
   if (bilanEconomiqueCampagneAffichee === null || !campagnes.includes(bilanEconomiqueCampagneAffichee)) {
@@ -5104,8 +5119,24 @@ function bilanEconomiqueHtml() {
   const l = v => v !== null && v !== undefined ? fmtDecimal(v, 0) + ' L' : '—';
   const e = v => fmtEuro(v);
 
+  // Mois de la campagne consultée, pour la navigation du détail "Prix du
+  // lait" (coupé de Production laitière -- voir commentaire au-dessus).
+  // Même construction que l'ancien #qualite-months de renderQualite.
+  const moisInfos = [];
+  let premierMoisAvecDonnees = null;
+  for (let i = 0; i < 12; i++) {
+    const info = moisInfoPourIndex(campagne, i);
+    const hasData = DB.prelevementsQualite.some(p => p.date.slice(0, 7) === info.key);
+    if (hasData && premierMoisAvecDonnees === null) premierMoisAvecDonnees = info.key;
+    moisInfos.push({ ...info, hasData });
+  }
+  if (bilanEconomiqueMoisAffiche === null || !moisInfos.some(m => m.key === bilanEconomiqueMoisAffiche && m.hasData)) {
+    bilanEconomiqueMoisAffiche = premierMoisAvecDonnees;
+  }
+  const moisSelectionne = moisInfos.find(m => m.key === bilanEconomiqueMoisAffiche);
+
   return `
-    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan économique', "Bilan financier de la campagne (prix du lait et tout ce qui en découle) -- pour la production, les prélèvements bruts et le détail mensuel TB/TP/cellules/MSU, direction Production laitière.")}</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan économique', "Bilan financier de la campagne (prix du lait et tout ce qui en découle) -- pour la production, les prélèvements bruts et les moyennes techniques mensuelles TB/TP/cellules/MSU, direction Production laitière.")}</div>
 
     <div class="card" style="margin-bottom:10px;">
       <label>Campagne consultée</label>
@@ -5131,6 +5162,15 @@ function bilanEconomiqueHtml() {
           <button type="button" class="btn btn-primary" id="btn-prix-coef-save" style="width:auto;padding:10px 16px;margin:0;">OK</button>
         </div>
       </div>
+    </div>
+
+    <div class="chip-list" id="bilan-eco-mois" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;">
+      ${moisInfos.map(m => `<button type="button" class="chip${m.hasData ? '' : ' chip-empty'}${m.key === bilanEconomiqueMoisAffiche ? ' selected' : ''}" style="flex-shrink:0;" data-mois="${m.key}">${m.label}</button>`).join('')}
+    </div>
+
+    <div class="card" id="bilan-eco-prix-mois-card">
+      <div style="font-size:14px;font-weight:700;margin-bottom:10px;">💶 Détail du mois${moisSelectionne ? ' — ' + moisSelectionne.label : ''}</div>
+      <div id="bilan-eco-prix-mois-body">${prixLaitMoisDetailHtml(bilanEconomiqueMoisAffiche, campagne)}</div>
     </div>
 
     <div class="stat-grid">
@@ -11308,6 +11348,70 @@ function moisInfoPourIndex(campagneDebut, idx) {
   return { key, label: MOIS_LABELS_CAMPAGNE[idx] + ' ' + String(year).slice(2) };
 }
 
+// Une ligne de grade (Cellules/Coliformes/Flore/Butyriques) du détail
+// "Prix du lait" -- fonction pure, partagée entre Bilan économique (seul
+// endroit où ce détail vit désormais, voir prixLaitMoisDetailHtml) et
+// d'anciens usages internes à renderQualite avant que le bloc n'en soit
+// coupé (chantier "Refonte desktop" bis).
+function ligneGrade(nomAffiche, g) {
+  const badge = `<span class="badge ${gradeBadgeClass(g.grade)}" style="margin-left:6px;">${g.grade || '—'}</span>`;
+  const detail = g.grade === null
+    ? (g.n > 0 ? g.n + ' prélèvement(s), hors barème' : 'pas de résultat ce mois')
+    : (g.n !== undefined ? g.n + ' prélèvement(s), somme ' + g.sum : 'moyenne du mois');
+  return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+    <div><div style="font-size:13.5px;">${nomAffiche}${badge}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${detail}</div></div>
+    <div style="font-weight:600;font-size:13.5px;">${fmtEuro(g.incidence, true)}</div>
+  </div>`;
+}
+
+// Détail financier d'un mois donné (prix hors/avec qualité, grades, Bonus
+// Super A, pénalités bactério déduites, total du mois) -- vit désormais
+// exclusivement dans Bilan économique (voir bilanEconomiqueHtml), coupé de
+// Production laitière qui ne garde que les moyennes techniques mensuelles.
+// Même calcul qu'avant (calculerPrixLaitMois), jamais un second calcul.
+function prixLaitMoisDetailHtml(mois, campagne) {
+  const coef = coefficientMsuPourCampagne(campagne);
+  const list = mois ? DB.prelevementsQualite.filter(p => p.date.slice(0, 7) === mois) : [];
+  const penalites = mois ? penalitesPourMois(mois) : [];
+  const volumeMois = mois ? volumeTankMois(mois) : 0;
+  const res = calculerPrixLaitMois(list, volumeMois, coef, penalites);
+  const g = res.grades;
+  const superABadge = res.superA.eligible
+    ? '<span class="badge badge-green" style="margin-left:6px;">Obtenu</span>'
+    : '<span class="badge badge-coral" style="margin-left:6px;">Non obtenu</span>';
+  const superARaison = res.superA.eligible ? 'Bonus +70,00 €/1000L appliqué' : (res.superA.raison || 'pas de résultat ce mois');
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-size:13px;color:var(--text-muted);">Prix hors qualité <span style="font-size:11px;">(MSU × ${fmtDecimal(coef, 4)})</span></div>
+      <div style="font-weight:700;font-size:15px;">${fmtEuro(res.prixHorsQualite)}${res.prixHorsQualite !== null ? ' /1000L' : ''}</div>
+    </div>
+    ${ligneGrade('Cellules', g.cellules)}
+    ${ligneGrade('Coliformes', g.coliformes)}
+    ${ligneGrade('Flore totale', g.floreTotale)}
+    ${ligneGrade('Butyriques', g.butyriques)}
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
+      <div><div style="font-size:13.5px;">Bonus Super A${superABadge}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${superARaison}</div></div>
+      <div style="font-weight:600;font-size:13.5px;">${res.superA.eligible ? fmtEuro(70, true) : fmtEuro(0, true)}</div>
+    </div>
+    <div class="note-warn" style="margin-top:10px;margin-bottom:0;">Statut Super A calculé sur les critères suivis par Ovilog (4 grades + Listéria/Salmonelles). La grille laiterie exige aussi l'absence d'antibiotiques, de virage résazurine et de déclassement pour conditions d'hygiène insuffisantes — à vérifier hors Ovilog avant application.</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:2px solid var(--border);margin-top:10px;">
+      <div style="font-weight:700;font-size:14px;">Prix avec qualité</div>
+      <div style="font-weight:700;font-size:16px;">${fmtEuro(res.prixAvecQualite)}${res.prixAvecQualite !== null ? ' /1000L' : ''}</div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-muted);margin-top:4px;">
+      <div>Volume livré ce mois (tank)</div><div>${volumeMois} L</div>
+    </div>
+    ${res.montantPenalites > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;margin:8px 0;background:var(--coral-bg);border-radius:var(--radius);">
+      <span style="color:var(--coral-fg);font-size:13px;">Pénalité(s) bactério (${(penalites || []).length})</span>
+      <span style="font-weight:700;color:var(--coral-fg);">-${fmtEuro(res.montantPenalites)}</span>
+    </div>` : ''}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+      <div style="font-weight:700;font-size:15px;">Total du mois</div>
+      <div style="font-weight:700;font-size:18px;color:var(--primary);">${res.totalMois !== null ? fmtEuro(res.totalMois) : '—'}</div>
+    </div>
+  `;
+}
+
 function renderQualite() {
   DB.prelevementsQualite = DB.prelevementsQualite || [];
   DB.penalitesBacterio = DB.penalitesBacterio || [];
@@ -11460,15 +11564,6 @@ function renderQualite() {
       <div class="stat-card sc-blue"><div class="stat-card-label">TP moyen</div><div class="stat-card-value" id="qualite-stat-tp">—</div><div class="stat-card-sub">pondéré par le volume</div></div>
       <div class="stat-card sc-blue"><div class="stat-card-label">MSU moyen</div><div class="stat-card-value" id="qualite-stat-msu">—</div><div class="stat-card-sub">TB + TP pondérés</div></div>
       <div class="stat-card sc-blue"><div class="stat-card-label">Cellules moyennes</div><div class="stat-card-value" id="qualite-stat-cellules">—</div><div class="stat-card-sub">milliers/mL, moyenne simple</div></div>
-    </div>
-
-    <div class="card" id="qualite-prix-card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div style="font-size:14px;font-weight:700;">💶 Prix du lait</div>
-        <div style="font-size:11.5px;color:var(--text-muted);">Coefficient MSU : <span id="prix-coef-value"></span></div>
-      </div>
-      <div id="qualite-prix-body"></div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:10px;">Le réglage du coefficient MSU et le bilan financier de la campagne se font désormais depuis Bilan économique.</div>
     </div>
 
     <div class="card" id="qualite-penalites-card">
@@ -11687,64 +11782,12 @@ function renderQualite() {
     Array.from(row.children).forEach(chip => chip.classList.toggle('selected', chip.dataset.key === state.mois));
   }
 
-  function ligneGrade(nomAffiche, g) {
-    const badge = `<span class="badge ${gradeBadgeClass(g.grade)}" style="margin-left:6px;">${g.grade || '—'}</span>`;
-    const detail = g.grade === null
-      ? (g.n > 0 ? g.n + ' prélèvement(s), hors barème' : 'pas de résultat ce mois')
-      : (g.n !== undefined ? g.n + ' prélèvement(s), somme ' + g.sum : 'moyenne du mois');
-    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
-      <div><div style="font-size:13.5px;">${nomAffiche}${badge}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${detail}</div></div>
-      <div style="font-weight:600;font-size:13.5px;">${fmtEuro(g.incidence, true)}</div>
-    </div>`;
-  }
-
-  function renderPrixLait(list, penalites) {
-    const coef = coefficientMsuPourCampagne(state.campagne);
-    document.getElementById('prix-coef-value').textContent = fmtDecimal(coef, 4);
-    const volumeMois = state.mois ? volumeTankMois(state.mois) : 0;
-    const res = calculerPrixLaitMois(list, volumeMois, coef, penalites);
-    const g = res.grades;
-    const superABadge = res.superA.eligible
-      ? '<span class="badge badge-green" style="margin-left:6px;">Obtenu</span>'
-      : '<span class="badge badge-coral" style="margin-left:6px;">Non obtenu</span>';
-    const superARaison = res.superA.eligible ? 'Bonus +70,00 €/1000L appliqué' : (res.superA.raison || 'pas de résultat ce mois');
-    document.getElementById('qualite-prix-body').innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div style="font-size:13px;color:var(--text-muted);">Prix hors qualité <span style="font-size:11px;">(MSU × ${fmtDecimal(coef, 4)})</span></div>
-        <div style="font-weight:700;font-size:15px;">${fmtEuro(res.prixHorsQualite)}${res.prixHorsQualite !== null ? ' /1000L' : ''}</div>
-      </div>
-      ${ligneGrade('Cellules', g.cellules)}
-      ${ligneGrade('Coliformes', g.coliformes)}
-      ${ligneGrade('Flore totale', g.floreTotale)}
-      ${ligneGrade('Butyriques', g.butyriques)}
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
-        <div><div style="font-size:13.5px;">Bonus Super A${superABadge}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${superARaison}</div></div>
-        <div style="font-weight:600;font-size:13.5px;">${res.superA.eligible ? fmtEuro(70, true) : fmtEuro(0, true)}</div>
-      </div>
-      <div class="note-warn" style="margin-top:10px;margin-bottom:0;">Statut Super A calculé sur les critères suivis par Ovilog (4 grades + Listéria/Salmonelles). La grille laiterie exige aussi l'absence d'antibiotiques, de virage résazurine et de déclassement pour conditions d'hygiène insuffisantes — à vérifier hors Ovilog avant application.</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:2px solid var(--border);margin-top:10px;">
-        <div style="font-weight:700;font-size:14px;">Prix avec qualité</div>
-        <div style="font-weight:700;font-size:16px;">${fmtEuro(res.prixAvecQualite)}${res.prixAvecQualite !== null ? ' /1000L' : ''}</div>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-muted);margin-top:4px;">
-        <div>Volume livré ce mois (tank)</div><div>${volumeMois} L</div>
-      </div>
-      ${res.montantPenalites > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;margin:8px 0;background:var(--coral-bg);border-radius:var(--radius);">
-        <span style="color:var(--coral-fg);font-size:13px;">Pénalité(s) bactério (${(penalites || []).length})</span>
-        <span style="font-weight:700;color:var(--coral-fg);">-${fmtEuro(res.montantPenalites)}</span>
-      </div>` : ''}
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
-        <div style="font-weight:700;font-size:15px;">Total du mois</div>
-        <div style="font-weight:700;font-size:18px;color:var(--primary);">${res.totalMois !== null ? fmtEuro(res.totalMois) : '—'}</div>
-      </div>
-    `;
-  }
-
-  // Le réglage du coefficient MSU (bouton + panneau d'édition) a été
-  // déplacé dans Bilan économique (chantier "Refonte desktop", étape
-  // Bilan de campagne) -- Production laitière n'affiche plus que sa
-  // valeur en lecture seule (voir prix-coef-value ci-dessus dans
-  // renderPrixLait), plus aucun wiring d'édition ici.
+  // Le détail financier "Prix du lait" (grades, Super A, pénalités, total
+  // du mois) ainsi que le réglage du coefficient MSU ont été déplacés dans
+  // Bilan économique (chantier "Refonte desktop" bis) -- voir
+  // prixLaitMoisDetailHtml et bilanEconomiqueHtml. Production laitière ne
+  // garde plus que les moyennes techniques mensuelles (renderStatsAndList
+  // ci-dessous) et les prélèvements bruts du mois.
 
   function renderStatsAndList() {
     const list = state.mois ? DB.prelevementsQualite.filter(p => moisKeyFromDate(p.date) === state.mois) : [];
@@ -11754,7 +11797,6 @@ function renderQualite() {
     document.getElementById('qualite-stat-tp').textContent = m.tp === null ? '—' : fmtDecimal(m.tp, 2) + ' g/L';
     document.getElementById('qualite-stat-msu').textContent = m.msu === null ? '—' : fmtDecimal(m.msu, 2) + ' g/L';
     document.getElementById('qualite-stat-cellules').textContent = m.cellules === null ? '—' : fmtDecimal(m.cellules, 0);
-    renderPrixLait(list, penalitesMois);
     renderPenalites(penalitesMois);
 
     const positifDates = [];
