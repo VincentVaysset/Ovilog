@@ -4919,6 +4919,46 @@ function renderBilanCampagne() {
       btnExportEcoPdf.textContent = 'Export en cours...';
       exportBilanEconomiquePdf(bilanEconomiqueCampagneAffichee).finally(() => { btnExportEcoPdf.disabled = false; btnExportEcoPdf.textContent = original; });
     };
+    // Réglage du coefficient MSU (chantier "Refonte desktop", étape Bilan
+    // de campagne) : déplacé ici depuis Production laitière -- c'est un
+    // paramètre du calcul du prix, seule saisie tolérée sur cet onglet.
+    // Même logique que l'ancien wiring de renderQualite (upsertCoefficientCampagne,
+    // rien de dupliqué), juste rattaché à bilanEconomiqueCampagneAffichee
+    // au lieu de state.mois -- il n'y a jamais eu de notion de mois ici.
+    const btnPrixCoef = document.getElementById('btn-prix-coef');
+    if (btnPrixCoef) btnPrixCoef.onclick = () => {
+      const campagne = bilanEconomiqueCampagneAffichee;
+      const editRow = document.getElementById('qualite-prix-coef-edit');
+      const existante = entreeCoefficientPourCampagne(campagne);
+      document.getElementById('prix-ref-input').value = existante && existante.prixReference != null ? existante.prixReference : '';
+      document.getElementById('msu-ref-input').value = existante && existante.msuReference != null ? existante.msuReference : '';
+      document.getElementById('prix-coef-input').value = coefficientMsuPourCampagne(campagne);
+      document.getElementById('prix-coef-heritage').textContent = existante
+        ? 'Valeur déjà définie pour la Campagne ' + (campagne + 1) + '.'
+        : 'Aucune valeur propre à la Campagne ' + (campagne + 1) + ' — ci-dessous, la valeur héritée d\'une campagne antérieure. L\'enregistrer créera une entrée dédiée à cette campagne, sans toucher aux campagnes précédentes.';
+      editRow.classList.toggle('hidden');
+    };
+    function recalculerCoefDepuisReferenceEco() {
+      const pr = parseFloat(document.getElementById('prix-ref-input').value);
+      const msuRef = parseFloat(document.getElementById('msu-ref-input').value);
+      if (!isNaN(pr) && !isNaN(msuRef) && msuRef > 0) {
+        document.getElementById('prix-coef-input').value = (pr / msuRef).toFixed(4);
+      }
+    }
+    const prixRefInput = document.getElementById('prix-ref-input');
+    if (prixRefInput) prixRefInput.oninput = recalculerCoefDepuisReferenceEco;
+    const msuRefInput = document.getElementById('msu-ref-input');
+    if (msuRefInput) msuRefInput.oninput = recalculerCoefDepuisReferenceEco;
+    const btnPrixCoefSave = document.getElementById('btn-prix-coef-save');
+    if (btnPrixCoefSave) btnPrixCoefSave.onclick = () => {
+      const v = parseFloat(document.getElementById('prix-coef-input').value);
+      if (isNaN(v) || v <= 0) { alert('Coefficient invalide.'); return; }
+      const pr = parseFloat(document.getElementById('prix-ref-input').value);
+      const msuRef = parseFloat(document.getElementById('msu-ref-input').value);
+      upsertCoefficientCampagne(bilanEconomiqueCampagneAffichee, v, isNaN(pr) ? null : pr, isNaN(msuRef) ? null : msuRef);
+      saveData(DB);
+      render('bilan-campagne');
+    };
   }
   if (bilanCampagneTab === 'reproduction') {
     // Dépliage d'une carte de lot IA/Éponge (voir bilanReproductionHtml) :
@@ -5041,12 +5081,18 @@ function bilanLactationHtml() {
 }
 
 /* Sous-onglet "Bilan économique" de Bilan de campagne (chantier "Refonte
-   desktop", étape Bilan de campagne) : reprise EXACTE, en lecture seule,
-   du bloc "Bilan financier de la campagne" déjà affiché sur Production
-   laitière (renderQualite) -- même fonction bilanCampagneQualite, jamais
-   un second calcul. Consultation uniquement : aucune saisie sur cet
-   écran, toute correction se fait depuis Production laitière (tank,
-   prélèvements). Visible identiquement sur mobile et desktop. */
+   desktop", étape Bilan de campagne) : ne parle QUE d'argent -- le bloc
+   "Bilan financier de la campagne" (auparavant dupliqué avec Production
+   laitière) a été COUPÉ de renderQualite, il ne vit plus qu'ici (même
+   fonction bilanCampagneQualite, jamais un second calcul). Le réglage du
+   coefficient MSU (paramètre économique du calcul du prix du lait) a
+   rejoint cet onglet pour la même raison -- seule saisie tolérée ici,
+   tout le reste (tank, prélèvements bruts, TB/TP/cellules/MSU) reste
+   exclusivement dans Production laitière. Seul "Lait total produit sur
+   la campagne" est affiché aux deux endroits (utile ici comme
+   dénominateur du prix, et sur Production laitière dans "Moyennes de la
+   campagne") -- la seule duplication volontaire. Visible identiquement
+   sur mobile et desktop. */
 function bilanEconomiqueHtml() {
   const campagnes = campagnesDisponiblesSieol();
   if (bilanEconomiqueCampagneAffichee === null || !campagnes.includes(bilanEconomiqueCampagneAffichee)) {
@@ -5054,11 +5100,12 @@ function bilanEconomiqueHtml() {
   }
   const campagne = bilanEconomiqueCampagneAffichee;
   const bilan = bilanCampagneQualite(campagne);
+  const coef = coefficientMsuPourCampagne(campagne);
   const l = v => v !== null && v !== undefined ? fmtDecimal(v, 0) + ' L' : '—';
   const e = v => fmtEuro(v);
 
   return `
-    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan économique', "Reprise du bilan financier déjà calculé sur Production laitière (tank + prélèvements qualité), pour la campagne choisie. Lecture seule -- pour corriger une valeur, direction Production laitière.")}</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan économique', "Bilan financier de la campagne (prix du lait et tout ce qui en découle) -- pour la production, les prélèvements bruts et le détail mensuel TB/TP/cellules/MSU, direction Production laitière.")}</div>
 
     <div class="card" style="margin-bottom:10px;">
       <label>Campagne consultée</label>
@@ -5067,48 +5114,71 @@ function bilanEconomiqueHtml() {
       </select>
     </div>
 
-    <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);">Production</div>
-      <div style="font-size:20px;font-weight:600;color:var(--green-fg);">${l(bilan.productionTotaleL)}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Tank, toute la campagne</div>
-    </div>
-    <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);">Prix moyen hors qualité</div>
-      <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${e(bilan.prixMoyenHorsQualite)}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">/1000L, pondéré volume</div>
-    </div>
-    <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);">Prix moyen avec qualité</div>
-      <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${e(bilan.prixMoyenAvecQualite)}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">/1000L, pondéré volume</div>
-    </div>
-    <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);">Montant total hors qualité</div>
-      <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${e(bilan.montantHorsQualite)}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Au prix MSU seul</div>
-    </div>
-    <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);">Montant total avec qualité</div>
-      <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${e(bilan.montantAvecQualite)}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Grades + Super A + pénalités bactério</div>
-    </div>
-    <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);">Gain lié à la qualité</div>
-      <div style="font-size:20px;font-weight:600;color:var(--green-fg);">${bilan.gainQualite !== null ? fmtEuro(bilan.gainQualite, true) : '—'}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">= montant avec qualité − montant hors qualité</div>
-    </div>
-    <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);">Montant total Super A</div>
-      <div style="font-size:20px;font-weight:600;color:var(--green-fg);">${e(bilan.montantSuperA)}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Part positive du gain</div>
-    </div>
-    <div class="card">
-      <div style="font-size:12px;color:var(--text-muted);">Montant total pénalités</div>
-      <div style="font-size:20px;font-weight:600;color:var(--coral-fg);">${bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : fmtEuro(0)}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Part négative du gain</div>
+    <div class="card" id="bilan-eco-prix-coef-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-size:14px;font-weight:700;">💶 Prix du lait</div>
+        <button type="button" id="btn-prix-coef" style="font-size:11.5px;color:var(--text-muted);background:none;border:none;padding:0;cursor:pointer;">Coefficient MSU : <span id="prix-coef-value">${fmtDecimal(coef, 4)}</span> ✎</button>
+      </div>
+      <div id="qualite-prix-coef-edit" class="hidden" style="margin-bottom:0;">
+        <div id="prix-coef-heritage" style="font-size:11.5px;color:var(--text-muted);margin-bottom:8px;"></div>
+        <label style="margin-bottom:2px;">Prix référence (€/1000L) — optionnel</label>
+        <input type="number" step="0.01" id="prix-ref-input" placeholder="ex. 1580" style="margin-bottom:8px;" />
+        <label style="margin-bottom:2px;">MSU référence (g/L) — optionnel</label>
+        <input type="number" step="0.01" id="msu-ref-input" placeholder="ex. 130" style="margin-bottom:8px;" />
+        <label style="margin-bottom:2px;">Coefficient MSU (€/1000L par point) — calculé si les 2 champs ci-dessus sont remplis, sinon à saisir directement</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="number" step="0.0001" id="prix-coef-input" style="margin:0;" />
+          <button type="button" class="btn btn-primary" id="btn-prix-coef-save" style="width:auto;padding:10px 16px;margin:0;">OK</button>
+        </div>
+      </div>
     </div>
 
-    <div style="font-size:11px;color:var(--text-muted);margin:4px 2px 10px;">Pour corriger une valeur (tank, prélèvement), direction Production laitière.</div>
+    <div class="stat-grid">
+      <div class="stat-card sc-green" id="eco-stat-production">
+        <div class="stat-card-label">Lait total produit sur la campagne</div>
+        <div class="stat-card-value">${l(bilan.productionTotaleL)}</div>
+        <div class="stat-card-sub">Tank, toute la campagne</div>
+      </div>
+      <div class="stat-card sc-blue" id="eco-stat-prix-hors">
+        <div class="stat-card-label">Prix moy. hors qualité</div>
+        <div class="stat-card-value">${e(bilan.prixMoyenHorsQualite)}</div>
+        <div class="stat-card-sub">/1000L, pondéré volume</div>
+      </div>
+      <div class="stat-card sc-blue" id="eco-stat-prix-avec">
+        <div class="stat-card-label">Prix moy. avec qualité</div>
+        <div class="stat-card-value">${e(bilan.prixMoyenAvecQualite)}</div>
+        <div class="stat-card-sub">/1000L, pondéré volume</div>
+      </div>
+      <div class="stat-card sc-blue" id="eco-stat-montant-hors">
+        <div class="stat-card-label">Montant total hors qualité</div>
+        <div class="stat-card-value">${e(bilan.montantHorsQualite)}</div>
+        <div class="stat-card-sub">Au prix MSU seul</div>
+      </div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card sc-blue" id="eco-stat-montant-avec">
+        <div class="stat-card-label">Montant total avec qualité</div>
+        <div class="stat-card-value">${e(bilan.montantAvecQualite)}</div>
+        <div class="stat-card-sub">Grades + Super A + pénalités bactério</div>
+      </div>
+      <div class="stat-card sc-green" id="eco-stat-super-a">
+        <div class="stat-card-label">Montant total Super A</div>
+        <div class="stat-card-value">${e(bilan.montantSuperA)}</div>
+        <div class="stat-card-sub">Part positive du gain</div>
+      </div>
+      <div class="stat-card sc-coral" id="eco-stat-penalites">
+        <div class="stat-card-label">Montant total pénalités</div>
+        <div class="stat-card-value">${bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : fmtEuro(0)}</div>
+        <div class="stat-card-sub">Part négative du gain</div>
+      </div>
+    </div>
+    <div class="stat-card sc-green" id="eco-stat-gain" style="margin-bottom:16px;">
+      <div class="stat-card-label">Gain lié à la qualité (bactério + Super A + pénalités)</div>
+      <div class="stat-card-value">${bilan.gainQualite !== null ? fmtEuro(bilan.gainQualite, true) : '—'}</div>
+      <div class="stat-card-sub">= montant avec qualité − montant hors qualité</div>
+    </div>
+
+    <div style="font-size:11px;color:var(--text-muted);margin:4px 2px 10px;">Pour le tank, les prélèvements bruts ou le détail mensuel TB/TP/cellules/MSU, direction Production laitière.</div>
     <button type="button" class="btn btn-secondary" id="btn-export-bilan-economique-pdf">Export PDF</button>
   `;
 }
@@ -11395,21 +11465,10 @@ function renderQualite() {
     <div class="card" id="qualite-prix-card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
         <div style="font-size:14px;font-weight:700;">💶 Prix du lait</div>
-        <button type="button" id="btn-prix-coef" style="font-size:11.5px;color:var(--text-muted);background:none;border:none;padding:0;cursor:pointer;">Coefficient MSU : <span id="prix-coef-value"></span> ✎</button>
-      </div>
-      <div id="qualite-prix-coef-edit" class="hidden" style="margin-bottom:12px;">
-        <div id="prix-coef-heritage" style="font-size:11.5px;color:var(--text-muted);margin-bottom:8px;"></div>
-        <label style="margin-bottom:2px;">Prix référence (€/1000L) — optionnel</label>
-        <input type="number" step="0.01" id="prix-ref-input" placeholder="ex. 1580" style="margin-bottom:8px;" />
-        <label style="margin-bottom:2px;">MSU référence (g/L) — optionnel</label>
-        <input type="number" step="0.01" id="msu-ref-input" placeholder="ex. 130" style="margin-bottom:8px;" />
-        <label style="margin-bottom:2px;">Coefficient MSU (€/1000L par point) — calculé si les 2 champs ci-dessus sont remplis, sinon à saisir directement</label>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <input type="number" step="0.0001" id="prix-coef-input" style="margin:0;" />
-          <button type="button" class="btn btn-primary" id="btn-prix-coef-save" style="width:auto;padding:10px 16px;margin:0;">OK</button>
-        </div>
+        <div style="font-size:11.5px;color:var(--text-muted);">Coefficient MSU : <span id="prix-coef-value"></span></div>
       </div>
       <div id="qualite-prix-body"></div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:10px;">Le réglage du coefficient MSU et le bilan financier de la campagne se font désormais depuis Bilan économique.</div>
     </div>
 
     <div class="card" id="qualite-penalites-card">
@@ -11431,23 +11490,6 @@ function renderQualite() {
       <div class="stat-card sc-green"><div class="stat-card-label">TP moyen</div><div class="stat-card-value" id="qc-stat-tp">—</div><div class="stat-card-sub">pondéré par le volume</div></div>
       <div class="stat-card sc-green"><div class="stat-card-label">MSU moyen</div><div class="stat-card-value" id="qc-stat-msu">—</div><div class="stat-card-sub">TB + TP pondérés</div></div>
       <div class="stat-card sc-green"><div class="stat-card-label">Production totale</div><div class="stat-card-value" id="qc-stat-production">—</div><div class="stat-card-sub">tank, toute la campagne</div></div>
-    </div>
-
-    <div style="font-size:14px;font-weight:700;margin:18px 0 10px;">💶 Bilan financier de la campagne</div>
-    <div class="stat-grid">
-      <div class="stat-card sc-blue"><div class="stat-card-label">Prix moy. hors qualité</div><div class="stat-card-value" id="qc-stat-prix-hors">—</div><div class="stat-card-sub">/1000L, pondéré volume</div></div>
-      <div class="stat-card sc-blue"><div class="stat-card-label">Prix moy. avec qualité</div><div class="stat-card-value" id="qc-stat-prix-avec">—</div><div class="stat-card-sub">/1000L, pondéré volume</div></div>
-      <div class="stat-card sc-blue"><div class="stat-card-label">Montant total hors qualité</div><div class="stat-card-value" id="qc-stat-montant-hors">—</div><div class="stat-card-sub">au prix MSU seul</div></div>
-      <div class="stat-card sc-blue"><div class="stat-card-label">Montant total avec qualité</div><div class="stat-card-value" id="qc-stat-montant-avec">—</div><div class="stat-card-sub">grades + Super A + pénalités bactério</div></div>
-    </div>
-    <div class="stat-grid">
-      <div class="stat-card sc-green"><div class="stat-card-label">Montant total Super A</div><div class="stat-card-value" id="qc-stat-super-a">—</div><div class="stat-card-sub">part positive du gain</div></div>
-      <div class="stat-card sc-coral"><div class="stat-card-label">Montant total pénalités</div><div class="stat-card-value" id="qc-stat-penalites">—</div><div class="stat-card-sub">part négative du gain</div></div>
-    </div>
-    <div class="stat-card sc-green" style="margin-bottom:16px;">
-      <div class="stat-card-label">Gain lié à la qualité (bactério + Super A + pénalités)</div>
-      <div class="stat-card-value" id="qc-stat-gain">—</div>
-      <div class="stat-card-sub">= montant avec qualité − montant hors qualité</div>
     </div>
 
     <button type="button" class="btn btn-secondary" id="btn-qualite-print" style="margin-bottom:10px;">🖨️ Imprimer le récapitulatif (PDF)</button>
@@ -11698,42 +11740,11 @@ function renderQualite() {
     `;
   }
 
-  document.getElementById('btn-prix-coef').onclick = () => {
-    const editRow = document.getElementById('qualite-prix-coef-edit');
-    // Ne pré-remplit prixReference/msuReference que si une entrée existe DÉJÀ
-    // spécifiquement pour cette campagne — une valeur héritée d'une campagne
-    // antérieure n'a pas le même couple prix/MSU de référence, ça n'aurait
-    // pas de sens de le recopier ici.
-    const existante = entreeCoefficientPourCampagne(state.campagne);
-    document.getElementById('prix-ref-input').value = existante && existante.prixReference != null ? existante.prixReference : '';
-    document.getElementById('msu-ref-input').value = existante && existante.msuReference != null ? existante.msuReference : '';
-    document.getElementById('prix-coef-input').value = coefficientMsuPourCampagne(state.campagne);
-    document.getElementById('prix-coef-heritage').textContent = existante
-      ? 'Valeur déjà définie pour la Campagne ' + (state.campagne + 1) + '.'
-      : 'Aucune valeur propre à la Campagne ' + (state.campagne + 1) + ' — ci-dessous, la valeur héritée d\'une campagne antérieure. L\'enregistrer créera une entrée dédiée à cette campagne, sans toucher aux campagnes précédentes.';
-    editRow.classList.toggle('hidden');
-  };
-  // Recalcule automatiquement le coefficient dès que les 2 champs de
-  // référence sont remplis (mais reste modifiable à la main ensuite).
-  function recalculerCoefDepuisReference() {
-    const pr = parseFloat(document.getElementById('prix-ref-input').value);
-    const msuRef = parseFloat(document.getElementById('msu-ref-input').value);
-    if (!isNaN(pr) && !isNaN(msuRef) && msuRef > 0) {
-      document.getElementById('prix-coef-input').value = (pr / msuRef).toFixed(4);
-    }
-  }
-  document.getElementById('prix-ref-input').oninput = recalculerCoefDepuisReference;
-  document.getElementById('msu-ref-input').oninput = recalculerCoefDepuisReference;
-  document.getElementById('btn-prix-coef-save').onclick = () => {
-    const v = parseFloat(document.getElementById('prix-coef-input').value);
-    if (isNaN(v) || v <= 0) { alert('Coefficient invalide.'); return; }
-    const pr = parseFloat(document.getElementById('prix-ref-input').value);
-    const msuRef = parseFloat(document.getElementById('msu-ref-input').value);
-    upsertCoefficientCampagne(state.campagne, v, isNaN(pr) ? null : pr, isNaN(msuRef) ? null : msuRef);
-    saveData(DB);
-    document.getElementById('qualite-prix-coef-edit').classList.add('hidden');
-    renderStatsAndList();
-  };
+  // Le réglage du coefficient MSU (bouton + panneau d'édition) a été
+  // déplacé dans Bilan économique (chantier "Refonte desktop", étape
+  // Bilan de campagne) -- Production laitière n'affiche plus que sa
+  // valeur en lecture seule (voir prix-coef-value ci-dessus dans
+  // renderPrixLait), plus aucun wiring d'édition ici.
 
   function renderStatsAndList() {
     const list = state.mois ? DB.prelevementsQualite.filter(p => moisKeyFromDate(p.date) === state.mois) : [];
@@ -11824,19 +11835,18 @@ function renderQualite() {
 
   // Bloc "Moyennes / Bilan financier de la campagne" -- indépendant du mois
   // sélectionné (state.mois), recalculé uniquement quand la campagne change.
+  // Chantier "Refonte desktop" (étape Bilan de campagne) : le bloc "Bilan
+  // financier de la campagne" (prix moyens, montants, gain, Super A,
+  // pénalités) a été coupé de cet écran -- il ne vit plus que dans
+  // l'onglet Bilan économique (bilanEconomiqueHtml, même fonction
+  // bilanCampagneQualite, jamais recalculé). Ne reste ici que TB/TP/MSU/
+  // Production, qui restent affichés sur Production laitière.
   function renderCampagneBilan() {
     const bilan = bilanCampagneQualite(state.campagne);
     document.getElementById('qc-stat-tb').textContent = bilan.tb === null ? '—' : fmtDecimal(bilan.tb, 2) + ' g/L';
     document.getElementById('qc-stat-tp').textContent = bilan.tp === null ? '—' : fmtDecimal(bilan.tp, 2) + ' g/L';
     document.getElementById('qc-stat-msu').textContent = bilan.msu === null ? '—' : fmtDecimal(bilan.msu, 2) + ' g/L';
     document.getElementById('qc-stat-production').textContent = fmtDecimal(bilan.productionTotaleL, 0) + ' L';
-    document.getElementById('qc-stat-prix-hors').textContent = bilan.prixMoyenHorsQualite !== null ? fmtEuro(bilan.prixMoyenHorsQualite) : '—';
-    document.getElementById('qc-stat-prix-avec').textContent = bilan.prixMoyenAvecQualite !== null ? fmtEuro(bilan.prixMoyenAvecQualite) : '—';
-    document.getElementById('qc-stat-montant-hors').textContent = bilan.montantHorsQualite !== null ? fmtEuro(bilan.montantHorsQualite) : '—';
-    document.getElementById('qc-stat-montant-avec').textContent = bilan.montantAvecQualite !== null ? fmtEuro(bilan.montantAvecQualite) : '—';
-    document.getElementById('qc-stat-gain').textContent = bilan.gainQualite !== null ? fmtEuro(bilan.gainQualite, true) : '—';
-    document.getElementById('qc-stat-super-a').textContent = fmtEuro(bilan.montantSuperA);
-    document.getElementById('qc-stat-penalites').textContent = bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : fmtEuro(0);
   }
 
   function renderAll() { renderMonths(); renderStatsAndList(); renderCampagneBilan(); }
