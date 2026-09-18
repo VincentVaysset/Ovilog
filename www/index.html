@@ -428,6 +428,16 @@
   .accueil-compteurs-desktop { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
   .accueil-blocs-desktop { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   @media (max-width: 1100px) { .accueil-compteurs-desktop { grid-template-columns: repeat(2, 1fr); } .accueil-blocs-desktop { grid-template-columns: 1fr; } }
+  /* Chantier "Refonte desktop" (étape Bilan de campagne / Production
+     laitière) : .stat-grid est mobile-first (2 colonnes fixes, voir sa
+     règle de base) -- sur desktop, mêmes 4 colonnes que les compteurs de
+     l'accueil ci-dessus (.accueil-compteurs-desktop), pour rester dans le
+     même esprit plutôt que d'inventer un 3e style de grille. N'affecte
+     que Production laitière (renderQualite) : le seul autre écran
+     utilisant .stat-grid est l'accueil MOBILE, qui ne s'affiche jamais
+     avec body.desktop-shell (l'accueil desktop a son propre template). */
+  body.desktop-shell .stat-grid { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 1100px) { body.desktop-shell .stat-grid { grid-template-columns: repeat(2, 1fr); } }
   .compteur-case { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; position: relative; }
   .compteur-label { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px; }
   .compteur-valeur { font-size: 26px; font-weight: 700; line-height: 1; }
@@ -1030,6 +1040,12 @@ function loadData() {
     prelevementsQualite: [],
     penalitesBacterio: [],
     bilanLactation: [],
+    // Manquait ici jusqu'à présent (chantier "Refonte desktop", étape Bilan
+    // de campagne) -- seul migrateData() le posait rétroactivement pour une
+    // sauvegarde déjà existante, jamais pour une toute nouvelle
+    // installation : les champs du sous-onglet Bilan de lactation
+    // plantaient dès la première saisie sur une base neuve.
+    bilanLactationSaisie: [],
     lactationModele: [],
     sieolSansMiseBas: [],
     resumeControleLaitier: [],
@@ -2266,10 +2282,27 @@ function calculerPrixLaitMois(list, volumeTotalMoisL, coefficientMsu, penalites)
    - superAParMois : { moisKey: eligible } -- réutilisé tel quel par le
      récapitulatif PDF pour la colonne "Super A" de chaque ligne (statut
      du mois du prélèvement, jamais recalculé par prélèvement individuel). */
+/* Somme des saisies tank (DB.laitTank) d'une campagne donnée -- extrait de
+   bilanCampagneQualite (chantier "Refonte desktop", étape Bilan de
+   campagne) pour être réutilisé tel quel comme valeur par défaut du
+   litrage total du Bilan de lactation, jamais recalculé séparément. */
+function productionTankCampagne(campagne) {
+  return DB.laitTank.filter(l => campagneAnneeDebutPourDate(l.date) === campagne).reduce((s, l) => s + l.quantite, 0);
+}
+
+/* Brebis ayant eu au moins un contrôle laitier enregistré cette campagne
+   (chantier "Refonte desktop", étape Bilan de campagne) -- sur TOUTE
+   DB.brebis, jamais filtré par statut actif : une brebis vendue en cours
+   de campagne après être passée à la traite compte toujours. Valeur par
+   défaut de "Brebis passées à la traite" du Bilan de lactation. */
+function brebisPasseesTraiteCampagne(campagne) {
+  return DB.brebis.filter(s => (s.controleLaitier || []).some(c => c.campagne === campagne)).length;
+}
+
 function bilanCampagneQualite(campagne) {
   const listCampagne = DB.prelevementsQualite.filter(p => campagneAnneeDebutPourDate(p.date) === campagne);
   const moy = moyennesQualitePonderees(listCampagne);
-  const productionTotaleL = DB.laitTank.filter(l => campagneAnneeDebutPourDate(l.date) === campagne).reduce((s, l) => s + l.quantite, 0);
+  const productionTotaleL = productionTankCampagne(campagne);
   const coef = coefficientMsuPourCampagne(campagne);
   const penalitesCampagne = (DB.penalitesBacterio || []).filter(p => campagneAnneeDebutPourDate(p.dateDebut) === campagne);
 
@@ -3591,6 +3624,7 @@ let ficheCarriereOuverts = {};
 let ficheBrebisTabSheepId = null;
 let bilanCampagneTab = 'incoherences';
 let bilanLactationCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan de lactation, voir bilanLactationHtml
+let bilanEconomiqueCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan économique, voir bilanEconomiqueHtml
 let inventaireActifsTab = 'brebis'; // 'brebis' | 'agnelles' | 'beliers' | 'agneaux' — voir renderInventaireActifs
 let declarationAnneeSelectionnee = null; // année civile choisie sur l'écran Déclaration annuelle (voir renderDeclarationAnnuelle), initialisée à l'année en cours au premier rendu
 let calendrierMoisAffiche = null; // 'YYYY-MM' du mois affiché sur le Calendrier (voir renderJournal) -- initialisé au mois en cours au premier rendu, conservé ensuite pour garder la navigation mois précédent/suivant d'un rendu à l'autre
@@ -3603,7 +3637,7 @@ const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 
 // Écrans redessinés en grille/tableau grand écran sur desktop (voir
 // render()) -- sortent du plafond main{max-width:700px}. Complété au fil
 // des chantiers desktop successifs, jamais un élargissement global.
-const DESKTOP_WIDE_VIEWS = new Set(['detail', 'home', 'list', 'beliers', 'controle-laitier', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'parametres']);
+const DESKTOP_WIDE_VIEWS = new Set(['detail', 'home', 'list', 'beliers', 'controle-laitier', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'parametres', 'bilan-campagne', 'qualite']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -3659,8 +3693,14 @@ const NAV_ITEMS = [
   { view: 'inventaire-actifs', label: 'Inventaire', icon: ICON_BOX, color: 'coral' },
   { view: 'inventaire', label: "Mouvements d'animaux", icon: ICON_MOUVEMENT, color: 'coral' },
   { view: 'sanitaire', label: 'Carnet sanitaire', icon: ICON_SANTE, color: 'coral' },
-  { view: 'qualite', label: 'Qualité', icon: ICON_LAIT, color: 'blue' },
+  { view: 'qualite', label: 'Production laitière', icon: ICON_LAIT, color: 'blue' },
   { view: 'journal', label: 'Calendrier', icon: ICON_JOURNAL, color: 'green' },
+  // Chantier "Refonte desktop" (étape Bilan de campagne) : accessible sur
+  // mobile depuis la carte "Bilan de campagne" de l'accueil (voir
+  // kpi-bilan-campagne), mais jusqu'ici absent de toute navigation
+  // desktop -- même icône/couleur que cette carte (ICON_JOURNAL/coral),
+  // rien d'inventé.
+  { view: 'bilan-campagne', label: 'Bilan de campagne', icon: ICON_JOURNAL, color: 'coral' },
   { view: 'registre', label: "Registre d'élevage", icon: ICON_JOURNAL, color: 'coral' },
   { view: 'declaration-annuelle', label: 'Déclaration annuelle', icon: ICON_CALENDAR, color: 'coral' },
   { view: 'parametres', label: 'Paramètres', icon: ICON_SETTINGS, color: 'gray' }
@@ -4771,7 +4811,7 @@ function bilanBrebisRowsHtml(list) {
 }
 
 /* ---------- Bilan de campagne ----------
-   Deux onglets, sur une variable d'état locale (même principe que
+   Quatre onglets, sur une variable d'état locale (même principe que
    l'Inventaire Brebis/Béliers/Agneaux) :
    - "Incohérences fin de campagne" : ce qui reste à vérifier ou à corriger
      avant la clôture — brebis sans aucun suivi, et les deux issues connues
@@ -4780,9 +4820,16 @@ function bilanBrebisRowsHtml(list) {
      qu'en fin de campagne (taux de réussite, troupeau à mettre bas, détail
      par groupe d'âge) — voir campagneBilanChiffres/tauxReussiteGlobal/
      statsDetailleesParGroupeAge.
+   - "Bilan économique" (chantier "Refonte desktop") : reprise en lecture
+     seule du bilan financier déjà calculé sur Production laitière (voir
+     bilanEconomiqueHtml).
+   - "Bilan de lactation" : vue troupeau litrage/effectif traite/présence
+     (voir bilanLactationHtml).
    Les statuts intermédiaires (Gestante en cours, Vide confirmée, Avortée,
    Pseudogestation) ne sont pas repris ici : ils restent visibles sur la
-   fiche de chaque brebis et en badge dans l'onglet "Brebis" du menu. */
+   fiche de chaque brebis et en badge dans l'onglet "Brebis" du menu.
+   Accessible sur mobile depuis la carte "Bilan de campagne" de l'accueil,
+   et depuis la sidebar sur desktop (voir NAV_ITEMS). */
 function renderBilanCampagne() {
   pageTitle.textContent = 'Bilan de campagne';
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
@@ -4790,6 +4837,13 @@ function renderBilanCampagne() {
   const tabs = [
     { key: 'incoherences', label: 'Brebis à régulariser' },
     { key: 'reproduction', label: 'Bilan de reproduction' },
+    // "Bilan économique" (chantier "Refonte desktop", étape Bilan de
+    // campagne) : reprise en lecture seule du bloc "Bilan financier de la
+    // campagne" déjà calculé par bilanCampagneQualite (écran Production
+    // laitière) -- aucun nouveau calcul, jamais de saisie ici (toute
+    // correction se fait depuis Production laitière). Visible sur mobile
+    // ET desktop comme les 3 autres onglets, aucun gating isDesktopMode().
+    { key: 'economique', label: 'Bilan économique' },
     { key: 'lactation', label: 'Bilan de lactation' }
   ];
   const tabBarHtml = `<div class="tab-bar">${tabs.map(t =>
@@ -4798,9 +4852,16 @@ function renderBilanCampagne() {
 
   const bodyHtml = bilanCampagneTab === 'incoherences' ? bilanIncoherencesHtml(actives)
     : bilanCampagneTab === 'reproduction' ? bilanReproductionHtml()
+    : bilanCampagneTab === 'economique' ? bilanEconomiqueHtml()
     : bilanLactationHtml();
 
-  app.innerHTML = tabBarHtml + bodyHtml;
+  // Chantier "Refonte desktop" (étape Bilan de campagne) : même technique
+  // que Paramètres/Production laitière -- le corps de l'onglet actif est
+  // enveloppé dans .fiche-desktop-grid UNIQUEMENT sur desktop (un seul
+  // point d'enveloppe couvre les 4 onglets, puisque bodyHtml est déjà
+  // assemblé génériquement ci-dessus). La tab-bar reste hors de la grille,
+  // inchangée. Mobile strictement inchangé.
+  app.innerHTML = tabBarHtml + (isDesktopMode() ? `<div class="fiche-desktop-grid">${bodyHtml}</div>` : bodyHtml);
 
   document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
     btn.onclick = () => { bilanCampagneTab = btn.dataset.tab; render('bilan-campagne'); };
@@ -4846,6 +4907,17 @@ function renderBilanCampagne() {
       const original = btnExportLactationXlsx.textContent;
       btnExportLactationXlsx.textContent = 'Export en cours...';
       exportBilanLactationXlsx(bilanLactationCampagneAffichee).finally(() => { btnExportLactationXlsx.disabled = false; btnExportLactationXlsx.textContent = original; });
+    };
+  }
+  if (bilanCampagneTab === 'economique') {
+    const selectEco = document.getElementById('bilan-eco-campagne-select');
+    if (selectEco) selectEco.onchange = () => { bilanEconomiqueCampagneAffichee = parseInt(selectEco.value, 10); render('bilan-campagne'); };
+    const btnExportEcoPdf = document.getElementById('btn-export-bilan-economique-pdf');
+    if (btnExportEcoPdf) btnExportEcoPdf.onclick = () => {
+      btnExportEcoPdf.disabled = true;
+      const original = btnExportEcoPdf.textContent;
+      btnExportEcoPdf.textContent = 'Export en cours...';
+      exportBilanEconomiquePdf(bilanEconomiqueCampagneAffichee).finally(() => { btnExportEcoPdf.disabled = false; btnExportEcoPdf.textContent = original; });
     };
   }
   if (bilanCampagneTab === 'reproduction') {
@@ -4911,13 +4983,12 @@ function bilanLactationHtml() {
     bilanLactationCampagneAffichee = campagnes.length > 1 ? campagnes[1] : campagnes[0];
   }
   const campagne = bilanLactationCampagneAffichee;
-  const saisie = bilanLactationSaisieCampagne(campagne);
   const ind = bilanLactationIndicateurs(campagne);
   const indN1 = bilanLactationIndicateurs(campagne - 1);
   const txt = (v, suffix) => v !== null && v !== undefined ? fmtDecimal(v, 1) + (suffix || '') : '—';
 
   return `
-    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan de lactation', "Vue troupeau de la campagne, saisie manuellement par l'éleveur (litrage total, brebis passées à la traite) — campagne sélectionnée explicitement, jamais présumée être la campagne en cours d'Ovilog.")}</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan de lactation', "Vue troupeau de la campagne. Litrage total et brebis passées à la traite sont calculés automatiquement (tank de Production laitière, contrôles laitiers) mais restent modifiables si besoin — campagne sélectionnée explicitement, jamais présumée être la campagne en cours d'Ovilog.")}</div>
 
     <div class="card" style="margin-bottom:10px;">
       <label>Campagne consultée</label>
@@ -4928,10 +4999,10 @@ function bilanLactationHtml() {
 
     <div class="card" style="margin-bottom:10px;">
       <label>Litrage total produit sur la campagne (L)</label>
-      <input type="number" step="0.1" id="bilan-lactation-litrage-total" placeholder="ex: 78450" value="${saisie && saisie.litrageTotal !== null && saisie.litrageTotal !== undefined ? saisie.litrageTotal : ''}">
+      <input type="number" step="0.1" id="bilan-lactation-litrage-total" placeholder="ex: 78450" value="${ind.litrageTotal !== null ? ind.litrageTotal : ''}">
       <label style="display:block;margin-top:14px;">Brebis passées à la traite</label>
-      <input type="number" step="1" id="bilan-lactation-brebis-traite" placeholder="ex: 415 (chiffre SIEOL)" value="${saisie && saisie.brebisTraite !== null && saisie.brebisTraite !== undefined ? saisie.brebisTraite : ''}">
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Brebis passées à la traite = toutes celles ayant eu au moins un contrôle laitier cette campagne (saisie libre, typiquement le chiffre SIEOL).</div>
+      <input type="number" step="1" id="bilan-lactation-brebis-traite" placeholder="ex: 415" value="${ind.brebisTraite !== null && ind.brebisTraite !== undefined ? ind.brebisTraite : ''}">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Litrage total pré-rempli automatiquement depuis le tank de Production laitière (modifiable si la saisie tank est incomplète). Brebis passées à la traite = toutes celles ayant eu au moins un contrôle laitier cette campagne, calculé automatiquement (modifiable au besoin).</div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Campagne ${campagneLabel(campagne - 1)} (N-1) : ${txt(indN1.litrageTotal, ' L')} · ${indN1.brebisTraite !== null ? indN1.brebisTraite : '—'} brebis</div>
     </div>
 
@@ -4966,6 +5037,79 @@ function bilanLactationHtml() {
       <button type="button" class="btn btn-secondary" id="btn-export-bilan-lactation-pdf" style="flex:1;">Export PDF</button>
       <button type="button" class="btn btn-secondary" id="btn-export-bilan-lactation-xlsx" style="flex:1;">Export Excel</button>
     </div>
+  `;
+}
+
+/* Sous-onglet "Bilan économique" de Bilan de campagne (chantier "Refonte
+   desktop", étape Bilan de campagne) : reprise EXACTE, en lecture seule,
+   du bloc "Bilan financier de la campagne" déjà affiché sur Production
+   laitière (renderQualite) -- même fonction bilanCampagneQualite, jamais
+   un second calcul. Consultation uniquement : aucune saisie sur cet
+   écran, toute correction se fait depuis Production laitière (tank,
+   prélèvements). Visible identiquement sur mobile et desktop. */
+function bilanEconomiqueHtml() {
+  const campagnes = campagnesDisponiblesSieol();
+  if (bilanEconomiqueCampagneAffichee === null || !campagnes.includes(bilanEconomiqueCampagneAffichee)) {
+    bilanEconomiqueCampagneAffichee = campagnes.includes(DB.campagneDebut) ? DB.campagneDebut : campagnes[0];
+  }
+  const campagne = bilanEconomiqueCampagneAffichee;
+  const bilan = bilanCampagneQualite(campagne);
+  const l = v => v !== null && v !== undefined ? fmtDecimal(v, 0) + ' L' : '—';
+  const e = v => fmtEuro(v);
+
+  return `
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan économique', "Reprise du bilan financier déjà calculé sur Production laitière (tank + prélèvements qualité), pour la campagne choisie. Lecture seule -- pour corriger une valeur, direction Production laitière.")}</div>
+
+    <div class="card" style="margin-bottom:10px;">
+      <label>Campagne consultée</label>
+      <select id="bilan-eco-campagne-select">
+        ${campagnes.map(c => `<option value="${c}" ${c === campagne ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);">Production</div>
+      <div style="font-size:20px;font-weight:600;color:var(--green-fg);">${l(bilan.productionTotaleL)}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Tank, toute la campagne</div>
+    </div>
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);">Prix moyen hors qualité</div>
+      <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${e(bilan.prixMoyenHorsQualite)}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">/1000L, pondéré volume</div>
+    </div>
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);">Prix moyen avec qualité</div>
+      <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${e(bilan.prixMoyenAvecQualite)}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">/1000L, pondéré volume</div>
+    </div>
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);">Montant total hors qualité</div>
+      <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${e(bilan.montantHorsQualite)}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Au prix MSU seul</div>
+    </div>
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);">Montant total avec qualité</div>
+      <div style="font-size:20px;font-weight:600;color:var(--blue-fg);">${e(bilan.montantAvecQualite)}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Grades + Super A + pénalités bactério</div>
+    </div>
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);">Gain lié à la qualité</div>
+      <div style="font-size:20px;font-weight:600;color:var(--green-fg);">${bilan.gainQualite !== null ? fmtEuro(bilan.gainQualite, true) : '—'}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">= montant avec qualité − montant hors qualité</div>
+    </div>
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);">Montant total Super A</div>
+      <div style="font-size:20px;font-weight:600;color:var(--green-fg);">${e(bilan.montantSuperA)}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Part positive du gain</div>
+    </div>
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-muted);">Montant total pénalités</div>
+      <div style="font-size:20px;font-weight:600;color:var(--coral-fg);">${bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : fmtEuro(0)}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Part négative du gain</div>
+    </div>
+
+    <div style="font-size:11px;color:var(--text-muted);margin:4px 2px 10px;">Pour corriger une valeur (tank, prélèvement), direction Production laitière.</div>
+    <button type="button" class="btn btn-secondary" id="btn-export-bilan-economique-pdf">Export PDF</button>
   `;
 }
 
@@ -11099,7 +11243,7 @@ function renderQualite() {
   DB.penalitesBacterio = DB.penalitesBacterio || [];
   DB.laitTank = DB.laitTank || [];
   if (!DB.parametresPrixLait || !Array.isArray(DB.parametresPrixLait)) DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null }];
-  pageTitle.textContent = 'Qualité';
+  pageTitle.textContent = 'Production laitière';
 
   const today = new Date().toISOString().slice(0, 10);
   const campagneAujourdhui = DB.campagneDebut != null ? DB.campagneDebut : campagneAnneeDebutPourDate(today);
@@ -11225,7 +11369,14 @@ function renderQualite() {
     </div>
   `;
 
-  app.innerHTML = `
+  // Chantier "Refonte desktop" (étape Bilan de campagne / Production
+  // laitière) : même technique que Paramètres -- tout le corps de l'écran
+  // enveloppé dans .fiche-desktop-grid UNIQUEMENT sur desktop (les .card
+  // deviennent des cellules de grille centrées ; tab-bar/stat-grid/listes/
+  // boutons, qui ne sont pas des .card, s'étalent automatiquement sur
+  // toute la largeur via la règle déjà en place). Contenu et comportement
+  // strictement inchangés sur mobile.
+  const qualiteBodyHtml = `
     ${tankCardHtml}
     <div class="tab-bar" id="qualite-campagne-tabs">
       ${campagnes.map(c => `<button type="button" class="tab-btn${c === state.campagne ? ' active' : ''}" data-campagne="${c}">Campagne ${c + 1}</button>`).join('')}
@@ -11302,6 +11453,7 @@ function renderQualite() {
     <button type="button" class="btn btn-secondary" id="btn-qualite-print" style="margin-bottom:10px;">🖨️ Imprimer le récapitulatif (PDF)</button>
     <button type="button" class="btn btn-secondary" id="btn-rapport-campagne-print" style="margin-bottom:16px;">🖨️ Rapport de campagne (PDF)</button>
   `;
+  app.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${qualiteBodyHtml}</div>` : qualiteBodyHtml;
 
   // ---------- Wiring de la carte "Production laitière (tank)" (voir tankCardHtml ci-dessus) ----------
   const laitDateInput = document.getElementById('f-lait-date');
@@ -15244,17 +15396,29 @@ function bilanLactationSaisieCampagne(campagne) {
 /* Indicateurs troupeau du Bilan de lactation (refonte) pour UNE campagne
    donnée -- réutilisé à la fois par l'écran (campagne affichée + rappel
    N-1) et les exports PDF/Excel (mêmes chiffres, jamais recalculés
-   séparément). litrageTotal/brebisTraite viennent de la saisie manuelle de
-   l'éleveur (bilanLactationSaisieCampagne) ; misesBas et moyennePresence
-   sont recalculés depuis les données déjà présentes dans Ovilog
+   séparément).
+   litrageTotal/brebisTraite (chantier "Refonte desktop", étape Bilan de
+   campagne) : calculés automatiquement par défaut -- litrageTotal depuis
+   le tank de la campagne (productionTankCampagne, même formule que le
+   Bilan économique/financier de Production laitière) ; brebisTraite
+   depuis les brebis ayant eu au moins un contrôle laitier cette campagne
+   (brebisPasseesTraiteCampagne). Une saisie manuelle explicite de
+   l'éleveur (bilanLactationSaisieCampagne) reste toujours prioritaire sur
+   ces valeurs auto -- les deux champs restent modifiables au cas où
+   l'auto ne correspondrait pas à la réalité (tank pas encore saisi,
+   correction ponctuelle...). litrageTotal reste null si ni saisie ni
+   tank n'existent pour cette campagne (0 L de tank est ambigu -- jamais
+   présumé comme une vraie production nulle) ; brebisTraite, lui, est un
+   comptage toujours défini (0 est une vraie réponse : "aucune brebis
+   contrôlée pour l'instant"). misesBas et moyennePresence restent
+   recalculés depuis les données déjà présentes dans Ovilog
    (misesBasTroupeauCampagne / moyennePresenceMensuelleCampagne) -- jamais
-   ressaisis à la main. Un indicateur reste null tant que la saisie
-   manquante l'empêche de se calculer (jamais une division par une valeur
-   absente présentée comme 0). */
+   ressaisis à la main. */
 function bilanLactationIndicateurs(campagne) {
   const saisie = bilanLactationSaisieCampagne(campagne);
-  const litrageTotal = saisie && typeof saisie.litrageTotal === 'number' ? saisie.litrageTotal : null;
-  const brebisTraite = saisie && typeof saisie.brebisTraite === 'number' ? saisie.brebisTraite : null;
+  const litrageAuto = productionTankCampagne(campagne);
+  const litrageTotal = (saisie && typeof saisie.litrageTotal === 'number') ? saisie.litrageTotal : (litrageAuto > 0 ? litrageAuto : null);
+  const brebisTraite = (saisie && typeof saisie.brebisTraite === 'number') ? saisie.brebisTraite : brebisPasseesTraiteCampagne(campagne);
   const misesBas = misesBasTroupeauCampagne(campagne);
   const moyennePresence = moyennePresenceMensuelleCampagne(campagne);
   const litragePartraite = (litrageTotal !== null && brebisTraite > 0) ? Math.round((litrageTotal / brebisTraite) * 10) / 10 : null;
@@ -15307,7 +15471,7 @@ function buildBilanLactationPdfBytes(campagne) {
     y -= PDF_ROW_HEIGHT;
   });
   y -= 10;
-  pdfWrapLines("Litrage total et brebis passées à la traite : saisie manuelle de l'éleveur (typiquement le récapitulatif SIEOL). Moyenne de présence = moyenne mensuelle de l'effectif sur les 12 mois de la campagne (octobre à septembre), entrées et sorties incluses. Ratio traites / mises bas = brebis passées à la traite ÷ brebis ayant mis bas (donnée reprise du Bilan de reproduction troupeau) — un ratio supérieur à 100 % est possible (des brebis restées vides ou ayant avorté peuvent aussi être traites).", 105)
+  pdfWrapLines("Litrage total et brebis passées à la traite : calculés automatiquement (tank de Production laitière, contrôles laitiers), modifiables à la main si besoin. Moyenne de présence = moyenne mensuelle de l'effectif sur les 12 mois de la campagne (octobre à septembre), entrées et sorties incluses. Ratio traites / mises bas = brebis passées à la traite ÷ brebis ayant mis bas (donnée reprise du Bilan de reproduction troupeau) — un ratio supérieur à 100 % est possible (des brebis restées vides ou ayant avorté peuvent aussi être traites).", 105)
     .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
 
   content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
@@ -15317,6 +15481,65 @@ function buildBilanLactationPdfBytes(campagne) {
 async function exportBilanLactationPdf(campagne) {
   const bytes = buildBilanLactationPdfBytes(campagne);
   const filename = 'bilan-lactation_' + campagneLabel(campagne) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
+/* Export PDF du Bilan économique (chantier "Refonte desktop", étape Bilan
+   de campagne) : mêmes chiffres que le bloc "Bilan financier de la
+   campagne" de Production laitière (bilanCampagneQualite), jamais
+   recalculés -- résumé seul (pas le récapitulatif mensuel détaillé, voir
+   exportQualiteCampagnePdf, qui existe déjà par ailleurs), avec rappel
+   N-1 comme les autres exports de résumé de campagne. */
+function buildBilanEconomiquePdfBytes(campagne) {
+  const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
+  const rightEdge = pageW - PDF_MARGIN;
+  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
+  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const bilan = bilanCampagneQualite(campagne);
+  const bilanN1 = bilanCampagneQualite(campagne - 1);
+  const l = v => v !== null && v !== undefined ? fmtDecimal(v, 0) + ' L' : '—';
+  const e = v => fmtEuro(v);
+
+  let y = pageH - PDF_MARGIN;
+  let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Bilan économique', 'FB', 14);
+  y -= 16;
+  content += pdfTextOp(PDF_MARGIN, y, exploitationNom + ' · Campagne ' + campagneLabel(campagne), 'F1', 9);
+  y -= 12;
+  content += pdfTextOp(PDF_MARGIN, y, 'Édité le ' + aujourdhui, 'F1', 9);
+  y -= 10;
+  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
+  y -= 24;
+
+  const cols = [{ label: '', x: 0 }, { label: 'Campagne ' + campagneLabel(campagne), x: 260 }, { label: 'Campagne ' + campagneLabel(campagne - 1), x: 400 }];
+  cols.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
+  y -= 5;
+  content += pdfLineOp(PDF_MARGIN, y, PDF_MARGIN + 480, y);
+  y -= 16;
+  const rows = [
+    ['Production totale', l(bilan.productionTotaleL), l(bilanN1.productionTotaleL)],
+    ['Prix moyen hors qualité', e(bilan.prixMoyenHorsQualite), e(bilanN1.prixMoyenHorsQualite)],
+    ['Prix moyen avec qualité', e(bilan.prixMoyenAvecQualite), e(bilanN1.prixMoyenAvecQualite)],
+    ['Montant total hors qualité', e(bilan.montantHorsQualite), e(bilanN1.montantHorsQualite)],
+    ['Montant total avec qualité', e(bilan.montantAvecQualite), e(bilanN1.montantAvecQualite)],
+    ['Gain lié à la qualité', bilan.gainQualite !== null ? fmtEuro(bilan.gainQualite, true) : '—', bilanN1.gainQualite !== null ? fmtEuro(bilanN1.gainQualite, true) : '—'],
+    ['Montant total Super A', e(bilan.montantSuperA), e(bilanN1.montantSuperA)],
+    ['Montant total pénalités', bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : fmtEuro(0), bilanN1.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilanN1.montantPenalitesCampagne) : fmtEuro(0)]
+  ];
+  rows.forEach(row => {
+    cols.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], ci === 0 ? 'F1' : 'FB', 9.5); });
+    y -= PDF_ROW_HEIGHT;
+  });
+  y -= 10;
+  pdfWrapLines("Reprise du bilan financier déjà calculé sur Production laitière (tank + prélèvements qualité) -- lecture seule, pour corriger une valeur direction Production laitière.", 105)
+    .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
+
+  content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
+  return buildSinglePagePdfBytes(content, false);
+}
+
+async function exportBilanEconomiquePdf(campagne) {
+  const bytes = buildBilanEconomiquePdfBytes(campagne);
+  const filename = 'bilan-economique_' + campagneLabel(campagne) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
