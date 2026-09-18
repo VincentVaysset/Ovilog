@@ -2880,9 +2880,23 @@ const EPONGE_DELAI_LUTTE_JOURS = 16;
    recalculés ici : ces notions n'existent que pour une brebis (voir
    agnelageCampagneActuelle/estVideDefinitiveCampagne) — passer null/false
    pour une agnelle, qui n'a jamais encore d'agnelage. */
-function codeReproActuel(animal, agnelageCampagne, videDefinitive) {
+// Dernier évènement modesRepro de la campagne en cours dont le lot existe
+// ENCORE (voir btn-del-lot, qui garde volontairement modesRepro d'un membre
+// ayant déjà une mise bas rattachée) -- un lot supprimé ne doit plus
+// "proposer" son mode indéfiniment une fois qu'aucune mise bas ne le
+// justifie plus (ex. mise bas ensuite supprimée elle aussi) : repasse alors
+// à MN, comme si l'animal n'avait jamais été mis en lot cette campagne.
+// N'affecte jamais un évènement déjà concrétisé par une mise bas
+// (agnelage.codeRepro, lu séparément dans codeReproActuel).
+function dernierModeReproValide(animal) {
   const modes = (animal.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut);
-  const dernier = modes.length ? modes[modes.length - 1] : null;
+  for (let i = modes.length - 1; i >= 0; i--) {
+    const m = modes[i];
+    if (!m.lotId || (DB.lots || []).some(l => l.id === m.lotId)) return m;
+  }
+  return null;
+}
+function codeReproActuel(animal, agnelageCampagne, videDefinitive) {
   // agnelageCampagne.codeRepro peut manquer sur un agnelage enregistré avant
   // l'existence de ce module -- une mise bas déjà là reste malgré tout un
   // succès (jamais rétrogradée en "en attente"), MN sert alors de repli
@@ -2890,6 +2904,7 @@ function codeReproActuel(animal, agnelageCampagne, videDefinitive) {
   if (agnelageCampagne) {
     return { code: agnelageCampagne.codeRepro || 'MN', style: 'ok' };
   }
+  const dernier = dernierModeReproValide(animal);
   const code = dernier ? dernier.mode : 'MN';
   return { code, style: videDefinitive ? 'echec' : 'attente' };
 }
@@ -3769,6 +3784,22 @@ btnBack.onclick = () => {
   else if (currentView === 'diag-bluetooth') { btDiagLeaveScreen(); render('parametres'); }
   else if (currentView === 'maj-inventaire') render('inventaire-actifs');
   else if (currentView === 'maj-inventaire-validation') render('maj-inventaire');
+  else if (currentView === 'import-tank-laitier') render('qualite');
+  else if (currentView === 'import-controle-laitier-sieol') render('controle-laitier');
+  else if (currentView === 'import-controle-laitier-modele' || currentView === 'import-nouveaux-animaux' || currentView === 'import-lactation-modele' || currentView === 'confirmation-nouvelle-campagne') render('parametres');
+  // Filet de sécurité (BUG "bouton retour intermittent") : cette chaîne
+  // if/else est maintenue à la main, un écran par écran, et a fini par
+  // désynchroniser de la liste réelle des vues (voir ROOT_VIEWS, qui décide
+  // seule d'afficher la flèche) à mesure que l'appli grandissait -- 4 écrans
+  // (imports Tank laitier/Contrôle laitier SIEOL/Contrôle laitier modèle,
+  // confirmation nouvelle campagne) s'y sont retrouvés sans aucun cas
+  // correspondant, flèche affichée mais clic sans aucun effet, aucune autre
+  // issue pour l'utilisateur sur 3 d'entre eux (pas de bouton "Annuler" en
+  // page). Plutôt que d'attendre le prochain écran oublié, tout cas non
+  // couvert ci-dessus retombe désormais sur l'accueil au lieu de ne rien
+  // faire -- un retour "trop générique" reste toujours préférable à un
+  // bouton mort.
+  else render('home');
 };
 fabAdd.onclick = () => render('add-sheep');
 
@@ -4873,28 +4904,53 @@ function renderBilanCampagne() {
   if (bilanCampagneTab === 'lactation') {
     const select = document.getElementById('bilan-lactation-campagne-select');
     if (select) select.onchange = () => { bilanLactationCampagneAffichee = parseInt(select.value, 10); render('bilan-campagne'); };
-    // Saisie manuelle troupeau (litrage total, brebis passées à la traite) --
-    // voir DB.bilanLactationSaisie/bilanLactationHtml. onchange (au blur),
-    // pas oninput : un re-render à chaque frappe couperait la saisie en
-    // cours, alors que les indicateurs affichés doivent de toute façon se
-    // recalculer entièrement (litrage/brebis traite, ratio, etc.).
-    const saveBilanLactationSaisie = () => {
+    // Saisie manuelle troupeau (litrage total, brebis passées à la traite,
+    // brebis présentes) -- voir DB.bilanLactationSaisie/bilanLactationHtml.
+    // onchange (au blur), pas oninput : un re-render à chaque frappe
+    // couperait la saisie en cours, alors que les indicateurs affichés
+    // doivent de toute façon se recalculer entièrement (litrage/brebis
+    // traite, ratio, etc.). Chaque champ enregistre SEULEMENT sa propre
+    // valeur (jamais les 3 lues et réécrites ensemble) : les 3 inputs
+    // affichent en permanence une valeur (auto ou corrigée), donc relire
+    // les 3 à chaque `change` aurait promu silencieusement en "correction"
+    // la valeur encore auto affichée par les 2 champs non touchés -- exactement
+    // l'écrasement silencieux que ce chantier doit éviter. Vider un champ
+    // revient déjà à supprimer sa correction (voir les boutons "↺ Recalculer
+    // automatiquement" ci-dessous, un raccourci pour le même effet).
+    function saveChampLactation(champ, val) {
       const campagne = bilanLactationCampagneAffichee;
-      const litrageInput = document.getElementById('bilan-lactation-litrage-total');
-      const brebisInput = document.getElementById('bilan-lactation-brebis-traite');
-      const litrageVal = litrageInput && litrageInput.value !== '' ? parseFloat(litrageInput.value) : null;
-      const brebisVal = brebisInput && brebisInput.value !== '' ? parseInt(brebisInput.value, 10) : null;
       let entry = DB.bilanLactationSaisie.find(e => e.campagne === campagne);
       if (!entry) { entry = { campagne }; DB.bilanLactationSaisie.push(entry); }
-      entry.litrageTotal = (litrageVal !== null && !isNaN(litrageVal)) ? litrageVal : null;
-      entry.brebisTraite = (brebisVal !== null && !isNaN(brebisVal)) ? brebisVal : null;
+      entry[champ] = val;
       saveData(DB);
       render('bilan-campagne');
-    };
+    }
     const litrageInput = document.getElementById('bilan-lactation-litrage-total');
-    if (litrageInput) litrageInput.onchange = saveBilanLactationSaisie;
+    if (litrageInput) litrageInput.onchange = () => {
+      const v = litrageInput.value !== '' ? parseFloat(litrageInput.value) : null;
+      saveChampLactation('litrageTotal', (v !== null && !isNaN(v)) ? v : null);
+    };
     const brebisInput = document.getElementById('bilan-lactation-brebis-traite');
-    if (brebisInput) brebisInput.onchange = saveBilanLactationSaisie;
+    if (brebisInput) brebisInput.onchange = () => {
+      const v = brebisInput.value !== '' ? parseInt(brebisInput.value, 10) : null;
+      saveChampLactation('brebisTraite', (v !== null && !isNaN(v)) ? v : null);
+    };
+    const presentesInput = document.getElementById('bilan-lactation-brebis-presentes');
+    if (presentesInput) presentesInput.onchange = () => {
+      const v = presentesInput.value !== '' ? parseFloat(presentesInput.value) : null;
+      saveChampLactation('brebisPresentes', (v !== null && !isNaN(v)) ? v : null);
+    };
+    // Boutons "↺ Recalculer automatiquement" (voir champCorrigeBadgeHtml) :
+    // efface UNIQUEMENT le champ concerné de la saisie manuelle, sans
+    // toucher aux 2 autres -- une correction n'a jamais à être re-saisie
+    // pour en effacer une autre.
+    function effacerChampLactation(champ) { saveChampLactation(champ, null); }
+    const btnResetLitrage = document.getElementById('btn-reset-lactation-litrage');
+    if (btnResetLitrage) btnResetLitrage.onclick = () => effacerChampLactation('litrageTotal');
+    const btnResetBrebisTraite = document.getElementById('btn-reset-lactation-brebis-traite');
+    if (btnResetBrebisTraite) btnResetBrebisTraite.onclick = () => effacerChampLactation('brebisTraite');
+    const btnResetPresentes = document.getElementById('btn-reset-lactation-presentes');
+    if (btnResetPresentes) btnResetPresentes.onclick = () => effacerChampLactation('brebisPresentes');
     const btnExportLactationPdf = document.getElementById('btn-export-bilan-lactation-pdf');
     if (btnExportLactationPdf) btnExportLactationPdf.onclick = () => {
       btnExportLactationPdf.disabled = true;
@@ -4922,12 +4978,19 @@ function renderBilanCampagne() {
       if (chip.classList.contains('chip-empty')) return;
       chip.onclick = () => { bilanEconomiqueMoisAffiche = chip.dataset.mois; render('bilan-campagne'); };
     });
-    const btnExportEcoPdf = document.getElementById('btn-export-bilan-economique-pdf');
-    if (btnExportEcoPdf) btnExportEcoPdf.onclick = () => {
-      btnExportEcoPdf.disabled = true;
-      const original = btnExportEcoPdf.textContent;
-      btnExportEcoPdf.textContent = 'Export en cours...';
-      exportBilanEconomiquePdf(bilanEconomiqueCampagneAffichee).finally(() => { btnExportEcoPdf.disabled = false; btnExportEcoPdf.textContent = original; });
+    // "Rapport de campagne" (chantier "Refonte desktop" ter) : déplacé ici
+    // depuis Production laitière -- même fonction buildRapportCampagnePdfBytes,
+    // jamais un second calcul, seule la source de la campagne change (celle
+    // de Bilan économique plutôt que l'onglet campagne de Production
+    // laitière). L'ancien "Export PDF" propre à cet onglet (buildBilanEconomiquePdfBytes,
+    // un doublon plus pauvre : pas de détail mensuel, pas de détail des
+    // pénalités) a été supprimé au passage.
+    const btnExportRapportCampagne = document.getElementById('btn-export-rapport-campagne-pdf');
+    if (btnExportRapportCampagne) btnExportRapportCampagne.onclick = () => {
+      btnExportRapportCampagne.disabled = true;
+      const original = btnExportRapportCampagne.textContent;
+      btnExportRapportCampagne.textContent = 'Génération...';
+      exportRapportCampagnePdf(bilanEconomiqueCampagneAffichee).finally(() => { btnExportRapportCampagne.disabled = false; btnExportRapportCampagne.textContent = original; });
     };
     // Réglage du coefficient MSU (chantier "Refonte desktop", étape Bilan
     // de campagne) : déplacé ici depuis Production laitière -- c'est un
@@ -5014,16 +5077,29 @@ function renderBilanCampagne() {
 
 /* Sous-onglet "Bilan de lactation" de Bilan de campagne (refonte troupeau) :
    pour une campagne choisie explicitement (jamais présumée = campagne en
-   cours, même exigence qu'avant) -- 2 champs de saisie manuelle éleveur
-   (litrage total, brebis passées à la traite, voir DB.bilanLactationSaisie)
-   plus les indicateurs calculés à partir d'eux et des données déjà
-   présentes dans Ovilog (voir bilanLactationIndicateurs), chacun avec son
-   rappel N-1. Le recoupement vides définitives SIEOL a disparu (voir
+   cours, même exigence qu'avant) -- 3 champs calculés automatiquement par
+   défaut mais modifiables (litrage total, brebis passées à la traite,
+   brebis présentes -- voir DB.bilanLactationSaisie/bilanLactationIndicateurs
+   pour la mécanique complète de correction, jamais écrasée silencieusement)
+   plus les indicateurs dérivés (litrage/brebis traite, litrage/brebis
+   présente, ratio traites/mises bas), chacun avec son rappel N-1. Le
+   recoupement vides définitives SIEOL a disparu (voir
    renderRecoupementSieol, supprimé) et l'import du bilan de lactation
    détaillé (DB.bilanLactation, par brebis) sort de cet onglet -- traité
    dans un chantier séparé, ne reste ici accessible par aucun bouton
    (renderImportBilanLactation garde sa route pour ne pas perdre le code,
    simplement orpheline en attendant ce chantier). */
+// Indicateur "valeur corrigée" + bouton de retour au calcul automatique,
+// partagé par les 3 champs modifiables du Bilan de lactation (litrage
+// total, brebis traites, brebis présentes) -- jamais dupliqué à la main.
+function champCorrigeBadgeHtml(estCorrige, resetBtnId) {
+  if (!estCorrige) return '';
+  return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+    <span class="badge badge-amber">✏️ Valeur corrigée</span>
+    <button type="button" class="btn btn-secondary" id="${resetBtnId}" style="width:auto;padding:2px 8px;font-size:11px;">↺ Recalculer automatiquement</button>
+  </div>`;
+}
+
 function bilanLactationHtml() {
   const campagnes = campagnesDisponiblesSieol();
   if (bilanLactationCampagneAffichee === null || !campagnes.includes(bilanLactationCampagneAffichee)) {
@@ -5038,7 +5114,7 @@ function bilanLactationHtml() {
   const txt = (v, suffix) => v !== null && v !== undefined ? fmtDecimal(v, 1) + (suffix || '') : '—';
 
   return `
-    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan de lactation', "Vue troupeau de la campagne. Litrage total et brebis passées à la traite sont calculés automatiquement (tank de Production laitière, contrôles laitiers) mais restent modifiables si besoin — campagne sélectionnée explicitement, jamais présumée être la campagne en cours d'Ovilog.")}</div>
+    <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Bilan de lactation', "Vue troupeau de la campagne. Litrage total, brebis passées à la traite et brebis présentes sont calculés automatiquement (tank de Production laitière, contrôles laitiers, entrées/sorties) mais restent modifiables si besoin — une correction manuelle est signalée (\"Valeur corrigée\") et n'est jamais écrasée automatiquement, un bouton permet d'y revenir à tout moment. Campagne sélectionnée explicitement, jamais présumée être la campagne en cours d'Ovilog.")}</div>
 
     <div class="card" style="margin-bottom:10px;">
       <label>Campagne consultée</label>
@@ -5050,8 +5126,10 @@ function bilanLactationHtml() {
     <div class="card" style="margin-bottom:10px;">
       <label>Litrage total produit sur la campagne (L)</label>
       <input type="number" step="0.1" id="bilan-lactation-litrage-total" placeholder="ex: 78450" value="${ind.litrageTotal !== null ? ind.litrageTotal : ''}">
+      ${champCorrigeBadgeHtml(ind.litrageTotalCorrige, 'btn-reset-lactation-litrage')}
       <label style="display:block;margin-top:14px;">Brebis passées à la traite</label>
       <input type="number" step="1" id="bilan-lactation-brebis-traite" placeholder="ex: 415" value="${ind.brebisTraite !== null && ind.brebisTraite !== undefined ? ind.brebisTraite : ''}">
+      ${champCorrigeBadgeHtml(ind.brebisTraiteCorrige, 'btn-reset-lactation-brebis-traite')}
       <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Litrage total pré-rempli automatiquement depuis le tank de Production laitière (modifiable si la saisie tank est incomplète). Brebis passées à la traite = toutes celles ayant eu au moins un contrôle laitier cette campagne, calculé automatiquement (modifiable au besoin).</div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Campagne ${campagneLabel(campagne - 1)} (N-1) : ${txt(indN1.litrageTotal, ' L')} · ${indN1.brebisTraite !== null ? indN1.brebisTraite : '—'} brebis</div>
     </div>
@@ -5077,9 +5155,10 @@ function bilanLactationHtml() {
     </div>
 
     <div class="card" style="margin-bottom:10px;">
-      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Moyenne de présence sur la campagne</div>
-      <div style="font-size:20px;font-weight:600;">${txt(ind.moyennePresence, '')}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Moyenne mensuelle de l'effectif sur les 12 mois de la campagne (octobre à septembre), à partir de l'effectif de début de campagne, ajustée chaque mois selon les sorties ET les entrées survenues ce mois-là.</div>
+      <label>Brebis présentes (moyenne de présence sur la campagne)</label>
+      <input type="number" step="0.1" id="bilan-lactation-brebis-presentes" placeholder="ex: 380" value="${ind.moyennePresence !== null && ind.moyennePresence !== undefined ? ind.moyennePresence : ''}">
+      ${champCorrigeBadgeHtml(ind.moyennePresenceCorrige, 'btn-reset-lactation-presentes')}
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Calculé automatiquement : moyenne mensuelle de l'effectif sur les 12 mois de la campagne (octobre à septembre), à partir de l'effectif de début de campagne, ajustée chaque mois selon les sorties ET les entrées survenues ce mois-là. Modifiable si tu as une connaissance terrain plus fine.</div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">N-1 : <b>${txt(indN1.moyennePresence, '')}</b></div>
     </div>
 
@@ -5219,7 +5298,7 @@ function bilanEconomiqueHtml() {
     </div>
 
     <div style="font-size:11px;color:var(--text-muted);margin:4px 2px 10px;">Pour le tank, les prélèvements bruts ou le détail mensuel TB/TP/cellules/MSU, direction Production laitière.</div>
-    <button type="button" class="btn btn-secondary" id="btn-export-bilan-economique-pdf">Export PDF</button>
+    <button type="button" class="btn btn-secondary" id="btn-export-rapport-campagne-pdf">🖨️ Rapport de campagne (PDF)</button>
   `;
 }
 
@@ -6825,7 +6904,7 @@ function renderDetail(id) {
   // tant qu'aucune mise bas n'a de résultat basé dessus (style "ok" = déjà
   // sur l'agnelage, modifiable via "Modifier l'agnelage" à la place) ET qu'un
   // évènement existe réellement (sinon rien à éditer, MN par défaut).
-  const reproEntryActuelle = (sheep.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut).slice(-1)[0] || null;
+  const reproEntryActuelle = dernierModeReproValide(sheep);
   const reproModifiable = codeReproInfo.style !== 'ok' && reproEntryActuelle;
   const reproStatutHtml = `
     <div class="card">
@@ -10185,7 +10264,7 @@ function renderAgnelleDetail(id) {
   // Style d'une agnelle toujours "attente" (jamais "ok", pas encore
   // d'agnelage possible) -- modifiable/supprimable ici dès qu'un évènement
   // existe réellement (voir renderEditRepro).
-  const reproEntryActuelleAg = (ag.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut).slice(-1)[0] || null;
+  const reproEntryActuelleAg = dernierModeReproValide(ag);
 
   // Desktop (chantier "Refonte desktop", mockup validé) : même bandeau
   // d'identité fixe + grille de cartes que la fiche brebis, sans
@@ -11587,8 +11666,7 @@ function renderQualite() {
       <div class="stat-card sc-green"><div class="stat-card-label">Production totale</div><div class="stat-card-value" id="qc-stat-production">—</div><div class="stat-card-sub">tank, toute la campagne</div></div>
     </div>
 
-    <button type="button" class="btn btn-secondary" id="btn-qualite-print" style="margin-bottom:10px;">🖨️ Imprimer le récapitulatif (PDF)</button>
-    <button type="button" class="btn btn-secondary" id="btn-rapport-campagne-print" style="margin-bottom:16px;">🖨️ Rapport de campagne (PDF)</button>
+    <button type="button" class="btn btn-secondary" id="btn-qualite-print" style="margin-bottom:16px;">🖨️ Imprimer le récapitulatif (PDF)</button>
   `;
   app.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${qualiteBodyHtml}</div>` : qualiteBodyHtml;
 
@@ -11911,13 +11989,6 @@ function renderQualite() {
     const original = btn.textContent;
     btn.disabled = true; btn.textContent = 'Génération...';
     Promise.resolve(exportQualiteCampagnePdf(state.campagne)).finally(() => { btn.disabled = false; btn.textContent = original; });
-  };
-
-  document.getElementById('btn-rapport-campagne-print').onclick = () => {
-    const btn = document.getElementById('btn-rapport-campagne-print');
-    const original = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Génération...';
-    Promise.resolve(exportRapportCampagnePdf(state.campagne)).finally(() => { btn.disabled = false; btn.textContent = original; });
   };
 
   renderAll();
@@ -15449,34 +15520,42 @@ function bilanLactationSaisieCampagne(campagne) {
    donnée -- réutilisé à la fois par l'écran (campagne affichée + rappel
    N-1) et les exports PDF/Excel (mêmes chiffres, jamais recalculés
    séparément).
-   litrageTotal/brebisTraite (chantier "Refonte desktop", étape Bilan de
-   campagne) : calculés automatiquement par défaut -- litrageTotal depuis
-   le tank de la campagne (productionTankCampagne, même formule que le
-   Bilan économique/financier de Production laitière) ; brebisTraite
-   depuis les brebis ayant eu au moins un contrôle laitier cette campagne
-   (brebisPasseesTraiteCampagne). Une saisie manuelle explicite de
-   l'éleveur (bilanLactationSaisieCampagne) reste toujours prioritaire sur
-   ces valeurs auto -- les deux champs restent modifiables au cas où
-   l'auto ne correspondrait pas à la réalité (tank pas encore saisi,
-   correction ponctuelle...). litrageTotal reste null si ni saisie ni
-   tank n'existent pour cette campagne (0 L de tank est ambigu -- jamais
-   présumé comme une vraie production nulle) ; brebisTraite, lui, est un
-   comptage toujours défini (0 est une vraie réponse : "aucune brebis
-   contrôlée pour l'instant"). misesBas et moyennePresence restent
-   recalculés depuis les données déjà présentes dans Ovilog
-   (misesBasTroupeauCampagne / moyennePresenceMensuelleCampagne) -- jamais
-   ressaisis à la main. */
+   litrageTotal/brebisTraite/moyennePresence (chantier "Refonte desktop",
+   étape Bilan de campagne, puis étendu à moyennePresence sur retour
+   terrain) : calculés automatiquement par défaut -- litrageTotal depuis le
+   tank de la campagne (productionTankCampagne, même formule que le Bilan
+   économique/financier de Production laitière) ; brebisTraite depuis les
+   brebis ayant eu au moins un contrôle laitier cette campagne
+   (brebisPasseesTraiteCampagne) ; moyennePresence depuis l'effectif mensuel
+   moyen oct-sept (moyennePresenceMensuelleCampagne). Une saisie manuelle
+   explicite de l'éleveur (bilanLactationSaisieCampagne) reste toujours
+   prioritaire sur ces 3 valeurs auto -- jamais écrasée silencieusement par
+   un recalcul ultérieur, et jamais appliquée tant qu'elle n'a pas été
+   explicitement effacée (voir les 3 flags *Corrige, utilisés par
+   bilanLactationHtml pour l'indicateur "valeur corrigée" + le bouton
+   "revenir au calcul automatique"). litrageTotal reste null si ni saisie
+   ni tank n'existent pour cette campagne (0 L de tank est ambigu -- jamais
+   présumé comme une vraie production nulle) ; brebisTraite et
+   moyennePresence sont eux toujours définis (0 est une vraie réponse).
+   litragePartraite/litrageParPresente utilisent les valeurs EFFECTIVES
+   (corrigées si présentes, sinon calculées) au dénominateur -- jamais la
+   valeur auto brute une fois qu'une correction existe. misesBas reste
+   recalculé depuis les données déjà présentes dans Ovilog
+   (misesBasTroupeauCampagne) -- jamais ressaisi à la main. */
 function bilanLactationIndicateurs(campagne) {
   const saisie = bilanLactationSaisieCampagne(campagne);
   const litrageAuto = productionTankCampagne(campagne);
-  const litrageTotal = (saisie && typeof saisie.litrageTotal === 'number') ? saisie.litrageTotal : (litrageAuto > 0 ? litrageAuto : null);
-  const brebisTraite = (saisie && typeof saisie.brebisTraite === 'number') ? saisie.brebisTraite : brebisPasseesTraiteCampagne(campagne);
+  const litrageTotalCorrige = !!(saisie && typeof saisie.litrageTotal === 'number');
+  const litrageTotal = litrageTotalCorrige ? saisie.litrageTotal : (litrageAuto > 0 ? litrageAuto : null);
+  const brebisTraiteCorrige = !!(saisie && typeof saisie.brebisTraite === 'number');
+  const brebisTraite = brebisTraiteCorrige ? saisie.brebisTraite : brebisPasseesTraiteCampagne(campagne);
   const misesBas = misesBasTroupeauCampagne(campagne);
-  const moyennePresence = moyennePresenceMensuelleCampagne(campagne);
+  const moyennePresenceCorrige = !!(saisie && typeof saisie.brebisPresentes === 'number');
+  const moyennePresence = moyennePresenceCorrige ? saisie.brebisPresentes : moyennePresenceMensuelleCampagne(campagne);
   const litragePartraite = (litrageTotal !== null && brebisTraite > 0) ? Math.round((litrageTotal / brebisTraite) * 10) / 10 : null;
   const litrageParPresente = (litrageTotal !== null && moyennePresence > 0) ? Math.round((litrageTotal / moyennePresence) * 10) / 10 : null;
   const ratioTraitesMisesBas = (brebisTraite !== null && misesBas > 0) ? Math.round((brebisTraite / misesBas) * 1000) / 10 : null;
-  return { litrageTotal, brebisTraite, misesBas, moyennePresence, litragePartraite, litrageParPresente, ratioTraitesMisesBas };
+  return { litrageTotal, litrageTotalCorrige, brebisTraite, brebisTraiteCorrige, misesBas, moyennePresence, moyennePresenceCorrige, litragePartraite, litrageParPresente, ratioTraitesMisesBas };
 }
 
 /* Export PDF du Bilan de lactation (refonte troupeau, voir bouton "Export
@@ -15533,65 +15612,6 @@ function buildBilanLactationPdfBytes(campagne) {
 async function exportBilanLactationPdf(campagne) {
   const bytes = buildBilanLactationPdfBytes(campagne);
   const filename = 'bilan-lactation_' + campagneLabel(campagne) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
-  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
-}
-
-/* Export PDF du Bilan économique (chantier "Refonte desktop", étape Bilan
-   de campagne) : mêmes chiffres que le bloc "Bilan financier de la
-   campagne" de Production laitière (bilanCampagneQualite), jamais
-   recalculés -- résumé seul (pas le récapitulatif mensuel détaillé, voir
-   exportQualiteCampagnePdf, qui existe déjà par ailleurs), avec rappel
-   N-1 comme les autres exports de résumé de campagne. */
-function buildBilanEconomiquePdfBytes(campagne) {
-  const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
-  const rightEdge = pageW - PDF_MARGIN;
-  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
-  const bilan = bilanCampagneQualite(campagne);
-  const bilanN1 = bilanCampagneQualite(campagne - 1);
-  const l = v => v !== null && v !== undefined ? fmtDecimal(v, 0) + ' L' : '—';
-  const e = v => fmtEuro(v);
-
-  let y = pageH - PDF_MARGIN;
-  let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Bilan économique', 'FB', 14);
-  y -= 16;
-  content += pdfTextOp(PDF_MARGIN, y, exploitationNom + ' · Campagne ' + campagneLabel(campagne), 'F1', 9);
-  y -= 12;
-  content += pdfTextOp(PDF_MARGIN, y, 'Édité le ' + aujourdhui, 'F1', 9);
-  y -= 10;
-  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-  y -= 24;
-
-  const cols = [{ label: '', x: 0 }, { label: 'Campagne ' + campagneLabel(campagne), x: 260 }, { label: 'Campagne ' + campagneLabel(campagne - 1), x: 400 }];
-  cols.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
-  y -= 5;
-  content += pdfLineOp(PDF_MARGIN, y, PDF_MARGIN + 480, y);
-  y -= 16;
-  const rows = [
-    ['Production totale', l(bilan.productionTotaleL), l(bilanN1.productionTotaleL)],
-    ['Prix moyen hors qualité', e(bilan.prixMoyenHorsQualite), e(bilanN1.prixMoyenHorsQualite)],
-    ['Prix moyen avec qualité', e(bilan.prixMoyenAvecQualite), e(bilanN1.prixMoyenAvecQualite)],
-    ['Montant total hors qualité', e(bilan.montantHorsQualite), e(bilanN1.montantHorsQualite)],
-    ['Montant total avec qualité', e(bilan.montantAvecQualite), e(bilanN1.montantAvecQualite)],
-    ['Gain lié à la qualité', bilan.gainQualite !== null ? fmtEuro(bilan.gainQualite, true) : '—', bilanN1.gainQualite !== null ? fmtEuro(bilanN1.gainQualite, true) : '—'],
-    ['Montant total Super A', e(bilan.montantSuperA), e(bilanN1.montantSuperA)],
-    ['Montant total pénalités', bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : fmtEuro(0), bilanN1.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilanN1.montantPenalitesCampagne) : fmtEuro(0)]
-  ];
-  rows.forEach(row => {
-    cols.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], ci === 0 ? 'F1' : 'FB', 9.5); });
-    y -= PDF_ROW_HEIGHT;
-  });
-  y -= 10;
-  pdfWrapLines("Reprise du bilan financier déjà calculé sur Production laitière (tank + prélèvements qualité) -- lecture seule, pour corriger une valeur direction Production laitière.", 105)
-    .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
-
-  content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
-  return buildSinglePagePdfBytes(content, false);
-}
-
-async function exportBilanEconomiquePdf(campagne) {
-  const bytes = buildBilanEconomiquePdfBytes(campagne);
-  const filename = 'bilan-economique_' + campagneLabel(campagne) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
