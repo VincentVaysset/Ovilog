@@ -6508,12 +6508,13 @@ function renderAgneaux() {
    n'avoir, par exemple, qu'un bilan de lactation importé et aucune mise
    bas/soin/contrôle -- elle doit quand même avoir sa carte). */
 function carriereCampagnesHtml(sources) {
-  const { agnelages, sanitaire, controles, bilanParCampagne } = sources;
+  const { agnelages, sanitaire, controles, bilanParCampagne, classeParCampagne } = sources;
   const campagnes = new Set();
   agnelages.forEach(a => { if (a.campagne != null) campagnes.add(a.campagne); });
   sanitaire.forEach(s => { if (s.campagne != null) campagnes.add(s.campagne); });
   controles.forEach(c => { if (c.campagne != null) campagnes.add(c.campagne); });
   Object.keys(bilanParCampagne).forEach(k => campagnes.add(Number(k)));
+  Object.keys(classeParCampagne).forEach(k => campagnes.add(Number(k)));
   if (campagnes.size === 0) return '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun historique des campagnes précédentes.</div>';
   const keys = Array.from(campagnes).sort((a, b) => b - a);
   const accordionSection = (campagne, section, icon, color, label, rows, emptyLabel) => {
@@ -6532,16 +6533,22 @@ function carriereCampagnesHtml(sources) {
   };
   return keys.map(campagne => {
     const bilan = bilanParCampagne[String(campagne)];
-    const bilanHtml = !bilan ? '' : `
+    // Classe archivée à l'import CLS/CLO (DB.lactationModele) -- jamais
+    // recalculée localement, jamais lue depuis DB.bilanLactation (collection
+    // SIEOL orpheline, plus aucun écran d'import accessible -- voir "Bug
+    // classe lactation Carrière/Index"). Litrage/jours de traite restent
+    // inchangés, toujours lus depuis bilan (DB.bilanLactation) comme avant.
+    const classe = classeParCampagne[String(campagne)];
+    const bilanHtml = (!bilan && classe == null) ? '' : `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
       ${iconCircle(ICON_LAIT, 'blue', 'sm')}
       <div>
         <div style="font-size:11.5px;color:var(--text-muted);">Bilan de lactation</div>
-        <div style="font-weight:700;font-size:19px;">${bilan.lactTotale != null ? fmtDecimal(bilan.lactTotale, 1) + ' L' : '—'}</div>
+        <div style="font-weight:700;font-size:19px;">${bilan && bilan.lactTotale != null ? fmtDecimal(bilan.lactTotale, 1) + ' L' : '—'}</div>
         <div style="margin-top:4px;">
-          ${bilan.dureeTraite != null ? `<span class="badge badge-muted" style="margin-right:6px;">${bilan.dureeTraite} j de traite</span>` : ''}
-          ${bilan.classeParQuart != null ? `<span class="badge badge-blue" style="margin-right:6px;">Classe ${bilan.classeParQuart}</span>` : ''}
-          ${bilan.dateMiseBas ? `<span class="badge badge-muted">Mise bas le ${formatDateFr(bilan.dateMiseBas)}</span>` : ''}
+          ${bilan && bilan.dureeTraite != null ? `<span class="badge badge-muted" style="margin-right:6px;">${bilan.dureeTraite} j de traite</span>` : ''}
+          ${classe != null ? `<span class="badge badge-blue" style="margin-right:6px;">Classe ${classe}</span>` : ''}
+          ${bilan && bilan.dateMiseBas ? `<span class="badge badge-muted">Mise bas le ${formatDateFr(bilan.dateMiseBas)}</span>` : ''}
         </div>
       </div>
     </div>
@@ -6784,13 +6791,34 @@ function renderDetail(id) {
   `;
   // Bilan de lactation SIEOL/UNOTEC (voir importBilanLactation) : toujours
   // une campagne déjà close, jamais la campagne en cours -- alimente
-  // directement le bloc "Bilan de lactation" en tête de chaque carte de
-  // campagne dans Carrière (voir carriereCampagnesHtml).
+  // désormais uniquement le litrage/jours de traite du bloc "Bilan de
+  // lactation" en tête de chaque carte de campagne dans Carrière (voir
+  // carriereCampagnesHtml) -- collection orpheline (plus aucun écran
+  // d'import accessible), gardée telle quelle pour ces 2 champs seulement,
+  // jamais pour la classe (voir classeParCampagne ci-dessous).
   const bilanLactationSheep = (DB.bilanLactation || [])
     .filter(l => cleanEid(l.eid) === cleanEid(sheep.eid));
   // Une seule entrée de bilan par brebis+campagne (voir importBilanLactation).
   const bilanParCampagne = {};
   bilanLactationSheep.forEach(l => { if (l.campagne != null) bilanParCampagne[String(l.campagne)] = l; });
+  // Type de suivi de l'exploitation (cls/clo) -- détermine le champ qui
+  // porte la "classe" dans DB.lactationModele (voir
+  // libelleColLactationModele) ; utilisé à la fois par Carrière (classe par
+  // campagne passée, ci-dessous) et par l'onglet Index (campagne en cours +
+  // repli sur la plus récente archivée, voir indexTabHtml plus bas).
+  const typeSuiviFiche = DB.exploitation.typeSuivi;
+  // Classe de lactation archivée à chaque import CLS/CLO (voir
+  // renderImportLactationModele, upsert par eid+campagne) : SEULE source de
+  // la classe affichée en Carrière -- jamais recalculée, jamais lue depuis
+  // DB.bilanLactation (voir "Bug classe lactation Carrière/Index"). Scopée
+  // aux campagnes déjà closes, comme bilanParCampagne ci-dessus -- la
+  // campagne en cours reste l'affaire de l'onglet Index.
+  const classeParCampagne = {};
+  (DB.lactationModele || []).forEach(l => {
+    if (cleanEid(l.eid) !== cleanEid(sheep.eid) || l.campagne == null || l.campagne >= DB.campagneDebut) return;
+    const val = typeSuiviFiche === 'clo' ? l.indexProduction : l.classeParQuart;
+    if (val != null) classeParCampagne[String(l.campagne)] = val;
+  });
   const agnelagesPassees = agnelagesIndexes.filter(a => a.campagne != null && a.campagne < DB.campagneDebut);
   const sanitairePassees = sanitaireIndexes.filter(s => s.campagne != null && s.campagne < DB.campagneDebut);
   const controlesPassees = controleIndexes.filter(c => c.campagne != null && c.campagne < DB.campagneDebut);
@@ -6798,7 +6826,8 @@ function renderDetail(id) {
     agnelages: agnelagesPassees,
     sanitaire: sanitairePassees,
     controles: controlesPassees,
-    bilanParCampagne
+    bilanParCampagne,
+    classeParCampagne
   });
 
   const statutBadge = (sheep.statut && sheep.statut !== 'active')
@@ -7020,23 +7049,38 @@ function renderDetail(id) {
   // N'a de sens que pour un élevage suivi CLS ou CLO -- voir
   // ficheBrebisTabsHtml pour la désactivation de l'onglet Index lui-même
   // quand ce n'est pas le cas.
-  const typeSuiviFiche = DB.exploitation.typeSuivi;
   const indexDisponible = typeSuiviFiche === 'cls' || typeSuiviFiche === 'clo';
   const libColFiche = libelleColLactationModele(typeSuiviFiche);
   const lactationCourante = lactationModeleExistant(sheep.eid, DB.campagneDebut);
+  // Repli sur la classe archivée la plus récente (DB.lactationModele) quand
+  // la campagne en cours n'a pas encore été importée -- même logique que la
+  // dernière ligne de Carrière (max des campagnes archivées pour cette
+  // brebis). Une brebis jamais importée (tableau vide) ne doit jamais
+  // planter : Math.max(...[]) vaudrait -Infinity, d'où la garde de longueur.
+  const campagnesArchiveesEid = (DB.lactationModele || [])
+    .filter(l => cleanEid(l.eid) === cleanEid(sheep.eid) && l.campagne != null)
+    .map(l => l.campagne);
+  const campagneRepli = (!lactationCourante && campagnesArchiveesEid.length > 0) ? Math.max(...campagnesArchiveesEid) : null;
+  const lactationAffichee = lactationCourante || (campagneRepli != null ? lactationModeleExistant(sheep.eid, campagneRepli) : null);
+  // Libellé dynamique quand on affiche une campagne passée en repli -- même
+  // convention "campagne + 1" que Carrière/Accueil (DB.campagneDebut stocke
+  // l'année de début, jamais l'année affichée telle quelle), pour ne pas
+  // laisser croire que ces chiffres sont ceux de la campagne en cours.
+  const titreIndex = lactationCourante ? 'Index · campagne en cours'
+    : (campagneRepli != null ? `Index · campagne ${campagneRepli + 1}` : 'Index · campagne en cours');
   const indexTabHtml = `
     <div class="card">
-      ${sectionHeaderHtml(ICON_JOURNAL, 'gray', 'Index · campagne en cours')}
-      ${!lactationCourante ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune donnée de lactation importée pour cette campagne.</div>' : (typeSuiviFiche === 'clo' ? `
+      ${sectionHeaderHtml(ICON_JOURNAL, 'gray', titreIndex)}
+      ${!lactationAffichee ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune donnée de lactation importée pour cette campagne.</div>' : (typeSuiviFiche === 'clo' ? `
         <div class="grid2">
-          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col4}</div><div style="font-weight:600;">${lactationCourante.indexIsol != null ? lactationCourante.indexIsol : '—'}</div></div>
-          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col5}</div><div style="font-weight:600;">${lactationCourante.indexProduction != null ? lactationCourante.indexProduction : '—'}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col4}</div><div style="font-weight:600;">${lactationAffichee.indexIsol != null ? lactationAffichee.indexIsol : '—'}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col5}</div><div style="font-weight:600;">${lactationAffichee.indexProduction != null ? lactationAffichee.indexProduction : '—'}</div></div>
         </div>
       ` : `
         <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
-          <div><div style="font-size:12px;color:var(--text-muted);">Lactation moyenne</div><div style="font-weight:600;">${lactationCourante.lactationMoyenne != null ? fmtDecimal(lactationCourante.lactationMoyenne, 1) : '—'}</div></div>
-          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col5}</div><div style="font-weight:600;">${lactationCourante.classeParQuart != null ? lactationCourante.classeParQuart : '—'}</div></div>
-          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col4}</div><div style="font-weight:600;">${lactationCourante.indiceCumule != null ? lactationCourante.indiceCumule : '—'}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">Lactation moyenne</div><div style="font-weight:600;">${lactationAffichee.lactationMoyenne != null ? fmtDecimal(lactationAffichee.lactationMoyenne, 1) : '—'}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col5}</div><div style="font-weight:600;">${lactationAffichee.classeParQuart != null ? lactationAffichee.classeParQuart : '—'}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col4}</div><div style="font-weight:600;">${lactationAffichee.indiceCumule != null ? lactationAffichee.indiceCumule : '—'}</div></div>
         </div>
       `)}
     </div>
