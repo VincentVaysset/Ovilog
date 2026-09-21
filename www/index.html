@@ -2713,6 +2713,18 @@ function recalculerStatutBelier(belier) {
   else if (last && last.type === 'Autoconsommation') belier.statut = 'autoconsommé';
   else belier.statut = 'actif';
 }
+// Même principe que recalculerStatutBrebis/Belier ci-dessus, mais pour
+// lamb.statutFinal ('vendu'/'mort'/absent) -- nécessaire depuis que le
+// mouvement individuel générique (chantier "Mouvements + harmonisation
+// des fiches", 6a) rend l'historique de mouvements de l'agneau éditable/
+// supprimable par swipe : sans recalcul, supprimer ou modifier le
+// mouvement de sortie laissait statutFinal figé sur son ancienne valeur.
+function recalculerStatutFinalAgneau(lamb) {
+  const last = dernierMouvementParDate((lamb.mouvements || []).filter(m => m.type === 'Vendu' || m.type === 'Mort'));
+  if (last && last.type === 'Vendu') lamb.statutFinal = 'vendu';
+  else if (last && last.type === 'Mort') lamb.statutFinal = 'mort';
+  else delete lamb.statutFinal;
+}
 
 /* Chiffres-clé de la campagne en cours, partagés par l'écran d'accueil et
    le Bilan de campagne :
@@ -3898,9 +3910,9 @@ btnBack.onclick = () => {
   else if (currentView === 'add-sheep') render('list');
   else if (currentView === 'add-agnelle') { editingAgnelleId = null; render(addAgnelleOrigin); }
   else if (currentView === 'agnelle-detail') render(agnelleDetailOrigin);
-  else if (currentView === 'add-sanitaire-agnelle' || currentView === 'add-note-agnelle') { editAgnelleContext = null; render('agnelle-detail', currentAgnelleId); }
+  else if (currentView === 'add-sanitaire-agnelle' || currentView === 'add-note-agnelle' || currentView === 'add-mouvement-agnelle') { editAgnelleContext = null; render('agnelle-detail', currentAgnelleId); }
   else if (currentView === 'agneau-detail') render(agneauDetailOrigin);
-  else if (currentView === 'add-sanitaire-agneau' || currentView === 'add-note-agneau') { editAgneauContext = null; render('agneau-detail', currentAgneauEid); }
+  else if (currentView === 'add-sanitaire-agneau' || currentView === 'add-note-agneau' || currentView === 'add-mouvement-agneau') { editAgneauContext = null; render('agneau-detail', currentAgneauEid); }
   else if (currentView === 'add-lot' || currentView === 'add-lot-reforme' || currentView === 'add-lot-repro' || currentView === 'edit-lot') render('lots');
   else if (currentView === 'edit-repro') {
     if (editReproTarget && editReproTarget.kind === 'agnelle') { currentAgnelleId = editReproTarget.id; render('agnelle-detail'); }
@@ -4028,7 +4040,7 @@ function deleteAgnelleItem(kind, idx) {
 }
 function editAgnelleItem(kind, idx) {
   editAgnelleContext = { kind, idx };
-  render(kind === 'sanitaire' ? 'add-sanitaire-agnelle' : 'add-note-agnelle');
+  render(kind === 'sanitaire' ? 'add-sanitaire-agnelle' : kind === 'mouvements' ? 'add-mouvement-agnelle' : 'add-note-agnelle');
 }
 
 function deleteAgneauItem(kind, idx) {
@@ -4037,12 +4049,18 @@ function deleteAgneauItem(kind, idx) {
   if (!lamb) return;
   lamb[kind] = lamb[kind] || [];
   lamb[kind].splice(idx, 1);
+  // Sans ce recalcul, supprimer le mouvement de sortie (Vendu/Mort) laissait
+  // lamb.statutFinal figé sur 'vendu'/'mort' malgré sa disparition de
+  // l'historique -- voir recalculerStatutFinalAgneau (même principe que
+  // recalculerStatutBrebis/Belier, chantier "Mouvements + harmonisation
+  // des fiches").
+  if (kind === 'mouvements') recalculerStatutFinalAgneau(lamb);
   saveData(DB);
   render('agneau-detail');
 }
 function editAgneauItem(kind, idx) {
   editAgneauContext = { kind, idx };
-  render(kind === 'sanitaire' ? 'add-sanitaire-agneau' : 'add-note-agneau');
+  render(kind === 'sanitaire' ? 'add-sanitaire-agneau' : kind === 'mouvements' ? 'add-mouvement-agneau' : 'add-note-agneau');
 }
 
 function activateSwipes(container) {
@@ -4141,9 +4159,11 @@ function render(view, sheepId) {
     else if (view === 'agnelle-detail') renderAgnelleDetail(currentAgnelleId);
     else if (view === 'add-sanitaire-agnelle') renderAddSanitaireAgnelle();
     else if (view === 'add-note-agnelle') renderAddNoteAgnelle();
+    else if (view === 'add-mouvement-agnelle') renderAddMouvementAgnelle();
     else if (view === 'agneau-detail') renderAgneauDetail();
     else if (view === 'add-sanitaire-agneau') renderAddSanitaireAgneau();
     else if (view === 'add-note-agneau') renderAddNoteAgneau();
+    else if (view === 'add-mouvement-agneau') renderAddMouvementAgneau();
     else if (view === 'beliers') renderBeliers();
     else if (view === 'add-belier') renderAddBelier();
     else if (view === 'belier-detail') renderBelierDetail(currentBelierId);
@@ -10027,194 +10047,51 @@ function renderAddMouvement(sheepId) {
   const editing = editContext && editContext.kind === 'mouvements';
   const existing = editing ? sheep.mouvements[editContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier le mouvement' : 'Nouveau mouvement';
-  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  const cfg = CATEGORIE_ANIMAL_CONFIG.brebis;
 
-  app.innerHTML = `
-    <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis n°${numeroVisuel(sheep.eid)}</div>
+  app.innerHTML = `<div class="card">${mouvementFormHtml('Brebis n°' + numeroVisuel(sheep.eid), cfg.typeSortie, existing)}</div>`;
 
-      <label>Type de mouvement</label>
-      <div class="grid2" style="margin-bottom:10px;">
-        ${CATEGORIE_ANIMAL_CONFIG.brebis.typeSortie.map((val, i) => `<button type="button" class="opt-btn type-opt coral" data-val="${val}"${i === 2 ? ' style="grid-column:span 2;"' : ''}>${val}</button>`).join('')}
-      </div>
-
-      <div id="cause-block" class="hidden" style="margin-bottom:14px;">
-        <label>Cause</label>
-        <div class="chip-list" id="cause-list"></div>
-        <div class="row">
-          <input type="text" id="new-cause" placeholder="Ajouter une nouvelle cause...">
-          <button type="button" class="btn btn-secondary" id="add-cause" style="width:auto;padding:0 16px;">+</button>
-        </div>
-      </div>
-
-      <div id="acheteur-block" class="hidden" style="margin-bottom:14px;">
-        <label>Acheteur</label>
-        <div class="chip-list" id="acheteur-list"></div>
-        <div class="row">
-          <input type="text" id="new-acheteur" placeholder="Ajouter un nouvel acheteur...">
-          <button type="button" class="btn btn-secondary" id="add-acheteur" style="width:auto;padding:0 16px;">+</button>
-        </div>
-      </div>
-
-      <label>Date</label>
-      <input type="date" id="f-date" value="${today}">
-
-      <div id="err" class="error-box hidden"></div>
-      <button class="btn btn-primary" id="btn-save-mouvement">${editing ? 'Enregistrer les modifications' : 'Enregistrer le mouvement'}</button>
-    </div>
-  `;
-
-  let type = null, cause = null, acheteur = null;
-
-  function renderCauseChips() {
-    const list = document.getElementById('cause-list');
-    list.innerHTML = '';
-    if (DB.causesMortalite.length === 0) {
-      list.innerHTML = "<div style=\"font-size:13px;color:var(--text-muted);\">Aucune cause enregistrée pour l'instant — ajoute-en une ci-dessous.</div>";
-    }
-    DB.causesMortalite.forEach(val => {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip' + (cause === val ? ' selected' : '');
-      chip.textContent = val;
-      chip.onclick = () => {
-        cause = (cause === val) ? null : val;
-        renderCauseChips();
-        document.getElementById('err').classList.add('hidden');
-      };
-      list.appendChild(chip);
-    });
-  }
-
-  function renderAcheteurChips() {
-    const list = document.getElementById('acheteur-list');
-    list.innerHTML = '';
-    if (DB.acheteurs.length === 0) {
-      list.innerHTML = "<div style=\"font-size:13px;color:var(--text-muted);\">Aucun acheteur enregistré pour l'instant — ajoute-en un ci-dessous.</div>";
-    }
-    DB.acheteurs.forEach(val => {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip' + (acheteur === val ? ' selected' : '');
-      chip.textContent = val;
-      chip.onclick = () => {
-        acheteur = (acheteur === val) ? null : val;
-        renderAcheteurChips();
-        document.getElementById('err').classList.add('hidden');
-      };
-      list.appendChild(chip);
-    });
-  }
-  renderCauseChips();
-  renderAcheteurChips();
-
-  document.querySelectorAll('.type-opt').forEach(btn => {
-    btn.onclick = () => {
-      type = btn.dataset.val;
-      cause = null; acheteur = null;
-      document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      document.getElementById('cause-block').classList.toggle('hidden', MOTIFS_VENTE.includes(type));
-      document.getElementById('acheteur-block').classList.toggle('hidden', !MOTIFS_VENTE.includes(type));
-      renderCauseChips();
-      renderAcheteurChips();
-      document.getElementById('err').classList.add('hidden');
-    };
-  });
-
-  document.getElementById('add-cause').onclick = () => {
-    const input = document.getElementById('new-cause');
-    const val = input.value.trim();
-    if (!val) return;
-    if (!DB.causesMortalite.includes(val)) DB.causesMortalite.push(val);
-    saveData(DB);
-    input.value = '';
-    cause = val;
-    renderCauseChips();
-  };
-  document.getElementById('add-acheteur').onclick = () => {
-    const input = document.getElementById('new-acheteur');
-    const val = input.value.trim();
-    if (!val) return;
-    if (!DB.acheteurs.includes(val)) DB.acheteurs.push(val);
-    saveData(DB);
-    input.value = '';
-    acheteur = val;
-    renderAcheteurChips();
-  };
-
-  document.getElementById('btn-save-mouvement').onclick = () => {
-    const err = document.getElementById('err');
-    if (!type) {
-      err.textContent = "Choisis un type de mouvement.";
-      err.classList.remove('hidden');
-      return;
-    }
-    if (MOTIFS_VENTE.includes(type) && !acheteur) {
-      err.textContent = "Sélectionne ou ajoute un acheteur.";
-      err.classList.remove('hidden');
-      return;
-    }
-    const dateMouvement = document.getElementById('f-date').value;
+  wireMouvementForm({
+    typeSortie: cfg.typeSortie,
+    motifsVente: cfg.motifsVente,
+    existing,
     // Cohérence chronologique : une Sortie ne peut pas précéder l'Entrée de
     // l'animal -- ni contrôle bloquant ni message clair n'existaient avant
     // ce chantier (voir demande "Autoriser Entrée + Sortie dans la même
     // campagne"), l'erreur passait alors totalement inaperçue.
-    const dateEntreeSheep = premierMouvementDate(editing ? sheep.mouvements.filter((m, i) => i !== editContext.idx) : sheep.mouvements, ['Entrée']);
-    if (dateEntreeSheep && dateMouvement < dateEntreeSheep) {
-      err.textContent = "La date de sortie (" + formatDateFr(dateMouvement) + ") ne peut pas être antérieure à la date d'entrée de la brebis (" + formatDateFr(dateEntreeSheep) + ").";
-      err.classList.remove('hidden');
-      return;
-    }
-    err.classList.add('hidden');
-    const mouvement = {
-      type: type,
-      cause: MOTIFS_VENTE.includes(type) ? null : cause,
-      acheteur: acheteur,
-      date: dateMouvement
-    };
-    sheep.mouvements = sheep.mouvements || [];
-    const statutAvant = sheep.statut || 'active';
-    const ancienMouvement = editing ? sheep.mouvements[editContext.idx] : null;
-    // Un mouvement issu d'une sortie groupée (Mouvement collectif, ou "Mise à
-    // jour inventaire") porte un collectifId qui le rattache à
-    // DB.mouvementsCollectifs -- sans le reporter ici, corriger juste la
-    // cause ou la date d'UNE brebis du lot la faisait disparaître de ce
-    // lot (retrouvable/annulable en masse) sans que rien ne le signale,
-    // cassant sa traçabilité par rapport aux autres membres du même lot.
-    if (ancienMouvement && ancienMouvement.collectifId) mouvement.collectifId = ancienMouvement.collectifId;
-    if (editing) sheep.mouvements[editContext.idx] = mouvement;
-    else sheep.mouvements.push(mouvement);
-    recalculerStatutBrebis(sheep);
-    // Confirm() ciblé : uniquement si MODIFIER un mouvement existant change
-    // réellement le statut qui en découle (ex: date corrigée qui fait
-    // qu'une autre sortie devient la plus récente, type changé) -- jamais à
-    // l'ajout d'un nouveau mouvement, ni sur une simple correction de cause
-    // ou d'acheteur qui ne change rien au statut.
-    if (editing && sheep.statut !== statutAvant) {
-      if (!confirm('Modifier ce mouvement va faire passer le statut de la brebis n°' + numeroVisuel(sheep.eid) + ' de "' + statutAvant + '" à "' + sheep.statut + '". Confirmer ?')) {
-        sheep.mouvements[editContext.idx] = ancienMouvement;
-        sheep.statut = statutAvant;
-        return;
+    dateEntreeRef: premierMouvementDate(editing ? sheep.mouvements.filter((m, i) => i !== editContext.idx) : sheep.mouvements, ['Entrée']),
+    erreurDateAnterieure: (dateMouvement, dateEntreeSheep) => "La date de sortie (" + formatDateFr(dateMouvement) + ") ne peut pas être antérieure à la date d'entrée de la brebis (" + formatDateFr(dateEntreeSheep) + ").",
+    onSave: (mouvement) => {
+      sheep.mouvements = sheep.mouvements || [];
+      const statutAvant = sheep.statut || 'active';
+      const ancienMouvement = editing ? sheep.mouvements[editContext.idx] : null;
+      // Un mouvement issu d'une sortie groupée (Mouvement collectif, ou "Mise à
+      // jour inventaire") porte un collectifId qui le rattache à
+      // DB.mouvementsCollectifs -- sans le reporter ici, corriger juste la
+      // cause ou la date d'UNE brebis du lot la faisait disparaître de ce
+      // lot (retrouvable/annulable en masse) sans que rien ne le signale,
+      // cassant sa traçabilité par rapport aux autres membres du même lot.
+      if (ancienMouvement && ancienMouvement.collectifId) mouvement.collectifId = ancienMouvement.collectifId;
+      if (editing) sheep.mouvements[editContext.idx] = mouvement;
+      else sheep.mouvements.push(mouvement);
+      recalculerStatutBrebis(sheep);
+      // Confirm() ciblé : uniquement si MODIFIER un mouvement existant change
+      // réellement le statut qui en découle (ex: date corrigée qui fait
+      // qu'une autre sortie devient la plus récente, type changé) -- jamais à
+      // l'ajout d'un nouveau mouvement, ni sur une simple correction de cause
+      // ou d'acheteur qui ne change rien au statut.
+      if (editing && sheep.statut !== statutAvant) {
+        if (!confirm('Modifier ce mouvement va faire passer le statut de la brebis n°' + numeroVisuel(sheep.eid) + ' de "' + statutAvant + '" à "' + sheep.statut + '". Confirmer ?')) {
+          sheep.mouvements[editContext.idx] = ancienMouvement;
+          sheep.statut = statutAvant;
+          return;
+        }
       }
+      editContext = null;
+      saveData(DB);
+      render('detail', sheep.id);
     }
-    editContext = null;
-    saveData(DB);
-    render('detail', sheep.id);
-  };
-
-  if (existing) {
-    const typeBtn = [...document.querySelectorAll('.type-opt')].find(b => b.dataset.val === existing.type);
-    if (typeBtn) typeBtn.click();
-    if (existing.cause) {
-      const chip = [...document.querySelectorAll('#cause-list .chip')].find(c => c.textContent === existing.cause);
-      if (chip) chip.click();
-    }
-    if (existing.acheteur) {
-      const chip = [...document.querySelectorAll('#acheteur-list .chip')].find(c => c.textContent === existing.acheteur);
-      if (chip) chip.click();
-    }
-  }
+  });
 }
 
 /* ---------- Inventaire agnelles ---------- */
@@ -10777,15 +10654,18 @@ function renderAgnelleDetail(id) {
     </div>
   `).join('');
 
-  const mouvements = (ag.mouvements || []).slice().reverse();
+  const mouvements = (ag.mouvements || []).map((m, i) => ({ ...m, idx: i })).reverse();
   const mouvementHtml = mouvements.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun mouvement enregistré.</div>' : mouvements.map(m => `
-    <div class="history-item">
-      ${iconCircle(ICON_MOUVEMENT, 'coral', 'sm')}
-      <div class="content">
-        <div style="font-weight:600;">${m.type}</div>
-        ${m.cause ? `<div style="margin-top:5px;"><span class="badge badge-muted">${m.cause}</span></div>` : ''}
-        ${m.acheteur ? `<div style="font-size:12.5px;margin-top:4px;">Acheteur : <strong>${m.acheteur}</strong></div>` : ''}
-        <div class="date" style="margin-top:4px;">${formatDateFr(m.date)}</div>
+    <div class="swipe-wrap" data-kind="agnelle-mouvements" data-idx="${m.idx}">
+      <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
+      <div class="swipe-fg history-item">
+        ${iconCircle(ICON_MOUVEMENT, 'coral', 'sm')}
+        <div class="content">
+          <div style="font-weight:600;">${m.type}</div>
+          ${m.cause ? `<div style="margin-top:5px;"><span class="badge badge-muted">${m.cause}</span></div>` : ''}
+          ${m.acheteur ? `<div style="font-size:12.5px;margin-top:4px;">Acheteur : <strong>${m.acheteur}</strong></div>` : ''}
+          <div class="date" style="margin-top:4px;">${formatDateFr(m.date)}</div>
+        </div>
       </div>
     </div>
   `).join('');
@@ -10872,8 +10752,10 @@ function renderAgnelleDetail(id) {
     </div>
   `;
   const mouvTabHtml = `
+    <button class="btn btn-primary" id="btn-add-mouvement-agnelle" style="background:var(--coral-fg);margin-bottom:16px;">+ Mouvement</button>
     <div class="card">
       ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
+      <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${mouvementHtml}
     </div>
   `;
@@ -10904,6 +10786,8 @@ function renderAgnelleDetail(id) {
   if (btnAddSanitaireAgnelle) btnAddSanitaireAgnelle.onclick = () => { editAgnelleContext = null; render('add-sanitaire-agnelle'); };
   const btnAddNoteAgnelle = document.getElementById('btn-add-note-agnelle');
   if (btnAddNoteAgnelle) btnAddNoteAgnelle.onclick = () => { editAgnelleContext = null; render('add-note-agnelle'); };
+  const btnAddMouvementAgnelle = document.getElementById('btn-add-mouvement-agnelle');
+  if (btnAddMouvementAgnelle) btnAddMouvementAgnelle.onclick = () => { editAgnelleContext = null; render('add-mouvement-agnelle'); };
 
   const btnEditReproTagAg = document.getElementById('btn-edit-repro-tag-ag');
   if (btnEditReproTagAg) btnEditReproTagAg.onclick = () => { editReproTarget = { kind: 'agnelle', id: ag.id }; render('edit-repro'); };
@@ -10943,6 +10827,57 @@ function renderAgnelleDetail(id) {
     saveData(DB);
     render(agnelleDetailOrigin);
   };
+}
+
+/* ---------- Mouvement individuel agnelle (chantier "Mouvements +
+   harmonisation des fiches", 6a) ----------
+   Même écran générique que brebis/bélier (voir mouvementFormHtml/
+   wireMouvementForm), purement ADDITIF par rapport à "Vendre" (bouton
+   existant de l'onglet Identité, voir showVendreAgnelleModal, laissé
+   inchangé) : accessible depuis l'onglet Mouvements, il couvre les 5
+   motifs de typeSortie (pas seulement Vente). Comme pour une agnelle
+   TOUT motif de typeSortie est une sortie du roster de renouvellement
+   (voir CATEGORIE_ANIMAL_CONFIG.agnelles), une NOUVELLE saisie réutilise
+   directement cfg.applySortie -- même traitement que Mouvement collectif
+   pour cette catégorie (archive + retire de DB.agnelles, sans toucher
+   lamb.statutFinal, qui reste une particularité du bouton "Vendre" externe
+   à ce chantier). Modifier un mouvement existant (forcément 'Naissance'/
+   'Entrée', les sorties ayant déjà fait disparaître la fiche) ne
+   déclenche jamais cet archivage : simple mise à jour en place, comme
+   pour brebis/bélier. */
+function renderAddMouvementAgnelle() {
+  const ag = DB.agnelles.find(a => a.id === currentAgnelleId);
+  const editing = editAgnelleContext && editAgnelleContext.kind === 'mouvements';
+  const existing = editing ? ag.mouvements[editAgnelleContext.idx] : null;
+  pageTitle.textContent = editing ? 'Modifier le mouvement' : 'Nouveau mouvement';
+  const cfg = CATEGORIE_ANIMAL_CONFIG.agnelles;
+
+  app.innerHTML = `<div class="card">${mouvementFormHtml('Agnelle n°' + numeroVisuel(ag.eid), cfg.typeSortie, existing)}</div>`;
+
+  wireMouvementForm({
+    typeSortie: cfg.typeSortie,
+    motifsVente: cfg.motifsVente,
+    existing,
+    // Une agnelle gardée porte 'Naissance' ET 'Entrée' (tri), une achetée
+    // seulement 'Entrée' (voir garderAgnelle/renderAddAgnelle) -- voir les
+    // deux types pour couvrir les deux origines.
+    dateEntreeRef: premierMouvementDate(editing ? ag.mouvements.filter((m, i) => i !== editAgnelleContext.idx) : ag.mouvements, ['Naissance', 'Entrée']),
+    erreurDateAnterieure: (dateMouvement, dateEntree) => "La date de sortie (" + formatDateFr(dateMouvement) + ") ne peut pas être antérieure à la date d'entrée de l'agnelle (" + formatDateFr(dateEntree) + ").",
+    onSave: (mouvement) => {
+      if (!editing) {
+        if (!confirm('Confirmer ce mouvement pour la n°' + numeroVisuel(ag.eid) + ' ? Elle sortira du roster de renouvellement. Cette action est irréversible.')) return;
+        cfg.applySortie(ag, mouvement.type, mouvement.cause, mouvement.acheteur, mouvement.date, null);
+        editAgnelleContext = null;
+        saveData(DB);
+        render(agnelleDetailOrigin);
+        return;
+      }
+      ag.mouvements[editAgnelleContext.idx] = mouvement;
+      editAgnelleContext = null;
+      saveData(DB);
+      render('agnelle-detail');
+    }
+  });
 }
 
 /* ---------- Carnet sanitaire agnelle (chantier "Fiches individuelles
@@ -11265,15 +11200,18 @@ function renderAgneauDetail() {
     </div>
   `).join('');
 
-  const mouvements = (lamb.mouvements || []).slice().reverse();
+  const mouvements = (lamb.mouvements || []).map((m, i) => ({ ...m, idx: i })).reverse();
   const mouvementHtml = mouvements.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun mouvement enregistré.</div>' : mouvements.map(m => `
-    <div class="history-item">
-      ${iconCircle(ICON_MOUVEMENT, 'coral', 'sm')}
-      <div class="content">
-        <div style="font-weight:600;">${m.type}</div>
-        ${m.cause ? `<div style="margin-top:5px;"><span class="badge badge-muted">${m.cause}</span></div>` : ''}
-        ${m.acheteur ? `<div style="font-size:12.5px;margin-top:4px;">Acheteur : <strong>${m.acheteur}</strong></div>` : ''}
-        <div class="date" style="margin-top:4px;">${formatDateFr(m.date)}</div>
+    <div class="swipe-wrap" data-kind="agneau-mouvements" data-idx="${m.idx}">
+      <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
+      <div class="swipe-fg history-item">
+        ${iconCircle(ICON_MOUVEMENT, 'coral', 'sm')}
+        <div class="content">
+          <div style="font-weight:600;">${m.type}</div>
+          ${m.cause ? `<div style="margin-top:5px;"><span class="badge badge-muted">${m.cause}</span></div>` : ''}
+          ${m.acheteur ? `<div style="font-size:12.5px;margin-top:4px;">Acheteur : <strong>${m.acheteur}</strong></div>` : ''}
+          <div class="date" style="margin-top:4px;">${formatDateFr(m.date)}</div>
+        </div>
       </div>
     </div>
   `).join('');
@@ -11328,8 +11266,10 @@ function renderAgneauDetail() {
     </div>
   `;
   const mouvTabHtml = `
+    <button class="btn btn-primary" id="btn-add-mouvement-agneau" style="background:var(--coral-fg);margin-bottom:16px;">+ Mouvement</button>
     <div class="card">
       ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
+      <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${mouvementHtml}
     </div>
   `;
@@ -11381,6 +11321,54 @@ function renderAgneauDetail() {
   if (btnAddSanitaireAgneau) btnAddSanitaireAgneau.onclick = () => { editAgneauContext = null; render('add-sanitaire-agneau'); };
   const btnAddNoteAgneau = document.getElementById('btn-add-note-agneau');
   if (btnAddNoteAgneau) btnAddNoteAgneau.onclick = () => { editAgneauContext = null; render('add-note-agneau'); };
+  const btnAddMouvementAgneau = document.getElementById('btn-add-mouvement-agneau');
+  if (btnAddMouvementAgneau) btnAddMouvementAgneau.onclick = () => { editAgneauContext = null; render('add-mouvement-agneau'); };
+}
+
+/* ---------- Mouvement individuel agneau (chantier "Mouvements +
+   harmonisation des fiches", 6a) ----------
+   Même écran générique que brebis/bélier/agnelle, purement ADDITIF par
+   rapport aux boutons "Vendu"/"Mort" de l'onglet Identité (showLambSortieModal,
+   laissés inchangés) : accessible depuis l'onglet Mouvements. Vocabulaire
+   volontairement identique à l'existant ('Vendu'/'Mort', voir
+   CATEGORIE_ANIMAL_CONFIG.agneaux.typeSortie) -- pas d'unification avec
+   MOTIFS_VENTE ('Vente'/'Morte'), qui reste une décision du futur chantier
+   Mouvement collectif Agneaux. Contrairement à l'agnelle, l'agneau ne
+   quitte jamais son tableau (sheep.agnelages[].lambs[]) à la sortie -- pas
+   d'applySortie ici, juste lamb.mouvements + lamb.statutFinal, recalculé
+   après coup par recalculerStatutFinalAgneau (nécessaire aussi bien pour
+   l'ajout que l'édition, contrairement à agnelle/brebis/bélier où le
+   statut se déduit différemment). */
+function renderAddMouvementAgneau() {
+  const ctx = findLambContextByEid(currentAgneauEid);
+  const lamb = ctx && ctx.lamb;
+  const editing = editAgneauContext && editAgneauContext.kind === 'mouvements';
+  const existing = editing ? lamb.mouvements[editAgneauContext.idx] : null;
+  pageTitle.textContent = editing ? 'Modifier le mouvement' : 'Nouveau mouvement';
+  const cfg = CATEGORIE_ANIMAL_CONFIG.agneaux;
+
+  app.innerHTML = `<div class="card">${mouvementFormHtml('Agneau n°' + numeroVisuel(lamb.eid), cfg.typeSortie, existing)}</div>`;
+
+  wireMouvementForm({
+    typeSortie: cfg.typeSortie,
+    motifsVente: cfg.motifsVente,
+    existing,
+    dateEntreeRef: premierMouvementDate(editing ? lamb.mouvements.filter((m, i) => i !== editAgneauContext.idx) : lamb.mouvements, ['Entrée']),
+    erreurDateAnterieure: (dateMouvement, dateEntree) => "La date de sortie (" + formatDateFr(dateMouvement) + ") ne peut pas être antérieure à la date d'entrée de l'agneau (" + formatDateFr(dateEntree) + ").",
+    onSave: (mouvement) => {
+      // Confirm() ciblé : même principe que showLambSortieModal (garde le
+      // même "filet" avant un ajout, jamais sur une simple édition -- voir
+      // renderAddMouvement/Belier/Agnelle pour la logique équivalente).
+      if (!editing && !confirm((mouvement.type === 'Vendu' ? 'Confirmer la vente' : 'Confirmer la mort') + ' de l\'agneau n°' + numeroVisuel(lamb.eid) + ' ?')) return;
+      lamb.mouvements = lamb.mouvements || [];
+      if (editing) lamb.mouvements[editAgneauContext.idx] = mouvement;
+      else lamb.mouvements.push(mouvement);
+      recalculerStatutFinalAgneau(lamb);
+      editAgneauContext = null;
+      saveData(DB);
+      render('agneau-detail');
+    }
+  });
 }
 
 /* ---------- Carnet sanitaire agneau -- même structure que
@@ -12151,138 +12139,38 @@ function renderAddMouvementBelier() {
   const editing = editBelierContext && editBelierContext.kind === 'mouvements';
   const existing = editing ? belier.mouvements[editBelierContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier le mouvement' : 'Nouveau mouvement';
-  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  const cfg = CATEGORIE_ANIMAL_CONFIG.beliers;
 
-  app.innerHTML = `
-    <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Bélier n°${numeroVisuel(belier.eid)}</div>
+  app.innerHTML = `<div class="card">${mouvementFormHtml('Bélier n°' + numeroVisuel(belier.eid), cfg.typeSortie, existing)}</div>`;
 
-      <label>Type de mouvement</label>
-      <div class="grid2" style="margin-bottom:10px;">
-        ${CATEGORIE_ANIMAL_CONFIG.beliers.typeSortie.map((val, i) => `<button type="button" class="opt-btn type-opt coral" data-val="${val}"${i === 2 ? ' style="grid-column:span 2;"' : ''}>${val}</button>`).join('')}
-      </div>
-
-      <div id="cause-block" class="hidden" style="margin-bottom:14px;">
-        <label>Cause</label>
-        <div class="chip-list" id="cause-list"></div>
-        <div class="row">
-          <input type="text" id="new-cause" placeholder="Ajouter une nouvelle cause...">
-          <button type="button" class="btn btn-secondary" id="add-cause" style="width:auto;padding:0 16px;">+</button>
-        </div>
-      </div>
-
-      <div id="acheteur-block" class="hidden" style="margin-bottom:14px;">
-        <label>Acheteur</label>
-        <div class="chip-list" id="acheteur-list"></div>
-        <div class="row">
-          <input type="text" id="new-acheteur" placeholder="Ajouter un nouvel acheteur...">
-          <button type="button" class="btn btn-secondary" id="add-acheteur" style="width:auto;padding:0 16px;">+</button>
-        </div>
-      </div>
-
-      <label>Date</label>
-      <input type="date" id="f-date" value="${today}">
-
-      <div id="err" class="error-box hidden"></div>
-      <button class="btn btn-primary" id="btn-save-mouvement">${editing ? 'Enregistrer les modifications' : 'Enregistrer le mouvement'}</button>
-    </div>
-  `;
-
-  let type = existing ? existing.type : null, cause = existing ? existing.cause : null, acheteur = existing ? existing.acheteur : null;
-
-  function renderCauseChips() {
-    const list = document.getElementById('cause-list');
-    list.innerHTML = '';
-    if (DB.causesMortalite.length === 0) list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">Aucune cause enregistrée pour l\'instant.</div>';
-    DB.causesMortalite.forEach(val => {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip' + (cause === val ? ' selected' : '');
-      chip.textContent = val;
-      chip.onclick = () => { cause = (cause === val) ? null : val; renderCauseChips(); document.getElementById('err').classList.add('hidden'); };
-      list.appendChild(chip);
-    });
-  }
-  function renderAcheteurChips() {
-    const list = document.getElementById('acheteur-list');
-    list.innerHTML = '';
-    if (DB.acheteurs.length === 0) list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">Aucun acheteur enregistré pour l\'instant.</div>';
-    DB.acheteurs.forEach(val => {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip' + (acheteur === val ? ' selected' : '');
-      chip.textContent = val;
-      chip.onclick = () => { acheteur = (acheteur === val) ? null : val; renderAcheteurChips(); document.getElementById('err').classList.add('hidden'); };
-      list.appendChild(chip);
-    });
-  }
-  renderCauseChips();
-  renderAcheteurChips();
-
-  document.querySelectorAll('.type-opt').forEach(btn => {
-    if (btn.dataset.val === type) btn.classList.add('selected');
-    btn.onclick = () => {
-      type = btn.dataset.val;
-      cause = null; acheteur = null;
-      document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      document.getElementById('cause-block').classList.toggle('hidden', MOTIFS_VENTE.includes(type));
-      document.getElementById('acheteur-block').classList.toggle('hidden', !MOTIFS_VENTE.includes(type));
-      renderCauseChips(); renderAcheteurChips();
-      document.getElementById('err').classList.add('hidden');
-    };
-  });
-  if (type && !MOTIFS_VENTE.includes(type)) document.getElementById('cause-block').classList.remove('hidden');
-  if (MOTIFS_VENTE.includes(type)) document.getElementById('acheteur-block').classList.remove('hidden');
-
-  document.getElementById('add-cause').onclick = () => {
-    const input = document.getElementById('new-cause');
-    const val = input.value.trim();
-    if (!val) return;
-    if (!DB.causesMortalite.includes(val)) DB.causesMortalite.push(val);
-    saveData(DB); input.value = ''; cause = val; renderCauseChips();
-  };
-  document.getElementById('add-acheteur').onclick = () => {
-    const input = document.getElementById('new-acheteur');
-    const val = input.value.trim();
-    if (!val) return;
-    if (!DB.acheteurs.includes(val)) DB.acheteurs.push(val);
-    saveData(DB); input.value = ''; acheteur = val; renderAcheteurChips();
-  };
-
-  document.getElementById('btn-save-mouvement').onclick = () => {
-    const err = document.getElementById('err');
-    if (!type) { err.textContent = "Choisis un type de mouvement."; err.classList.remove('hidden'); return; }
-    if (MOTIFS_VENTE.includes(type) && !acheteur) { err.textContent = "Sélectionne ou ajoute un acheteur."; err.classList.remove('hidden'); return; }
-    const dateMouvementBelier = document.getElementById('f-date').value;
+  wireMouvementForm({
+    typeSortie: cfg.typeSortie,
+    motifsVente: cfg.motifsVente,
+    existing,
     // Cohérence chronologique : voir renderAddMouvement (brebis).
-    const dateEntreeBelier = premierMouvementDate(editing ? belier.mouvements.filter((m, i) => i !== editBelierContext.idx) : belier.mouvements, ['Entrée']);
-    if (dateEntreeBelier && dateMouvementBelier < dateEntreeBelier) {
-      err.textContent = "La date de sortie (" + formatDateFr(dateMouvementBelier) + ") ne peut pas être antérieure à la date d'entrée du bélier (" + formatDateFr(dateEntreeBelier) + ").";
-      err.classList.remove('hidden');
-      return;
-    }
-    err.classList.add('hidden');
-    const mouvement = { type: type, cause: MOTIFS_VENTE.includes(type) ? null : cause, acheteur: acheteur, date: dateMouvementBelier };
-    belier.mouvements = belier.mouvements || [];
-    const statutAvant = belier.statut || 'actif';
-    const ancienMouvement = editing ? belier.mouvements[editBelierContext.idx] : null;
-    if (editing) belier.mouvements[editBelierContext.idx] = mouvement;
-    else belier.mouvements.push(mouvement);
-    recalculerStatutBelier(belier);
-    // Confirm() ciblé : voir renderAddMouvement (brebis) pour la logique
-    // identique -- uniquement si modifier ce mouvement change le statut.
-    if (editing && belier.statut !== statutAvant) {
-      if (!confirm('Modifier ce mouvement va faire passer le statut du bélier n°' + numeroVisuel(belier.eid) + ' de "' + statutAvant + '" à "' + belier.statut + '". Confirmer ?')) {
-        belier.mouvements[editBelierContext.idx] = ancienMouvement;
-        belier.statut = statutAvant;
-        return;
+    dateEntreeRef: premierMouvementDate(editing ? belier.mouvements.filter((m, i) => i !== editBelierContext.idx) : belier.mouvements, ['Entrée']),
+    erreurDateAnterieure: (dateMouvementBelier, dateEntreeBelier) => "La date de sortie (" + formatDateFr(dateMouvementBelier) + ") ne peut pas être antérieure à la date d'entrée du bélier (" + formatDateFr(dateEntreeBelier) + ").",
+    onSave: (mouvement) => {
+      belier.mouvements = belier.mouvements || [];
+      const statutAvant = belier.statut || 'actif';
+      const ancienMouvement = editing ? belier.mouvements[editBelierContext.idx] : null;
+      if (editing) belier.mouvements[editBelierContext.idx] = mouvement;
+      else belier.mouvements.push(mouvement);
+      recalculerStatutBelier(belier);
+      // Confirm() ciblé : voir renderAddMouvement (brebis) pour la logique
+      // identique -- uniquement si modifier ce mouvement change le statut.
+      if (editing && belier.statut !== statutAvant) {
+        if (!confirm('Modifier ce mouvement va faire passer le statut du bélier n°' + numeroVisuel(belier.eid) + ' de "' + statutAvant + '" à "' + belier.statut + '". Confirmer ?')) {
+          belier.mouvements[editBelierContext.idx] = ancienMouvement;
+          belier.statut = statutAvant;
+          return;
+        }
       }
+      editBelierContext = null;
+      saveData(DB);
+      render('belier-detail');
     }
-    editBelierContext = null;
-    saveData(DB);
-    render('belier-detail');
-  };
+  });
 }
 
 /* ---------- Ajout note bélier (chantier "Harmonisation des fiches") ----------
@@ -14248,6 +14136,14 @@ const CATEGORIE_ANIMAL_CONFIG = {
     pool: () => DB.brebis,
     isActive: s => (s.statut || 'active') === 'active',
     typeSortie: ['Morte', 'Vente', 'Vente reproduction', 'Perte', 'Autoconsommation'],
+    // motifsVente : sous-ensemble de typeSortie qui déclenche le bloc
+    // "Acheteur" (plutôt que "Cause") dans l'écran de mouvement individuel
+    // générique (voir mouvementFormHtml/wireMouvementForm, chantier
+    // "Mouvements + harmonisation des fiches") -- distinct de typeSortie
+    // car les agneaux non triés gardent leur vocabulaire "Vendu" propre
+    // (non unifié avec MOTIFS_VENTE, voir motifsVente sur l'entrée agneaux
+    // ci-dessous).
+    motifsVente: MOTIFS_VENTE,
     // annulable indique si un mouvement collectif appliqué à cette catégorie
     // peut être défait automatiquement (voir renderMouvementsCollectifsHistorique) :
     // vrai pour brebis/béliers (mouvement retiré + statut recalculé), pas
@@ -14265,6 +14161,7 @@ const CATEGORIE_ANIMAL_CONFIG = {
     pool: () => DB.beliers || [],
     isActive: b => (b.statut || 'actif') === 'actif',
     typeSortie: ['Mort', 'Vente', 'Vente reproduction', 'Perte', 'Autoconsommation'],
+    motifsVente: MOTIFS_VENTE,
     annulable: true,
     applySortie: (b, type, cause, acheteur, date, collectifId) => {
       b.mouvements = b.mouvements || [];
@@ -14277,6 +14174,7 @@ const CATEGORIE_ANIMAL_CONFIG = {
     pool: () => DB.agnelles || [],
     isActive: a => (a.statut || 'active') === 'active',
     typeSortie: ['Morte', 'Vente', 'Vente reproduction', 'Perte', 'Autoconsommation'],
+    motifsVente: MOTIFS_VENTE,
     annulable: false,
     // Contrairement à brebis/béliers, il n'existe pas d'onglet "sorties" pour
     // les agnelles dans Inventaire : une sortie les archive dans le registre
@@ -14292,20 +14190,30 @@ const CATEGORIE_ANIMAL_CONFIG = {
   },
   // Agneaux NON triés (mâles + femelles pas encore gardées pour le
   // renouvellement, voir getAgneauxInventaire) -- distinct de "agnelles"
-  // ci-dessus. Ni typeSortie ni applySortie : cette catégorie repose sur
+  // ci-dessus. Pas d'applySortie/annulable : cette catégorie repose sur
   // lamb.statutFinal, pas sur .statut/.mouvements comme les 3 autres --
   // Traitement collectif l'utilise normalement (un soin n'a pas besoin de
   // typeSortie/applySortie), mais Mouvement collectif l'intercepte avant
   // d'atteindre le formulaire de sortie (voir renderMouvementGroupe /
-  // screenAgneauxNonSupporte), qui ne pourrait pas fonctionner sans ces
-  // deux champs. pool() ajoute un .id (= eid) directement sur l'objet réel
-  // sheep.agnelages[].lambs[] pour rester compatible avec la sélection par
-  // .id du Traitement collectif -- jamais de copie, la mutation (soin
-  // poussé dans .sanitaire) doit porter sur l'objet réel.
+  // screenAgneauxNonSupporte), qui ne pourrait pas fonctionner sans
+  // applySortie -- ajouter typeSortie/motifsVente ci-dessous (chantier
+  // "Mouvements + harmonisation des fiches", écran de mouvement individuel
+  // générique, voir renderAddMouvementAgneau) ne change donc rien à ce
+  // gating, screenSuite() testant explicitement categorie === 'agneaux'
+  // avant de lire cfg.typeSortie. Vocabulaire "Vendu"/"Mort" volontairement
+  // conservé tel quel (pas unifié avec MOTIFS_VENTE/'Vente'/'Morte') pour
+  // ne pas préempter la décision de vocabulaire du chantier suivant
+  // (Mouvement collectif Agneaux, applySortie/annulable restent à ajouter
+  // à ce moment-là). pool() ajoute un .id (= eid) directement sur l'objet
+  // réel sheep.agnelages[].lambs[] pour rester compatible avec la
+  // sélection par .id du Traitement collectif -- jamais de copie, la
+  // mutation (soin poussé dans .sanitaire) doit porter sur l'objet réel.
   agneaux: {
     label: 'Agneaux', tous: 'Tous les', actives: 'actifs', singulier: 'un agneau',
     pool: () => getAgneauxInventaire().map(it => { it.lamb.id = it.lamb.id || it.lamb.eid; return it.lamb; }),
     isActive: l => l.statutFinal !== 'vendu' && l.statutFinal !== 'mort',
+    typeSortie: ['Vendu', 'Mort'],
+    motifsVente: ['Vendu'],
     annulable: false
   }
 };
@@ -14319,6 +14227,133 @@ const CATEGORIE_TABS = [
 // CATEGORIE_ANIMAL_CONFIG.agneaux pour ce qui les différencie sur cette
 // catégorie précise).
 const CATEGORIE_TABS_COLLECTIF = [...CATEGORIE_TABS, { key: 'agneaux', label: 'Agneaux' }];
+
+/* ---------- Écran de mouvement individuel générique (chantier
+   "Mouvements + harmonisation des fiches", 6a) ----------
+   Extrait de renderAddMouvement (brebis) / renderAddMouvementBelier, qui
+   étaient ~identiques à 95% -- même principe que noteFormHtml/wireNoteForm
+   pour les notes : mouvementFormHtml construit le balisage (dans un
+   .card, à la charge de l'appelant), wireMouvementForm branche toute la
+   logique (chips cause/acheteur, contrôle chronologique, validation) et
+   appelle onSave(mouvement) une fois le mouvement { type, cause,
+   acheteur, date } validé -- à charge de l'appelant de l'appliquer à son
+   entité (push/édition + recalcul de statut + navigation), qui diffère
+   par catégorie (voir renderAddMouvement/renderAddMouvementBelier/
+   renderAddMouvementAgnelle/renderAddMouvementAgneau). */
+function mouvementFormHtml(animalLabel, typeSortie, existing) {
+  const today = existing ? existing.date : new Date().toISOString().slice(0, 10);
+  return `
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">${animalLabel}</div>
+
+    <label>Type de mouvement</label>
+    <div class="grid2" style="margin-bottom:10px;">
+      ${typeSortie.map((val, i) => `<button type="button" class="opt-btn type-opt coral" data-val="${val}"${i === 2 ? ' style="grid-column:span 2;"' : ''}>${val}</button>`).join('')}
+    </div>
+
+    <div id="cause-block" class="hidden" style="margin-bottom:14px;">
+      <label>Cause</label>
+      <div class="chip-list" id="cause-list"></div>
+      <div class="row">
+        <input type="text" id="new-cause" placeholder="Ajouter une nouvelle cause...">
+        <button type="button" class="btn btn-secondary" id="add-cause" style="width:auto;padding:0 16px;">+</button>
+      </div>
+    </div>
+
+    <div id="acheteur-block" class="hidden" style="margin-bottom:14px;">
+      <label>Acheteur</label>
+      <div class="chip-list" id="acheteur-list"></div>
+      <div class="row">
+        <input type="text" id="new-acheteur" placeholder="Ajouter un nouvel acheteur...">
+        <button type="button" class="btn btn-secondary" id="add-acheteur" style="width:auto;padding:0 16px;">+</button>
+      </div>
+    </div>
+
+    <label>Date</label>
+    <input type="date" id="f-date" value="${today}">
+
+    <div id="err" class="error-box hidden"></div>
+    <button class="btn btn-primary" id="btn-save-mouvement">${existing ? 'Enregistrer les modifications' : 'Enregistrer le mouvement'}</button>
+  `;
+}
+// opts: { typeSortie, motifsVente, existing, dateEntreeRef, erreurDateAnterieure(dateMouvement, dateEntreeRef), onSave(mouvement) }
+function wireMouvementForm(opts) {
+  const { typeSortie, motifsVente, existing, dateEntreeRef, erreurDateAnterieure, onSave } = opts;
+  let type = existing ? existing.type : null, cause = existing ? existing.cause : null, acheteur = existing ? existing.acheteur : null;
+
+  function renderCauseChips() {
+    const list = document.getElementById('cause-list');
+    list.innerHTML = '';
+    if (DB.causesMortalite.length === 0) list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">Aucune cause enregistrée pour l\'instant.</div>';
+    DB.causesMortalite.forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (cause === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { cause = (cause === val) ? null : val; renderCauseChips(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+  }
+  function renderAcheteurChips() {
+    const list = document.getElementById('acheteur-list');
+    list.innerHTML = '';
+    if (DB.acheteurs.length === 0) list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">Aucun acheteur enregistré pour l\'instant.</div>';
+    DB.acheteurs.forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (acheteur === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { acheteur = (acheteur === val) ? null : val; renderAcheteurChips(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+  }
+  renderCauseChips();
+  renderAcheteurChips();
+
+  document.querySelectorAll('.type-opt').forEach(btn => {
+    if (btn.dataset.val === type) btn.classList.add('selected');
+    btn.onclick = () => {
+      type = btn.dataset.val;
+      cause = null; acheteur = null;
+      document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      document.getElementById('cause-block').classList.toggle('hidden', motifsVente.includes(type));
+      document.getElementById('acheteur-block').classList.toggle('hidden', !motifsVente.includes(type));
+      renderCauseChips(); renderAcheteurChips();
+      document.getElementById('err').classList.add('hidden');
+    };
+  });
+  if (type && !motifsVente.includes(type)) document.getElementById('cause-block').classList.remove('hidden');
+  if (type && motifsVente.includes(type)) document.getElementById('acheteur-block').classList.remove('hidden');
+
+  document.getElementById('add-cause').onclick = () => {
+    const input = document.getElementById('new-cause');
+    const val = input.value.trim();
+    if (!val) return;
+    if (!DB.causesMortalite.includes(val)) DB.causesMortalite.push(val);
+    saveData(DB); input.value = ''; cause = val; renderCauseChips();
+  };
+  document.getElementById('add-acheteur').onclick = () => {
+    const input = document.getElementById('new-acheteur');
+    const val = input.value.trim();
+    if (!val) return;
+    if (!DB.acheteurs.includes(val)) DB.acheteurs.push(val);
+    saveData(DB); input.value = ''; acheteur = val; renderAcheteurChips();
+  };
+
+  document.getElementById('btn-save-mouvement').onclick = () => {
+    const err = document.getElementById('err');
+    if (!type) { err.textContent = "Choisis un type de mouvement."; err.classList.remove('hidden'); return; }
+    if (motifsVente.includes(type) && !acheteur) { err.textContent = "Sélectionne ou ajoute un acheteur."; err.classList.remove('hidden'); return; }
+    const dateMouvement = document.getElementById('f-date').value;
+    if (dateEntreeRef && dateMouvement < dateEntreeRef) {
+      err.textContent = erreurDateAnterieure(dateMouvement, dateEntreeRef);
+      err.classList.remove('hidden');
+      return;
+    }
+    err.classList.add('hidden');
+    onSave({ type, cause: motifsVente.includes(type) ? null : cause, acheteur, date: dateMouvement });
+  };
+}
 
 /* ---------- Mouvement collectif (vente / sortie multiple) ----------
    Catégorie choisie en premier (screenChooseCategorie), même principe que
