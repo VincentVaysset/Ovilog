@@ -14190,31 +14190,35 @@ const CATEGORIE_ANIMAL_CONFIG = {
   },
   // Agneaux NON triés (mâles + femelles pas encore gardées pour le
   // renouvellement, voir getAgneauxInventaire) -- distinct de "agnelles"
-  // ci-dessus. Pas d'applySortie/annulable : cette catégorie repose sur
-  // lamb.statutFinal, pas sur .statut/.mouvements comme les 3 autres --
-  // Traitement collectif l'utilise normalement (un soin n'a pas besoin de
-  // typeSortie/applySortie), mais Mouvement collectif l'intercepte avant
-  // d'atteindre le formulaire de sortie (voir renderMouvementGroupe /
-  // screenAgneauxNonSupporte), qui ne pourrait pas fonctionner sans
-  // applySortie -- ajouter typeSortie/motifsVente ci-dessous (chantier
-  // "Mouvements + harmonisation des fiches", écran de mouvement individuel
-  // générique, voir renderAddMouvementAgneau) ne change donc rien à ce
-  // gating, screenSuite() testant explicitement categorie === 'agneaux'
-  // avant de lire cfg.typeSortie. Vocabulaire "Vendu"/"Mort" volontairement
-  // conservé tel quel (pas unifié avec MOTIFS_VENTE/'Vente'/'Morte') pour
-  // ne pas préempter la décision de vocabulaire du chantier suivant
-  // (Mouvement collectif Agneaux, applySortie/annulable restent à ajouter
-  // à ce moment-là). pool() ajoute un .id (= eid) directement sur l'objet
-  // réel sheep.agnelages[].lambs[] pour rester compatible avec la
-  // sélection par .id du Traitement collectif -- jamais de copie, la
-  // mutation (soin poussé dans .sanitaire) doit porter sur l'objet réel.
+  // ci-dessus. Repose sur lamb.statutFinal (pas sur .statut comme les 3
+  // autres), recalculé après chaque mouvement par recalculerStatutFinalAgneau
+  // (chantier "Mouvements + harmonisation des fiches") plutôt que dérivé à
+  // la volée comme pour brebis/béliers. Vocabulaire "Vendu"/"Mort"
+  // volontairement conservé tel quel (pas unifié avec MOTIFS_VENTE/
+  // 'Vente'/'Morte') -- voir motifsVente ci-dessous, utilisé par l'écran
+  // individuel (renderAddMouvementAgneau) ET par Mouvement collectif
+  // (screenForm doit lire cfg.motifsVente, jamais le MOTIFS_VENTE global,
+  // qui ne contient pas 'Vendu'). annulable=true : contrairement aux
+  // agnelles, l'agneau ne quitte jamais son tableau (sheep.agnelages[].
+  // lambs[]) à la sortie -- annuler un mouvement collectif retrouve donc
+  // simplement l'entrée par collectifId et recalcule statutFinal, sans
+  // reconstruction d'archive nécessaire (voir renderMouvementsCollectifs
+  // Historique). pool() ajoute un .id (= eid) directement sur l'objet réel
+  // sheep.agnelages[].lambs[] pour rester compatible avec la sélection par
+  // .id du Traitement collectif ET du Mouvement collectif -- jamais de
+  // copie, la mutation (soin ou sortie) doit porter sur l'objet réel.
   agneaux: {
     label: 'Agneaux', tous: 'Tous les', actives: 'actifs', singulier: 'un agneau',
     pool: () => getAgneauxInventaire().map(it => { it.lamb.id = it.lamb.id || it.lamb.eid; return it.lamb; }),
     isActive: l => l.statutFinal !== 'vendu' && l.statutFinal !== 'mort',
     typeSortie: ['Vendu', 'Mort'],
     motifsVente: ['Vendu'],
-    annulable: false
+    annulable: true,
+    applySortie: (lamb, type, cause, acheteur, date, collectifId) => {
+      lamb.mouvements = lamb.mouvements || [];
+      lamb.mouvements.push({ type, cause: type === 'Vendu' ? null : cause, acheteur, date, collectifId });
+      recalculerStatutFinalAgneau(lamb);
+    }
   }
 };
 const CATEGORIE_TABS = [
@@ -14360,12 +14364,12 @@ function wireMouvementForm(opts) {
    Traitement collectif (voir renderTraitementCollectif) : `categorie` est
    une simple variable de fermeture, remise à zéro à chaque entrée sur cet
    écran -- pas de mémorisation entre deux visites, pour rester cohérent
-   avec l'autre écran collectif. Les Agneaux non triés (CATEGORIE_TABS_
-   COLLECTIF) n'ont pas de sortie de masse ici : leur modèle de données
-   (statutFinal sur l'objet lamb imbriqué, pas de mouvements/statut comme
-   les 3 autres catégories) est incompatible avec applySortie/annulation en
-   masse -- on affiche un renvoi explicite vers la liste "Agneaux" plutôt
-   que de proposer un formulaire qui ne pourrait pas fonctionner. */
+   avec l'autre écran collectif. Les 4 catégories de CATEGORIE_TABS_COLLECTIF
+   passent désormais par le même screenForm() (chantier "Mouvements +
+   harmonisation des fiches", 6b) : les Agneaux non triés utilisent
+   cfg.applySortie/cfg.motifsVente comme les 3 autres (voir
+   CATEGORIE_ANIMAL_CONFIG.agneaux) -- seul le vocabulaire (Vendu/Mort) et
+   l'absence de bloc "Cause" pour Vendu diffèrent, déjà gérés via cfg. */
 function renderMouvementGroupe() {
   let categorie = null;
 
@@ -14380,26 +14384,8 @@ function renderMouvementGroupe() {
       </div>
     `;
     document.querySelectorAll('.cat-mc-opt').forEach(btn => {
-      btn.onclick = () => { categorie = btn.dataset.val; screenSuite(); };
+      btn.onclick = () => { categorie = btn.dataset.val; screenForm(); };
     });
-  }
-
-  function screenAgneauxNonSupporte() {
-    pageTitle.textContent = 'Mouvement collectif — Agneaux';
-    app.innerHTML = `
-      <div class="card">
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Les sorties (vente / mort) des agneaux non triés se saisissent individuellement, depuis la fiche de chaque agneau (liste "Agneaux").</div>
-        <button type="button" class="btn btn-primary" id="btn-mc-agneaux-liste" style="margin-bottom:10px;">Aller à la liste des agneaux</button>
-        <button type="button" class="btn btn-secondary" id="btn-mc-agneaux-retour">Choisir une autre catégorie</button>
-      </div>
-    `;
-    document.getElementById('btn-mc-agneaux-liste').onclick = () => render('agneaux');
-    document.getElementById('btn-mc-agneaux-retour').onclick = () => screenChooseCategorie();
-  }
-
-  function screenSuite() {
-    if (categorie === 'agneaux') { screenAgneauxNonSupporte(); return; }
-    screenForm();
   }
 
   function screenForm() {
@@ -14408,7 +14394,7 @@ function renderMouvementGroupe() {
   const today = new Date().toISOString().slice(0,10);
   const actives = cfg.pool().filter(cfg.isActive);
 
-  if (!window.__mouvementGroupeSelected) window.__mouvementGroupeSelected = { brebis: new Set(), beliers: new Set(), agnelles: new Set() };
+  if (!window.__mouvementGroupeSelected) window.__mouvementGroupeSelected = { brebis: new Set(), beliers: new Set(), agnelles: new Set(), agneaux: new Set() };
   const selected = window.__mouvementGroupeSelected[categorie];
   // Ne garde que les ids encore actifs (une sélection lancée puis reprise
   // plus tard ne doit pas pointer vers un animal déjà sorti entre-temps).
@@ -14486,12 +14472,12 @@ function renderMouvementGroupe() {
         type = btn.dataset.val;
         document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
-        document.getElementById('cause-block').classList.toggle('hidden', MOTIFS_VENTE.includes(type));
-        document.getElementById('acheteur-block').classList.toggle('hidden', !MOTIFS_VENTE.includes(type));
+        document.getElementById('cause-block').classList.toggle('hidden', cfg.motifsVente.includes(type));
+        document.getElementById('acheteur-block').classList.toggle('hidden', !cfg.motifsVente.includes(type));
       };
     });
-    if (type && !MOTIFS_VENTE.includes(type)) document.getElementById('cause-block').classList.remove('hidden');
-    if (MOTIFS_VENTE.includes(type)) document.getElementById('acheteur-block').classList.remove('hidden');
+    if (type && !cfg.motifsVente.includes(type)) document.getElementById('cause-block').classList.remove('hidden');
+    if (cfg.motifsVente.includes(type)) document.getElementById('acheteur-block').classList.remove('hidden');
 
     document.getElementById('add-cause').onclick = () => {
       const input = document.getElementById('new-cause');
@@ -14511,7 +14497,7 @@ function renderMouvementGroupe() {
     document.getElementById('btn-valider-groupe').onclick = () => {
       const errBox = document.getElementById('err');
       if (!type) { errBox.textContent = "Choisis un type de mouvement."; errBox.classList.remove('hidden'); return; }
-      if (MOTIFS_VENTE.includes(type) && !acheteur) { errBox.textContent = "Sélectionne ou ajoute un acheteur."; errBox.classList.remove('hidden'); return; }
+      if (cfg.motifsVente.includes(type) && !acheteur) { errBox.textContent = "Sélectionne ou ajoute un acheteur."; errBox.classList.remove('hidden'); return; }
       if (selected.size === 0) { errBox.textContent = "Sélectionne au moins " + cfg.singulier + " (à la main ou au bip)."; errBox.classList.remove('hidden'); return; }
       const date = document.getElementById('f-date').value;
       const concernees = actives.filter(s => selected.has(s.id));
@@ -14559,16 +14545,18 @@ function renderMouvementGroupe() {
 /* ---------- Historique des mouvements collectifs (annulation en masse) ----------
    Chaque mouvement collectif (voir renderMouvementGroupe) est identifié par un
    collectifId posé sur le mouvement ajouté à chaque animal, et résumé dans
-   DB.mouvementsCollectifs. Pour brebis/béliers (annulable=true), les objets
-   restent vivants dans DB.brebis/DB.beliers : annuler retire simplement le
-   mouvement marqué de ce collectifId sur chacun et recalcule son statut --
-   annulation automatique et complète, chaque animal retrouve exactement son
-   état précédent. Pour les agnelles (annulable=false), la sortie les a déjà
-   archivées dans le registre ET retirées du roster de renouvellement : les
-   restaurer nécessiterait de reconstruire leur fiche depuis l'archive du
-   registre, chantier séparé volontairement reporté après octobre 2026 (voir
-   plan validé) -- ici, seule la traçabilité est assurée (le mouvement
-   collectif reste consultable), sans bouton d'annulation automatique. */
+   DB.mouvementsCollectifs. Pour brebis/béliers/agneaux (annulable=true), les
+   objets restent vivants dans DB.brebis/DB.beliers/sheep.agnelages[].lambs[] :
+   annuler retire simplement le mouvement marqué de ce collectifId sur chacun
+   et recalcule son statut (recalculerStatutBrebis/Belier/FinalAgneau selon la
+   catégorie) -- annulation automatique et complète, chaque animal retrouve
+   exactement son état précédent. Pour les agnelles (annulable=false), la
+   sortie les a déjà archivées dans le registre ET retirées du roster de
+   renouvellement : les restaurer nécessiterait de reconstruire leur fiche
+   depuis l'archive du registre, chantier séparé volontairement reporté après
+   octobre 2026 (voir plan validé) -- ici, seule la traçabilité est assurée
+   (le mouvement collectif reste consultable), sans bouton d'annulation
+   automatique. */
 function renderMouvementsCollectifsHistorique() {
   pageTitle.textContent = 'Mouvements collectifs';
   DB.mouvementsCollectifs = DB.mouvementsCollectifs || [];
@@ -14609,7 +14597,9 @@ function renderMouvementsCollectifsHistorique() {
         const idx = animal.mouvements.findIndex(mv => mv.collectifId === id);
         if (idx === -1) return;
         animal.mouvements.splice(idx, 1);
-        if (m.categorie === 'beliers') recalculerStatutBelier(animal); else recalculerStatutBrebis(animal);
+        if (m.categorie === 'beliers') recalculerStatutBelier(animal);
+        else if (m.categorie === 'agneaux') recalculerStatutFinalAgneau(animal);
+        else recalculerStatutBrebis(animal);
       });
       DB.mouvementsCollectifs = DB.mouvementsCollectifs.filter(x => x.id !== id);
       saveData(DB);
