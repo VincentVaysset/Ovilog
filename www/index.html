@@ -3744,6 +3744,16 @@ let agnelleDetailOrigin = 'agnelles-inventaire';
 let currentBelierId = null;
 let belierDetailOrigin = 'beliers';
 let editBelierContext = null; // { kind, idx }
+// Onglet actif des fiches Bélier/Agnelle/Agneau (chantier "Harmonisation
+// des fiches") -- même principe que ficheBrebisTab/ficheBrebisTabSheepId :
+// remis à "ident" quand on change d'animal, conservé lors d'un re-rendu de
+// la même fiche après une action (swipe, etc.).
+let ficheBelierTab = 'ident';
+let ficheBelierTabId = null;
+let ficheAgnelleTab = 'ident';
+let ficheAgnelleTabId = null;
+let ficheAgneauTab = 'ident';
+let ficheAgneauTabEid = null;
 let editAgnelleContext = null; // { kind, idx } -- soin/note d'une agnelle (distinct de editingAgnelleId, qui édite les champs de la fiche elle-même)
 let currentAgneauEid = null; // agneau non trié (lamb) affiché sur renderAgneauDetail -- identifié par EID, pas de .id stable comme les autres collections
 let agneauDetailOrigin = 'agneaux';
@@ -3909,7 +3919,7 @@ btnBack.onclick = () => {
   else if (currentView === 'import-correspondance-sieol') render('parametres');
   else if (currentView === 'add-belier') render('beliers');
   else if (currentView === 'belier-detail') render(belierDetailOrigin);
-  else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
+  else if (currentView === 'add-sanitaire-belier' || currentView === 'add-mouvement-belier' || currentView === 'add-note-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
   else if (currentView === 'add-echo' || currentView === 'add-agnelage' || currentView === 'add-sanitaire' || currentView === 'add-mouvement' || currentView === 'add-controle' || currentView === 'add-note') render('detail', currentSheepId);
   else if (currentView === 'echo-rapide' || currentView === 'misebas-rapide') render('home');
   else if (currentView === 'bilan-campagne') render('home');
@@ -4004,7 +4014,7 @@ function deleteBelierItem(kind, idx) {
 
 function editBelierItem(kind, idx) {
   editBelierContext = { kind, idx };
-  render(kind === 'sanitaire' ? 'add-sanitaire-belier' : 'add-mouvement-belier');
+  render(kind === 'sanitaire' ? 'add-sanitaire-belier' : kind === 'notes' ? 'add-note-belier' : 'add-mouvement-belier');
 }
 
 function deleteAgnelleItem(kind, idx) {
@@ -4139,6 +4149,7 @@ function render(view, sheepId) {
     else if (view === 'belier-detail') renderBelierDetail(currentBelierId);
     else if (view === 'add-sanitaire-belier') renderAddSanitaireBelier(currentBelierId);
     else if (view === 'add-mouvement-belier') renderAddMouvementBelier(currentBelierId);
+    else if (view === 'add-note-belier') renderAddNoteBelier();
     else if (view === 'qualite') renderQualite();
     else if (view === 'controle-laitier') renderControleLaitier();
     else if (view === 'liste-serie') renderListeSerie();
@@ -6841,6 +6852,33 @@ const FICHE_BREBIS_TABS = [
   { key: 'index', label: 'Index', icon: ICON_JOURNAL, color: 'gray' },
   { key: 'notes', label: 'Notes', icon: ICON_JOURNAL, color: 'amber' }
 ];
+/* ---------- Composant partagé : barre d'onglets de fiche ----------
+   Chantier "Harmonisation des fiches" -- généralisation de l'ancienne
+   ficheBrebisTabsHtml (seule fiche à avoir des onglets jusqu'ici) pour que
+   Bélier/Agnelle/Agneau puissent la réutiliser telle quelle, avec leur
+   propre tableau de tabs et leurs propres nombre d'onglets (pas forcément
+   8 : le découpage par lignes de 4 max s'adapte automatiquement, une seule
+   ligne si <= 4 tabs). `opts.isDisabled(tab)` et `opts.badgeFor(tab)` sont
+   des callbacks optionnelles -- même mécanique que l'onglet "Index"
+   désactivable et le badge de comptage sur "notes" pour la brebis,
+   généralisés plutôt que codés en dur pour cette seule fiche. Sortie HTML
+   strictement identique à l'ancienne implémentation pour la brebis (voir
+   ficheBrebisTabsHtml ci-dessous), donc aucune régression visuelle. */
+function ficheTabsHtml(tabs, active, opts) {
+  opts = opts || {};
+  const isDisabled = opts.isDisabled || (() => false);
+  const badgeFor = opts.badgeFor || (() => 0);
+  const btnHtml = t => {
+    const disabled = isDisabled(t);
+    const badgeCount = badgeFor(t);
+    const badge = badgeCount > 0 ? `<span class="fiche-tab-badge">${badgeCount}</span>` : '';
+    return `<button type="button" class="fiche-tab-btn${active === t.key ? ' active' : ''}${disabled ? ' disabled' : ''}" data-tab="${t.key}"${disabled ? ' disabled' : ''}>${iconCircle(t.icon, t.color, 'xs')}<span style="display:flex;align-items:center;gap:3px;">${t.label}${badge}</span></button>`;
+  };
+  const rows = [];
+  for (let i = 0; i < tabs.length; i += 4) rows.push(tabs.slice(i, i + 4));
+  return rows.map((row, i) => `<div class="fiche-tabs${i > 0 ? ' row2' : ''}">${row.map(btnHtml).join('')}</div>`).join('');
+}
+
 // L'onglet "Index" (chantier "Import Lactation + affichage Index/
 // Carrière") n'a de sens que pour un élevage suivi en CLS ou CLO -- reste
 // désactivé (jamais un onglet vide) pour "non_suivi"/non défini, calculé à
@@ -6851,14 +6889,29 @@ const FICHE_BREBIS_TABS = [
 // comptage sur un onglet de fiche, aucun autre onglet n'en affiche.
 function ficheBrebisTabsHtml(active, notesCount) {
   const indexDisponible = DB.exploitation.typeSuivi === 'cls' || DB.exploitation.typeSuivi === 'clo';
-  const btnHtml = t => {
-    const disabled = t.key === 'index' && !indexDisponible;
-    const badge = t.key === 'notes' && notesCount > 0 ? `<span class="fiche-tab-badge">${notesCount}</span>` : '';
-    return `<button type="button" class="fiche-tab-btn${active === t.key ? ' active' : ''}${disabled ? ' disabled' : ''}" data-tab="${t.key}"${disabled ? ' disabled' : ''}>${iconCircle(t.icon, t.color, 'xs')}<span style="display:flex;align-items:center;gap:3px;">${t.label}${badge}</span></button>`;
-  };
+  return ficheTabsHtml(FICHE_BREBIS_TABS, active, {
+    isDisabled: t => t.key === 'index' && !indexDisponible,
+    badgeFor: t => t.key === 'notes' ? notesCount : 0
+  });
+}
+
+/* ---------- Composant partagé : bandeau d'identité desktop ----------
+   Chantier "Harmonisation des fiches" -- généralisation du bandeau
+   d'en-tête desktop déjà utilisé par la fiche brebis (voir son usage plus
+   bas) pour que Bélier/Agnelle/Agneau le réutilisent tel quel : icône +
+   nom + EID + une ligne de badges libres (le HTML des badges reste
+   entièrement calculé par l'appelant, jamais recalculé ici -- chaque
+   fiche garde ses propres badges). Balisage strictement identique à
+   l'ancien bandeau brebis, donc aucune régression visuelle sur celle-ci. */
+function ficheDesktopHeaderHtml({ icon, iconColor, titre, eid, badges }) {
   return `
-    <div class="fiche-tabs">${FICHE_BREBIS_TABS.slice(0, 4).map(btnHtml).join('')}</div>
-    <div class="fiche-tabs row2">${FICHE_BREBIS_TABS.slice(4).map(btnHtml).join('')}</div>
+    <div class="card fiche-desktop-header">
+      ${iconCircle(icon, iconColor, 'lg')}
+      <div style="flex:1;min-width:0;">
+        <div class="fiche-desktop-name">${titre} <span style="font-weight:500;font-size:13px;color:var(--text-muted);">— EID ${eid}</span></div>
+        <div class="fiche-desktop-badges">${badges}</div>
+      </div>
+    </div>
   `;
 }
 
@@ -7385,19 +7438,11 @@ function renderDetail(id) {
   // "Version PC desktop" -- il rejoint désormais genealogieBlock dans
   // l'onglet Identité (identTabHtml), sur desktop comme sur mobile, la
   // généalogie n'ayant pas sa place dans un bandeau d'en-tête.
-  const desktopHeaderHtml = !desktop ? '' : `
-    <div class="card fiche-desktop-header">
-      ${iconCircle(ICON_SHEEP, 'green', 'lg')}
-      <div style="flex:1;min-width:0;">
-        <div class="fiche-desktop-name">Brebis n°${numeroVisuel(sheep.eid)} <span style="font-weight:500;font-size:13px;color:var(--text-muted);">— EID ${sheep.eid}</span></div>
-        <div class="fiche-desktop-badges">
-          ${attendueTraiteBadge}
-          ${statutBadge}
-          <span class="badge badge-muted">${age(sheep.eid)} an(s) (${anneeNaissance(sheep.eid)})</span>
-        </div>
-      </div>
-    </div>
-  `;
+  const desktopHeaderHtml = !desktop ? '' : ficheDesktopHeaderHtml({
+    icon: ICON_SHEEP, iconColor: 'green',
+    titre: 'Brebis n°' + numeroVisuel(sheep.eid), eid: sheep.eid,
+    badges: attendueTraiteBadge + statutBadge + `<span class="badge badge-muted">${age(sheep.eid)} an(s) (${anneeNaissance(sheep.eid)})</span>`
+  });
 
   app.innerHTML = desktop ? `
     ${desktopHeaderHtml}
@@ -10679,10 +10724,27 @@ function renderAgnellesInventaire() {
    couvrant déjà ce besoin). Modifier/Vendre/Supprimer réutilisent tels
    quels le formulaire et la modale déjà utilisés par le chantier de tri --
    une seule logique, jamais deux façons de modifier une agnelle. */
+/* Onglets fiche Agnelle (chantier "Harmonisation des fiches") : Ident.
+   (avec Modifier/Vendre, actions propres à l'identité de l'animal),
+   Généalogie (bloc déjà séparé aujourd'hui, devient un vrai onglet),
+   Sanitaire, Mouv., Notes. Même composant partagé ficheTabsHtml que la
+   brebis/le bélier (voir 5a). */
+const FICHE_AGNELLE_TABS = [
+  { key: 'ident', label: 'Ident.', icon: ICON_SHEEP, color: 'amber' },
+  { key: 'genealogie', label: 'Généalogie', icon: ICON_SHEEP, color: 'gray' },
+  { key: 'sanit', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
+  { key: 'mouv', label: 'Mouv.', icon: ICON_MOUVEMENT, color: 'coral' },
+  { key: 'notes', label: 'Notes', icon: ICON_JOURNAL, color: 'amber' }
+];
+function ficheAgnelleTabsHtml(active, notesCount) {
+  return ficheTabsHtml(FICHE_AGNELLE_TABS, active, { badgeFor: t => t.key === 'notes' ? notesCount : 0 });
+}
+
 function renderAgnelleDetail(id) {
   const ag = (DB.agnelles || []).find(a => a.id === id);
   if (!ag) { render('agnelles-inventaire'); return; }
   pageTitle.textContent = 'Agnelle n°' + numeroVisuel(ag.eid);
+  if (ficheAgnelleTabId !== ag.id) { ficheAgnelleTab = 'ident'; ficheAgnelleTabId = ag.id; }
 
   const sanitaire = (ag.sanitaire || []).map((s, i) => ({ ...s, idx: i })).reverse();
   const sanitaireHtml = sanitaire.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun soin enregistré.</div>' : sanitaire.map(s => `
@@ -10740,10 +10802,11 @@ function renderAgnelleDetail(id) {
   // existe réellement (voir renderEditRepro).
   const reproEntryActuelleAg = dernierModeReproValide(ag);
 
-  // Desktop (chantier "Refonte desktop", mockup validé) : même bandeau
-  // d'identité fixe + grille de cartes que la fiche brebis, sans
-  // sous-onglets (pas assez de catégories). Contenu identique au mobile,
-  // seule la mise en page change (bandeau vert/sidebar non touchés).
+  // Desktop : même bandeau d'identité fixe + grille de cartes que la fiche
+  // brebis. Depuis le chantier "Harmonisation des fiches", l'agnelle a
+  // aussi ses propres onglets (voir FICHE_AGNELLE_TABS ci-dessus). Contenu
+  // identique au mobile, seule la mise en page change (bandeau vert/
+  // sidebar non touchés).
   const desktop = isDesktopMode();
   const desktopHeaderHtml = !desktop ? '' : `
     <div class="card fiche-desktop-header">
@@ -10757,7 +10820,7 @@ function renderAgnelleDetail(id) {
       </div>
     </div>
   `;
-  const agnelleBodyHtml = `
+  const identTabHtml = `
     <div class="card">
       ${sectionHeaderHtml(ICON_SHEEP, 'amber', 'Identité')}
       <div style="font-size:12px;color:var(--text-muted);">EID complet</div>
@@ -10783,7 +10846,13 @@ function renderAgnelleDetail(id) {
       ${incoherenceSieolTravail(ag.numeroLongTravailSieol, ag.numeroCourtTravailSieol) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le numéro long et le numéro court ne correspondent pas entre eux.</div>` : ''}
       ${incoherenceAnneeSieolCourt(ag.numeroCourtTravailSieol, anneeNaissance(ag.eid)) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le chiffre d'année du numéro court ne correspond pas à l'année de naissance de cette agnelle (${anneeNaissance(ag.eid)}).</div>` : ''}
     </div>
-
+    <div class="row" style="margin-bottom:16px;">
+      <button class="btn btn-secondary" id="btn-edit-agnelle-fiche">Modifier</button>
+      <button class="btn btn-secondary" id="btn-vendre-agnelle-fiche" style="color:var(--coral-fg);border-color:var(--coral-fg);">Vendre</button>
+    </div>
+    <button class="btn btn-secondary" id="btn-delete-agnelle-fiche" style="color:var(--danger);border-color:var(--danger);">Supprimer cette agnelle</button>
+  `;
+  const genealogieTabHtml = `
     <div class="card">
       ${sectionHeaderHtml(ICON_SHEEP, 'gray', 'Généalogie')}
       ${mother
@@ -10793,41 +10862,53 @@ function renderAgnelleDetail(id) {
           : '<div style="font-size:13px;color:var(--text-muted);">Non renseignée.</div>'}
       ${htmlLienMereAdoptive(lamb, 'btn-voir-mere-adoptive-agnelle-fiche')}
     </div>
-
-    <div class="row" style="margin-bottom:16px;">
-      <button class="btn btn-secondary" id="btn-edit-agnelle-fiche">Modifier</button>
-      <button class="btn btn-secondary" id="btn-vendre-agnelle-fiche" style="color:var(--coral-fg);border-color:var(--coral-fg);">Vendre</button>
-    </div>
-
-    <div class="row" style="margin-bottom:16px;">
-      <button class="btn btn-primary" id="btn-add-sanitaire-agnelle" style="background:var(--danger);">+ Carnet sanitaire</button>
-      <button class="btn btn-primary" id="btn-add-note-agnelle" style="background:var(--amber-fg);">+ Note</button>
-    </div>
-
+  `;
+  const sanitTabHtml = `
+    <button class="btn btn-primary" id="btn-add-sanitaire-agnelle" style="background:var(--danger);margin-bottom:16px;">+ Carnet sanitaire</button>
     <div class="card">
       ${sectionHeaderHtml(ICON_SANTE, 'coral', 'Carnet sanitaire')}
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${sanitaireHtml}
     </div>
+  `;
+  const mouvTabHtml = `
+    <div class="card">
+      ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
+      ${mouvementHtml}
+    </div>
+  `;
+  const notesTabHtml = `
+    <button class="btn btn-primary" id="btn-add-note-agnelle" style="background:var(--amber-fg);margin-bottom:16px;">+ Note</button>
     <div class="card">
       ${sectionHeaderHtml(ICON_JOURNAL, 'amber', 'Notes')}
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${notesHtml}
     </div>
-    <div class="card">
-      ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
-      ${mouvementHtml}
-    </div>
-    <button class="btn btn-secondary" id="btn-delete-agnelle-fiche" style="color:var(--danger);border-color:var(--danger);">Supprimer cette agnelle</button>
   `;
-  app.innerHTML = desktop ? `${desktopHeaderHtml}<div class="fiche-desktop-grid">${agnelleBodyHtml}</div>` : agnelleBodyHtml;
+  const ficheAgnelleTabContent = { ident: identTabHtml, genealogie: genealogieTabHtml, sanit: sanitTabHtml, mouv: mouvTabHtml, notes: notesTabHtml };
+
+  app.innerHTML = desktop ? `
+    ${desktopHeaderHtml}
+    <div class="fiche-tabs-desktop-wrap">${ficheAgnelleTabsHtml(ficheAgnelleTab, notes.length)}</div>
+    <div class="fiche-desktop-grid">${ficheAgnelleTabContent[ficheAgnelleTab] || identTabHtml}</div>
+  ` : `
+    ${ficheAgnelleTabsHtml(ficheAgnelleTab, notes.length)}
+    ${ficheAgnelleTabContent[ficheAgnelleTab] || identTabHtml}
+  `;
   activateSwipes(app);
-  document.getElementById('btn-add-sanitaire-agnelle').onclick = () => { editAgnelleContext = null; render('add-sanitaire-agnelle'); };
-  document.getElementById('btn-add-note-agnelle').onclick = () => { editAgnelleContext = null; render('add-note-agnelle'); };
+  document.querySelectorAll('.fiche-tab-btn').forEach(btn => {
+    if (btn.disabled) return;
+    btn.onclick = () => { ficheAgnelleTab = btn.dataset.tab; render('agnelle-detail'); };
+  });
+  const btnAddSanitaireAgnelle = document.getElementById('btn-add-sanitaire-agnelle');
+  if (btnAddSanitaireAgnelle) btnAddSanitaireAgnelle.onclick = () => { editAgnelleContext = null; render('add-sanitaire-agnelle'); };
+  const btnAddNoteAgnelle = document.getElementById('btn-add-note-agnelle');
+  if (btnAddNoteAgnelle) btnAddNoteAgnelle.onclick = () => { editAgnelleContext = null; render('add-note-agnelle'); };
 
   const btnEditReproTagAg = document.getElementById('btn-edit-repro-tag-ag');
   if (btnEditReproTagAg) btnEditReproTagAg.onclick = () => { editReproTarget = { kind: 'agnelle', id: ag.id }; render('edit-repro'); };
-  document.getElementById('btn-modifier-numeros-travail-sieol-ag').onclick = () => openCorrigerNumerosTravailSieolSheet(ag, () => render('agnelle-detail'));
+  const btnModifierNumSieolAg = document.getElementById('btn-modifier-numeros-travail-sieol-ag');
+  if (btnModifierNumSieolAg) btnModifierNumSieolAg.onclick = () => openCorrigerNumerosTravailSieolSheet(ag, () => render('agnelle-detail'));
   const btnMere = document.getElementById('btn-voir-mere-agnelle-fiche');
   if (btnMere) btnMere.onclick = () => {
     detailOrigin = 'agnelle-detail';
@@ -10845,15 +10926,18 @@ function renderAgnelleDetail(id) {
     previousDetailId = null;
     render('detail', m.id);
   };
-  document.getElementById('btn-edit-agnelle-fiche').onclick = () => {
+  const btnEditAgnelleFiche = document.getElementById('btn-edit-agnelle-fiche');
+  if (btnEditAgnelleFiche) btnEditAgnelleFiche.onclick = () => {
     editingAgnelleId = ag.id;
     addAgnelleOrigin = 'agnelle-detail';
     render('add-agnelle');
   };
-  document.getElementById('btn-vendre-agnelle-fiche').onclick = () => {
+  const btnVendreAgnelleFiche = document.getElementById('btn-vendre-agnelle-fiche');
+  if (btnVendreAgnelleFiche) btnVendreAgnelleFiche.onclick = () => {
     showVendreAgnelleModal(ag, () => render(agnelleDetailOrigin));
   };
-  document.getElementById('btn-delete-agnelle-fiche').onclick = () => {
+  const btnDeleteAgnelleFiche = document.getElementById('btn-delete-agnelle-fiche');
+  if (btnDeleteAgnelleFiche) btnDeleteAgnelleFiche.onclick = () => {
     if (!confirm('Supprimer l\'agnelle n°' + numeroVisuel(ag.eid) + ' de l\'inventaire ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
     DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
     saveData(DB);
@@ -11110,14 +11194,14 @@ function renderAddNoteAgnelle() {
 }
 
 /* ---------- Fiche agneau (agneau non trié, chantier "Fiches individuelles
-   Agneaux & Agnelles") -- même esprit allégé que renderBelierDetail/
-   renderAgnelleDetail (pas de sous-onglets) : identité, généalogie (lien
-   vers la mère biologique + mère adoptive le cas échéant -- pas de champ
-   père, aucun suivi de ce type au niveau de l'agneau ailleurs dans
-   l'appli), carnet sanitaire et notes (ajout/modif/suppr), sortie
-   Vendu/Mort réutilisant telle quelle showLambSortieModal/annulerSortieLamb
-   (déjà utilisées par l'écran "Agneaux"). Identifié par EID (pas de .id
-   stable, l'agneau vit comme sous-objet de brebis.agnelages[].lambs[]). */
+   Agneaux & Agnelles", passée en onglets au chantier "Harmonisation des
+   fiches" -- voir FICHE_AGNEAU_TABS) : identité, généalogie (lien vers la
+   mère biologique + mère adoptive le cas échéant -- pas de champ père,
+   aucun suivi de ce type au niveau de l'agneau ailleurs dans l'appli),
+   carnet sanitaire et notes (ajout/modif/suppr), sortie Vendu/Mort
+   réutilisant telle quelle showLambSortieModal/annulerSortieLamb (déjà
+   utilisées par l'écran "Agneaux"). Identifié par EID (pas de .id stable,
+   l'agneau vit comme sous-objet de brebis.agnelages[].lambs[]). */
 function findLambContextByEid(eid) {
   for (const sheep of DB.brebis) {
     for (const ag of (sheep.agnelages || [])) {
@@ -11128,11 +11212,27 @@ function findLambContextByEid(eid) {
   }
   return null;
 }
+/* Onglets fiche Agneau (chantier "Harmonisation des fiches") : Ident.
+   (avec Vendu/Mort/Annuler, actions de sortie propres à l'identité de
+   l'animal), Généalogie, Sanitaire, Mouv., Notes. Même composant partagé
+   ficheTabsHtml que les autres fiches (voir 5a). */
+const FICHE_AGNEAU_TABS = [
+  { key: 'ident', label: 'Ident.', icon: ICON_SHEEP, color: 'amber' },
+  { key: 'genealogie', label: 'Généalogie', icon: ICON_SHEEP, color: 'gray' },
+  { key: 'sanit', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
+  { key: 'mouv', label: 'Mouv.', icon: ICON_MOUVEMENT, color: 'coral' },
+  { key: 'notes', label: 'Notes', icon: ICON_JOURNAL, color: 'amber' }
+];
+function ficheAgneauTabsHtml(active, notesCount) {
+  return ficheTabsHtml(FICHE_AGNEAU_TABS, active, { badgeFor: t => t.key === 'notes' ? notesCount : 0 });
+}
+
 function renderAgneauDetail() {
   const ctx = findLambContextByEid(currentAgneauEid);
   if (!ctx) { render('agneaux'); return; }
   const { lamb, mother, date } = ctx;
   pageTitle.textContent = 'Agneau n°' + numeroVisuel(lamb.eid);
+  if (ficheAgneauTabEid !== lamb.eid) { ficheAgneauTab = 'ident'; ficheAgneauTabEid = lamb.eid; }
 
   const sanitaire = (lamb.sanitaire || []).map((s, i) => ({ ...s, idx: i })).reverse();
   const sanitaireHtml = sanitaire.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun soin enregistré.</div>' : sanitaire.map(s => `
@@ -11194,7 +11294,7 @@ function renderAgneauDetail() {
       </div>
     </div>
   `;
-  const agneauBodyHtml = `
+  const identTabHtml = `
     <div class="card">
       ${sectionHeaderHtml(ICON_SHEEP, 'amber', 'Identité')}
       <div style="font-size:12px;color:var(--text-muted);">EID complet</div>
@@ -11205,44 +11305,60 @@ function renderAgneauDetail() {
       </div>
       ${!desktop ? `<div style="margin-top:10px;"><span class="badge ${sortieDecidee ? 'badge-muted' : 'badge-amber'}">${statutBadge}</span></div>` : ''}
     </div>
-
-    <div class="card">
-      ${sectionHeaderHtml(ICON_SHEEP, 'gray', 'Généalogie')}
-      <div style="font-size:13px;">Mère : <strong id="btn-voir-mere-agneau-fiche" style="color:var(--green-fg);text-decoration:underline;cursor:pointer;">n°${numeroVisuel(mother.eid)}</strong></div>
-      ${htmlLienMereAdoptive(lamb, 'btn-voir-mere-adoptive-agneau-fiche')}
-    </div>
-
     <div class="row" style="margin-bottom:16px;">
       ${sortieDecidee
         ? `<button type="button" class="btn btn-secondary" id="btn-agneau-fiche-annuler">Annuler cette sortie</button>`
         : `<button type="button" class="btn btn-secondary" id="btn-agneau-fiche-vendu" style="color:var(--coral-fg);border-color:var(--danger);">Vendu</button>
            <button type="button" class="btn btn-secondary" id="btn-agneau-fiche-mort" style="color:var(--coral-fg);border-color:var(--danger);">Mort</button>`}
     </div>
-
-    <div class="row" style="margin-bottom:16px;">
-      <button class="btn btn-primary" id="btn-add-sanitaire-agneau" style="background:var(--danger);">+ Carnet sanitaire</button>
-      <button class="btn btn-primary" id="btn-add-note-agneau" style="background:var(--amber-fg);">+ Note</button>
+  `;
+  const genealogieTabHtml = `
+    <div class="card">
+      ${sectionHeaderHtml(ICON_SHEEP, 'gray', 'Généalogie')}
+      <div style="font-size:13px;">Mère : <strong id="btn-voir-mere-agneau-fiche" style="color:var(--green-fg);text-decoration:underline;cursor:pointer;">n°${numeroVisuel(mother.eid)}</strong></div>
+      ${htmlLienMereAdoptive(lamb, 'btn-voir-mere-adoptive-agneau-fiche')}
     </div>
-
+  `;
+  const sanitTabHtml = `
+    <button class="btn btn-primary" id="btn-add-sanitaire-agneau" style="background:var(--danger);margin-bottom:16px;">+ Carnet sanitaire</button>
     <div class="card">
       ${sectionHeaderHtml(ICON_SANTE, 'coral', 'Carnet sanitaire')}
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${sanitaireHtml}
     </div>
-    <div class="card">
-      ${sectionHeaderHtml(ICON_JOURNAL, 'amber', 'Notes')}
-      <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
-      ${notesHtml}
-    </div>
+  `;
+  const mouvTabHtml = `
     <div class="card">
       ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
       ${mouvementHtml}
     </div>
   `;
-  app.innerHTML = desktop ? `${desktopHeaderHtml}<div class="fiche-desktop-grid">${agneauBodyHtml}</div>` : agneauBodyHtml;
-  activateSwipes(app);
+  const notesTabHtml = `
+    <button class="btn btn-primary" id="btn-add-note-agneau" style="background:var(--amber-fg);margin-bottom:16px;">+ Note</button>
+    <div class="card">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'amber', 'Notes')}
+      <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
+      ${notesHtml}
+    </div>
+  `;
+  const ficheAgneauTabContent = { ident: identTabHtml, genealogie: genealogieTabHtml, sanit: sanitTabHtml, mouv: mouvTabHtml, notes: notesTabHtml };
 
-  document.getElementById('btn-voir-mere-agneau-fiche').onclick = () => {
+  app.innerHTML = desktop ? `
+    ${desktopHeaderHtml}
+    <div class="fiche-tabs-desktop-wrap">${ficheAgneauTabsHtml(ficheAgneauTab, notes.length)}</div>
+    <div class="fiche-desktop-grid">${ficheAgneauTabContent[ficheAgneauTab] || identTabHtml}</div>
+  ` : `
+    ${ficheAgneauTabsHtml(ficheAgneauTab, notes.length)}
+    ${ficheAgneauTabContent[ficheAgneauTab] || identTabHtml}
+  `;
+  activateSwipes(app);
+  document.querySelectorAll('.fiche-tab-btn').forEach(btn => {
+    if (btn.disabled) return;
+    btn.onclick = () => { ficheAgneauTab = btn.dataset.tab; render('agneau-detail'); };
+  });
+
+  const btnVoirMereAgneau = document.getElementById('btn-voir-mere-agneau-fiche');
+  if (btnVoirMereAgneau) btnVoirMereAgneau.onclick = () => {
     detailOrigin = 'agneau-detail';
     previousDetailId = null;
     render('detail', mother.id);
@@ -11255,14 +11371,16 @@ function renderAgneauDetail() {
     previousDetailId = null;
     render('detail', m.id);
   };
-  if (!sortieDecidee) {
-    document.getElementById('btn-agneau-fiche-vendu').onclick = () => showLambSortieModal(lamb, 'vendu', () => render('agneau-detail'));
-    document.getElementById('btn-agneau-fiche-mort').onclick = () => showLambSortieModal(lamb, 'mort', () => render('agneau-detail'));
-  } else {
-    document.getElementById('btn-agneau-fiche-annuler').onclick = () => annulerSortieLamb(lamb, () => render('agneau-detail'));
-  }
-  document.getElementById('btn-add-sanitaire-agneau').onclick = () => { editAgneauContext = null; render('add-sanitaire-agneau'); };
-  document.getElementById('btn-add-note-agneau').onclick = () => { editAgneauContext = null; render('add-note-agneau'); };
+  const btnAgneauVendu = document.getElementById('btn-agneau-fiche-vendu');
+  if (btnAgneauVendu) btnAgneauVendu.onclick = () => showLambSortieModal(lamb, 'vendu', () => render('agneau-detail'));
+  const btnAgneauMort = document.getElementById('btn-agneau-fiche-mort');
+  if (btnAgneauMort) btnAgneauMort.onclick = () => showLambSortieModal(lamb, 'mort', () => render('agneau-detail'));
+  const btnAgneauAnnuler = document.getElementById('btn-agneau-fiche-annuler');
+  if (btnAgneauAnnuler) btnAgneauAnnuler.onclick = () => annulerSortieLamb(lamb, () => render('agneau-detail'));
+  const btnAddSanitaireAgneau = document.getElementById('btn-add-sanitaire-agneau');
+  if (btnAddSanitaireAgneau) btnAddSanitaireAgneau.onclick = () => { editAgneauContext = null; render('add-sanitaire-agneau'); };
+  const btnAddNoteAgneau = document.getElementById('btn-add-note-agneau');
+  if (btnAddNoteAgneau) btnAddNoteAgneau.onclick = () => { editAgneauContext = null; render('add-note-agneau'); };
 }
 
 /* ---------- Carnet sanitaire agneau -- même structure que
@@ -11625,10 +11743,26 @@ function renderAddBelier() {
   };
 }
 
+/* Onglets fiche Bélier (chantier "Harmonisation des fiches") : Ident.
+   (avec Généalogie repliée dedans, comme sur la fiche brebis -- pas assez
+   de champs pour justifier un onglet à part, contrairement à Agnelle/
+   Agneau qui ont un vrai bloc de liens à afficher), Sanitaire, Mouv.,
+   Notes. Même composant partagé ficheTabsHtml que la brebis (voir 5a). */
+const FICHE_BELIER_TABS = [
+  { key: 'ident', label: 'Ident.', icon: ICON_RAM, color: 'gray' },
+  { key: 'sanit', label: 'Sanitaire', icon: ICON_SANTE, color: 'coral' },
+  { key: 'mouv', label: 'Mouv.', icon: ICON_MOUVEMENT, color: 'coral' },
+  { key: 'notes', label: 'Notes', icon: ICON_JOURNAL, color: 'amber' }
+];
+function ficheBelierTabsHtml(active, notesCount) {
+  return ficheTabsHtml(FICHE_BELIER_TABS, active, { badgeFor: t => t.key === 'notes' ? notesCount : 0 });
+}
+
 function renderBelierDetail() {
   const belier = DB.beliers.find(b => b.id === currentBelierId);
   if (!belier) { render('beliers'); return; }
   pageTitle.textContent = 'Bélier n°' + numeroVisuel(belier.eid);
+  if (ficheBelierTabId !== belier.id) { ficheBelierTab = 'ident'; ficheBelierTabId = belier.id; }
 
   const sanitaire = belier.sanitaire || [];
   const sanitaireHtml = sanitaire.map((s,i) => ({...s, idx:i})).reverse().map(s => `
@@ -11662,17 +11796,38 @@ function renderBelierDetail() {
     </div>
   `).join('') || '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun mouvement enregistré.</div>';
 
+  // Notes (chantier "Harmonisation des fiches") : même principe que
+  // brebis/agnelle/agneau -- observations libres, triées par date
+  // décroissante, idx d'origine décroissant en tie-break.
+  const notes = belier.notes || [];
+  const notesTriees = notes.map((n, i) => ({ ...n, idx: i }))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.idx - a.idx);
+  const notesHtml = notesTriees.map(n => `
+    <div class="swipe-wrap" data-kind="belier-notes" data-idx="${n.idx}">
+      <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
+      <div class="swipe-fg history-item">
+        ${iconCircle(ICON_JOURNAL, 'amber', 'sm')}
+        <div class="content">
+          ${n.categorie ? `<span class="badge badge-amber" style="margin-bottom:4px;">${n.categorie}</span>` : ''}
+          <div>${n.texte}</div>
+          <div class="date" style="margin-top:4px;">${formatDateFr(n.date)}</div>
+        </div>
+      </div>
+    </div>
+  `).join('') || '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune note enregistrée.</div>';
+
   const statutBadge = (belier.statut && belier.statut !== 'actif')
     ? `<div style="background:#f0efe9;color:var(--text-muted);padding:8px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;">Statut actuel : <strong>${belier.statut}</strong></div>`
     : '';
 
-  // Desktop (chantier "Refonte desktop", mockup validé) : même bandeau
-  // d'identité fixe + grille de cartes que la fiche brebis -- mais SANS
-  // sous-onglets (pas assez de catégories pour un bélier, demande
-  // explicite). Contenu de chaque carte rigoureusement identique au
-  // mobile, seule la mise en page change (bandeau vert/sidebar non
-  // touchés). statutBadge déplacé dans le bandeau pour éviter le doublon,
-  // comme sur la fiche brebis.
+  // Desktop : même bandeau d'identité fixe + grille de cartes que la fiche
+  // brebis. Depuis le chantier "Harmonisation des fiches", le bélier a
+  // aussi ses propres onglets (voir FICHE_BELIER_TABS ci-dessus) -- la
+  // décision antérieure de ne pas en mettre ("pas assez de catégories")
+  // est explicitement révisée pour harmoniser les 4 fiches. Contenu de
+  // chaque carte rigoureusement identique au mobile, seule la mise en page
+  // change (bandeau vert/sidebar non touchés). statutBadge déplacé dans le
+  // bandeau pour éviter le doublon, comme sur la fiche brebis.
   const desktop = isDesktopMode();
   const desktopHeaderHtml = !desktop ? '' : `
     <div class="card fiche-desktop-header">
@@ -11686,7 +11841,7 @@ function renderBelierDetail() {
       </div>
     </div>
   `;
-  const belierBodyHtml = `
+  const identTabHtml = `
     <div class="card">
       ${sectionHeaderHtml(ICON_RAM, 'gray', 'Identité')}
       <div style="font-size:12px;color:var(--text-muted);">EID complet</div>
@@ -11709,32 +11864,61 @@ function renderBelierDetail() {
     </div>
     ${(belier.pere || belier.mere) ? `<div class="card">${sectionHeaderHtml(ICON_RAM, 'gray', 'Généalogie')}${ligneGenealogieHtml('Père', belier.pere, belier.pereLien)}${ligneGenealogieHtml('Mère', belier.mere, belier.mereLien)}</div>` : ''}
     ${desktop ? '' : statutBadge}
-    <div class="row" style="margin-bottom:16px;">
-      <button class="btn btn-primary" id="btn-add-sanitaire-belier" style="background:var(--danger);">+ Carnet sanitaire</button>
-      <button class="btn btn-primary" id="btn-add-mouvement-belier" style="background:var(--danger);">+ Mouvement</button>
-    </div>
+    <button class="btn btn-secondary" id="btn-delete-belier" style="color:var(--danger);border-color:var(--danger);">Supprimer ce bélier</button>
+  `;
+  const sanitTabHtml = `
+    <button class="btn btn-primary" id="btn-add-sanitaire-belier" style="background:var(--danger);margin-bottom:16px;">+ Carnet sanitaire</button>
     <div class="card">
       ${sectionHeaderHtml(ICON_SANTE, 'coral', 'Carnet sanitaire')}
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${sanitaireHtml}
     </div>
+  `;
+  const mouvTabHtml = `
+    <button class="btn btn-primary" id="btn-add-mouvement-belier" style="background:var(--danger);margin-bottom:16px;">+ Mouvement</button>
     <div class="card">
       ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${mouvementHtml}
     </div>
-    <button class="btn btn-secondary" id="btn-delete-belier" style="color:var(--danger);border-color:var(--danger);">Supprimer ce bélier</button>
   `;
-  app.innerHTML = desktop ? `${desktopHeaderHtml}<div class="fiche-desktop-grid">${belierBodyHtml}</div>` : belierBodyHtml;
-  document.getElementById('btn-add-sanitaire-belier').onclick = () => { editBelierContext = null; render('add-sanitaire-belier'); };
-  document.getElementById('btn-add-mouvement-belier').onclick = () => { editBelierContext = null; render('add-mouvement-belier'); };
+  const notesTabHtml = `
+    <button class="btn btn-primary" id="btn-add-note-belier" style="background:var(--amber-fg);margin-bottom:16px;">+ Note</button>
+    <div class="card">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'amber', 'Notes')}
+      <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
+      ${notesHtml}
+    </div>
+  `;
+  const ficheBelierTabContent = { ident: identTabHtml, sanit: sanitTabHtml, mouv: mouvTabHtml, notes: notesTabHtml };
+
+  app.innerHTML = desktop ? `
+    ${desktopHeaderHtml}
+    <div class="fiche-tabs-desktop-wrap">${ficheBelierTabsHtml(ficheBelierTab, notes.length)}</div>
+    <div class="fiche-desktop-grid">${ficheBelierTabContent[ficheBelierTab] || identTabHtml}</div>
+  ` : `
+    ${ficheBelierTabsHtml(ficheBelierTab, notes.length)}
+    ${ficheBelierTabContent[ficheBelierTab] || identTabHtml}
+  `;
+  document.querySelectorAll('.fiche-tab-btn').forEach(btn => {
+    if (btn.disabled) return;
+    btn.onclick = () => { ficheBelierTab = btn.dataset.tab; render('belier-detail'); };
+  });
+  const btnAddSanitaireBelier = document.getElementById('btn-add-sanitaire-belier');
+  if (btnAddSanitaireBelier) btnAddSanitaireBelier.onclick = () => { editBelierContext = null; render('add-sanitaire-belier'); };
+  const btnAddMouvementBelier = document.getElementById('btn-add-mouvement-belier');
+  if (btnAddMouvementBelier) btnAddMouvementBelier.onclick = () => { editBelierContext = null; render('add-mouvement-belier'); };
+  const btnAddNoteBelier = document.getElementById('btn-add-note-belier');
+  if (btnAddNoteBelier) btnAddNoteBelier.onclick = () => { editBelierContext = null; render('add-note-belier'); };
   const btnCorrigerEidBelier = document.getElementById('btn-corriger-eid-belier');
   if (btnCorrigerEidBelier) btnCorrigerEidBelier.onclick = () => openCorrigerEidSheet(belier, () => render('belier-detail'));
-  document.getElementById('btn-modifier-numero-travail-sieol-belier').onclick = () => openCorrigerNumeroTravailSieolBelierSheet(belier, () => render('belier-detail'));
+  const btnModifierNumeroSieolBelier = document.getElementById('btn-modifier-numero-travail-sieol-belier');
+  if (btnModifierNumeroSieolBelier) btnModifierNumeroSieolBelier.onclick = () => openCorrigerNumeroTravailSieolBelierSheet(belier, () => render('belier-detail'));
   document.querySelectorAll('.btn-voir-parent-lie').forEach(btn => {
     btn.onclick = () => naviguerVersParentLie(btn.dataset.categorie, btn.dataset.id, null, 'belier-detail');
   });
-  document.getElementById('btn-delete-belier').onclick = () => {
+  const btnDeleteBelier = document.getElementById('btn-delete-belier');
+  if (btnDeleteBelier) btnDeleteBelier.onclick = () => {
     if (!confirm('Supprimer le bélier n°' + numeroVisuel(belier.eid) + ' ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
     DB.beliers = DB.beliers.filter(b => b.id !== belier.id);
     saveData(DB);
@@ -12099,6 +12283,32 @@ function renderAddMouvementBelier() {
     saveData(DB);
     render('belier-detail');
   };
+}
+
+/* ---------- Ajout note bélier (chantier "Harmonisation des fiches") ----------
+   Même formulaire partagé que brebis/agnelle/agneau (noteFormHtml/
+   wireNoteForm), simplement branché sur belier.notes. */
+function renderAddNoteBelier() {
+  const belier = DB.beliers.find(b => b.id === currentBelierId);
+  const editing = editBelierContext && editBelierContext.kind === 'notes';
+  const existing = editing ? belier.notes[editBelierContext.idx] : null;
+  pageTitle.textContent = editing ? 'Modifier la note' : 'Nouvelle note';
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Bélier n°${numeroVisuel(belier.eid)}</div>
+      ${noteFormHtml(existing, editing, 'var(--amber-fg)')}
+    </div>
+  `;
+
+  wireNoteForm(existing, (note) => {
+    belier.notes = belier.notes || [];
+    if (editing) belier.notes[editBelierContext.idx] = note;
+    else belier.notes.push(note);
+    editBelierContext = null;
+    saveData(DB);
+    render('belier-detail');
+  });
 }
 
 
