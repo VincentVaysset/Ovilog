@@ -127,7 +127,7 @@ Non traité dans cette V1 — trop de risque d'erreur pour l'instant. À reprend
 
 ## État d'avancement (v2 — appli Android réelle via Capacitor)
 
-Réalisé et fonctionnel dans l'appli native : fiche brebis, échographie (3 types), agnelage (adoption, mort-nés, Sélépérol automatique), carnet sanitaire (+ traitement collectif), mouvements (+ mouvement groupé), agnelles (tri réversible, généalogie), béliers, lutte, contrôle laitier (par n° de contrôle), production laitière tank, journal, lots avec recherche en bergerie (bip différencié), import CSV inventaire+échographies, profil exploitation, campagne (affichage + changement), sauvegarde/restauration JSON, intégration ANMV (délais d'attente lait/viande par produit).
+Réalisé et fonctionnel dans l'appli native : fiche brebis, échographie (3 types), agnelage (adoption, mort-nés, Sélépérol automatique), carnet sanitaire (+ traitement collectif), mouvements (+ mouvement collectif), agnelles (tri réversible, généalogie), béliers, lutte, contrôle laitier (par n° de contrôle), production laitière tank, journal, lots avec recherche en bergerie (bip différencié), import CSV inventaire+échographies, profil exploitation, campagne (affichage + changement), sauvegarde/restauration JSON, intégration ANMV (délais d'attente lait/viande par produit).
 
 Reste à faire : refonte navigation (ci-dessous), synchronisation cloud multi-appareils (Firebase), réforme (liste, toujours en attente).
 

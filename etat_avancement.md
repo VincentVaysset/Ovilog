@@ -34,7 +34,7 @@
 - Échographie avec 3 types (Constat / Stades / Stades + comptage), cas particuliers modulables, parasitisme
 - Agnelage (adoption, mort-nés, Sélépérol 2cc automatique à la naissance transmis jusqu'à la future fiche brebis)
 - Carnet sanitaire (Vaccin/Traitement/Autre, produits modulables) + traitement collectif
-- Mouvements (Morte/Vendue/Vendue reproduction) + mouvement groupé (scan en continu)
+- Mouvements (Morte/Vendue/Vendue reproduction) + mouvement collectif (scan en continu)
 - Agnelles : tri réversible (Garder/Écarter/Reconsidérer), généalogie (lien vers fiche mère), inventaire séparé des brebis
 - Béliers : fiche, carnet sanitaire, mouvements dédiés
 - Lutte (dates communes brebis/agnelles)
@@ -48,7 +48,7 @@
 - Sauvegarde/restauration JSON
 - Intégration ANMV (délais d'attente lait/viande par produit)
 - Refonte de navigation : menu hamburger, écran d'accueil = ancien tableau de bord avec cadres visuels, en-tête avec logo/nom exploitation/campagne
-- Modules de saisie en série dédiés : Échographies, Mises-bas (renommés, distincts du mouvement groupé/traitement collectif)
+- Modules de saisie en série dédiés : Échographies, Mises-bas (renommés, distincts du mouvement collectif/traitement collectif)
 - Registre d'élevage (conditionnalité PAC) : existe, structure revue plusieurs fois
 - Synchronisation Firebase Firestore multi-appareils : opérationnelle
 - **Chantier "Vide définitive" — CLOS** :
@@ -102,7 +102,7 @@
 - Onglet "Brebis" du menu doit être un inventaire pur (sans les cadres de stats au-dessus, qui vivent maintenant sur l'écran d'accueil)
 - Traçabilité complète des agneaux : clic Vendu/Mort doit demander date (+ acheteur si vente), apparaître dans Mouvements et le registre, être annulable
 - Onglet "Agneaux" du menu hamburger : les agneaux bouclés doivent y apparaître comme un vrai inventaire à part entière
-- Nettoyage UI : retirer les onglets Brebis/Béliers/Agneaux redondants au-dessus du bouton "Mouvement groupé" dans Inventaire (le choix se fait déjà à l'intérieur)
+- Nettoyage UI : retirer les onglets Brebis/Béliers/Agneaux redondants au-dessus du bouton "Mouvement collectif" dans Inventaire (le choix se fait déjà à l'intérieur)
 - Polish lecteur Allflex : indicateur visuel de connexion, reconnexion automatique, comportement au redémarrage de l'app — déprioritisé car le scan fonctionne de façon fiable
 
 ### 📋 À venir / en attente volontaire
