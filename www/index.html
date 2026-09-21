@@ -864,7 +864,7 @@ function migrateData(d) {
   }
   if (!d.traitementsCollectifs) d.traitementsCollectifs = [];
   if (!d.mouvementsCollectifs) d.mouvementsCollectifs = [];
-  if (!d.registre) d.registre = { brebis: {}, beliers: {}, agneaux: {} };
+  if (!d.registre) d.registre = { brebis: {}, beliers: {}, agnelles: {} };
   // Purge exceptionnelle et unique du registre (02/09/2026), demandée par
   // l'éleveur : avant le correctif ci-dessus qui a arrêté d'y archiver les
   // suppressions (voir "Supprimer" brebis/agnelle/bélier), une fiche créée
@@ -877,7 +877,7 @@ function migrateData(d) {
   // one-shot : ne rejoue jamais une 2e fois, y compris sur une base restaurée
   // depuis une sauvegarde antérieure à cette purge.
   if (!d.registrePurgeExceptionnelle20260902) {
-    d.registre = { brebis: {}, beliers: {}, agneaux: {} };
+    d.registre = { brebis: {}, beliers: {}, agnelles: {} };
     d.registrePurgeExceptionnelle20260902 = true;
   }
   if (d.lecteurBluetooth === undefined) d.lecteurBluetooth = null;
@@ -976,7 +976,7 @@ function migrateData(d) {
   (d.beliers || []).forEach(b => corrigerNomSelepherol(b.sanitaire));
   (d.agnelles || []).forEach(a => corrigerNomSelepherol(a.sanitaire));
   if (d.registre) {
-    ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+    ['brebis', 'beliers', 'agnelles'].forEach(cat => {
       Object.values(d.registre[cat] || {}).forEach(entry => corrigerNomSelepherol(entry.sanitaire));
     });
   }
@@ -1041,11 +1041,28 @@ function migrateData(d) {
     (d.beliers || []).forEach(b => renommerMotifsVente(b.mouvements));
     (d.agnelles || []).forEach(a => renommerMotifsVente(a.mouvements));
     if (d.registre) {
-      ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+      ['brebis', 'beliers', 'agnelles'].forEach(cat => {
         Object.values(d.registre[cat] || {}).forEach(entry => renommerMotifsVente(entry.mouvements));
       });
     }
     d.motifVenteUnifie20260915 = true;
+  }
+  // Migration one-shot (chantier "Fiches individuelles Agneaux & Agnelles") :
+  // la catégorie interne 'agneaux' du Traitement collectif/Mouvement groupé/
+  // Registre ciblait en réalité DB.agnelles (les femelles déjà triées pour
+  // le renouvellement), jamais les agneaux non triés -- source de confusion
+  // maintenant qu'une VRAIE catégorie 'agneaux' existe (agneaux non triés,
+  // Traitement collectif uniquement). Renomme partout où l'ancienne clé
+  // était stockée : archive du registre, historique des traitements/
+  // mouvements collectifs. Flag one-shot : ne rejoue jamais une 2e fois.
+  if (!d.agnellesRenommeesDepuisAgneaux20260921) {
+    if (d.registre && d.registre.agneaux) {
+      d.registre.agnelles = Object.assign(d.registre.agnelles || {}, d.registre.agneaux);
+      delete d.registre.agneaux;
+    }
+    (d.traitementsCollectifs || []).forEach(t => { if (t.categorie === 'agneaux') t.categorie = 'agnelles'; });
+    (d.mouvementsCollectifs || []).forEach(m => { if (m.categorie === 'agneaux') m.categorie = 'agnelles'; });
+    d.agnellesRenommeesDepuisAgneaux20260921 = true;
   }
   return d;
 }
@@ -1105,12 +1122,13 @@ function loadData() {
     produitsInfo: {},
     traitementsCollectifs: [],
     mouvementsCollectifs: [],
-    registre: { brebis: {}, beliers: {}, agneaux: {} },
+    registre: { brebis: {}, beliers: {}, agnelles: {} },
     registrePurgeExceptionnelle20260902: true, // nouvelle installation : registre déjà vide, rien à purger
     campagneDateDemarrageCorrigee20260904: true, // nouvelle installation : campagneDateDemarrage encore vide, rien à corriger
     lecteurBluetooth: null, // { address, name } — lecteur par défaut, voir bandeau/btEnsureConnectionListener
     controleLaitierMigreMl: true, // nouvelle installation : jamais de données en litres à convertir
-    numeroSieolMigreVersTravailSieol: true // nouvelle installation : jamais de numeroSieol à migrer
+    numeroSieolMigreVersTravailSieol: true, // nouvelle installation : jamais de numeroSieol à migrer
+    agnellesRenommeesDepuisAgneaux20260921: true // nouvelle installation : déjà sous le bon nom
   };
 }
 /* Déclenche le téléchargement d'un fichier JSON de sauvegarde — utilisée à
@@ -1163,7 +1181,7 @@ let DB = loadData();
    jamais une entrée déjà archivée : on ne fait qu'ajouter (concat), au cas où
    un même EID serait archivé plusieurs fois au fil des années. */
 function ensureRegistreEntry(categorie, eid) {
-  DB.registre = DB.registre || { brebis: {}, beliers: {}, agneaux: {} };
+  DB.registre = DB.registre || { brebis: {}, beliers: {}, agnelles: {} };
   DB.registre[categorie] = DB.registre[categorie] || {};
   if (!DB.registre[categorie][eid]) {
     DB.registre[categorie][eid] = { sanitaire: [], agnelages: [], mouvements: [] };
@@ -1458,7 +1476,7 @@ function verifierEidUnique(eid, exclureId = null) {
     };
   }
 
-  const registreCategories = [['brebis', 'une brebis sortie (registre)'], ['beliers', 'un bélier sorti (registre)'], ['agneaux', 'un agneau/une agnelle sorti(e) (registre)']];
+  const registreCategories = [['brebis', 'une brebis sortie (registre)'], ['beliers', 'un bélier sorti (registre)'], ['agnelles', 'une agnelle sortie (registre)']];
   for (const [cat, label] of registreCategories) {
     const reg = DB.registre && DB.registre[cat];
     if (!reg) continue;
@@ -3726,6 +3744,10 @@ let agnelleDetailOrigin = 'agnelles-inventaire';
 let currentBelierId = null;
 let belierDetailOrigin = 'beliers';
 let editBelierContext = null; // { kind, idx }
+let editAgnelleContext = null; // { kind, idx } -- soin/note d'une agnelle (distinct de editingAgnelleId, qui édite les champs de la fiche elle-même)
+let currentAgneauEid = null; // agneau non trié (lamb) affiché sur renderAgneauDetail -- identifié par EID, pas de .id stable comme les autres collections
+let agneauDetailOrigin = 'agneaux';
+let editAgneauContext = null; // { kind, idx } -- soin/note d'un agneau non trié
 let currentLotId = null;
 let inventaireTab = 'brebis';
 // Onglet actif de la fiche brebis (chantier "Refonte en onglets", inspiré
@@ -3758,7 +3780,7 @@ const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 
 // Écrans redessinés en grille/tableau grand écran sur desktop (voir
 // render()) -- sortent du plafond main{max-width:700px}. Complété au fil
 // des chantiers desktop successifs, jamais un élargissement global.
-const DESKTOP_WIDE_VIEWS = new Set(['detail', 'home', 'list', 'beliers', 'controle-laitier', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'parametres', 'bilan-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
+const DESKTOP_WIDE_VIEWS = new Set(['detail', 'home', 'list', 'beliers', 'controle-laitier', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'agneau-detail', 'parametres', 'bilan-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -3866,6 +3888,9 @@ btnBack.onclick = () => {
   else if (currentView === 'add-sheep') render('list');
   else if (currentView === 'add-agnelle') { editingAgnelleId = null; render(addAgnelleOrigin); }
   else if (currentView === 'agnelle-detail') render(agnelleDetailOrigin);
+  else if (currentView === 'add-sanitaire-agnelle' || currentView === 'add-note-agnelle') { editAgnelleContext = null; render('agnelle-detail', currentAgnelleId); }
+  else if (currentView === 'agneau-detail') render(agneauDetailOrigin);
+  else if (currentView === 'add-sanitaire-agneau' || currentView === 'add-note-agneau') { editAgneauContext = null; render('agneau-detail', currentAgneauEid); }
   else if (currentView === 'add-lot' || currentView === 'add-lot-reforme' || currentView === 'add-lot-repro' || currentView === 'edit-lot') render('lots');
   else if (currentView === 'edit-repro') {
     if (editReproTarget && editReproTarget.kind === 'agnelle') { currentAgnelleId = editReproTarget.id; render('agnelle-detail'); }
@@ -3944,6 +3969,8 @@ function messageSuppressionAgnelage(agnelage) {
 
 function deleteItem(kind, idx) {
   if (kind.startsWith('belier-')) return deleteBelierItem(kind.slice(7), idx);
+  if (kind.startsWith('agnelle-')) return deleteAgnelleItem(kind.slice(8), idx);
+  if (kind.startsWith('agneau-')) return deleteAgneauItem(kind.slice(7), idx);
   const sheep = findSheep(currentSheepId);
   if (!sheep) return;
   const message = kind === 'agnelages' ? messageSuppressionAgnelage((sheep.agnelages || [])[idx]) : 'Supprimer cet élément ? Cette action est irréversible.';
@@ -3957,6 +3984,8 @@ function deleteItem(kind, idx) {
 
 function editItem(kind, idx) {
   if (kind.startsWith('belier-')) return editBelierItem(kind.slice(7), idx);
+  if (kind.startsWith('agnelle-')) return editAgnelleItem(kind.slice(8), idx);
+  if (kind.startsWith('agneau-')) return editAgneauItem(kind.slice(7), idx);
   editContext = { kind, idx };
   const viewMap = { echographies: 'add-echo', agnelages: 'add-agnelage', sanitaire: 'add-sanitaire', mouvements: 'add-mouvement', controleLaitier: 'add-controle', notes: 'add-note' };
   render(viewMap[kind], currentSheepId);
@@ -3976,6 +4005,34 @@ function deleteBelierItem(kind, idx) {
 function editBelierItem(kind, idx) {
   editBelierContext = { kind, idx };
   render(kind === 'sanitaire' ? 'add-sanitaire-belier' : 'add-mouvement-belier');
+}
+
+function deleteAgnelleItem(kind, idx) {
+  if (!confirm('Supprimer cet élément ? Cette action est irréversible.')) return;
+  const ag = DB.agnelles.find(a => a.id === currentAgnelleId);
+  if (!ag) return;
+  ag[kind] = ag[kind] || [];
+  ag[kind].splice(idx, 1);
+  saveData(DB);
+  render('agnelle-detail');
+}
+function editAgnelleItem(kind, idx) {
+  editAgnelleContext = { kind, idx };
+  render(kind === 'sanitaire' ? 'add-sanitaire-agnelle' : 'add-note-agnelle');
+}
+
+function deleteAgneauItem(kind, idx) {
+  if (!confirm('Supprimer cet élément ? Cette action est irréversible.')) return;
+  const lamb = findLambByEid(currentAgneauEid);
+  if (!lamb) return;
+  lamb[kind] = lamb[kind] || [];
+  lamb[kind].splice(idx, 1);
+  saveData(DB);
+  render('agneau-detail');
+}
+function editAgneauItem(kind, idx) {
+  editAgneauContext = { kind, idx };
+  render(kind === 'sanitaire' ? 'add-sanitaire-agneau' : 'add-note-agneau');
 }
 
 function activateSwipes(container) {
@@ -4072,6 +4129,11 @@ function render(view, sheepId) {
     else if (view === 'add-agnelle') renderAddAgnelle();
     else if (view === 'agnelles-inventaire') renderAgnellesInventaire();
     else if (view === 'agnelle-detail') renderAgnelleDetail(currentAgnelleId);
+    else if (view === 'add-sanitaire-agnelle') renderAddSanitaireAgnelle();
+    else if (view === 'add-note-agnelle') renderAddNoteAgnelle();
+    else if (view === 'agneau-detail') renderAgneauDetail();
+    else if (view === 'add-sanitaire-agneau') renderAddSanitaireAgneau();
+    else if (view === 'add-note-agneau') renderAddNoteAgneau();
     else if (view === 'beliers') renderBeliers();
     else if (view === 'add-belier') renderAddBelier();
     else if (view === 'belier-detail') renderBelierDetail(currentBelierId);
@@ -6499,9 +6561,11 @@ function renderAgneaux() {
   const introHtml = items.length === 0 ? '' :
     `<div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${enAttente} en attente de devenir sur ${items.length} agneau(x) bouclé(s).</div>`;
 
-  // Pas de fiche dédiée par agneau : le scan fait défiler jusqu'à sa carte
-  // dans l'inventaire et la met en surbrillance (même principe que le scan
-  // du Chantier de tri), plutôt que d'ouvrir un écran séparé.
+  // Fiche dédiée par agneau (chantier "Fiches individuelles Agneaux &
+  // Agnelles") : bouton "Voir la fiche" sur chaque carte. Le scan continue
+  // de faire défiler jusqu'à la carte et de la surligner (repérage rapide,
+  // même principe que le Chantier de tri) plutôt que d'ouvrir directement
+  // la fiche -- l'éleveur choisit ensuite d'y entrer ou non.
   const scanHtml = `
     <div class="card">
       <label>Scanner un agneau pour le retrouver</label>
@@ -6540,6 +6604,7 @@ function renderAgneaux() {
             : `<button type="button" class="btn btn-secondary btn-agneau-vendu" data-i="${i}" style="color:var(--coral-fg);border-color:var(--danger);">Vendu</button>
                <button type="button" class="btn btn-secondary btn-agneau-mort" data-i="${i}" style="color:var(--coral-fg);border-color:var(--danger);">Mort</button>`}
         </div>
+        <button type="button" class="btn btn-secondary btn-voir-fiche-agneau" data-i="${i}" style="margin-top:8px;">Voir la fiche</button>
         <button type="button" class="btn btn-secondary btn-voir-mere-agneau" data-eid="${it.mereEid}" style="margin-top:8px;">Voir la fiche de la mère</button>
         ${htmlLienMereAdoptive(it.lamb, 'btn-voir-mere-adoptive-agneau')}
       </div>
@@ -6567,6 +6632,14 @@ function renderAgneaux() {
     }
   });
 
+  document.querySelectorAll('.btn-voir-fiche-agneau').forEach(btn => {
+    btn.onclick = () => {
+      const lamb = items[parseInt(btn.dataset.i, 10)].lamb;
+      currentAgneauEid = lamb.eid;
+      agneauDetailOrigin = 'agneaux';
+      render('agneau-detail');
+    };
+  });
   document.querySelectorAll('.btn-agneau-vendu').forEach(btn => {
     btn.onclick = () => {
       const lamb = items[parseInt(btn.dataset.i, 10)].lamb;
@@ -7626,23 +7699,19 @@ function renderAddEcho(sheepId) {
 }
 
 /* ---------- Ajout / modification note (chantier "Onglet Notes sur la
-   fiche brebis") -- observation libre, catégorie facultative choisie dans
-   DB.categoriesNotes (liste modulable, voir Paramètres > Listes), même
-   pattern d'ajout à la volée que "Cas particulier" ci-dessus
-   (renderAddEcho/#add-special). Pas de contrôle anti-doublon par date
-   (contrairement aux échographies) : plusieurs notes le même jour sont
-   normales pour de simples observations. ---------- */
-function renderAddNote(sheepId) {
-  const sheep = findSheep(sheepId);
-  const editing = editContext && editContext.kind === 'notes';
-  const existing = editing ? sheep.notes[editContext.idx] : null;
-  pageTitle.textContent = editing ? 'Modifier la note' : 'Nouvelle note';
+   fiche brebis", étendu aux agnelles/agneaux par le chantier "Fiches
+   individuelles Agneaux & Agnelles") -- observation libre, catégorie
+   facultative choisie dans DB.categoriesNotes (liste modulable, voir
+   Paramètres > Listes), même pattern d'ajout à la volée que "Cas
+   particulier" (renderAddEcho/#add-special). Pas de contrôle anti-doublon
+   par date (contrairement aux échographies) : plusieurs notes le même
+   jour sont normales pour de simples observations.
+   noteFormHtml/wireNoteForm : cœur partagé par les 3 écrans (brebis,
+   agnelle, agneau) -- seul le contexte (fiche visée, callback de
+   sauvegarde) change d'un écran à l'autre. ---------- */
+function noteFormHtml(existing, editing, btnColor) {
   const today = existing ? existing.date : new Date().toISOString().slice(0, 10);
-
-  app.innerHTML = `
-    <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis n°${numeroVisuel(sheep.eid)}</div>
-
+  return `
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
 
@@ -7657,10 +7726,10 @@ function renderAddNote(sheepId) {
       <textarea id="f-texte" rows="4" placeholder="Observation libre...">${existing ? existing.texte : ''}</textarea>
 
       <div id="err" class="error-box hidden"></div>
-      <button class="btn btn-primary" id="btn-save-note" style="background:var(--amber-fg);">${editing ? 'Enregistrer les modifications' : 'Enregistrer la note'}</button>
-    </div>
+      <button class="btn btn-primary" id="btn-save-note" style="background:${btnColor};">${editing ? 'Enregistrer les modifications' : 'Enregistrer la note'}</button>
   `;
-
+}
+function wireNoteForm(existing, onSave) {
   let categorie = existing ? (existing.categorie || null) : null;
   DB.categoriesNotes = DB.categoriesNotes || [];
 
@@ -7707,13 +7776,30 @@ function renderAddNote(sheepId) {
       texte: texte,
       categorie: categorie
     };
+    onSave(note);
+  };
+}
+function renderAddNote(sheepId) {
+  const sheep = findSheep(sheepId);
+  const editing = editContext && editContext.kind === 'notes';
+  const existing = editing ? sheep.notes[editContext.idx] : null;
+  pageTitle.textContent = editing ? 'Modifier la note' : 'Nouvelle note';
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis n°${numeroVisuel(sheep.eid)}</div>
+      ${noteFormHtml(existing, editing, 'var(--amber-fg)')}
+    </div>
+  `;
+
+  wireNoteForm(existing, (note) => {
     sheep.notes = sheep.notes || [];
     if (editing) sheep.notes[editContext.idx] = note;
     else sheep.notes.push(note);
     editContext = null;
     saveData(DB);
     render('detail', sheep.id);
-  };
+  });
 }
 
 /* ---------- Ajout agnelage ---------- */
@@ -10152,7 +10238,7 @@ function showVendreAgnelleModal(ag, onDone) {
     ag.statut = 'vendue';
     const lamb = findLambByEid(ag.eid);
     if (lamb) lamb.statutFinal = 'vendu';
-    archiverDansRegistre('agneaux', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
+    archiverDansRegistre('agnelles', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
     DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
     saveData(DB);
     document.body.removeChild(overlay);
@@ -10199,6 +10285,7 @@ function renderAgnelles() {
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;">
+            <button type="button" class="btn btn-secondary btn-voir-fiche-agnelle-tri" data-id="${ag.id}" style="width:auto;padding:6px 14px;font-size:13px;">Voir la fiche</button>
             <button type="button" class="btn btn-secondary btn-edit-agnelle" data-id="${ag.id}" style="width:auto;padding:6px 14px;font-size:13px;">Modifier</button>
             <button type="button" class="btn btn-secondary btn-vendre-agnelle" data-id="${ag.id}" style="color:var(--coral-fg);border-color:var(--coral-fg);width:auto;padding:6px 14px;font-size:13px;">Vendre</button>
             <button type="button" class="btn btn-secondary btn-remove-agnelle" data-id="${ag.id}" style="color:var(--danger);border-color:var(--danger);width:auto;padding:6px 14px;font-size:13px;">Suppr.</button>
@@ -10277,7 +10364,7 @@ function renderAgnelles() {
     // mois" et pour rester exploitable même après suppression de la fiche.
     DB.agnelles.push({
       id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: c.lamb.eid, origine: 'née', motherEid: c.motherEid,
-      dateEntree, sanitaire: (c.lamb.sanitaire || []).slice(),
+      dateEntree, sanitaire: (c.lamb.sanitaire || []).slice(), notes: (c.lamb.notes || []).slice(),
       mouvements: [
         { type: 'Naissance', cause: null, date: c.date },
         { type: 'Entrée', cause: 'Tri (renouvellement)', date: dateEntree }
@@ -10373,6 +10460,9 @@ function renderAgnelles() {
   document.getElementById('btn-add-agnelle').onclick = () => { editingAgnelleId = null; addAgnelleOrigin = 'agnelles'; render('add-agnelle'); };
   document.querySelectorAll('.btn-edit-agnelle').forEach(btn => {
     btn.onclick = () => { editingAgnelleId = btn.dataset.id; addAgnelleOrigin = 'agnelles'; render('add-agnelle'); };
+  });
+  document.querySelectorAll('.btn-voir-fiche-agnelle-tri').forEach(btn => {
+    btn.onclick = () => { currentAgnelleId = btn.dataset.id; agnelleDetailOrigin = 'agnelles'; render('agnelle-detail'); };
   });
 }
 
@@ -10548,30 +10638,48 @@ function renderAgnellesInventaire() {
   });
 }
 
-/* ---------- Fiche agnelle (lecture + historique) ----------
+/* ---------- Fiche agnelle ----------
    Sur le modèle allégé de renderBelierDetail : identité, généalogie (lien
    vers la fiche de la mère si connue, sinon père/mère en texte libre pour
-   une agnelle achetée), carnet sanitaire et mouvements déjà enregistrés
-   (lecture seule -- il n'existe pas encore de saisie de nouveaux soins/
-   mouvements pour une agnelle ailleurs dans l'appli, donc pas ajoutée ici
-   non plus : hors périmètre de ce chantier). Modifier/Vendre/Supprimer
-   réutilisent tels quels le formulaire et la modale déjà utilisés par le
-   chantier de tri -- une seule logique, jamais deux façons de modifier une
-   agnelle. */
+   une agnelle achetée), carnet sanitaire (ajout/modif/suppr de soin) et
+   notes libres (chantier "Fiches individuelles Agneaux & Agnelles"),
+   mouvements déjà enregistrés (lecture seule -- aucune saisie manuelle de
+   mouvement pour une agnelle ailleurs dans l'appli, Vendre/Modifier
+   couvrant déjà ce besoin). Modifier/Vendre/Supprimer réutilisent tels
+   quels le formulaire et la modale déjà utilisés par le chantier de tri --
+   une seule logique, jamais deux façons de modifier une agnelle. */
 function renderAgnelleDetail(id) {
   const ag = (DB.agnelles || []).find(a => a.id === id);
   if (!ag) { render('agnelles-inventaire'); return; }
   pageTitle.textContent = 'Agnelle n°' + numeroVisuel(ag.eid);
 
-  const sanitaire = (ag.sanitaire || []).slice().reverse();
+  const sanitaire = (ag.sanitaire || []).map((s, i) => ({ ...s, idx: i })).reverse();
   const sanitaireHtml = sanitaire.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun soin enregistré.</div>' : sanitaire.map(s => `
-    <div class="history-item">
-      ${iconCircle(ICON_SANTE, 'coral', 'sm')}
-      <div class="content">
-        <div style="font-weight:600;">${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</div>
-        ${(s.quantiteCc != null || s.dose || s.intervenant || s.collectif || s.numeroOrdonnance) ? `<div style="margin-top:5px;">${s.quantiteCc != null ? `<span class="badge badge-muted" style="margin-right:6px;">${s.quantiteCc} cc</span>` : (s.dose ? `<span class="badge badge-muted" style="margin-right:6px;">${s.dose}</span>` : '')}${s.intervenant ? `<span class="badge badge-muted" style="margin-right:6px;">${s.intervenant}</span>` : ''}${s.collectif ? '<span class="badge badge-gray">Collectif</span>' : ''}${s.numeroOrdonnance ? `<span class="badge badge-muted" style="margin-left:6px;">Ord. n°${s.numeroOrdonnance}</span>` : ''}</div>` : ''}
-        <div class="date" style="margin-top:4px;">${sanitaireDateHtml(s)}</div>
-        ${s.commentaire ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin-top:2px;">${s.commentaire}</div>` : ''}
+    <div class="swipe-wrap" data-kind="agnelle-sanitaire" data-idx="${s.idx}">
+      <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
+      <div class="swipe-fg history-item">
+        ${iconCircle(ICON_SANTE, 'coral', 'sm')}
+        <div class="content">
+          <div style="font-weight:600;">${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</div>
+          ${(s.quantiteCc != null || s.dose || s.intervenant || s.collectif || s.numeroOrdonnance) ? `<div style="margin-top:5px;">${s.quantiteCc != null ? `<span class="badge badge-muted" style="margin-right:6px;">${s.quantiteCc} cc</span>` : (s.dose ? `<span class="badge badge-muted" style="margin-right:6px;">${s.dose}</span>` : '')}${s.intervenant ? `<span class="badge badge-muted" style="margin-right:6px;">${s.intervenant}</span>` : ''}${s.collectif ? '<span class="badge badge-gray">Collectif</span>' : ''}${s.numeroOrdonnance ? `<span class="badge badge-muted" style="margin-left:6px;">Ord. n°${s.numeroOrdonnance}</span>` : ''}</div>` : ''}
+          <div class="date" style="margin-top:4px;">${sanitaireDateHtml(s)}</div>
+          ${s.commentaire ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin-top:2px;">${s.commentaire}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  const notes = (ag.notes || []).map((n, i) => ({ ...n, idx: i })).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const notesHtml = notes.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune note enregistrée.</div>' : notes.map(n => `
+    <div class="swipe-wrap" data-kind="agnelle-notes" data-idx="${n.idx}">
+      <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
+      <div class="swipe-fg history-item">
+        ${iconCircle(ICON_JOURNAL, 'amber', 'sm')}
+        <div class="content">
+          ${n.categorie ? `<span class="badge badge-muted" style="margin-bottom:4px;">${n.categorie}</span>` : ''}
+          <div style="font-size:14px;">${n.texte}</div>
+          <div class="date" style="margin-top:4px;">${formatDateFr(n.date)}</div>
+        </div>
       </div>
     </div>
   `).join('');
@@ -10660,9 +10768,20 @@ function renderAgnelleDetail(id) {
       <button class="btn btn-secondary" id="btn-vendre-agnelle-fiche" style="color:var(--coral-fg);border-color:var(--coral-fg);">Vendre</button>
     </div>
 
+    <div class="row" style="margin-bottom:16px;">
+      <button class="btn btn-primary" id="btn-add-sanitaire-agnelle" style="background:var(--danger);">+ Carnet sanitaire</button>
+      <button class="btn btn-primary" id="btn-add-note-agnelle" style="background:var(--amber-fg);">+ Note</button>
+    </div>
+
     <div class="card">
       ${sectionHeaderHtml(ICON_SANTE, 'coral', 'Carnet sanitaire')}
+      <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${sanitaireHtml}
+    </div>
+    <div class="card">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'amber', 'Notes')}
+      <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
+      ${notesHtml}
     </div>
     <div class="card">
       ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
@@ -10671,6 +10790,9 @@ function renderAgnelleDetail(id) {
     <button class="btn btn-secondary" id="btn-delete-agnelle-fiche" style="color:var(--danger);border-color:var(--danger);">Supprimer cette agnelle</button>
   `;
   app.innerHTML = desktop ? `${desktopHeaderHtml}<div class="fiche-desktop-grid">${agnelleBodyHtml}</div>` : agnelleBodyHtml;
+  activateSwipes(app);
+  document.getElementById('btn-add-sanitaire-agnelle').onclick = () => { editAgnelleContext = null; render('add-sanitaire-agnelle'); };
+  document.getElementById('btn-add-note-agnelle').onclick = () => { editAgnelleContext = null; render('add-note-agnelle'); };
 
   const btnEditReproTagAg = document.getElementById('btn-edit-repro-tag-ag');
   if (btnEditReproTagAg) btnEditReproTagAg.onclick = () => { editReproTarget = { kind: 'agnelle', id: ag.id }; render('edit-repro'); };
@@ -10706,6 +10828,658 @@ function renderAgnelleDetail(id) {
     saveData(DB);
     render(agnelleDetailOrigin);
   };
+}
+
+/* ---------- Carnet sanitaire agnelle (chantier "Fiches individuelles
+   Agneaux & Agnelles") -- même structure que renderAddSanitaireBelier,
+   avec 2 différences : "Ordonnance n°" obligatoire (traçabilité imposée
+   pour cette catégorie, cf. demande explicite) sauf pour le type "Autre"
+   (soin de plaie, aucun produit prescriptible en jeu), et sauvegarde sur
+   ag.sanitaire / retour vers la fiche agnelle. ---------- */
+function renderAddSanitaireAgnelle() {
+  const ag = DB.agnelles.find(a => a.id === currentAgnelleId);
+  const editing = editAgnelleContext && editAgnelleContext.kind === 'sanitaire';
+  const existing = editing ? ag.sanitaire[editAgnelleContext.idx] : null;
+  pageTitle.textContent = editing ? 'Modifier le soin' : 'Carnet sanitaire';
+  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Agnelle n°${numeroVisuel(ag.eid)}</div>
+
+      <label>Type d'évènement</label>
+      <div class="grid4" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px;">
+        <button type="button" class="opt-btn type-opt coral" data-val="Vaccin">Vaccin</button>
+        <button type="button" class="opt-btn type-opt coral" data-val="Traitement">Traitement</button>
+        <button type="button" class="opt-btn type-opt coral" data-val="Autre">Autre</button>
+      </div>
+
+      <div id="sous-type-block" class="hidden" style="margin-bottom:10px;">
+        <label>Catégorie de traitement</label>
+        <div class="grid2" id="sous-type-group">
+          <button type="button" class="opt-btn sous-opt coral" data-val="Antibiotique">Antibiotique</button>
+          <button type="button" class="opt-btn sous-opt coral" data-val="Antiparasitaire">Antiparasitaire</button>
+        </div>
+        <div class="grid2">
+          <button type="button" class="opt-btn sous-opt coral" data-val="Anti-inflammatoire" style="grid-column:span 2;">Anti-inflammatoire</button>
+        </div>
+      </div>
+
+      <div id="autre-note" class="hidden" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;padding:10px;background:#f0efe9;border-radius:var(--radius);">${infoBulleHtml('Type de soin « Autre »', 'Soin de plaie — pas de produit à sélectionner.')}</div>
+
+      <div id="produit-block" class="hidden" style="margin-bottom:14px;">
+        <label>Produit utilisé</label>
+        <div class="chip-list" id="produit-list"></div>
+        <div class="row">
+          <input type="text" id="new-produit" placeholder="Ajouter un nouveau produit...">
+          <button type="button" class="btn btn-secondary" id="add-produit" style="width:auto;padding:0 16px;">+</button>
+        </div>
+        <div id="posologie-rappel" class="hidden" style="font-size:12.5px;color:var(--text-muted);margin-top:8px;padding:8px 10px;background:#f0efe9;border-radius:var(--radius);"></div>
+      </div>
+
+      ${ordonnanceBlockHtml(true)}
+
+      <label>Date</label>
+      <input type="date" id="f-date" value="${today}">
+
+      <label>Quantité administrée (cc)</label>
+      <input type="number" id="f-quantite" placeholder="ex: 2" step="0.1" min="0" value="${existing && existing.quantiteCc != null ? existing.quantiteCc : ''}">
+
+      <label>Intervenant</label>
+      <div class="chip-list" id="intervenant-list"></div>
+      <div class="row">
+        <input type="text" id="new-intervenant" placeholder="Ajouter un nouvel intervenant...">
+        <button type="button" class="btn btn-secondary" id="add-intervenant" style="width:auto;padding:0 16px;">+</button>
+      </div>
+
+      <label>Commentaire (facultatif)</label>
+      <input type="text" id="f-comment" placeholder="ex: rappel dans 3 semaines" value="${existing ? (existing.commentaire || '') : ''}">
+
+      <div id="err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-save-sanitaire">${editing ? 'Enregistrer les modifications' : 'Enregistrer le soin'}</button>
+    </div>
+  `;
+
+  let type = null, sousType = null, produit = null, intervenant = null;
+  const refreshOrdonnanceBlock = wireOrdonnanceBlock(() => produit);
+
+  function renderIntervenantChips() {
+    const list = document.getElementById('intervenant-list');
+    list.innerHTML = '';
+    (DB.intervenants || []).forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (intervenant === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { intervenant = (intervenant === val) ? null : val; renderIntervenantChips(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+  }
+  renderIntervenantChips();
+  document.getElementById('add-intervenant').onclick = () => {
+    const input = document.getElementById('new-intervenant');
+    const val = input.value.trim();
+    if (!val) return;
+    DB.intervenants = DB.intervenants || [];
+    if (!DB.intervenants.includes(val)) DB.intervenants.push(val);
+    saveData(DB);
+    input.value = '';
+    intervenant = val;
+    renderIntervenantChips();
+  };
+
+  function updatePosologieRappel() {
+    const box = document.getElementById('posologie-rappel');
+    const info = produit && DB.produitsInfo[produit];
+    if (info && info.posologie) {
+      box.textContent = 'Posologie : ' + info.posologie;
+      box.classList.remove('hidden');
+    } else {
+      box.classList.add('hidden');
+    }
+  }
+
+  function categorieKey() {
+    if (type === 'Vaccin') return 'vaccins';
+    if (sousType === 'Antibiotique') return 'antibiotiques';
+    if (sousType === 'Antiparasitaire') return 'antiparasitaires';
+    if (sousType === 'Anti-inflammatoire') return 'antiinflammatoires';
+    return null;
+  }
+  function renderProduitChips() {
+    const key = categorieKey();
+    const list = document.getElementById('produit-list');
+    list.innerHTML = '';
+    if (!key) { document.getElementById('produit-block').classList.add('hidden'); document.getElementById('ordonnance-block').classList.add('hidden'); return; }
+    document.getElementById('produit-block').classList.remove('hidden');
+    document.getElementById('ordonnance-block').classList.remove('hidden');
+    DB.produits[key].forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (produit === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); updatePosologieRappel(); refreshOrdonnanceBlock(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+    updatePosologieRappel();
+    refreshOrdonnanceBlock();
+  }
+
+  document.querySelectorAll('.type-opt').forEach(btn => {
+    btn.onclick = () => {
+      type = btn.dataset.val;
+      sousType = null; produit = null;
+      document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      document.querySelectorAll('.sous-opt').forEach(b => b.classList.remove('selected'));
+      document.getElementById('sous-type-block').classList.toggle('hidden', type !== 'Traitement');
+      document.getElementById('autre-note').classList.toggle('hidden', type !== 'Autre');
+      if (type === 'Vaccin') renderProduitChips();
+      else { document.getElementById('produit-block').classList.add('hidden'); document.getElementById('ordonnance-block').classList.add('hidden'); }
+      updatePosologieRappel();
+      document.getElementById('err').classList.add('hidden');
+    };
+  });
+  document.querySelectorAll('.sous-opt').forEach(btn => {
+    btn.onclick = () => {
+      sousType = btn.dataset.val;
+      produit = null;
+      document.querySelectorAll('.sous-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      renderProduitChips();
+      document.getElementById('err').classList.add('hidden');
+    };
+  });
+  document.getElementById('add-produit').onclick = () => {
+    const key = categorieKey();
+    if (!key) return;
+    const input = document.getElementById('new-produit');
+    ouvrirModalNouveauProduitSanitaire({
+      categoriePreselectionnee: key,
+      categorieVerrouillee: true,
+      nomPrerempli: input.value.trim(),
+      onCreated: (nom) => {
+        input.value = '';
+        produit = nom;
+        renderProduitChips();
+      }
+    });
+  };
+
+  document.getElementById('btn-save-sanitaire').onclick = () => {
+    const err = document.getElementById('err');
+    if (!type) { err.textContent = "Choisis un type d'évènement."; err.classList.remove('hidden'); return; }
+    if (type === 'Traitement' && !sousType) { err.textContent = "Choisis une catégorie de traitement."; err.classList.remove('hidden'); return; }
+    if (type !== 'Autre' && !produit) { err.textContent = "Sélectionne ou ajoute un produit."; err.classList.remove('hidden'); return; }
+    const quantiteVal = document.getElementById('f-quantite').value;
+    if (quantiteVal.trim() === '' || isNaN(parseFloat(quantiteVal)) || parseFloat(quantiteVal) < 0) { err.textContent = "Renseigne la quantité administrée (cc)."; err.classList.remove('hidden'); return; }
+    if (!intervenant) { err.textContent = "Sélectionne ou ajoute un intervenant."; err.classList.remove('hidden'); return; }
+    const numeroOrdonnance = document.getElementById('f-ordonnance').value || null;
+    if (type !== 'Autre' && !numeroOrdonnance) { err.textContent = "Le numéro d'ordonnance est obligatoire pour une agnelle."; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    const soin = {
+      type: type, sousType: sousType, produit: type === 'Autre' ? 'Soin de plaie' : produit,
+      date: document.getElementById('f-date').value,
+      quantiteCc: parseFloat(quantiteVal),
+      intervenant: intervenant,
+      commentaire: document.getElementById('f-comment').value.trim(),
+      numeroOrdonnance: numeroOrdonnance
+    };
+    ag.sanitaire = ag.sanitaire || [];
+    if (editing) ag.sanitaire[editAgnelleContext.idx] = soin;
+    else ag.sanitaire.push(soin);
+    editAgnelleContext = null;
+    saveData(DB);
+    render('agnelle-detail');
+  };
+
+  if (existing) {
+    const typeBtn = [...document.querySelectorAll('.type-opt')].find(b => b.dataset.val === existing.type);
+    if (typeBtn) typeBtn.click();
+    if (existing.sousType) {
+      const sousBtn = [...document.querySelectorAll('.sous-opt')].find(b => b.dataset.val === existing.sousType);
+      if (sousBtn) sousBtn.click();
+    }
+    if (existing.produit && existing.type !== 'Autre') {
+      const chip = [...document.querySelectorAll('#produit-list .chip')].find(c => c.textContent === existing.produit);
+      if (chip) chip.click();
+    }
+    if (existing.intervenant) {
+      const chip = [...document.querySelectorAll('#intervenant-list .chip')].find(c => c.textContent === existing.intervenant);
+      if (chip) chip.click();
+    }
+    if (existing.numeroOrdonnance) {
+      document.getElementById('f-ordonnance').value = existing.numeroOrdonnance;
+      refreshOrdonnanceBlock();
+    }
+  }
+}
+
+function renderAddNoteAgnelle() {
+  const ag = DB.agnelles.find(a => a.id === currentAgnelleId);
+  const editing = editAgnelleContext && editAgnelleContext.kind === 'notes';
+  const existing = editing ? ag.notes[editAgnelleContext.idx] : null;
+  pageTitle.textContent = editing ? 'Modifier la note' : 'Nouvelle note';
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Agnelle n°${numeroVisuel(ag.eid)}</div>
+      ${noteFormHtml(existing, editing, 'var(--amber-fg)')}
+    </div>
+  `;
+
+  wireNoteForm(existing, (note) => {
+    ag.notes = ag.notes || [];
+    if (editing) ag.notes[editAgnelleContext.idx] = note;
+    else ag.notes.push(note);
+    editAgnelleContext = null;
+    saveData(DB);
+    render('agnelle-detail');
+  });
+}
+
+/* ---------- Fiche agneau (agneau non trié, chantier "Fiches individuelles
+   Agneaux & Agnelles") -- même esprit allégé que renderBelierDetail/
+   renderAgnelleDetail (pas de sous-onglets) : identité, généalogie (lien
+   vers la mère biologique + mère adoptive le cas échéant -- pas de champ
+   père, aucun suivi de ce type au niveau de l'agneau ailleurs dans
+   l'appli), carnet sanitaire et notes (ajout/modif/suppr), sortie
+   Vendu/Mort réutilisant telle quelle showLambSortieModal/annulerSortieLamb
+   (déjà utilisées par l'écran "Agneaux"). Identifié par EID (pas de .id
+   stable, l'agneau vit comme sous-objet de brebis.agnelages[].lambs[]). */
+function findLambContextByEid(eid) {
+  for (const sheep of DB.brebis) {
+    for (const ag of (sheep.agnelages || [])) {
+      for (const l of ag.lambs) {
+        if (l.eid && cleanEid(l.eid) === cleanEid(eid)) return { lamb: l, mother: sheep, date: ag.date };
+      }
+    }
+  }
+  return null;
+}
+function renderAgneauDetail() {
+  const ctx = findLambContextByEid(currentAgneauEid);
+  if (!ctx) { render('agneaux'); return; }
+  const { lamb, mother, date } = ctx;
+  pageTitle.textContent = 'Agneau n°' + numeroVisuel(lamb.eid);
+
+  const sanitaire = (lamb.sanitaire || []).map((s, i) => ({ ...s, idx: i })).reverse();
+  const sanitaireHtml = sanitaire.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun soin enregistré.</div>' : sanitaire.map(s => `
+    <div class="swipe-wrap" data-kind="agneau-sanitaire" data-idx="${s.idx}">
+      <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
+      <div class="swipe-fg history-item">
+        ${iconCircle(ICON_SANTE, 'coral', 'sm')}
+        <div class="content">
+          <div style="font-weight:600;">${[s.type, s.sousType, s.produit].filter(Boolean).join(' · ')}</div>
+          ${(s.quantiteCc != null || s.dose || s.intervenant || s.collectif || s.numeroOrdonnance) ? `<div style="margin-top:5px;">${s.quantiteCc != null ? `<span class="badge badge-muted" style="margin-right:6px;">${s.quantiteCc} cc</span>` : (s.dose ? `<span class="badge badge-muted" style="margin-right:6px;">${s.dose}</span>` : '')}${s.intervenant ? `<span class="badge badge-muted" style="margin-right:6px;">${s.intervenant}</span>` : ''}${s.collectif ? '<span class="badge badge-gray">Collectif</span>' : ''}${s.numeroOrdonnance ? `<span class="badge badge-muted" style="margin-left:6px;">Ord. n°${s.numeroOrdonnance}</span>` : ''}</div>` : ''}
+          <div class="date" style="margin-top:4px;">${sanitaireDateHtml(s)}</div>
+          ${s.commentaire ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin-top:2px;">${s.commentaire}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  const notes = (lamb.notes || []).map((n, i) => ({ ...n, idx: i })).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const notesHtml = notes.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune note enregistrée.</div>' : notes.map(n => `
+    <div class="swipe-wrap" data-kind="agneau-notes" data-idx="${n.idx}">
+      <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
+      <div class="swipe-fg history-item">
+        ${iconCircle(ICON_JOURNAL, 'amber', 'sm')}
+        <div class="content">
+          ${n.categorie ? `<span class="badge badge-muted" style="margin-bottom:4px;">${n.categorie}</span>` : ''}
+          <div style="font-size:14px;">${n.texte}</div>
+          <div class="date" style="margin-top:4px;">${formatDateFr(n.date)}</div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  const mouvements = (lamb.mouvements || []).slice().reverse();
+  const mouvementHtml = mouvements.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun mouvement enregistré.</div>' : mouvements.map(m => `
+    <div class="history-item">
+      ${iconCircle(ICON_MOUVEMENT, 'coral', 'sm')}
+      <div class="content">
+        <div style="font-weight:600;">${m.type}</div>
+        ${m.cause ? `<div style="margin-top:5px;"><span class="badge badge-muted">${m.cause}</span></div>` : ''}
+        ${m.acheteur ? `<div style="font-size:12.5px;margin-top:4px;">Acheteur : <strong>${m.acheteur}</strong></div>` : ''}
+        <div class="date" style="margin-top:4px;">${formatDateFr(m.date)}</div>
+      </div>
+    </div>
+  `).join('');
+
+  const sortieDecidee = lamb.statutFinal === 'vendu' || lamb.statutFinal === 'mort';
+  const statutBadge = lamb.statutFinal === 'vendu' ? 'Vendu' : lamb.statutFinal === 'mort' ? 'Mort' : 'En attente';
+
+  const desktop = isDesktopMode();
+  const desktopHeaderHtml = !desktop ? '' : `
+    <div class="card fiche-desktop-header">
+      ${iconCircle(ICON_SHEEP, 'amber', 'lg')}
+      <div style="flex:1;min-width:0;">
+        <div class="fiche-desktop-name">Agneau n°${numeroVisuel(lamb.eid)} <span style="font-weight:500;font-size:13px;color:var(--text-muted);">— EID ${lamb.eid}</span></div>
+        <div class="fiche-desktop-badges">
+          <span class="badge ${lamb.sexe === 'Mâle' ? 'badge-blue' : 'badge-coral'}">${lamb.sexe}</span>
+          <span class="badge ${sortieDecidee ? 'badge-muted' : 'badge-amber'}">${statutBadge}</span>
+        </div>
+      </div>
+    </div>
+  `;
+  const agneauBodyHtml = `
+    <div class="card">
+      ${sectionHeaderHtml(ICON_SHEEP, 'amber', 'Identité')}
+      <div style="font-size:12px;color:var(--text-muted);">EID complet</div>
+      <div style="font-size:14px;margin-bottom:10px;">${lamb.eid}</div>
+      <div class="grid2">
+        <div><div style="font-size:12px;color:var(--text-muted);">Sexe</div><div style="font-weight:600;">${lamb.sexe}</div></div>
+        <div><div style="font-size:12px;color:var(--text-muted);">Né le</div><div style="font-weight:600;">${formatDateFr(date)}</div></div>
+      </div>
+      ${!desktop ? `<div style="margin-top:10px;"><span class="badge ${sortieDecidee ? 'badge-muted' : 'badge-amber'}">${statutBadge}</span></div>` : ''}
+    </div>
+
+    <div class="card">
+      ${sectionHeaderHtml(ICON_SHEEP, 'gray', 'Généalogie')}
+      <div style="font-size:13px;">Mère : <strong id="btn-voir-mere-agneau-fiche" style="color:var(--green-fg);text-decoration:underline;cursor:pointer;">n°${numeroVisuel(mother.eid)}</strong></div>
+      ${htmlLienMereAdoptive(lamb, 'btn-voir-mere-adoptive-agneau-fiche')}
+    </div>
+
+    <div class="row" style="margin-bottom:16px;">
+      ${sortieDecidee
+        ? `<button type="button" class="btn btn-secondary" id="btn-agneau-fiche-annuler">Annuler cette sortie</button>`
+        : `<button type="button" class="btn btn-secondary" id="btn-agneau-fiche-vendu" style="color:var(--coral-fg);border-color:var(--danger);">Vendu</button>
+           <button type="button" class="btn btn-secondary" id="btn-agneau-fiche-mort" style="color:var(--coral-fg);border-color:var(--danger);">Mort</button>`}
+    </div>
+
+    <div class="row" style="margin-bottom:16px;">
+      <button class="btn btn-primary" id="btn-add-sanitaire-agneau" style="background:var(--danger);">+ Carnet sanitaire</button>
+      <button class="btn btn-primary" id="btn-add-note-agneau" style="background:var(--amber-fg);">+ Note</button>
+    </div>
+
+    <div class="card">
+      ${sectionHeaderHtml(ICON_SANTE, 'coral', 'Carnet sanitaire')}
+      <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
+      ${sanitaireHtml}
+    </div>
+    <div class="card">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'amber', 'Notes')}
+      <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
+      ${notesHtml}
+    </div>
+    <div class="card">
+      ${sectionHeaderHtml(ICON_MOUVEMENT, 'coral', 'Mouvements')}
+      ${mouvementHtml}
+    </div>
+  `;
+  app.innerHTML = desktop ? `${desktopHeaderHtml}<div class="fiche-desktop-grid">${agneauBodyHtml}</div>` : agneauBodyHtml;
+  activateSwipes(app);
+
+  document.getElementById('btn-voir-mere-agneau-fiche').onclick = () => {
+    detailOrigin = 'agneau-detail';
+    previousDetailId = null;
+    render('detail', mother.id);
+  };
+  const btnAdoptive = document.getElementById('btn-voir-mere-adoptive-agneau-fiche');
+  if (btnAdoptive) btnAdoptive.onclick = () => {
+    const m = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(btnAdoptive.dataset.eid));
+    if (!m) { alert("Fiche de la mère adoptive introuvable (peut-être supprimée)."); return; }
+    detailOrigin = 'agneau-detail';
+    previousDetailId = null;
+    render('detail', m.id);
+  };
+  if (!sortieDecidee) {
+    document.getElementById('btn-agneau-fiche-vendu').onclick = () => showLambSortieModal(lamb, 'vendu', () => render('agneau-detail'));
+    document.getElementById('btn-agneau-fiche-mort').onclick = () => showLambSortieModal(lamb, 'mort', () => render('agneau-detail'));
+  } else {
+    document.getElementById('btn-agneau-fiche-annuler').onclick = () => annulerSortieLamb(lamb, () => render('agneau-detail'));
+  }
+  document.getElementById('btn-add-sanitaire-agneau').onclick = () => { editAgneauContext = null; render('add-sanitaire-agneau'); };
+  document.getElementById('btn-add-note-agneau').onclick = () => { editAgneauContext = null; render('add-note-agneau'); };
+}
+
+/* ---------- Carnet sanitaire agneau -- même structure que
+   renderAddSanitaireAgnelle (ordonnance obligatoire sauf type "Autre"),
+   mais résolution par EID (findLambContextByEid) et sauvegarde sur
+   lamb.sanitaire / retour vers la fiche agneau. ---------- */
+function renderAddSanitaireAgneau() {
+  const ctx = findLambContextByEid(currentAgneauEid);
+  const lamb = ctx && ctx.lamb;
+  const editing = editAgneauContext && editAgneauContext.kind === 'sanitaire';
+  const existing = editing ? lamb.sanitaire[editAgneauContext.idx] : null;
+  pageTitle.textContent = editing ? 'Modifier le soin' : 'Carnet sanitaire';
+  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Agneau n°${numeroVisuel(lamb.eid)}</div>
+
+      <label>Type d'évènement</label>
+      <div class="grid4" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px;">
+        <button type="button" class="opt-btn type-opt coral" data-val="Vaccin">Vaccin</button>
+        <button type="button" class="opt-btn type-opt coral" data-val="Traitement">Traitement</button>
+        <button type="button" class="opt-btn type-opt coral" data-val="Autre">Autre</button>
+      </div>
+
+      <div id="sous-type-block" class="hidden" style="margin-bottom:10px;">
+        <label>Catégorie de traitement</label>
+        <div class="grid2" id="sous-type-group">
+          <button type="button" class="opt-btn sous-opt coral" data-val="Antibiotique">Antibiotique</button>
+          <button type="button" class="opt-btn sous-opt coral" data-val="Antiparasitaire">Antiparasitaire</button>
+        </div>
+        <div class="grid2">
+          <button type="button" class="opt-btn sous-opt coral" data-val="Anti-inflammatoire" style="grid-column:span 2;">Anti-inflammatoire</button>
+        </div>
+      </div>
+
+      <div id="autre-note" class="hidden" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;padding:10px;background:#f0efe9;border-radius:var(--radius);">${infoBulleHtml('Type de soin « Autre »', 'Soin de plaie — pas de produit à sélectionner.')}</div>
+
+      <div id="produit-block" class="hidden" style="margin-bottom:14px;">
+        <label>Produit utilisé</label>
+        <div class="chip-list" id="produit-list"></div>
+        <div class="row">
+          <input type="text" id="new-produit" placeholder="Ajouter un nouveau produit...">
+          <button type="button" class="btn btn-secondary" id="add-produit" style="width:auto;padding:0 16px;">+</button>
+        </div>
+        <div id="posologie-rappel" class="hidden" style="font-size:12.5px;color:var(--text-muted);margin-top:8px;padding:8px 10px;background:#f0efe9;border-radius:var(--radius);"></div>
+      </div>
+
+      ${ordonnanceBlockHtml(true)}
+
+      <label>Date</label>
+      <input type="date" id="f-date" value="${today}">
+
+      <label>Quantité administrée (cc)</label>
+      <input type="number" id="f-quantite" placeholder="ex: 2" step="0.1" min="0" value="${existing && existing.quantiteCc != null ? existing.quantiteCc : ''}">
+
+      <label>Intervenant</label>
+      <div class="chip-list" id="intervenant-list"></div>
+      <div class="row">
+        <input type="text" id="new-intervenant" placeholder="Ajouter un nouvel intervenant...">
+        <button type="button" class="btn btn-secondary" id="add-intervenant" style="width:auto;padding:0 16px;">+</button>
+      </div>
+
+      <label>Commentaire (facultatif)</label>
+      <input type="text" id="f-comment" placeholder="ex: rappel dans 3 semaines" value="${existing ? (existing.commentaire || '') : ''}">
+
+      <div id="err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-save-sanitaire">${editing ? 'Enregistrer les modifications' : 'Enregistrer le soin'}</button>
+    </div>
+  `;
+
+  let type = null, sousType = null, produit = null, intervenant = null;
+  const refreshOrdonnanceBlock = wireOrdonnanceBlock(() => produit);
+
+  function renderIntervenantChips() {
+    const list = document.getElementById('intervenant-list');
+    list.innerHTML = '';
+    (DB.intervenants || []).forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (intervenant === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { intervenant = (intervenant === val) ? null : val; renderIntervenantChips(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+  }
+  renderIntervenantChips();
+  document.getElementById('add-intervenant').onclick = () => {
+    const input = document.getElementById('new-intervenant');
+    const val = input.value.trim();
+    if (!val) return;
+    DB.intervenants = DB.intervenants || [];
+    if (!DB.intervenants.includes(val)) DB.intervenants.push(val);
+    saveData(DB);
+    input.value = '';
+    intervenant = val;
+    renderIntervenantChips();
+  };
+
+  function updatePosologieRappel() {
+    const box = document.getElementById('posologie-rappel');
+    const info = produit && DB.produitsInfo[produit];
+    if (info && info.posologie) {
+      box.textContent = 'Posologie : ' + info.posologie;
+      box.classList.remove('hidden');
+    } else {
+      box.classList.add('hidden');
+    }
+  }
+
+  function categorieKey() {
+    if (type === 'Vaccin') return 'vaccins';
+    if (sousType === 'Antibiotique') return 'antibiotiques';
+    if (sousType === 'Antiparasitaire') return 'antiparasitaires';
+    if (sousType === 'Anti-inflammatoire') return 'antiinflammatoires';
+    return null;
+  }
+  function renderProduitChips() {
+    const key = categorieKey();
+    const list = document.getElementById('produit-list');
+    list.innerHTML = '';
+    if (!key) { document.getElementById('produit-block').classList.add('hidden'); document.getElementById('ordonnance-block').classList.add('hidden'); return; }
+    document.getElementById('produit-block').classList.remove('hidden');
+    document.getElementById('ordonnance-block').classList.remove('hidden');
+    DB.produits[key].forEach(val => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (produit === val ? ' selected' : '');
+      chip.textContent = val;
+      chip.onclick = () => { const wasSelected = produit === val; produit = wasSelected ? null : val; renderProduitChips(); updatePosologieRappel(); refreshOrdonnanceBlock(); document.getElementById('err').classList.add('hidden'); };
+      list.appendChild(chip);
+    });
+    updatePosologieRappel();
+    refreshOrdonnanceBlock();
+  }
+
+  document.querySelectorAll('.type-opt').forEach(btn => {
+    btn.onclick = () => {
+      type = btn.dataset.val;
+      sousType = null; produit = null;
+      document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      document.querySelectorAll('.sous-opt').forEach(b => b.classList.remove('selected'));
+      document.getElementById('sous-type-block').classList.toggle('hidden', type !== 'Traitement');
+      document.getElementById('autre-note').classList.toggle('hidden', type !== 'Autre');
+      if (type === 'Vaccin') renderProduitChips();
+      else { document.getElementById('produit-block').classList.add('hidden'); document.getElementById('ordonnance-block').classList.add('hidden'); }
+      updatePosologieRappel();
+      document.getElementById('err').classList.add('hidden');
+    };
+  });
+  document.querySelectorAll('.sous-opt').forEach(btn => {
+    btn.onclick = () => {
+      sousType = btn.dataset.val;
+      produit = null;
+      document.querySelectorAll('.sous-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      renderProduitChips();
+      document.getElementById('err').classList.add('hidden');
+    };
+  });
+  document.getElementById('add-produit').onclick = () => {
+    const key = categorieKey();
+    if (!key) return;
+    const input = document.getElementById('new-produit');
+    ouvrirModalNouveauProduitSanitaire({
+      categoriePreselectionnee: key,
+      categorieVerrouillee: true,
+      nomPrerempli: input.value.trim(),
+      onCreated: (nom) => {
+        input.value = '';
+        produit = nom;
+        renderProduitChips();
+      }
+    });
+  };
+
+  document.getElementById('btn-save-sanitaire').onclick = () => {
+    const err = document.getElementById('err');
+    if (!type) { err.textContent = "Choisis un type d'évènement."; err.classList.remove('hidden'); return; }
+    if (type === 'Traitement' && !sousType) { err.textContent = "Choisis une catégorie de traitement."; err.classList.remove('hidden'); return; }
+    if (type !== 'Autre' && !produit) { err.textContent = "Sélectionne ou ajoute un produit."; err.classList.remove('hidden'); return; }
+    const quantiteVal = document.getElementById('f-quantite').value;
+    if (quantiteVal.trim() === '' || isNaN(parseFloat(quantiteVal)) || parseFloat(quantiteVal) < 0) { err.textContent = "Renseigne la quantité administrée (cc)."; err.classList.remove('hidden'); return; }
+    if (!intervenant) { err.textContent = "Sélectionne ou ajoute un intervenant."; err.classList.remove('hidden'); return; }
+    const numeroOrdonnance = document.getElementById('f-ordonnance').value || null;
+    if (type !== 'Autre' && !numeroOrdonnance) { err.textContent = "Le numéro d'ordonnance est obligatoire pour un agneau."; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    const soin = {
+      type: type, sousType: sousType, produit: type === 'Autre' ? 'Soin de plaie' : produit,
+      date: document.getElementById('f-date').value,
+      quantiteCc: parseFloat(quantiteVal),
+      intervenant: intervenant,
+      commentaire: document.getElementById('f-comment').value.trim(),
+      numeroOrdonnance: numeroOrdonnance
+    };
+    lamb.sanitaire = lamb.sanitaire || [];
+    if (editing) lamb.sanitaire[editAgneauContext.idx] = soin;
+    else lamb.sanitaire.push(soin);
+    editAgneauContext = null;
+    saveData(DB);
+    render('agneau-detail');
+  };
+
+  if (existing) {
+    const typeBtn = [...document.querySelectorAll('.type-opt')].find(b => b.dataset.val === existing.type);
+    if (typeBtn) typeBtn.click();
+    if (existing.sousType) {
+      const sousBtn = [...document.querySelectorAll('.sous-opt')].find(b => b.dataset.val === existing.sousType);
+      if (sousBtn) sousBtn.click();
+    }
+    if (existing.produit && existing.type !== 'Autre') {
+      const chip = [...document.querySelectorAll('#produit-list .chip')].find(c => c.textContent === existing.produit);
+      if (chip) chip.click();
+    }
+    if (existing.intervenant) {
+      const chip = [...document.querySelectorAll('#intervenant-list .chip')].find(c => c.textContent === existing.intervenant);
+      if (chip) chip.click();
+    }
+    if (existing.numeroOrdonnance) {
+      document.getElementById('f-ordonnance').value = existing.numeroOrdonnance;
+      refreshOrdonnanceBlock();
+    }
+  }
+}
+
+function renderAddNoteAgneau() {
+  const ctx = findLambContextByEid(currentAgneauEid);
+  const lamb = ctx && ctx.lamb;
+  const editing = editAgneauContext && editAgneauContext.kind === 'notes';
+  const existing = editing ? lamb.notes[editAgneauContext.idx] : null;
+  pageTitle.textContent = editing ? 'Modifier la note' : 'Nouvelle note';
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Agneau n°${numeroVisuel(lamb.eid)}</div>
+      ${noteFormHtml(existing, editing, 'var(--amber-fg)')}
+    </div>
+  `;
+
+  wireNoteForm(existing, (note) => {
+    lamb.notes = lamb.notes || [];
+    if (editing) lamb.notes[editAgneauContext.idx] = note;
+    else lamb.notes.push(note);
+    editAgneauContext = null;
+    saveData(DB);
+    render('agneau-detail');
+  });
 }
 
 /* ---------- Tableau de bord ---------- */
@@ -13257,8 +14031,8 @@ const CATEGORIE_ANIMAL_CONFIG = {
       recalculerStatutBelier(b);
     }
   },
-  agneaux: {
-    label: 'Agneaux', tous: 'Toutes les', actives: 'actives', singulier: 'un agneau',
+  agnelles: {
+    label: 'Agnelles', tous: 'Toutes les', actives: 'actives', singulier: 'une agnelle',
     pool: () => DB.agnelles || [],
     isActive: a => (a.statut || 'active') === 'active',
     typeSortie: ['Morte', 'Vente', 'Vente reproduction', 'Perte', 'Autoconsommation'],
@@ -13271,16 +14045,36 @@ const CATEGORIE_ANIMAL_CONFIG = {
       ag.mouvements = ag.mouvements || [];
       ag.mouvements.push({ type, cause: MOTIFS_VENTE.includes(type) ? null : cause, acheteur, date, collectifId });
       ag.statut = type === 'Morte' ? 'morte' : type === 'Vente' ? 'vendue' : type === 'Vente reproduction' ? 'vendue reproduction' : type === 'Perte' ? 'perdue' : 'autoconsommée';
-      archiverDansRegistre('agneaux', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
+      archiverDansRegistre('agnelles', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
       DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
     }
+  },
+  // Agneaux NON triés (mâles + femelles pas encore gardées pour le
+  // renouvellement, voir getAgneauxInventaire) -- distinct de "agnelles"
+  // ci-dessus. Uniquement pour le Traitement collectif (voir
+  // CATEGORIE_TABS_COLLECTIF, pas CATEGORIE_TABS -- le Mouvement groupé
+  // et son historique d'annulation ne savent pas gérer ce cas, qui repose
+  // sur lamb.statutFinal et non sur .statut/.mouvements comme les 3 autres
+  // catégories). pool() ajoute un .id (= eid) directement sur l'objet réel
+  // sheep.agnelages[].lambs[] pour rester compatible avec la sélection par
+  // .id du Traitement collectif -- jamais de copie, la mutation (soin
+  // poussé dans .sanitaire) doit porter sur l'objet réel.
+  agneaux: {
+    label: 'Agneaux', tous: 'Tous les', actives: 'actifs', singulier: 'un agneau',
+    pool: () => getAgneauxInventaire().map(it => { it.lamb.id = it.lamb.id || it.lamb.eid; return it.lamb; }),
+    isActive: l => l.statutFinal !== 'vendu' && l.statutFinal !== 'mort',
+    annulable: false
   }
 };
 const CATEGORIE_TABS = [
   { key: 'brebis', label: 'Brebis' },
   { key: 'beliers', label: 'Béliers' },
-  { key: 'agneaux', label: 'Agneaux' }
+  { key: 'agnelles', label: 'Agnelles' }
 ];
+// Traitement collectif uniquement : 4e catégorie "agneaux" en plus des 3
+// du Mouvement groupé (CATEGORIE_TABS ci-dessus) -- voir le commentaire
+// sur CATEGORIE_ANIMAL_CONFIG.agneaux pour la raison de cette séparation.
+const CATEGORIE_TABS_COLLECTIF = [...CATEGORIE_TABS, { key: 'agneaux', label: 'Agneaux' }];
 
 /* ---------- Mouvement groupé (vente / sortie multiple) ---------- */
 let mouvementGroupeTab = 'brebis';
@@ -13290,7 +14084,7 @@ function renderMouvementGroupe() {
   const today = new Date().toISOString().slice(0,10);
   const actives = cfg.pool().filter(cfg.isActive);
 
-  if (!window.__mouvementGroupeSelected) window.__mouvementGroupeSelected = { brebis: new Set(), beliers: new Set(), agneaux: new Set() };
+  if (!window.__mouvementGroupeSelected) window.__mouvementGroupeSelected = { brebis: new Set(), beliers: new Set(), agnelles: new Set() };
   const selected = window.__mouvementGroupeSelected[mouvementGroupeTab];
   // Ne garde que les ids encore actifs (une sélection lancée puis reprise
   // plus tard ne doit pas pointer vers un animal déjà sorti entre-temps).
@@ -13542,10 +14336,13 @@ function renommerNumeroOrdonnancePartout(ancienNumero, nouveauNumero) {
   function renameIn(list) {
     (list || []).forEach(soin => { if (soin.numeroOrdonnance === ancienNumero) soin.numeroOrdonnance = nouveauNumero; });
   }
-  DB.brebis.forEach(s => renameIn(s.sanitaire));
+  DB.brebis.forEach(s => {
+    renameIn(s.sanitaire);
+    (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => renameIn(l.sanitaire)));
+  });
   (DB.beliers || []).forEach(b => renameIn(b.sanitaire));
   (DB.agnelles || []).forEach(a => renameIn(a.sanitaire));
-  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+  ['brebis', 'beliers', 'agnelles'].forEach(cat => {
     const archive = DB.registre && DB.registre[cat];
     if (!archive) return;
     Object.values(archive).forEach(entry => renameIn(entry.sanitaire));
@@ -13566,10 +14363,13 @@ function compterRattachementsOrdonnance(numero) {
       if (soin.numeroOrdonnance === numero) { nbTraitements++; if (eid) eids.add(eid); }
     });
   }
-  DB.brebis.forEach(s => scan(s.sanitaire, s.eid));
+  DB.brebis.forEach(s => {
+    scan(s.sanitaire, s.eid);
+    (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => scan(l.sanitaire, l.eid)));
+  });
   (DB.beliers || []).forEach(b => scan(b.sanitaire, b.eid));
   (DB.agnelles || []).forEach(a => scan(a.sanitaire, a.eid));
-  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+  ['brebis', 'beliers', 'agnelles'].forEach(cat => {
     const archive = DB.registre && DB.registre[cat];
     if (!archive) return;
     Object.entries(archive).forEach(([eid, entry]) => scan(entry.sanitaire, eid));
@@ -13584,10 +14384,13 @@ function detacherOrdonnancePartout(numero) {
   function clear(list) {
     (list || []).forEach(soin => { if (soin.numeroOrdonnance === numero) delete soin.numeroOrdonnance; });
   }
-  DB.brebis.forEach(s => clear(s.sanitaire));
+  DB.brebis.forEach(s => {
+    clear(s.sanitaire);
+    (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => clear(l.sanitaire)));
+  });
   (DB.beliers || []).forEach(b => clear(b.sanitaire));
   (DB.agnelles || []).forEach(a => clear(a.sanitaire));
-  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+  ['brebis', 'beliers', 'agnelles'].forEach(cat => {
     const archive = DB.registre && DB.registre[cat];
     if (!archive) return;
     Object.values(archive).forEach(entry => clear(entry.sanitaire));
@@ -13599,10 +14402,13 @@ function detacherOrdonnancePartout(numero) {
 // bélier, collectif) -- même bloc HTML + même logique de tri/avertissement
 // partout, pour ne jamais laisser les 3 diverger. Visible dans les mêmes
 // conditions que #produit-block (masqué pour le type "Autre").
-function ordonnanceBlockHtml() {
+// obligatoire : agneaux/agnelles doivent impérativement rattacher une
+// ordonnance (traçabilité imposée pour ces catégories) -- facultatif pour
+// brebis/béliers, comportement d'origine du chantier Ordonnances.
+function ordonnanceBlockHtml(obligatoire) {
   return `
     <div id="ordonnance-block" class="hidden" style="margin-bottom:14px;">
-      <label>Ordonnance n° (facultatif)</label>
+      <label>Ordonnance n°${obligatoire ? '' : ' (facultatif)'}</label>
       <select id="f-ordonnance"></select>
       <div id="ordonnance-warning" class="hidden" style="font-size:12.5px;color:var(--warning);margin-top:-6px;">⚠ Ce produit n'est pas listé sur l'ordonnance sélectionnée.</div>
     </div>
@@ -14099,10 +14905,13 @@ function renameProduitPartout(oldName, newName) {
   function renameIn(list) {
     (list || []).forEach(soin => { if (soin.produit === oldName) soin.produit = newName; });
   }
-  DB.brebis.forEach(s => renameIn(s.sanitaire));
+  DB.brebis.forEach(s => {
+    renameIn(s.sanitaire);
+    (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => renameIn(l.sanitaire)));
+  });
   (DB.beliers || []).forEach(b => renameIn(b.sanitaire));
   (DB.agnelles || []).forEach(a => renameIn(a.sanitaire));
-  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+  ['brebis', 'beliers', 'agnelles'].forEach(cat => {
     const archive = DB.registre && DB.registre[cat];
     if (!archive) return;
     Object.values(archive).forEach(entry => renameIn(entry.sanitaire));
@@ -14232,7 +15041,7 @@ function renderTraitementCollectif() {
       <div class="card">
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">À qui appliquer ce traitement ?</div>
         <div style="display:flex;flex-direction:column;gap:10px;">
-          ${CATEGORIE_TABS.map(t => `<button type="button" class="opt-btn cat-tc-opt coral" data-val="${t.key}">${t.label}</button>`).join('')}
+          ${CATEGORIE_TABS_COLLECTIF.map(t => `<button type="button" class="opt-btn cat-tc-opt coral" data-val="${t.key}">${t.label}</button>`).join('')}
         </div>
       </div>
     `;
@@ -14243,6 +15052,9 @@ function renderTraitementCollectif() {
 
   function screenForm() {
   const cfg = CATEGORIE_ANIMAL_CONFIG[categorie];
+  // Ordonnance obligatoire pour agnelles/agneaux (traçabilité imposée),
+  // facultative pour brebis/béliers (comportement d'origine).
+  const ordonnanceObligatoire = categorie === 'agnelles' || categorie === 'agneaux';
   pageTitle.textContent = 'Traitement collectif — ' + cfg.label;
   const today = new Date().toISOString().slice(0,10);
   const actives = cfg.pool().filter(cfg.isActive);
@@ -14291,7 +15103,7 @@ function renderTraitementCollectif() {
         <div id="posologie-rappel" class="hidden" style="font-size:12.5px;color:var(--text-muted);margin-top:8px;padding:8px 10px;background:#f0efe9;border-radius:var(--radius);"></div>
       </div>
 
-      ${ordonnanceBlockHtml()}
+      ${ordonnanceBlockHtml(ordonnanceObligatoire)}
 
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
@@ -14459,6 +15271,10 @@ function renderTraitementCollectif() {
     if (quantiteVal.trim() === '' || isNaN(parseFloat(quantiteVal)) || parseFloat(quantiteVal) < 0) { err.textContent = "Renseigne la quantité administrée (cc)."; err.classList.remove('hidden'); return; }
     if (!intervenant) { err.textContent = "Sélectionne ou ajoute un intervenant."; err.classList.remove('hidden'); return; }
     if (cible.length === 0) { err.textContent = "Sélectionne au moins " + cfg.singulier + " (à la main ou au bip)."; err.classList.remove('hidden'); return; }
+    const numeroOrdonnance = document.getElementById('f-ordonnance').value || null;
+    // Exempté pour "Autre" (soin de plaie) : aucun produit prescriptible
+    // n'est en jeu, le bloc ordonnance est d'ailleurs masqué dans ce cas.
+    if (ordonnanceObligatoire && type !== 'Autre' && !numeroOrdonnance) { err.textContent = "Le numéro d'ordonnance est obligatoire pour " + cfg.label.toLowerCase() + "."; err.classList.remove('hidden'); return; }
     if (!confirm('Appliquer ce traitement collectif à ' + cible.length + ' ' + cfg.label.toLowerCase() + ' ?')) return;
     err.classList.add('hidden');
     const collectifId = 'TC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
@@ -14467,7 +15283,6 @@ function renderTraitementCollectif() {
     const soinIntervenant = intervenant;
     const soinComment = document.getElementById('f-comment').value.trim();
     const soinProduit = type === 'Autre' ? 'Soin de plaie' : produit;
-    const numeroOrdonnance = document.getElementById('f-ordonnance').value || null;
     const soin = {
       type: type, sousType: sousType, produit: soinProduit,
       date: soinDate,
@@ -14527,7 +15342,7 @@ function detectLegacyCollectifGroups() {
   }
   scan(DB.brebis, 'brebis');
   scan(DB.beliers, 'beliers');
-  scan(DB.agnelles, 'agneaux');
+  scan(DB.agnelles, 'agnelles');
   return Object.values(groups)
     .map(g => ({ ...g, dates: Array.from(g.dates).filter(Boolean).sort() }))
     .filter(g => g.membres.length >= 2);
@@ -14641,7 +15456,7 @@ function campagneDeDateRegistre(dateStr) {
 const REGISTRE_CATEGORIES = [
   { key: 'brebis', label: 'Brebis' },
   { key: 'beliers', label: 'Bélier' },
-  { key: 'agneaux', label: 'Agnelle' }
+  { key: 'agnelles', label: 'Agnelle' }
 ];
 
 /* Fusionne, pour une catégorie donnée, les animaux encore actifs et ceux
@@ -14706,7 +15521,7 @@ const TYPES_SORTIE = ['Vente', 'Vente reproduction', 'Morte', 'Mort', 'Perte', '
    fiches encore actives, leurs dateEntree/createdAt (indisponibles pour
    une fiche déjà supprimée, faute d'être archivés par archiverDansRegistre)
    — nécessaires ici comme repli quand aucun mouvement "Entrée" n'existe.
-   categorie : 'brebis' | 'beliers' | 'agneaux' (agnelles). */
+   categorie : 'brebis' | 'beliers' | 'agnelles'. */
 function effectifEntriesFor(categorie) {
   const archive = (DB.registre && DB.registre[categorie]) || {};
   const map = {};
@@ -14756,7 +15571,7 @@ function agnelleDateReference(entry) {
    (aucune sortie, ou sortie strictement après dateCible) ; pour une
    agnelle, en plus, si elle a plus de 6 mois à dateCible. */
 function effectifADate(typeAnimal, dateCible) {
-  const categorie = typeAnimal === 'brebis' ? 'brebis' : typeAnimal === 'belier' ? 'beliers' : 'agneaux';
+  const categorie = typeAnimal === 'brebis' ? 'brebis' : typeAnimal === 'belier' ? 'beliers' : 'agnelles';
   const dateCibleObj = toDateOuNull(dateCible);
   if (!dateCibleObj) return 0;
   let count = 0;
@@ -14784,7 +15599,7 @@ function effectifADate(typeAnimal, dateCible) {
    l'année en cours si la base est entièrement vide (nouvelle install). */
 function premiereAnneeDonnees() {
   let dateMin = null;
-  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+  ['brebis', 'beliers', 'agnelles'].forEach(cat => {
     effectifEntriesFor(cat).forEach(entry => {
       const d = animalDateEntree(entry);
       if (d && (!dateMin || d < dateMin)) dateMin = d;
@@ -18160,7 +18975,7 @@ function verifierDoublonHorsPerimetreNouvelAnimal(eidVal) {
       dateLabel: sorti ? (dateSortie ? 'sortie le ' + formatDateFr(dateSortie) : dateLabel) : dateLabel
     };
   }
-  const registreCategories = [['brebis', 'une brebis sortie (registre)'], ['beliers', 'un bélier sorti (registre)'], ['agneaux', 'un agneau/une agnelle sorti(e) (registre)']];
+  const registreCategories = [['brebis', 'une brebis sortie (registre)'], ['beliers', 'un bélier sorti (registre)'], ['agnelles', 'une agnelle sortie (registre)']];
   for (const [cat, label] of registreCategories) {
     const reg = DB.registre && DB.registre[cat];
     if (!reg) continue;
@@ -19149,7 +19964,7 @@ async function executerChangementCampagne() {
       modesRepro: ag.modesRepro || [],
       controleLaitier: [], statut: 'active'
     });
-    archiverDansRegistre('agneaux', ag.eid, { mouvements: ag.mouvements });
+    archiverDansRegistre('agnelles', ag.eid, { mouvements: ag.mouvements });
   });
   DB.agnelles = [];
 
@@ -19368,7 +20183,7 @@ function compterUsageMouvement(champ, valeur) {
   });
   (DB.beliers || []).forEach(b => scan(b.mouvements));
   (DB.agnelles || []).forEach(a => scan(a.mouvements));
-  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+  ['brebis', 'beliers', 'agnelles'].forEach(cat => {
     const reg = DB.registre && DB.registre[cat];
     if (reg) Object.values(reg).forEach(entry => scan(entry.mouvements));
   });
@@ -19382,10 +20197,13 @@ function compterUsageCauseMortalite(nom) { return compterUsageMouvement('cause',
 function compterUsageIntervenant(nom) {
   let n = 0;
   const scan = (soins) => (soins || []).forEach(s => { if (s.intervenant === nom) n++; });
-  DB.brebis.forEach(s => scan(s.sanitaire));
+  DB.brebis.forEach(s => {
+    scan(s.sanitaire);
+    (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => scan(l.sanitaire)));
+  });
   (DB.beliers || []).forEach(b => scan(b.sanitaire));
   (DB.agnelles || []).forEach(a => scan(a.sanitaire));
-  ['brebis', 'beliers', 'agneaux'].forEach(cat => {
+  ['brebis', 'beliers', 'agnelles'].forEach(cat => {
     const reg = DB.registre && DB.registre[cat];
     if (reg) Object.values(reg).forEach(entry => scan(entry.sanitaire));
   });
@@ -19399,12 +20217,17 @@ function compterUsageCasParticulier(nom) {
 function compterUsageTypeJournal(nom) {
   return (DB.journal || []).filter(e => e.type === nom).length;
 }
-// Chantier "Onglet Notes sur la fiche brebis" -- inclut aussi les notes
-// archivées (DB.notesArchiveesBrebis, brebis supprimées) pour que
+// Chantier "Onglet Notes sur la fiche brebis", étendu aux agnelles/agneaux
+// (chantier "Fiches individuelles Agneaux & Agnelles") -- inclut aussi les
+// notes archivées (DB.notesArchiveesBrebis, brebis supprimées) pour que
 // l'avertissement d'usage reste exact même après suppression de l'animal.
 function compterUsageCategorieNote(nom) {
   let n = 0;
-  DB.brebis.forEach(s => (s.notes || []).forEach(note => { if (note.categorie === nom) n++; }));
+  DB.brebis.forEach(s => {
+    (s.notes || []).forEach(note => { if (note.categorie === nom) n++; });
+    (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => (l.notes || []).forEach(note => { if (note.categorie === nom) n++; })));
+  });
+  (DB.agnelles || []).forEach(a => (a.notes || []).forEach(note => { if (note.categorie === nom) n++; }));
   Object.values(DB.notesArchiveesBrebis || {}).forEach(notes => (notes || []).forEach(note => { if (note.categorie === nom) n++; }));
   return n;
 }
@@ -20808,7 +21631,7 @@ function deepClean(value) {
 }
 
 /* Vrai si `value` ne contient aucune donnée réelle, en creusant récursivement
-   dans les objets (un DB.registre = {brebis:{}, beliers:{}, agneaux:{}}
+   dans les objets (un DB.registre = {brebis:{}, beliers:{}, agnelles:{}}
    n'a AUCUNE clé de premier niveau vide, mais ne contient pourtant rien --
    voir buildUpdatePayload). Une chaîne ou un nombre non nul/non vide n'est
    jamais considéré vide : seule une collection sans le moindre contenu
