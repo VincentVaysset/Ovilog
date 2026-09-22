@@ -1871,6 +1871,55 @@ function isGestanteEcho(echo) {
   return echo.stade && echo.stade !== 'Vide';
 }
 
+/* ---------- Échographies : vocabulaire de stade selon le mode de
+   reproduction (chantier "Échographies : Dénombrement + stades IA/Éponge")
+   ----------
+   Deux listes de stades pour le type "stade" (jamais pour "constat", qui
+   reste Pleine/Vide quel que soit le mode) : IA/Retour 1/Retour 2/Tardive
+   pour une brebis dans un lot IA OU Éponge actif cette campagne, Début/
+   Milieu/Fin (inchangé) pour une monte naturelle (aucun lot actif). "Vide"
+   est commun aux deux vocabulaires -- volontairement : une échographie déjà
+   enregistrée ne garde aucune trace du mode de la brebis au moment de la
+   saisie, donc lui attribuer après coup un "Vide (MN)"/"Vide (Lot)" serait
+   une donnée inventée. Le mode ne sert qu'à choisir les BONS BOUTONS à la
+   saisie (voir modeReproPourEcho ci-dessous) -- jamais relu depuis la
+   valeur de `stade` déjà stockée. */
+const STADES_MN = ['Début', 'Milieu', 'Fin'];
+const STADES_LOT = ['IA', 'Retour 1', 'Retour 2', 'Tardive'];
+// Détection du mode (chantier ci-dessus, point 2+3 du plan validé) :
+// strictement le même mécanisme que le badge Repro de la fiche
+// (dernierModeReproValide) -- une brebis dans un lot IA OU Éponge cette
+// campagne (dernière entrée modesRepro valide, lot encore existant) ->
+// vocabulaire "lot" ; sinon (aucune entrée, ou lot supprimé) -> monte
+// naturelle, vocabulaire MN inchangé. Brebis dans plusieurs lots cette
+// campagne : la dernière entrée valide fait foi, comme pour ce badge --
+// pas une nouvelle règle à inventer.
+function modeReproPourEcho(sheep) {
+  const dernier = dernierModeReproValide(sheep);
+  return dernier ? 'lot' : 'MN';
+}
+function stadesDisponiblesPourEcho(sheep) {
+  return modeReproPourEcho(sheep) === 'lot' ? STADES_LOT : STADES_MN;
+}
+// "4 et plus" : nombreAgneaux ne dépasse jamais 4 (voir renderAddEcho/
+// renderEchoRapide, aucune saisie ne permet une valeur supérieure) --
+// jamais un nombre inventé au-delà de ce que l'éleveur a réellement compté.
+function libelleNombreAgneaux(n) {
+  if (n >= 4) return '4 agneaux et plus';
+  return n + (n > 1 ? ' agneaux' : ' agneau');
+}
+// Dernière échographie d'une brebis par DATE RÉELLE (jamais l'ordre
+// d'insertion, voir le chantier "Échographies" -- corrige un biais
+// silencieux présent depuis toujours dans plusieurs écrans : une écho
+// saisie ou corrigée après coup pouvait fausser "la dernière" si elle
+// n'était pas la dernière du tableau). `echos` est la liste déjà filtrée
+// par l'appelant (ex: campagne en cours) ; retourne l'élément lui-même
+// (pas une copie), ou null si la liste est vide.
+function dernierEchoParDate(echos) {
+  if (!echos || echos.length === 0) return null;
+  return echos.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''))[echos.length - 1];
+}
+
 /* ---------- Vide définitive ----------
    Une brebis peut être notée "Vide" à plusieurs échographies d'affilée sans
    que ce soit définitif (elle peut redevenir pleine à l'écho suivante) —
@@ -2898,11 +2947,12 @@ function statutReproductionCampagne(sheep) {
     const echos = Array.isArray(sheep.echographies) ? sheep.echographies : [];
     const echosCampagne = echos.filter(e => e && e.campagne === DB.campagneDebut);
     if (echosCampagne.length === 0) return 'Aucune info repro';
-    // Chantier "Refonte desktop" : la dernière échographie CONNUE (la plus
-    // récente par date), pas la dernière de l'ordre d'insertion -- une
-    // échographie saisie ou corrigée après coup pouvait auparavant fausser
-    // le statut si elle n'était pas ajoutée en dernier dans le tableau.
-    const dernier = echosCampagne.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''))[echosCampagne.length - 1];
+    // Chantier "Refonte desktop" puis "Échographies" : la dernière
+    // échographie CONNUE (la plus récente par date, voir dernierEchoParDate),
+    // pas la dernière de l'ordre d'insertion -- une échographie saisie ou
+    // corrigée après coup pouvait auparavant fausser le statut si elle
+    // n'était pas ajoutée en dernier dans le tableau.
+    const dernier = dernierEchoParDate(echosCampagne);
     if (dernier.special === 'Avortée') return 'Avortée';
     if (dernier.special === 'Pseudogestation') return 'Pseudogestation';
     if (isGestanteEcho(dernier)) return 'Gestante (en cours)';
@@ -4250,26 +4300,47 @@ function dashboardStatsData() {
   const active = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   const total = active.length;
 
-  const stadeCount = { 'Début': 0, 'Milieu': 0, 'Fin': 0, 'Vide': 0 };
+  // Compteurs par stade (chantier "Échographies : Dénombrement + stades
+  // IA/Éponge") : Début/Milieu/Fin (monte naturelle) et IA/Retour 1/
+  // Retour 2/Tardive (lot IA ou Éponge) restent deux séries SÉPARÉES,
+  // jamais mélangées dans une même barre -- Vide est un bucket COMMUN aux
+  // deux vocabulaires (une écho "Vide" déjà enregistrée ne garde aucune
+  // trace du mode de la brebis au moment de la saisie, voir
+  // stadesDisponiblesPourEcho/modeReproPourEcho, lui attribuer un vocabulaire
+  // après coup serait une donnée inventée). "Non précisé" couvre tout
+  // résultat réel sans stade détaillé à ranger : constat "Pleine" (pas de
+  // stade), dénombrement (stade volontairement absent), cas particulier
+  // (Avortée/Pseudogestation) -- jamais silencieusement absent du total
+  // (avecEcho = somme de tous les buckets ci-dessous, voir dashboardKpiHtml).
+  const stadeCount = { 'Début': 0, 'Milieu': 0, 'Fin': 0, 'IA': 0, 'Retour 1': 0, 'Retour 2': 0, 'Tardive': 0, 'Vide': 0, nonPrecise: 0 };
   let avecEcho = 0;
   // Prolificité prévisionnelle (campagne en cours) : moyenne du nombre de
-  // têtes annoncées (Simple=1/Double=2) par la DERNIÈRE échographie de
-  // chaque brebis encore gestante -- même champ `agneaux` que celui déjà
-  // affiché sur la fiche brebis (voir echoItemHtml dans renderDetail),
-  // jamais une nouvelle saisie. Une brebis confirmée Vide n'a jamais ce
-  // champ renseigné (rien à estimer), donc filtrer sur sa présence suffit
-  // à l'exclure sans règle supplémentaire.
-  let gestantesAvecEstim = 0, totalTeteEstimee = 0;
+  // têtes annoncées par la DERNIÈRE échographie (par date réelle, voir
+  // dernierEchoParDate) de chaque brebis encore gestante -- Simple=1/
+  // Double=2 (agneaux, inchangé) ou la valeur exacte du dénombrement
+  // (nombreAgneaux, 1 à 4 -- "4 et plus" compté 4, un minimum, jamais un
+  // nombre inventé au-delà : voir prolificitePrevisionnelleEstMinimum).
+  // Champs mutuellement exclusifs, jamais les deux à la fois sur une même
+  // écho. Une brebis confirmée Vide ou sans comptage n'a ni l'un ni l'autre
+  // renseigné (rien à estimer), donc filtrer sur leur présence suffit à
+  // l'exclure sans règle supplémentaire.
+  let gestantesAvecEstim = 0, totalTeteEstimee = 0, prolificitePrevisionnelleEstMinimum = false;
   active.forEach(s => {
-    const last = s.echographies[s.echographies.length - 1];
+    const last = dernierEchoParDate(s.echographies);
     if (!last) return;
     avecEcho++;
-    if (last.type !== 'constat' && last.stade && stadeCount.hasOwnProperty(last.stade)) {
+    if (last.stade && stadeCount.hasOwnProperty(last.stade)) {
       stadeCount[last.stade]++;
+    } else {
+      stadeCount.nonPrecise++;
     }
     if (last.agneaux) {
       gestantesAvecEstim++;
       totalTeteEstimee += last.agneaux === 'Double' ? 2 : 1;
+    } else if (last.nombreAgneaux) {
+      gestantesAvecEstim++;
+      totalTeteEstimee += last.nombreAgneaux;
+      if (last.nombreAgneaux >= 4) prolificitePrevisionnelleEstMinimum = true;
     }
   });
   const prolificitePrevisionnelle = gestantesAvecEstim > 0 ? Math.round((totalTeteEstimee / gestantesAvecEstim) * 100) / 100 : null;
@@ -4343,7 +4414,7 @@ function dashboardStatsData() {
 
   return {
     active, total, stadeCount, avecEcho, totalMisesBas, totalAgneaux, totalMortNes,
-    totalMales, totalFemelles, prolificite, prolificitePrevisionnelle,
+    totalMales, totalFemelles, prolificite, prolificitePrevisionnelle, prolificitePrevisionnelleEstMinimum,
     misesBasActives, troupeauAMettreBas, misesBasRestantes, pctMisesBasRealisees,
     tauxReussite, attendueTraiteCount, resume1, resume2, resume3, totalControles
   };
@@ -4366,6 +4437,12 @@ function dashboardKpiHtml() {
       <div style="height:100%;width:${pct}%;background:${color};"></div>
     </div>`;
   }
+  // Deux séries de stades SÉPARÉES (monte naturelle / lot IA-Éponge, voir
+  // dashboardStatsData), chacune masquée si vide (une exploitation 100% MN
+  // ne voit jamais de barres IA, et inversement) -- Vide et Non précisé
+  // restent communs aux deux vocabulaires.
+  const totalMN = stadeCount['Début'] + stadeCount['Milieu'] + stadeCount['Fin'];
+  const totalLot = stadeCount['IA'] + stadeCount['Retour 1'] + stadeCount['Retour 2'] + stadeCount['Tardive'];
 
   return `
     <div class="stat-grid">
@@ -4419,10 +4496,21 @@ function dashboardKpiHtml() {
 
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Répartition par stade (dernière échographie)</div>
-      ${bar('Début', stadeCount['Début'], 'var(--primary-light)')}
-      ${bar('Milieu', stadeCount['Milieu'], 'var(--primary)')}
-      ${bar('Fin', stadeCount['Fin'], 'var(--success)')}
+      ${totalMN > 0 ? `
+        <div style="font-size:11.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;margin-bottom:6px;">Monte naturelle</div>
+        ${bar('Début', stadeCount['Début'], 'var(--primary-light)')}
+        ${bar('Milieu', stadeCount['Milieu'], 'var(--primary)')}
+        ${bar('Fin', stadeCount['Fin'], 'var(--success)')}
+      ` : ''}
+      ${totalLot > 0 ? `
+        <div style="font-size:11.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;margin-bottom:6px;">Lot IA / Éponge</div>
+        ${bar('IA', stadeCount['IA'], 'var(--primary-light)')}
+        ${bar('Retour 1', stadeCount['Retour 1'], 'var(--primary)')}
+        ${bar('Retour 2', stadeCount['Retour 2'], 'var(--blue-fg)')}
+        ${bar('Tardive', stadeCount['Tardive'], 'var(--success)')}
+      ` : ''}
       ${bar('Vide', stadeCount['Vide'], 'var(--danger)')}
+      ${stadeCount.nonPrecise > 0 ? bar('Non précisé', stadeCount.nonPrecise, 'var(--text-muted)') : ''}
       <div style="font-size:12px;color:var(--text-muted);">${total - avecEcho} brebis sans échographie enregistrée</div>
     </div>
 
@@ -4644,13 +4732,15 @@ function derniersMouvementsData(limite) {
    dashboardStatsData().stadeCount, jamais recalculé -- même population
    (dernière échographie de chaque brebis active, tous types "stade de
    gestation" confondus, voir dashboardStatsData) que la carte "Répartition
-   par stade" déjà affichée côté mobile. Pleines = Début+Milieu+Fin (toute
-   brebis confirmée gestante, quel que soit le stade) ; Vides = Vide. Pas
-   de case "à refaire" : cette valeur n'existe dans aucune échographie du
-   modèle de données (seules Pleine/Vide ou Début/Milieu/Fin/Vide sont
-   saisissables), l'afficher aurait été une donnée inventée. */
+   par stade" déjà affichée côté mobile. Pleines = tout stade positif, MN
+   (Début/Milieu/Fin) ou lot IA/Éponge (IA/Retour 1/Retour 2/Tardive)
+   confondus -- une brebis confirmée gestante, quel que soit le vocabulaire
+   ; Vides = Vide (commun aux deux vocabulaires, voir stadeCount). Pas de
+   case "à refaire" : cette valeur n'existe dans aucune échographie du
+   modèle de données, l'afficher aurait été une donnée inventée. */
 function pleinesVidesDepuisStade(stadeCount) {
-  const pleines = stadeCount['Début'] + stadeCount['Milieu'] + stadeCount['Fin'];
+  const pleines = stadeCount['Début'] + stadeCount['Milieu'] + stadeCount['Fin']
+    + stadeCount['IA'] + stadeCount['Retour 1'] + stadeCount['Retour 2'] + stadeCount['Tardive'];
   const vides = stadeCount['Vide'];
   const total = pleines + vides;
   return { pleines, vides, taux: total > 0 ? Math.round((pleines / total) * 1000) / 10 : null };
@@ -6948,10 +7038,14 @@ function renderDetail(id) {
   // ficheBrebisTabContent quand desktop=true pour éviter un doublon.
   const desktop = isDesktopMode();
 
+  // Jamais "undefined" pour une écho sans stade ni cas particulier (voir
+  // chantier "Échographies : Dénombrement + stades IA/Éponge") -- texte
+  // explicite systématique. agneaux (Simple/Double) et nombreAgneaux (1-4,
+  // dénombrement) sont mutuellement exclusifs, au plus un badge de comptage.
   const echoItemHtml = e => `
     <div class="content">
-      <div style="font-weight:600;">${e.special ? e.special : e.stade}</div>
-      ${(!e.special && e.agneaux) || e.parasitisme ? `<div style="margin-top:5px;">${(!e.special && e.agneaux) ? `<span class="badge badge-green" style="margin-right:6px;">${e.agneaux === 'Double' ? '2 agneaux et plus' : '1 agneau'}</span>` : ''}${e.parasitisme ? '<span class="badge badge-amber">Parasitisme observé</span>' : ''}</div>` : ''}
+      <div style="font-weight:600;">${e.special ? e.special : (e.stade || 'Non précisé')}</div>
+      ${(!e.special && (e.agneaux || e.nombreAgneaux)) || e.parasitisme ? `<div style="margin-top:5px;">${(!e.special && e.agneaux) ? `<span class="badge badge-green" style="margin-right:6px;">${e.agneaux === 'Double' ? '2 agneaux et plus' : '1 agneau'}</span>` : ''}${(!e.special && e.nombreAgneaux) ? `<span class="badge badge-green" style="margin-right:6px;">${libelleNombreAgneaux(e.nombreAgneaux)}</span>` : ''}${e.parasitisme ? '<span class="badge badge-amber">Parasitisme observé</span>' : ''}</div>` : ''}
       <div class="date" style="margin-top:4px;">${formatDateFr(e.date)}</div>
     </div>
   `;
@@ -6962,8 +7056,13 @@ function renderDetail(id) {
   // même), contrairement à l'agnelage/contrôle laitier ci-dessous. Les
   // campagnes strictement passées sont affichées séparément, en lecture
   // seule, dans "Historique par campagne" (voir historiqueCampagnesHtml).
+  // Triées par date RÉELLE (jamais l'ordre d'insertion, voir
+  // dernierEchoParDate/chantier "Échographies") -- la plus récente en
+  // premier, pour que "la dernière écho fait référence" reste vrai même
+  // après une saisie/correction tardive hors ordre.
   const echoIndexes = sheep.echographies.map((e, i) => ({...e, idx: i}));
-  const echoCourantes = echoIndexes.filter(e => typeof e.campagne === 'number' && e.campagne >= DB.campagneDebut).reverse();
+  const echoCourantes = echoIndexes.filter(e => typeof e.campagne === 'number' && e.campagne >= DB.campagneDebut)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const historyHtml = echoCourantes.map(e => `
     <div class="swipe-wrap" data-kind="echographies" data-idx="${e.idx}">
       <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
@@ -7574,6 +7673,17 @@ function renderDetail(id) {
 }
 
 /* ---------- Ajout échographie ---------- */
+/* ---------- Ajout / modification échographie (chantier "Échographies :
+   Dénombrement + stades IA/Éponge") ----------
+   Deux champs désormais séparés au lieu de "3 types" : (a) méthode de
+   résultat -- Constat (Pleine/Vide) ou Stade (vocabulaire adapté au mode de
+   la brebis, voir stadesDisponiblesPourEcho) ; (b) comptage, FACULTATIF,
+   choisi seulement si le résultat n'est pas Vide -- Aucun / Simple-Double
+   (agneaux, inchangé) / Nombre exact (nombreAgneaux, 1 à 4, nouveau).
+   `type` ne prend plus que 'constat'/'stade' à l'écriture (jamais
+   'stade_comptage', qui reste lu comme synonyme de 'stade' partout
+   ailleurs -- aucune écho existante n'est réécrite ici). agneaux et
+   nombreAgneaux restent mutuellement exclusifs sur une même écho. */
 function renderAddEcho(sheepId) {
   const sheep = findSheep(sheepId);
   const editing = editContext && editContext.kind === 'echographies';
@@ -7590,23 +7700,41 @@ function renderAddEcho(sheepId) {
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
 
-      <label>Type d'échographie</label>
-      <div class="grid4" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px;">
+      <label>Type de résultat</label>
+      <div class="grid2" style="margin-bottom:14px;">
         <button type="button" class="opt-btn type-echo-opt" data-val="constat">Constat</button>
-        <button type="button" class="opt-btn type-echo-opt" data-val="stade">Stades</button>
-        <button type="button" class="opt-btn type-echo-opt" data-val="stade_comptage">Stades + comptage</button>
+        <button type="button" class="opt-btn type-echo-opt" data-val="stade">Stade</button>
       </div>
 
       <div id="stade-block" class="hidden">
         <label id="stade-label">Résultat</label>
-        <div class="grid4" id="stade-group"></div>
+        <div class="grid4" id="stade-group" style="grid-template-columns:repeat(2,1fr);margin-bottom:14px;"></div>
+      </div>
+
+      <div id="comptage-mode-block" class="hidden">
+        <label>Comptage (facultatif)</label>
+        <div class="grid4" id="comptage-mode-group" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px;">
+          <button type="button" class="opt-btn comptage-mode-opt" data-val="aucun">Aucun</button>
+          <button type="button" class="opt-btn comptage-mode-opt" data-val="simple_double">Simple / Double</button>
+          <button type="button" class="opt-btn comptage-mode-opt" data-val="exact">Nombre exact</button>
+        </div>
       </div>
 
       <div id="agneaux-block" class="hidden">
         <label>Nombre d'agneaux</label>
-        <div class="grid2" id="agneaux-group">
+        <div class="grid2" id="agneaux-group" style="margin-bottom:14px;">
           <button type="button" class="opt-btn" data-val="Simple">1 agneau</button>
           <button type="button" class="opt-btn" data-val="Double">2 et plus</button>
+        </div>
+      </div>
+
+      <div id="nombre-agneaux-block" class="hidden">
+        <label>Nombre d'agneaux</label>
+        <div class="grid4" id="nombre-agneaux-group" style="margin-bottom:14px;">
+          <button type="button" class="opt-btn" data-val="1">1</button>
+          <button type="button" class="opt-btn" data-val="2">2</button>
+          <button type="button" class="opt-btn" data-val="3">3</button>
+          <button type="button" class="opt-btn" data-val="4">4 et plus</button>
         </div>
       </div>
 
@@ -7627,9 +7755,13 @@ function renderAddEcho(sheepId) {
     </div>
   `;
 
-  let typeEcho = existing ? (existing.type || 'stade_comptage') : null;
+  let resultMethod = existing ? (existing.type === 'constat' ? 'constat' : 'stade') : null;
   let stade = existing ? existing.stade : null;
+  let comptageMode = existing
+    ? (existing.agneaux ? 'simple_double' : existing.nombreAgneaux ? 'exact' : (existing.stade && existing.stade !== 'Vide' ? 'aucun' : null))
+    : null;
   let agneaux = existing ? existing.agneaux : null;
+  let nombreAgneaux = existing ? existing.nombreAgneaux : null;
   let special = existing ? existing.special : null;
   attacherCampagneEchoOptions(v => { campagneChoisie = v; });
 
@@ -7637,26 +7769,49 @@ function renderAddEcho(sheepId) {
     document.querySelectorAll(sel).forEach(b => b.classList.remove('selected'));
   }
 
+  function renderComptageModeButtons() {
+    document.querySelectorAll('.comptage-mode-opt').forEach(btn => {
+      btn.classList.toggle('selected', btn.dataset.val === comptageMode);
+    });
+  }
+
+  function updateComptageSubBlocks() {
+    document.getElementById('agneaux-block').classList.toggle('hidden', comptageMode !== 'simple_double');
+    document.getElementById('nombre-agneaux-block').classList.toggle('hidden', comptageMode !== 'exact');
+  }
+
+  // Comptage visible seulement si un résultat positif est choisi -- jamais
+  // pour "Vide" (aucun comptage possible, cohérence stricte demandée).
+  function updateComptageVisibility() {
+    const showComptage = stade && stade !== 'Vide';
+    document.getElementById('comptage-mode-block').classList.toggle('hidden', !showComptage);
+    if (!showComptage) {
+      comptageMode = null; agneaux = null; nombreAgneaux = null;
+      clearGroup('.comptage-mode-opt');
+      document.getElementById('agneaux-block').classList.add('hidden');
+      document.getElementById('nombre-agneaux-block').classList.add('hidden');
+    } else {
+      if (!comptageMode) comptageMode = 'aucun';
+      renderComptageModeButtons();
+      updateComptageSubBlocks();
+    }
+  }
+
   function renderStadeButtons() {
     const group = document.getElementById('stade-group');
     const label = document.getElementById('stade-label');
-    if (typeEcho === 'constat') {
+    let valeurs;
+    if (resultMethod === 'constat') {
       label.textContent = 'Résultat';
-      group.style.gridTemplateColumns = 'repeat(2,1fr)';
-      group.innerHTML = `
-        <button type="button" class="opt-btn stade-opt" data-val="Pleine">Pleine</button>
-        <button type="button" class="opt-btn stade-opt" data-val="Vide">Vide</button>
-      `;
+      valeurs = ['Pleine', 'Vide'];
     } else {
       label.textContent = 'Stade';
-      group.style.gridTemplateColumns = 'repeat(2,1fr)';
-      group.innerHTML = `
-        <button type="button" class="opt-btn stade-opt" data-val="Début">Début</button>
-        <button type="button" class="opt-btn stade-opt" data-val="Milieu">Milieu</button>
-        <button type="button" class="opt-btn stade-opt" data-val="Fin">Fin</button>
-        <button type="button" class="opt-btn stade-opt" data-val="Vide">Vide</button>
-      `;
+      // Vocabulaire adapté au mode de reproduction de la brebis (lot IA/
+      // Éponge actif cette campagne, ou monte naturelle sinon) -- déduit
+      // automatiquement, jamais un choix supplémentaire pour l'éleveur.
+      valeurs = [...stadesDisponiblesPourEcho(sheep), 'Vide'];
     }
+    group.innerHTML = valeurs.map(v => `<button type="button" class="opt-btn stade-opt" data-val="${v}">${v}</button>`).join('');
     document.querySelectorAll('.stade-opt').forEach(btn => {
       if (btn.dataset.val === stade) btn.classList.add('selected');
       btn.onclick = () => {
@@ -7665,9 +7820,7 @@ function renderAddEcho(sheepId) {
         renderSpecialChips();
         clearGroup('.stade-opt');
         btn.classList.add('selected');
-        const showAgneaux = (typeEcho === 'stade_comptage') && stade !== 'Vide';
-        document.getElementById('agneaux-block').classList.toggle('hidden', !showAgneaux);
-        if (!showAgneaux) { agneaux = null; clearGroup('#agneaux-group .opt-btn'); }
+        updateComptageVisibility();
         document.getElementById('err').classList.add('hidden');
       };
     });
@@ -7684,10 +7837,9 @@ function renderAddEcho(sheepId) {
       chip.onclick = () => {
         if (special === val) { special = null; }
         else {
-          special = val; stade = null; agneaux = null;
+          special = val; stade = null;
           clearGroup('.stade-opt');
-          clearGroup('#agneaux-group .opt-btn');
-          document.getElementById('agneaux-block').classList.add('hidden');
+          updateComptageVisibility();
         }
         renderSpecialChips();
         document.getElementById('err').classList.add('hidden');
@@ -7698,33 +7850,53 @@ function renderAddEcho(sheepId) {
   renderSpecialChips();
 
   document.querySelectorAll('.type-echo-opt').forEach(btn => {
-    if (btn.dataset.val === typeEcho) btn.classList.add('selected');
+    if (btn.dataset.val === resultMethod) btn.classList.add('selected');
     btn.onclick = () => {
-      typeEcho = btn.dataset.val;
-      stade = null; agneaux = null; special = null;
+      resultMethod = btn.dataset.val;
+      stade = null; special = null;
       document.querySelectorAll('.type-echo-opt').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       document.getElementById('stade-block').classList.remove('hidden');
-      document.getElementById('agneaux-block').classList.add('hidden');
       renderStadeButtons();
+      updateComptageVisibility();
       renderSpecialChips();
       document.getElementById('err').classList.add('hidden');
     };
   });
 
-  if (typeEcho) {
+  if (resultMethod) {
     document.getElementById('stade-block').classList.remove('hidden');
     renderStadeButtons();
-    if (typeEcho === 'stade_comptage' && stade && stade !== 'Vide') {
-      document.getElementById('agneaux-block').classList.remove('hidden');
-    }
+    updateComptageVisibility();
   }
+
+  document.querySelectorAll('.comptage-mode-opt').forEach(btn => {
+    btn.onclick = () => {
+      comptageMode = btn.dataset.val;
+      agneaux = null; nombreAgneaux = null;
+      clearGroup('.comptage-mode-opt');
+      clearGroup('#agneaux-group .opt-btn');
+      clearGroup('#nombre-agneaux-group .opt-btn');
+      btn.classList.add('selected');
+      updateComptageSubBlocks();
+      document.getElementById('err').classList.add('hidden');
+    };
+  });
 
   document.querySelectorAll('#agneaux-group .opt-btn').forEach(btn => {
     if (btn.dataset.val === agneaux) btn.classList.add('selected');
     btn.onclick = () => {
       agneaux = btn.dataset.val;
       clearGroup('#agneaux-group .opt-btn');
+      btn.classList.add('selected');
+      document.getElementById('err').classList.add('hidden');
+    };
+  });
+  document.querySelectorAll('#nombre-agneaux-group .opt-btn').forEach(btn => {
+    if (parseInt(btn.dataset.val, 10) === nombreAgneaux) btn.classList.add('selected');
+    btn.onclick = () => {
+      nombreAgneaux = parseInt(btn.dataset.val, 10);
+      clearGroup('#nombre-agneaux-group .opt-btn');
       btn.classList.add('selected');
       document.getElementById('err').classList.add('hidden');
     };
@@ -7746,8 +7918,8 @@ function renderAddEcho(sheepId) {
 
   document.getElementById('btn-save-echo').onclick = () => {
     const err = document.getElementById('err');
-    if (!typeEcho) {
-      err.textContent = "Choisis un type d'échographie.";
+    if (!resultMethod) {
+      err.textContent = "Choisis un type de résultat (Constat ou Stade).";
       err.classList.remove('hidden');
       return;
     }
@@ -7756,9 +7928,14 @@ function renderAddEcho(sheepId) {
       err.classList.remove('hidden');
       return;
     }
-    const needAgneaux = typeEcho === 'stade_comptage' && (stade === 'Début' || stade === 'Milieu' || stade === 'Fin');
-    if (needAgneaux && !agneaux) {
+    const comptageActif = stade && stade !== 'Vide';
+    if (comptageActif && comptageMode === 'simple_double' && !agneaux) {
       err.textContent = "Précise si c'est 1 agneau ou 2 et plus.";
+      err.classList.remove('hidden');
+      return;
+    }
+    if (comptageActif && comptageMode === 'exact' && !nombreAgneaux) {
+      err.textContent = "Précise le nombre d'agneaux.";
       err.classList.remove('hidden');
       return;
     }
@@ -7773,10 +7950,11 @@ function renderAddEcho(sheepId) {
     if (!confirmerCampagneEcho(campagneChoisie)) return;
     err.classList.add('hidden');
     const echo = {
-      type: typeEcho,
+      type: resultMethod,
       date: dateEcho,
       stade: stade,
-      agneaux: agneaux,
+      agneaux: (comptageActif && comptageMode === 'simple_double') ? agneaux : null,
+      nombreAgneaux: (comptageActif && comptageMode === 'exact') ? nombreAgneaux : null,
       special: special,
       parasitisme: document.getElementById('f-parasit').checked,
       // Campagne choisie explicitement ci-dessus (voir campagneEchoOptionsHtml)
@@ -8204,28 +8382,43 @@ function renderAddAgnelage(sheepId) {
    la page de sélection du type"). Réinitialisée uniquement quand l'écran
    d'accueil (ou tout autre écran) est explicitement quitté vers autre chose
    ET qu'on revient plus tard : voir resetEchoRapideSession(). */
-let echoRapideSession = { typeEcho: null, count: 0, dernierEcho: false, campagne: null };
-function resetEchoRapideSession() { echoRapideSession = { typeEcho: null, count: 0, dernierEcho: false, campagne: null }; }
+let echoRapideSession = { resultMethod: null, comptageMode: null, count: 0, dernierEcho: false, campagne: null };
+function resetEchoRapideSession() { echoRapideSession = { resultMethod: null, comptageMode: null, count: 0, dernierEcho: false, campagne: null }; }
 
+/* ---------- Saisie en série des échographies (chantier "Échographies :
+   Dénombrement + stades IA/Éponge") ----------
+   Combinaison résultat+comptage choisie une fois pour toute la session via
+   un menu déroulant (6 options : Constat/Stade × Aucun/Simple-Double/
+   Nombre exact) -- le mode IA/Éponge/MN n'est PAS un choix de ce menu, il
+   reste déduit automatiquement pour CHAQUE brebis scannée (voir
+   stadesDisponiblesPourEcho), donc le libellé exact des boutons "Stade"
+   s'adapte à chaque nouvelle brebis pendant la boucle. */
 function renderEchoRapide() {
   function typeLabel() {
-    return echoRapideSession.typeEcho === 'constat' ? 'Constat' : echoRapideSession.typeEcho === 'stade' ? 'Stades' : 'Stades + comptage';
+    const methode = echoRapideSession.resultMethod === 'constat' ? 'Constat' : 'Stade';
+    const comptage = echoRapideSession.comptageMode === 'simple_double' ? ' + Simple/Double'
+      : echoRapideSession.comptageMode === 'exact' ? ' + Nombre exact' : '';
+    return methode + comptage;
   }
 
   function screenChooseType() {
-    // Choisie une fois pour toute la session (comme le type d'écho
+    // Choisie une fois pour toute la session (comme la campagne
     // ci-dessous), pas ressaisie à chaque brebis scannée -- voir
     // campagneEchoOptionsHtml.
     if (echoRapideSession.campagne === null) echoRapideSession.campagne = DB.campagneDebut;
     pageTitle.textContent = 'Nouvelle session — Échographies';
     app.innerHTML = `
       <div class="card">
-        <div style="display:flex;align-items:center;margin-bottom:14px;"><span style="font-size:14px;font-weight:600;">Type d'échographie pour cette session</span>${infoBulleHtml('Type d’échographie pour cette session', "Ce choix reste fixé pour toute la session — inutile de le ressélectionner à chaque brebis.")}</div>
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <button type="button" class="opt-btn type-echo-session-opt" data-val="constat">Constat (Pleine / Vide)</button>
-          <button type="button" class="opt-btn type-echo-session-opt" data-val="stade">Stades (Début / Milieu / Fin / Vide)</button>
-          <button type="button" class="opt-btn type-echo-session-opt" data-val="stade_comptage">Stades + comptage (+ 1 ou 2 agneaux)</button>
-        </div>
+        <div style="display:flex;align-items:center;margin-bottom:14px;"><span style="font-size:14px;font-weight:600;">Combinaison résultat + comptage pour cette session</span>${infoBulleHtml('Combinaison pour cette session', "Ce choix reste fixé pour toute la session — inutile de le ressélectionner à chaque brebis. Le vocabulaire exact du stade (IA/Retour 1/Retour 2/Tardive ou Début/Milieu/Fin) s'adapte automatiquement au mode de chaque brebis scannée.")}</div>
+        <select id="f-echo-session-combo" style="width:100%;padding:12px;border-radius:var(--radius);border:1px solid var(--border);font-size:14px;background:var(--card);color:var(--text);">
+          <option value="">— Choisir —</option>
+          <option value="constat|aucun">Constat (Pleine/Vide) — sans comptage</option>
+          <option value="constat|simple_double">Constat (Pleine/Vide) + Simple/Double</option>
+          <option value="constat|exact">Constat (Pleine/Vide) + Nombre exact</option>
+          <option value="stade|aucun">Stade — sans comptage</option>
+          <option value="stade|simple_double">Stade + Simple/Double</option>
+          <option value="stade|exact">Stade + Nombre exact</option>
+        </select>
       </div>
       ${campagneEchoOptionsHtml(echoRapideSession.campagne)}
       <div class="card">
@@ -8235,22 +8428,29 @@ function renderEchoRapide() {
         </label>
         <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Coché, chaque brebis marquée "Vide" pendant cette session sera aussi enregistrée comme <strong>vide définitive</strong> pour la campagne — pas de double saisie à faire.</div>
       </div>
-      <button class="btn btn-primary" id="btn-start-echo-session" style="margin-top:14px;" disabled>Commencer la saisie</button>
+      <button class="btn btn-primary" id="btn-start-echo-session" style="margin-top:14px;" ${echoRapideSession.resultMethod ? '' : 'disabled'}>Commencer la saisie</button>
       <button type="button" class="btn btn-secondary" id="btn-historique-echo" style="margin-top:10px;">Voir l'historique des échographies</button>
     `;
-    document.querySelectorAll('.type-echo-session-opt').forEach(btn => {
-      btn.onclick = () => {
-        echoRapideSession.typeEcho = btn.dataset.val;
-        document.querySelectorAll('.type-echo-session-opt').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-        document.getElementById('btn-start-echo-session').disabled = false;
-      };
-    });
+    const combo = document.getElementById('f-echo-session-combo');
+    if (echoRapideSession.resultMethod) combo.value = echoRapideSession.resultMethod + '|' + echoRapideSession.comptageMode;
+    combo.onchange = () => {
+      const val = combo.value;
+      if (!val) {
+        echoRapideSession.resultMethod = null;
+        echoRapideSession.comptageMode = null;
+        document.getElementById('btn-start-echo-session').disabled = true;
+        return;
+      }
+      const [methode, comptage] = val.split('|');
+      echoRapideSession.resultMethod = methode;
+      echoRapideSession.comptageMode = comptage;
+      document.getElementById('btn-start-echo-session').disabled = false;
+    };
     attacherCampagneEchoOptions(v => { echoRapideSession.campagne = v; });
     document.getElementById('f-dernier-echo').checked = echoRapideSession.dernierEcho;
     document.getElementById('f-dernier-echo').onchange = (e) => { echoRapideSession.dernierEcho = e.target.checked; };
     document.getElementById('btn-start-echo-session').onclick = () => {
-      if (!echoRapideSession.typeEcho) return;
+      if (!echoRapideSession.resultMethod) return;
       if (!confirmerCampagneEcho(echoRapideSession.campagne)) return;
       screenLoop();
     };
@@ -8262,34 +8462,47 @@ function renderEchoRapide() {
     let unknownEid = null;
     let conflitEid = null; // EID absent de DB.brebis mais déjà utilisé ailleurs (voir verifierEidUnique) : bloque la création plutôt que de créer une brebis fantôme
     let candidatsAmbigus = null; // numéro d'ordre partagé par plusieurs brebis : l'éleveur doit choisir (voir trouverUnParEidOuNumero)
-    let stade = null, agneaux = null, parasit = false, special = null;
+    let stade = null, agneaux = null, nombreAgneaux = null, parasit = false, special = null;
 
     function resetResult() {
-      currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null; stade = null; agneaux = null; parasit = false; special = null;
+      currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null;
+      stade = null; agneaux = null; nombreAgneaux = null; parasit = false; special = null;
     }
 
     function clearGroup(sel) {
       document.querySelectorAll(sel).forEach(b => b.classList.remove('selected'));
     }
 
+    // Comptage figé pour toute la session (echoRapideSession.comptageMode),
+    // visible seulement si le résultat de CETTE brebis n'est pas Vide --
+    // jamais un choix supplémentaire pendant le scan.
+    function updateComptageVisibility() {
+      const agneauxBlock = document.getElementById('agneaux-block');
+      const nombreBlock = document.getElementById('nombre-agneaux-block');
+      if (!agneauxBlock || !nombreBlock) return;
+      const showComptage = stade && stade !== 'Vide' && echoRapideSession.comptageMode !== 'aucun';
+      if (!showComptage) {
+        agneaux = null; nombreAgneaux = null;
+        agneauxBlock.classList.add('hidden');
+        nombreBlock.classList.add('hidden');
+        return;
+      }
+      agneauxBlock.classList.toggle('hidden', echoRapideSession.comptageMode !== 'simple_double');
+      nombreBlock.classList.toggle('hidden', echoRapideSession.comptageMode !== 'exact');
+      if (echoRapideSession.comptageMode === 'simple_double') nombreAgneaux = null; else agneaux = null;
+    }
+
     function renderStadeButtons() {
       const group = document.getElementById('stade-group');
       if (!group) return;
-      if (echoRapideSession.typeEcho === 'constat') {
-        group.style.gridTemplateColumns = 'repeat(2,1fr)';
-        group.innerHTML = `
-          <button type="button" class="opt-btn stade-opt" data-val="Pleine">Pleine</button>
-          <button type="button" class="opt-btn stade-opt" data-val="Vide">Vide</button>
-        `;
-      } else {
-        group.style.gridTemplateColumns = 'repeat(2,1fr)';
-        group.innerHTML = `
-          <button type="button" class="opt-btn stade-opt" data-val="Début">Début</button>
-          <button type="button" class="opt-btn stade-opt" data-val="Milieu">Milieu</button>
-          <button type="button" class="opt-btn stade-opt" data-val="Fin">Fin</button>
-          <button type="button" class="opt-btn stade-opt" data-val="Vide">Vide</button>
-        `;
-      }
+      // Vocabulaire adapté au mode de reproduction de CETTE brebis (lot IA/
+      // Éponge actif cette campagne, ou monte naturelle sinon) -- déduit
+      // automatiquement, jamais un choix de l'éleveur (voir plan validé).
+      const valeurs = echoRapideSession.resultMethod === 'constat'
+        ? ['Pleine', 'Vide']
+        : [...stadesDisponiblesPourEcho(currentSheep), 'Vide'];
+      group.style.gridTemplateColumns = 'repeat(2,1fr)';
+      group.innerHTML = valeurs.map(v => `<button type="button" class="opt-btn stade-opt" data-val="${v}">${v}</button>`).join('');
       document.querySelectorAll('.stade-opt').forEach(btn => {
         if (btn.dataset.val === stade) btn.classList.add('selected');
         btn.onclick = () => {
@@ -8298,9 +8511,7 @@ function renderEchoRapide() {
           renderSpecialChips();
           clearGroup('.stade-opt');
           btn.classList.add('selected');
-          const showAgneaux = (echoRapideSession.typeEcho === 'stade_comptage') && stade !== 'Vide';
-          document.getElementById('agneaux-block').classList.toggle('hidden', !showAgneaux);
-          if (!showAgneaux) { agneaux = null; clearGroup('#agneaux-group .opt-btn'); }
+          updateComptageVisibility();
         };
       });
     }
@@ -8317,10 +8528,9 @@ function renderEchoRapide() {
         chip.onclick = () => {
           if (special === val) { special = null; }
           else {
-            special = val; stade = null; agneaux = null;
+            special = val; stade = null;
             clearGroup('.stade-opt');
-            clearGroup('#agneaux-group .opt-btn');
-            document.getElementById('agneaux-block').classList.add('hidden');
+            updateComptageVisibility();
           }
           renderSpecialChips();
         };
@@ -8331,13 +8541,22 @@ function renderEchoRapide() {
     function resultFieldsHtml() {
       return `
         <div class="card">
-          <label>${echoRapideSession.typeEcho === 'constat' ? 'Résultat' : 'Stade'}</label>
+          <label>${echoRapideSession.resultMethod === 'constat' ? 'Résultat' : 'Stade'}</label>
           <div class="grid4" id="stade-group" style="margin-bottom:14px;"></div>
           <div id="agneaux-block" class="hidden">
             <label>Nombre d'agneaux</label>
             <div class="grid2" id="agneaux-group" style="margin-bottom:14px;">
               <button type="button" class="opt-btn" data-val="Simple">1 agneau</button>
               <button type="button" class="opt-btn" data-val="Double">2 et plus</button>
+            </div>
+          </div>
+          <div id="nombre-agneaux-block" class="hidden">
+            <label>Nombre d'agneaux</label>
+            <div class="grid4" id="nombre-agneaux-group" style="margin-bottom:14px;">
+              <button type="button" class="opt-btn" data-val="1">1</button>
+              <button type="button" class="opt-btn" data-val="2">2</button>
+              <button type="button" class="opt-btn" data-val="3">3</button>
+              <button type="button" class="opt-btn" data-val="4">4 et plus</button>
             </div>
           </div>
           <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
@@ -8515,6 +8734,14 @@ function renderEchoRapide() {
             btn.classList.add('selected');
           };
         });
+        document.querySelectorAll('#nombre-agneaux-group .opt-btn').forEach(btn => {
+          if (parseInt(btn.dataset.val, 10) === nombreAgneaux) btn.classList.add('selected');
+          btn.onclick = () => {
+            nombreAgneaux = parseInt(btn.dataset.val, 10);
+            clearGroup('#nombre-agneaux-group .opt-btn');
+            btn.classList.add('selected');
+          };
+        });
         document.getElementById('f-parasit').checked = parasit;
         document.getElementById('f-parasit').onchange = (e) => { parasit = e.target.checked; };
 
@@ -8526,9 +8753,16 @@ function renderEchoRapide() {
             err.classList.remove('hidden');
             return;
           }
-          const needAgneaux = echoRapideSession.typeEcho === 'stade_comptage' && (stade === 'Début' || stade === 'Milieu' || stade === 'Fin');
-          if (needAgneaux && !agneaux) {
+          // Comptage facultatif, jamais pour "Vide" (cohérence stricte, voir
+          // le plan validé) -- figé pour la session (echoRapideSession.comptageMode).
+          const comptageActif = stade && stade !== 'Vide' && echoRapideSession.comptageMode !== 'aucun';
+          if (comptageActif && echoRapideSession.comptageMode === 'simple_double' && !agneaux) {
             err.textContent = "Précise si c'est 1 agneau ou 2 et plus.";
+            err.classList.remove('hidden');
+            return;
+          }
+          if (comptageActif && echoRapideSession.comptageMode === 'exact' && !nombreAgneaux) {
+            err.textContent = "Précise le nombre d'agneaux.";
             err.classList.remove('hidden');
             return;
           }
@@ -8541,9 +8775,12 @@ function renderEchoRapide() {
           }
           btnValider.disabled = true; // évite un double-clic/double-tap qui rejouerait la validation
           const echo = {
-            type: echoRapideSession.typeEcho,
+            type: echoRapideSession.resultMethod,
             date: dateEcho,
-            stade: stade, agneaux: agneaux, special: special, parasitisme: parasit,
+            stade: stade,
+            agneaux: (comptageActif && echoRapideSession.comptageMode === 'simple_double') ? agneaux : null,
+            nombreAgneaux: (comptageActif && echoRapideSession.comptageMode === 'exact') ? nombreAgneaux : null,
+            special: special, parasitisme: parasit,
             campagne: echoRapideSession.campagne
           };
           currentSheep.echographies.push(echo);
@@ -8563,7 +8800,7 @@ function renderEchoRapide() {
     draw();
   }
 
-  if (echoRapideSession.typeEcho) screenLoop();
+  if (echoRapideSession.resultMethod) screenLoop();
   else screenChooseType();
 }
 
@@ -8585,8 +8822,9 @@ function historiqueEchoRows() {
         courtSieol: sheep.numeroCourtTravailSieol || '',
         idx,
         date: e.date || '',
-        resultLabel: (e.special ? e.special : (e.stade || '?'))
+        resultLabel: (e.special ? e.special : (e.stade || 'Non précisé'))
           + (!e.special && e.agneaux ? ` <span class="compact-tag compact-tag-green">${e.agneaux === 'Double' ? '2+' : '1'}</span>` : '')
+          + (!e.special && e.nombreAgneaux ? ` <span class="compact-tag compact-tag-green">${e.nombreAgneaux >= 4 ? '4+' : e.nombreAgneaux}</span>` : '')
           + (e.parasitisme ? ' <span class="compact-tag compact-tag-amber">Parasit.</span>' : '')
       });
     });
@@ -13549,14 +13787,12 @@ function renderAddLot() {
   pageTitle.textContent = 'Nouveau lot';
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
 
-  // Dernière échographie de chaque brebis — même convention que partout
-  // ailleurs dans l'appli pour "la dernière écho" (voir tauxReussiteGlobal,
-  // Bilan de reproduction) : le dernier élément du tableau, sans filtre de
-  // campagne (une brebis sans écho cette campagne mais avec un historique
-  // plus ancien reste malgré tout caractérisée par sa toute dernière écho).
+  // Dernière échographie de chaque brebis par date réelle (voir
+  // dernierEchoParDate, chantier "Échographies"), sans filtre de campagne
+  // (une brebis sans écho cette campagne mais avec un historique plus
+  // ancien reste malgré tout caractérisée par sa toute dernière écho).
   function lastEchoOf(sheep) {
-    const echos = sheep.echographies || [];
-    return echos.length ? echos[echos.length - 1] : null;
+    return dernierEchoParDate(sheep.echographies || []);
   }
 
   app.innerHTML = `
@@ -13601,8 +13837,12 @@ function renderAddLot() {
     if (!echo) return 'Aucune écho';
     const parasitTag = echo.parasitisme ? ' <span class="compact-tag compact-tag-amber">Parasit.</span>' : '';
     if (echo.special) return echo.special + parasitTag;
-    const agneauxTag = echo.agneaux ? ` <span class="compact-tag compact-tag-green">${echo.agneaux === 'Double' ? '2+' : '1'}</span>` : '';
-    return (echo.stade || '?') + agneauxTag + parasitTag;
+    // Comptage : agneaux (Simple/Double) et nombreAgneaux (1-4, chantier
+    // "Échographies : Dénombrement") sont mutuellement exclusifs -- au plus
+    // un des deux tags s'affiche.
+    const comptageTag = echo.agneaux ? ` <span class="compact-tag compact-tag-green">${echo.agneaux === 'Double' ? '2+' : '1'}</span>`
+      : echo.nombreAgneaux ? ` <span class="compact-tag compact-tag-green">Dénombrement (${echo.nombreAgneaux >= 4 ? '4+' : echo.nombreAgneaux})</span>` : '';
+    return (echo.stade || 'Non précisé') + comptageTag + parasitTag;
   }
 
   function matches(sheep) {
