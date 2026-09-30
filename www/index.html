@@ -1200,25 +1200,41 @@ let DB = loadData();
 
 /* ---------- Registre d'élevage réglementaire (conditionnalité PAC) ----------
    Conserve en permanence, par EID, le carnet sanitaire, le carnet de mises
-   bas et les mouvements de chaque brebis/bélier/agnelle — y compris après
-   suppression de la fiche active ou remise à zéro de campagne. Rien n'écrase
-   jamais une entrée déjà archivée : on ne fait qu'ajouter (concat), au cas où
-   un même EID serait archivé plusieurs fois au fil des années. */
-function ensureRegistreEntry(categorie, eid) {
-  DB.registre = DB.registre || { brebis: {}, beliers: {}, agnelles: {} };
-  DB.registre[categorie] = DB.registre[categorie] || {};
-  if (!DB.registre[categorie][eid]) {
-    DB.registre[categorie][eid] = { sanitaire: [], agnelages: [], mouvements: [] };
-  }
-  return DB.registre[categorie][eid];
+   bas, les mouvements, les échographies, le contrôle laitier et la
+   généalogie de chaque brebis/bélier/agnelle — y compris après suppression
+   de la fiche active ou remise à zéro de campagne. Rien n'écrase jamais une
+   entrée déjà archivée : les tableaux s'additionnent (concat), au cas où un
+   même EID serait archivé plusieurs fois au fil des années ; seuls les
+   champs "état final" (généalogie, numéros SIEOL, dates d'entrée...) sont
+   remplacés par leur toute dernière valeur connue, jamais concaténés.
+   Chantier "Compléter le changement de campagne" (2e étape) : périmètre
+   étendu au-delà des 3 champs d'origine (sanitaire/agnelages/mouvements)
+   pour couvrir une fiche RETIRÉE en entier (brebis/bélier vendu ou mort),
+   pas seulement les mouvements d'une fiche qui reste active. */
+const REGISTRE_ARRAY_FIELDS = ['sanitaire', 'agnelages', 'mouvements', 'echographies', 'controleLaitier', 'modesRepro'];
+const REGISTRE_SCALAR_FIELDS = ['pere', 'mere', 'mereEid', 'numeroLongTravailSieol', 'numeroCourtTravailSieol',
+  'numeroSieol', 'numeroTravailSieol', 'dateEntree', 'createdAt', 'videesDefinitives'];
+/* Calcule la nouvelle entrée de registre SANS la poser dans DB.registre --
+   utilisée telle quelle par archiverDansRegistre (pose immédiatement) ET par
+   archiverEtRetirerFicheComplete (a besoin de l'écrire et de la vérifier
+   côté cloud AVANT de la poser, voir plus bas). */
+function calculerEntreeRegistreApresArchivage(categorie, eid, data) {
+  const existante = (DB.registre && DB.registre[categorie] && DB.registre[categorie][eid]) || null;
+  const entry = existante ? JSON.parse(JSON.stringify(existante)) : { eid: eid };
+  REGISTRE_ARRAY_FIELDS.forEach(k => {
+    entry[k] = entry[k] || [];
+    if (data[k] && data[k].length) entry[k] = entry[k].concat(data[k]);
+  });
+  REGISTRE_SCALAR_FIELDS.forEach(k => { if (data[k] !== undefined && data[k] !== null) entry[k] = data[k]; });
+  entry.eid = eid;
+  entry.derniereMiseAJour = Date.now();
+  return entry;
 }
 function archiverDansRegistre(categorie, eid, data) {
   if (!eid) return;
-  const entry = ensureRegistreEntry(categorie, eid);
-  if (data.sanitaire && data.sanitaire.length) entry.sanitaire = entry.sanitaire.concat(data.sanitaire);
-  if (data.agnelages && data.agnelages.length) entry.agnelages = entry.agnelages.concat(data.agnelages);
-  if (data.mouvements && data.mouvements.length) entry.mouvements = entry.mouvements.concat(data.mouvements);
-  entry.derniereMiseAJour = Date.now();
+  DB.registre = DB.registre || { brebis: {}, beliers: {}, agnelles: {} };
+  DB.registre[categorie] = DB.registre[categorie] || {};
+  DB.registre[categorie][eid] = calculerEntreeRegistreApresArchivage(categorie, eid, data);
 }
 
 // Correctif fuseau horaire : ne jamais repasser par toISOString() (UTC)
@@ -2436,12 +2452,15 @@ function productionTankCampagne(campagne) {
 }
 
 /* Brebis ayant eu au moins un contrôle laitier enregistré cette campagne
-   (chantier "Refonte desktop", étape Bilan de campagne) -- sur TOUTE
-   DB.brebis, jamais filtré par statut actif : une brebis vendue en cours
-   de campagne après être passée à la traite compte toujours. Valeur par
-   défaut de "Brebis passées à la traite" du Bilan de lactation. */
+   (chantier "Refonte desktop", étape Bilan de campagne) -- sur les brebis
+   actives ET archivées (voir registreEntriesFor, correctif du chantier
+   "Compléter le changement de campagne") -- une brebis vendue puis
+   retirée à une bascule ultérieure après être passée à la traite compte
+   toujours pour SA campagne, même si elle n'existe plus dans DB.brebis
+   aujourd'hui. Valeur par défaut de "Brebis passées à la traite" du Bilan
+   de lactation. */
 function brebisPasseesTraiteCampagne(campagne) {
-  return DB.brebis.filter(s => (s.controleLaitier || []).some(c => c.campagne === campagne)).length;
+  return registreEntriesFor('brebis').filter(entry => (entry.controleLaitier || []).some(c => c.campagne === campagne)).length;
 }
 
 function bilanCampagneQualite(campagne) {
@@ -3470,32 +3489,39 @@ function campagneLabel(campagneDebutVal) {
    forcément la campagne en cours) -- réutilisé par le ratio "brebis
    traites / brebis ayant mis bas" du nouveau Bilan de lactation. Repose
    directement sur le tag campagne déjà posé sur chaque agnelage (voir
-   agnelageCampagneActuelleIdx) plutôt que sur une reconstruction de cohorte :
-   un agnelage passé reste vrai quel que soit le statut actuel de la brebis
-   (vendue/morte depuis), donc parcourir TOUTES les brebis suffit ici, sans
-   avoir besoin d'une "population présente au 1er octobre de la campagne N"
-   comme le fait campagneCohortPresente pour la campagne en cours. */
+   agnelageCampagneActuelleIdx) plutôt que sur une reconstruction de cohorte.
+   Correctif du chantier "Compléter le changement de campagne" : une brebis
+   retirée de DB.brebis par une bascule ultérieure (archivée dans le
+   registre, voir archiverSortiesAnterieures) doit continuer à compter pour
+   SES campagnes passées -- parcourt donc registreEntriesFor (actives +
+   archivées), plus TOUTES DB.brebis comme avant pour celles encore
+   vivantes. */
 function misesBasTroupeauCampagne(campagne) {
-  return DB.brebis.filter(s => (s.agnelages || []).some(a => a && a.campagne === campagne)).length;
+  return registreEntriesFor('brebis').filter(entry => (entry.agnelages || []).some(a => a && a.campagne === campagne)).length;
 }
 
 /* Effectif de brebis présentes à une date quelconque du passé -- même
    logique que campagneCohortPresente (entrée avant, pas encore sortie),
    mais paramétrée par date plutôt que figée sur la campagne en cours :
    sert de brique à moyennePresenceMensuelleCampagne ci-dessous, pour
-   pouvoir échantillonner n'importe quelle campagne (y compris N-1). */
+   pouvoir échantillonner n'importe quelle campagne (y compris N-1).
+   Correctif du chantier "Compléter le changement de campagne" : repose
+   maintenant sur effectifEntriesFor (actives + archivées dans le registre,
+   voir animalDateEntree/animalDateSortie) au lieu de DB.brebis directement
+   -- sans quoi une brebis retirée par une bascule ultérieure disparaissait
+   à tort de l'effectif d'une campagne N-1/N-2 où elle était pourtant
+   présente. Bornes de dates IDENTIQUES à l'ancienne version (présente le
+   jour même de sa sortie, exclue seulement le lendemain). */
 function effectifPresentADate(dateRef) {
-  return DB.brebis.filter(s => {
-    const mouvements = s.mouvements || [];
-    const entreeMvt = mouvements.find(m => m.type === 'Entrée');
-    const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
-    const entreeDate = entreeDateStr ? new Date(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
-    if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > dateRef) return false;
-    const sortieMvt = [...mouvements].reverse().find(m => ['Vente', 'Morte', 'Vente reproduction', 'Perte', 'Autoconsommation'].includes(m.type));
-    if (!sortieMvt || !sortieMvt.date) return true;
-    const sortieDate = new Date(sortieMvt.date);
-    return isNaN(sortieDate.getTime()) || sortieDate >= dateRef;
-  }).length;
+  let count = 0;
+  effectifEntriesFor('brebis').forEach(entry => {
+    const dateEntree = animalDateEntree(entry);
+    if (!dateEntree || dateEntree > dateRef) return;
+    const dateSortie = animalDateSortie(entry);
+    if (dateSortie && dateSortie < dateRef) return;
+    count++;
+  });
+  return count;
 }
 
 /* Moyenne de présence sur la campagne (litrage/brebis présente, Bilan de
@@ -14841,21 +14867,43 @@ function renderMouvementsCollectifsHistorique() {
   DB.mouvementsCollectifs = DB.mouvementsCollectifs || [];
 
   function catLabel(cat) { return CATEGORIE_ANIMAL_CONFIG[cat || 'brebis'].label; }
+  // Membres déjà archivés dans le registre (et donc retirés du tableau
+  // vivant, voir archiverSortiesAnterieures) -- correctif du chantier
+  // "Compléter le changement de campagne" (point 7 de la validation) :
+  // avant ce correctif, "Annuler" restait affiché et supprimait l'entrée
+  // sans avoir rien restauré dès qu'UN membre manquait, donnant une fausse
+  // impression de succès. N'a d'effet que pour brebis/béliers (seules
+  // catégories concernées par l'archivage-retrait) -- toujours vide pour
+  // agneaux (qui ne quittent jamais leur tableau, voir CATEGORIE_ANIMAL_CONFIG)
+  // et non pertinent pour agnelles (déjà annulable:false).
+  function membresArchives(m) {
+    if (!m.annulable) return [];
+    const cfg = CATEGORIE_ANIMAL_CONFIG[m.categorie || 'brebis'];
+    const poolEids = new Set(cfg.pool().map(a => a.eid));
+    return m.membres.filter(eid => !poolEids.has(eid));
+  }
 
-  const itemHtml = (m) => `
+  const itemHtml = (m) => {
+    const archives = membresArchives(m);
+    const toutArchive = m.annulable && archives.length > 0 && archives.length === m.membres.length;
+    const nonAnnulableHtml = (titre, texte) => `<div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;">${titre}${infoBulleHtml(titre, texte)}</div>`;
+    return `
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
         ${iconCircle(ICON_WARNING, 'coral', 'sm')}
         <div>
           <div style="font-weight:600;">${catLabel(m.categorie)} · ${m.type}${m.acheteur ? ' · ' + m.acheteur : ''}</div>
-          <div style="font-size:12px;color:var(--text-muted);">${formatDateFr(m.date)} · ${m.membres.length} ${catLabel(m.categorie).toLowerCase()}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${formatDateFr(m.date)} · ${m.membres.length} ${catLabel(m.categorie).toLowerCase()}${archives.length && !toutArchive ? ' (' + archives.length + ' déjà archivé(s))' : ''}</div>
         </div>
       </div>
-      ${m.annulable
-        ? `<button type="button" class="btn btn-secondary btn-annuler-mvt-collectif" data-id="${m.id}" style="color:var(--danger);border-color:var(--danger);">Annuler ce mouvement collectif</button>`
-        : `<div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;">Non annulable${infoBulleHtml('Non annulable', "Agnelles déjà archivées dans le registre d'élevage et retirées du roster de renouvellement — l'annulation automatique n'est pas disponible pour cette catégorie (à restaurer manuellement si besoin).")}</div>`}
+      ${!m.annulable
+        ? nonAnnulableHtml('Non annulable', "Agnelles déjà archivées dans le registre d'élevage et retirées du roster de renouvellement — l'annulation automatique n'est pas disponible pour cette catégorie (à restaurer manuellement si besoin).")
+        : toutArchive
+        ? nonAnnulableHtml('Déjà archivé, non annulable', "Tous les animaux de ce mouvement collectif ont depuis été archivés dans le registre d'élevage (bascule ou nettoyage ponctuel) et retirés du tableau vivant — l'annulation automatique n'est plus possible.")
+        : `<button type="button" class="btn btn-secondary btn-annuler-mvt-collectif" data-id="${m.id}" style="color:var(--danger);border-color:var(--danger);">Annuler ce mouvement collectif${archives.length ? ' (partiel)' : ''}</button>`}
     </div>
   `;
+  };
 
   app.innerHTML = `
     <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Mouvements collectifs', 'Retrouve un mouvement (vente/sortie) appliqué à plusieurs animaux en une fois, et annule-le d\'un coup si besoin.')}</div>
@@ -14869,7 +14917,11 @@ function renderMouvementsCollectifsHistorique() {
       const id = btn.dataset.id;
       const m = DB.mouvementsCollectifs.find(x => x.id === id);
       if (!m) return;
-      if (!confirm('Annuler ce mouvement collectif (' + m.membres.length + ' ' + catLabel(m.categorie).toLowerCase() + ') ? Chaque animal retrouvera son statut précédent.')) return;
+      const archives = membresArchives(m);
+      const restaurables = m.membres.length - archives.length;
+      if (restaurables <= 0) return; // ne devrait pas arriver -- le bouton n'est affiché que s'il en reste
+      const detailArchives = archives.length ? ', ' + archives.length + ' déjà archivé(s) et non restaurable(s)' : '';
+      if (!confirm('Annuler ce mouvement collectif (' + restaurables + ' ' + catLabel(m.categorie).toLowerCase() + detailArchives + ') ? Chaque animal retrouvera son statut précédent.')) return;
       const cfg = CATEGORIE_ANIMAL_CONFIG[m.categorie || 'brebis'];
       cfg.pool().forEach(animal => {
         if (!animal.mouvements) return;
@@ -14880,7 +14932,15 @@ function renderMouvementsCollectifsHistorique() {
         else if (m.categorie === 'agneaux') recalculerStatutFinalAgneau(animal);
         else recalculerStatutBrebis(animal);
       });
-      DB.mouvementsCollectifs = DB.mouvementsCollectifs.filter(x => x.id !== id);
+      if (archives.length) {
+        // Ne garde que les EID déjà archivés -- redevient "Déjà archivé, non
+        // annulable" au prochain rendu (voir toutArchive ci-dessus), jamais
+        // supprimé en silence : liste ce qui n'a pas pu être restauré.
+        m.membres = archives;
+        alert(archives.length + ' animal(aux) déjà archivé(s) dans le registre n\'ont pas pu être restauré(s) : ' + archives.map(eid => 'n°' + numeroVisuel(eid)).join(', ') + '.');
+      } else {
+        DB.mouvementsCollectifs = DB.mouvementsCollectifs.filter(x => x.id !== id);
+      }
       saveData(DB);
       render('mouvements-collectifs');
     };
@@ -16060,15 +16120,18 @@ function registreEntriesFor(categorie) {
   const map = {};
   Object.keys(archive).forEach(eid => {
     const a = archive[eid];
-    map[eid] = { eid, actif: false, sanitaire: (a.sanitaire || []).slice(), agnelages: (a.agnelages || []).slice(), mouvements: (a.mouvements || []).slice() };
+    const entry = { eid, actif: false };
+    REGISTRE_ARRAY_FIELDS.forEach(k => { entry[k] = (a[k] || []).slice(); });
+    map[eid] = entry;
   });
   const actifs = categorie === 'brebis' ? DB.brebis : categorie === 'beliers' ? DB.beliers : DB.agnelles;
   (actifs || []).forEach(a => {
-    if (!map[a.eid]) map[a.eid] = { eid: a.eid, actif: true, sanitaire: [], agnelages: [], mouvements: [] };
-    else map[a.eid].actif = true;
-    map[a.eid].sanitaire = map[a.eid].sanitaire.concat(a.sanitaire || []);
-    map[a.eid].agnelages = map[a.eid].agnelages.concat(a.agnelages || []);
-    map[a.eid].mouvements = map[a.eid].mouvements.concat(a.mouvements || []);
+    if (!map[a.eid]) {
+      const entry = { eid: a.eid, actif: true };
+      REGISTRE_ARRAY_FIELDS.forEach(k => { entry[k] = []; });
+      map[a.eid] = entry;
+    } else map[a.eid].actif = true;
+    REGISTRE_ARRAY_FIELDS.forEach(k => { map[a.eid][k] = map[a.eid][k].concat(a[k] || []); });
   });
   return Object.values(map);
 }
@@ -16109,22 +16172,31 @@ const TYPES_SORTIE = ['Vente', 'Vente reproduction', 'Morte', 'Mort', 'Perte', '
 /* Fusion actifs + archivés dédiée au Registre PAC — même principe que
    registreEntriesFor() (juste au-dessus) mais SANS y toucher (partagée
    avec l'écran Registre déjà en production) : conserve en plus, pour les
-   fiches encore actives, leurs dateEntree/createdAt (indisponibles pour
-   une fiche déjà supprimée, faute d'être archivés par archiverDansRegistre)
-   — nécessaires ici comme repli quand aucun mouvement "Entrée" n'existe.
+   fiches encore actives ET pour les fiches archivées, leurs dateEntree/
+   createdAt -- nécessaires ici comme repli quand aucun mouvement "Entrée"
+   n'existe. Correctif du chantier "Compléter le changement de campagne" :
+   AVANT ce correctif, dateEntreeFallback/createdAtFallback n'étaient
+   jamais lus depuis l'archive (seulement depuis les fiches encore
+   actives), alors que archiverDansRegistre les y enregistre bien depuis ce
+   même chantier (voir REGISTRE_SCALAR_FIELDS) -- une fiche entièrement
+   retirée (brebis/bélier vendu, voir archiverEtRetirerFicheComplete) sans
+   mouvement "Entrée" explicite disparaissait alors silencieusement de
+   l'effectif de TOUTES ses campagnes passées (Bilan de lactation), repéré
+   par un test comparant les chiffres avant/après un archivage simulé.
    categorie : 'brebis' | 'beliers' | 'agnelles'. */
 function effectifEntriesFor(categorie) {
   const archive = (DB.registre && DB.registre[categorie]) || {};
   const map = {};
   Object.keys(archive).forEach(eid => {
-    map[eid] = { eid, mouvements: (archive[eid].mouvements || []).slice(), dateEntreeFallback: null, createdAtFallback: null };
+    const a = archive[eid];
+    map[eid] = { eid, mouvements: (a.mouvements || []).slice(), dateEntreeFallback: a.dateEntree || null, createdAtFallback: a.createdAt || null };
   });
   const actifs = categorie === 'brebis' ? DB.brebis : categorie === 'beliers' ? DB.beliers : DB.agnelles;
   (actifs || []).forEach(a => {
     if (!map[a.eid]) map[a.eid] = { eid: a.eid, mouvements: [], dateEntreeFallback: null, createdAtFallback: null };
     map[a.eid].mouvements = map[a.eid].mouvements.concat(a.mouvements || []);
-    map[a.eid].dateEntreeFallback = a.dateEntree || null;
-    map[a.eid].createdAtFallback = a.createdAt || null;
+    map[a.eid].dateEntreeFallback = a.dateEntree || map[a.eid].dateEntreeFallback || null;
+    map[a.eid].createdAtFallback = a.createdAt || map[a.eid].createdAtFallback || null;
   });
   return Object.values(map);
 }
@@ -20665,6 +20737,92 @@ function restaurerSnapshotPreCampagne() {
 let campagneChangeEnCours = false;
 let operationGroupeeEnCours = false;
 
+/* Archive une fiche COMPLÈTE (brebis ou bélier) dans le registre puis la
+   retire du tableau vivant -- chantier "Compléter le changement de
+   campagne" (2e étape, point 1) : ordre garanti, jamais l'inverse. Le
+   document registre est écrit puis RELU pour vérification côté cloud (voir
+   window.ecrireEtVerifierDocRegistre, script de synchro) AVANT que
+   DB.registre/le tableau vivant ne soient mutés ici -- si l'écriture ou la
+   vérification échoue, cette fiche précise reste intacte (jamais retirée),
+   avec la raison exacte de l'échec. Ne touche jamais aux autres fiches en
+   cours de traitement (voir archiverSortiesAnterieures, qui appelle cette
+   fonction une fois par animal, indépendamment des autres). */
+async function archiverEtRetirerFicheComplete(categorie, animal) {
+  const eid = animal.eid;
+  const data = Object.assign({}, animal);
+  delete data.id;
+  const entreeCalculee = calculerEntreeRegistreApresArchivage(categorie, eid, data);
+  if (!window.ecrireEtVerifierDocRegistre) {
+    return { ok: false, raison: 'synchro cloud non initialisée sur cet appareil' };
+  }
+  const resultat = await window.ecrireEtVerifierDocRegistre(categorie, eid, entreeCalculee);
+  if (!resultat.ok) return resultat;
+  // Seulement maintenant, une fois l'archivage confirmé par une vraie
+  // relecture côté cloud : pose l'entrée ET retire la fiche vivante --
+  // jamais l'inverse, jamais avant.
+  DB.registre = DB.registre || { brebis: {}, beliers: {}, agnelles: {} };
+  DB.registre[categorie] = DB.registre[categorie] || {};
+  DB.registre[categorie][eid] = entreeCalculee;
+  if (categorie === 'brebis') DB.brebis = DB.brebis.filter(s => s.eid !== eid);
+  else if (categorie === 'beliers') DB.beliers = (DB.beliers || []).filter(b => b.eid !== eid);
+  return { ok: true };
+}
+
+/* Archive puis retire du tableau vivant toute brebis/bélier non actif dont
+   la date du dernier mouvement (la sortie) est STRICTEMENT antérieure à
+   `dateLimite` -- partagée par la bascule (executerChangementCampagne) ET
+   le bouton de nettoyage ponctuel (Paramètres > Campagne, voir
+   renderParametresCampagne). Une sortie saisie à une date future (ou
+   égale/postérieure à dateLimite) n'est jamais touchée ici : elle sera
+   traitée à la bascule suivante, une fois cette date effectivement passée.
+   Traite chaque animal INDÉPENDAMMENT (voir archiverEtRetirerFicheComplete) :
+   l'échec d'une seule fiche ne bloque jamais les autres, qui restent
+   traitées normalement -- cette fiche reste simplement en place, à
+   réessayer plus tard. Retourne { archives: [{categorie, eid}],
+   echecs: [{categorie, eid, raison}] }, jamais un simple compteur. */
+async function archiverSortiesAnterieures(dateLimite) {
+  const archives = [];
+  const echecs = [];
+  async function traiterCategorie(categorie, tableau, statutActif) {
+    const candidats = tableau.filter(a => {
+      if ((a.statut || statutActif) === statutActif) return false;
+      const dernier = dernierMouvementParDate(a.mouvements);
+      return !!(dernier && dernier.date && dernier.date < dateLimite);
+    });
+    for (const animal of candidats) {
+      const resultat = await archiverEtRetirerFicheComplete(categorie, animal);
+      if (resultat.ok) archives.push({ categorie, eid: animal.eid });
+      else echecs.push({ categorie, eid: animal.eid, raison: resultat.raison });
+    }
+  }
+  // Le retrait du tableau vivant est fait par archiverEtRetirerFicheComplete
+  // lui-même, animal par animal, juste après confirmation -- jamais un
+  // filtrage groupé ici après coup (voir son commentaire : ordre garanti).
+  await traiterCategorie('brebis', DB.brebis, 'active');
+  await traiterCategorie('beliers', DB.beliers || [], 'actif');
+  return { archives, echecs };
+}
+
+const JOURNAL_REGISTRE_MAX = 200;
+/* Journal (synchronisé, contrairement au journal de synchro purement local
+   -- voir SYNC_JOURNAL_KEY) des bascules et nettoyages ayant archivé des
+   fiches, chantier "Compléter le changement de campagne" (2e étape, point
+   3) : liste les EID archivés à chaque opération, consultable sur tous les
+   appareils du compte. Bascules/nettoyages restant rares (au plus quelques
+   dizaines par an), pas besoin d'une collection dédiée -- un tableau dans
+   meta suffit largement sur plusieurs années (voir JOURNAL_REGISTRE_MAX,
+   large marge). */
+function journaliserArchivageRegistre(action, resultat) {
+  DB.journalRegistre = DB.journalRegistre || [];
+  DB.journalRegistre.unshift({
+    date: new Date().toISOString(),
+    action: action, // 'bascule' | 'nettoyage_registre'
+    eidsArchives: resultat.archives.map(a => a.categorie + ':' + a.eid),
+    echecs: resultat.echecs
+  });
+  DB.journalRegistre = DB.journalRegistre.slice(0, JOURNAL_REGISTRE_MAX);
+}
+
 /* Exécution réelle du "changement de campagne", déclenchée UNIQUEMENT depuis
    le bouton "Valider" de l'écran de vérification (voir
    renderConfirmationNouvelleCampagne) — plus aucun confirm() natif ici.
@@ -20738,6 +20896,16 @@ async function executerChangementCampagne() {
       if ((sheep.statut || 'active') === 'active') {
         archiverDansRegistre('brebis', sheep.eid, { mouvements: sheep.mouvements });
         sheep.mouvements = [];
+      }
+    });
+    // Même traitement pour les béliers actifs -- jusqu'ici absent (aucun
+    // archivage n'existait pour les béliers), signalé par l'audit du
+    // chantier "Compléter le changement de campagne" : leurs mouvements
+    // s'accumulaient indéfiniment, jamais archivés ni vidés à la bascule.
+    (DB.beliers || []).forEach(belier => {
+      if ((belier.statut || 'actif') === 'actif') {
+        archiverDansRegistre('beliers', belier.eid, { mouvements: belier.mouvements });
+        belier.mouvements = [];
       }
     });
 
@@ -20817,8 +20985,17 @@ async function executerChangementCampagne() {
       return { ok: false, raison: 'incohérence détectée après la bascule (rien n\'a été enregistré)', detail: { activesAvant, agnellesAvant, activesApres, attendu } };
     }
 
+    // Archive puis retire les brebis/béliers sortis AVANT le démarrage de
+    // cette nouvelle campagne -- APRÈS la vérification arithmétique
+    // ci-dessus, jamais avant : ceci écrit réellement dans le cloud (un
+    // document par fiche archivée, voir archiverEtRetirerFicheComplete), et
+    // ces écritures ne doivent jamais avoir lieu pour une bascule sur le
+    // point d'être annulée en mémoire (voir le retour anticipé ci-dessus).
+    const resultatArchivage = await archiverSortiesAnterieures(dateRenouvellement);
+    journaliserArchivageRegistre('bascule', resultatArchivage);
+
     saveData(DB);
-    return { ok: true, agnellesEnConflit };
+    return { ok: true, agnellesEnConflit, archivesSorties: resultatArchivage.archives, echecsArchivage: resultatArchivage.echecs };
   } finally {
     campagneChangeEnCours = false;
     operationGroupeeEnCours = false;
@@ -20927,7 +21104,7 @@ function renderConfirmationNouvelleCampagne() {
       btn.textContent = originalLabel;
       return;
     }
-    renderResultatNouvelleCampagne(activesAvant, agnellesAvant, result.agnellesEnConflit);
+    renderResultatNouvelleCampagne(activesAvant, agnellesAvant, result.agnellesEnConflit, result.archivesSorties || [], result.echecsArchivage || []);
   };
 }
 
@@ -20939,7 +21116,7 @@ function renderConfirmationNouvelleCampagne() {
    sur l'accueil. Les agnelles écartées pour cause de doublon d'EID (voir
    executerChangementCampagne) sont listées explicitement : elles restent
    dans DB.agnelles, à traiter à la main. */
-function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnConflit) {
+function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnConflit, archivesSorties, echecsArchivage) {
   pageTitle.textContent = 'Changement de campagne effectué';
   const activesApres = DB.brebis.filter(s => (s.statut || 'active') === 'active').length;
   const attendu = activesAvant + agnellesAvant - agnellesEnConflit.length;
@@ -20949,6 +21126,19 @@ function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnC
       <div style="font-size:13px;margin-bottom:8px;">EID déjà utilisé ailleurs -- restées dans l'inventaire Agnelles, à résoudre à la main.</div>
       ${agnellesEnConflit.map(c => `<div class="history-item"><div class="content">n°${numeroVisuel(c.eid)} — ${c.conflit.statutLabel}</div></div>`).join('')}
     </div>`;
+  // Sorties archivées dans le registre puis retirées des tableaux vivants
+  // (brebis/béliers vendus ou morts avant cette bascule, voir
+  // archiverSortiesAnterieures) -- distinct du roulement des agnelles
+  // ci-dessus, jamais mélangé avec lui.
+  const archivageHtml = (archivesSorties.length === 0 && echecsArchivage.length === 0) ? '' : `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">${archivesSorties.length} sortie(s) archivée(s) dans le registre</div>
+      ${archivesSorties.length ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Retirées des onglets Brebis/Béliers/Mouvements, conservées intégralement dans le Registre d'élevage.</div>` : ''}
+      ${echecsArchivage.length ? `
+        <div style="font-size:13px;color:var(--danger);margin-top:8px;">${echecsArchivage.length} fiche(s) non archivée(s) (laissée(s) en place, à réessayer) :</div>
+        ${echecsArchivage.map(e => `<div class="history-item"><div class="content">n°${numeroVisuel(e.eid)} (${e.categorie}) — ${e.raison}</div></div>`).join('')}
+      ` : ''}
+    </div>`;
   app.innerHTML = `
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Brebis actives</div>
@@ -20957,6 +21147,7 @@ function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnC
       <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Besoin de revenir en arrière ? Paramètres > Campagne propose de restaurer l'état d'avant cette bascule.</div>
     </div>
     ${conflitHtml}
+    ${archivageHtml}
     <button class="btn btn-primary" id="btn-continuer-resultat-campagne">Continuer</button>
   `;
   document.getElementById('btn-continuer-resultat-campagne').onclick = () => render('parametres');
@@ -21307,6 +21498,21 @@ function renderParametresCampagne(content) {
   // ecrireSnapshotPreCampagne/executerChangementCampagne) -- disparaît une
   // fois utilisé (restaurerSnapshotPreCampagne l'efface).
   const snapshotPreCampagne = lireSnapshotPreCampagne();
+  // Compte ce qu'un nettoyage ponctuel prendrait EFFECTIVEMENT en charge --
+  // même prédicat que archiverSortiesAnterieures (sortie antérieure à
+  // aujourd'hui), pour que ce chiffre annonce exactement ce qui va se
+  // passer, ni plus ni moins.
+  const aujourdhuiPourNettoyage = new Date().toISOString().slice(0, 10);
+  function compterSortiesAArchiver(tableau, statutActif) {
+    return (tableau || []).filter(a => {
+      if ((a.statut || statutActif) === statutActif) return false;
+      const dernier = dernierMouvementParDate(a.mouvements);
+      return !!(dernier && dernier.date && dernier.date < aujourdhuiPourNettoyage);
+    }).length;
+  }
+  const cptSortiesNonArchiveesBrebis = compterSortiesAArchiver(DB.brebis, 'active');
+  const cptSortiesNonArchiveesBeliers = compterSortiesAArchiver(DB.beliers, 'actif');
+  const cptSortiesNonArchivees = cptSortiesNonArchiveesBrebis + cptSortiesNonArchiveesBeliers;
   const snapshotPreCampagneHtml = !snapshotPreCampagne ? '' : `
     <div style="margin-top:10px;padding:10px;border:1px solid var(--danger);border-radius:10px;">
       <div style="font-size:12.5px;color:var(--text);margin-bottom:8px;">Point de restauration disponible : état d'avant la dernière bascule (${formatDateFr(snapshotPreCampagne.date.slice(0,10))}, ${snapshotPreCampagne.resume}).</div>
@@ -21369,6 +21575,13 @@ function renderParametresCampagne(content) {
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? ('Campagne ' + (DB.campagneDebut + 1) + ' (' + campagneDateDebutLabel() + ' ' + DB.campagneDebut + ' au ' + campagneDateFinLabel() + ' ' + (DB.campagneDebut + 1) + ')') : 'non définie'}. À déclencher le ${campagneDateDebutLabel()} : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis. Un écran de vérification détaillé s'affiche avant toute validation.</div>
       <button class="btn btn-secondary" id="btn-nouvelle-campagne" style="color:var(--danger);border-color:var(--danger);">Démarrer une nouvelle campagne</button>
       ${snapshotPreCampagneHtml}
+    </div>
+
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Nettoyage ponctuel du registre${infoBulleHtml('Nettoyage ponctuel du registre', "Archive dans le registre d'élevage, puis retire des onglets Brebis/Béliers/Mouvements, toute fiche déjà vendue ou morte mais jamais archivée (sortie antérieure à aujourd'hui) -- sans relancer un changement de campagne. À utiliser une fois pour rattraper des sorties anciennes, ou ponctuellement si besoin.")}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">${cptSortiesNonArchivees} fiche(s) sortie(s) non encore archivée(s) trouvée(s) (${cptSortiesNonArchiveesBrebis} brebis, ${cptSortiesNonArchiveesBeliers} bélier(s)).</div>
+      <button class="btn btn-secondary" id="btn-nettoyer-registre" style="color:var(--danger);border-color:var(--danger);" ${cptSortiesNonArchivees === 0 ? 'disabled' : ''}>Nettoyer le registre maintenant</button>
+      <div id="nettoyage-registre-status" style="font-size:12px;margin-top:8px;"></div>
     </div>
   `;
   content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
@@ -21443,6 +21656,38 @@ function renderParametresCampagne(content) {
       if (!confirm('Restaurer l\'état d\'avant la dernière bascule (' + snapshotPreCampagne.resume + ') ? Toute donnée saisie DEPUIS cette bascule sera perdue. Cette action se propage aussi au cloud et aux autres appareils, comme un import de sauvegarde.')) return;
       if (restaurerSnapshotPreCampagne()) render('parametres');
       else alert("Aucun point de restauration disponible (peut-être déjà utilisé).");
+    };
+  }
+  // Nettoyage ponctuel du registre (chantier "Compléter le changement de
+  // campagne", 2e étape, point 5) : jamais en rejouant la bascule --
+  // réutilise directement archiverSortiesAnterieures (même garantie
+  // écriture+vérification avant retrait), avec une sauvegarde JSON avant,
+  // exactement comme executerChangementCampagne.
+  const btnNettoyerRegistre = document.getElementById('btn-nettoyer-registre');
+  if (btnNettoyerRegistre) {
+    btnNettoyerRegistre.onclick = async () => {
+      if (!confirm(cptSortiesNonArchivees + ' fiche(s) vont être archivées dans le registre puis retirées des onglets Brebis/Béliers/Mouvements. Ferme l\'appli sur tes AUTRES appareils avant de continuer. Une sauvegarde JSON sera créée automatiquement avant. Continuer ?')) return;
+      const statusEl = document.getElementById('nettoyage-registre-status');
+      btnNettoyerRegistre.disabled = true;
+      statusEl.textContent = 'Sauvegarde en cours...';
+      const backup = await writeAutoBackupFile(nomFichierBackupAuto(new Date()), DB, { proposerPartage: true });
+      if (!backup.ok) {
+        statusEl.textContent = '⚠️ Nettoyage annulé : la sauvegarde automatique a échoué -- ' + backup.raison + '.';
+        btnNettoyerRegistre.disabled = false;
+        return;
+      }
+      await purgeOldAutoBackups();
+      statusEl.textContent = 'Archivage en cours...';
+      const resultat = await archiverSortiesAnterieures(aujourdhuiPourNettoyage);
+      journaliserArchivageRegistre('nettoyage_registre', resultat);
+      saveData(DB);
+      let msg = resultat.archives.length + ' fiche(s) archivée(s) et retirée(s).';
+      if (resultat.echecs.length) {
+        msg += ' ' + resultat.echecs.length + ' échec(s) (laissée(s) en place) : ' +
+          resultat.echecs.map(e => 'n°' + numeroVisuel(e.eid) + ' (' + e.raison + ')').join(', ') + '.';
+      }
+      statusEl.textContent = (resultat.echecs.length ? '⚠️ ' : '✅ ') + msg;
+      btnNettoyerRegistre.disabled = resultat.archives.length > 0 && resultat.echecs.length === 0; // désactivé seulement si tout a réussi (compteur ci-dessus resterait sinon à 0 tant que l'écran n'est pas rouvert)
     };
   }
 }
@@ -22619,7 +22864,11 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
   // migrerRegistreVersCollection : doit être visible de tous les appareils
   // du compte, sinon un appareil qui vient de se réinstaller relancerait la
   // migration à chaque fois qu'il ne trouve pas de trace locale.
-  'registreCollectionMigree20260930'];
+  'registreCollectionMigree20260930',
+  // Journal des bascules/nettoyages ayant archivé des fiches (voir
+  // journaliserArchivageRegistre) -- synchronisé comme le reste, distinct du
+  // journal de synchro purement local (SYNC_JOURNAL_KEY).
+  'journalRegistre'];
 // 'registre' ici = la collection dédiée users/{uid}/registre/{id} (1 document
 // par animal archivé, chantier "Registre : collection dédiée") -- SANS
 // rapport avec meta.registre ci-dessus (champ conservé tel quel, voir son
@@ -22820,6 +23069,52 @@ function marquerOpAppliquee(op) {
   else lastMap[op.id] = op.newValue;
   persisterSyncLastSynced();
 }
+
+/* Écrit UN document de la collection registre puis le relit pour vérifier
+   son contenu, AVANT que l'appelant (script classique, voir
+   archiverEtRetirerFicheComplete) ne retire la fiche vivante correspondante
+   -- chantier "Compléter le changement de campagne" (2e étape, point 1) :
+   jamais de suppression d'une fiche brebis/bélier tant que son archivage
+   n'est pas confirmé par une VRAIE relecture (même principe que
+   writeAutoBackupFile pour le fichier JSON), pas seulement un commit résolu
+   sans exception. Exposée sur window (jamais un module-scope simple) : le
+   script classique où vit executerChangementCampagne ne peut pas appeler
+   directement une fonction déclarée dans ce module (voir la remarque sur
+   drainPendingRemoteUpdates plus bas dans ce fichier). Retourne {ok, raison?}
+   -- jamais un simple booléen. En cas de succès, avance sync.lastSynced.registre
+   pour cette entrée (comme marquerOpAppliquee) afin que la synchro normale
+   qui suit (saveData, après le retrait de la fiche vivante) ne la repousse
+   pas une 2e fois inutilement. */
+window.ecrireEtVerifierDocRegistre = async function ecrireEtVerifierDocRegistre(categorie, eid, entree) {
+  if (!sync.uid) return { ok: false, raison: "aucune synchro cloud active sur cet appareil -- impossible de garantir l'archivage avant suppression" };
+  const docId = categorie + '_' + cleanEid(eid);
+  const ref = doc(fbDb, 'users', sync.uid, 'registre', docId);
+  const dataEnvoyee = deepClean(Object.assign({ id: docId, categorie: categorie, eid: eid }, entree));
+  try {
+    const batch = writeBatch(fbDb);
+    batch.set(ref, dataEnvoyee);
+    await batch.commit();
+  } catch (e) {
+    return { ok: false, raison: "l'écriture du document registre a échoué (" + (e && e.message ? e.message : 'erreur inconnue') + ')' };
+  }
+  try {
+    const relu = await getDoc(ref);
+    if (!relu.exists()) return { ok: false, raison: 'le document registre relu est introuvable juste après son écriture' };
+    const obtenu = relu.data();
+    for (const champ of REGISTRE_ARRAY_FIELDS) {
+      const attendu = (dataEnvoyee[champ] || []).length;
+      const recu = (obtenu[champ] || []).length;
+      if (attendu !== recu) {
+        return { ok: false, raison: 'le contenu relu du document (' + champ + ': ' + recu + ') ne correspond pas à celui envoyé (' + attendu + ')' };
+      }
+    }
+    sync.lastSynced.registre[docId] = dataEnvoyee;
+    persisterSyncLastSynced();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, raison: "la relecture de vérification du document registre a échoué (" + (e && e.message ? e.message : 'erreur inconnue') + ')' };
+  }
+};
 
 /* ---------- Journal de synchro + indicateur "en attente" ----------
    Correctif de l'audit "Changement de campagne" (points 1-2 de la 2e
@@ -23067,8 +23362,20 @@ function fusionnerEnregistrementDistant(local, remote, refConnue) {
   return fusionne;
 }
 
-function fusionnerInstantaneDistant(colName, arr) {
-  const ancienneRef = sync.lastSynced[colName] || {};
+/* `ancienneRef` est passée explicitement (jamais relue depuis
+   sync.lastSynced[colName] ici) -- correctif repéré par un test de ce
+   chantier : pendant une opération groupée (operationGroupeeEnCours), cette
+   fusion peut être appelée en DIFFÉRÉ (voir applyOrQueueRemoteUpdate) alors
+   que sync.lastSynced[colName] a déjà été avancé entre-temps par un instantané
+   PLUS RÉCENT -- lire la référence à ce moment-là donnerait la MAUVAISE
+   ancienne valeur (celle du nouvel instantané, pas celle d'avant CETTE
+   fusion), et ferait paraître "non modifié" un enregistrement pourtant
+   modifié localement entre les deux. L'appelant capture donc l'ancienne
+   référence à la réception de l'instantané, AVANT tout avancement de
+   sync.lastSynced -- seule la lecture de DB[colName] (voir
+   getRecordsArrayForSync) doit rester la plus FRAÎCHE possible, elle,
+   lue au moment réel de l'application (immédiate ou différée). */
+function fusionnerInstantaneDistant(colName, arr, ancienneRef) {
   const localParId = new Map((getRecordsArrayForSync(colName, DB) || []).map(r => [r.id, r]));
   const idsDistants = new Set();
   arr.forEach(remoteRec => {
@@ -23180,16 +23487,18 @@ async function startListeners(dejaAppairePrecedemment) {
           });
         });
       }
-      // Fusion (voir fusionnerInstantaneDistant) AVANT d'écraser
-      // sync.lastSynced[colName] ci-dessous : elle a besoin de la référence
-      // encore ANCIENNE pour distinguer un enregistrement légitimement à
-      // jour d'un enregistrement localement modifié mais pas encore
-      // confirmé synchronisé.
-      const fusion = fusionnerInstantaneDistant(colName, arr);
+      // Référence ANCIENNE capturée AVANT d'écraser sync.lastSynced[colName]
+      // ci-dessous -- nécessaire à fusionnerInstantaneDistant pour distinguer
+      // un enregistrement légitimement à jour d'un enregistrement localement
+      // modifié mais pas encore confirmé synchronisé. Capturée ici en valeur
+      // (jamais relue plus tard) : voir le commentaire de
+      // fusionnerInstantaneDistant sur pourquoi son appel lui-même doit
+      // rester DIFFÉRÉ (dans le mutateur ci-dessous), pas précalculé ici.
+      const ancienneRef = sync.lastSynced[colName] || {};
       sync.lastSynced[colName] = {};
       // Instantané indépendant de ce qui va dans DB : DB continue de
       // contenir les objets « vivants » que l'appli modifie directement sur
-      // place, éventuellement préservés tels quels par la fusion ci-dessus.
+      // place, éventuellement préservés tels quels par la fusion ci-dessous.
       // sync.lastSynced, lui, garde TOUJOURS la valeur distante brute telle
       // que Firestore la sert (jamais la version fusionnée) : c'est la seule
       // façon de savoir, au prochain instantané, ce que le cloud a HONNÊTEMENT
@@ -23197,7 +23506,9 @@ async function startListeners(dejaAppairePrecedemment) {
       // différence à repousser pour un enregistrement dont la fusion aurait
       // gardé la version locale.
       arr.forEach(r => { sync.lastSynced[colName][r.id] = deepClean(r); });
-      applyOrQueueRemoteUpdate(colName, () => { setRecordsArrayForSync(colName, fusion); });
+      applyOrQueueRemoteUpdate(colName, () => {
+        setRecordsArrayForSync(colName, fusionnerInstantaneDistant(colName, arr, ancienneRef));
+      });
       persisterSyncLastSynced();
     }, err => console.error('Erreur d\'écoute Firestore (' + colName + ') :', err));
     sync.unsubscribers.push(unsub);
@@ -23206,8 +23517,26 @@ async function startListeners(dejaAppairePrecedemment) {
   const unsubMeta = onSnapshot(metaRef, snap => {
     if (snap.exists()) {
       const meta = snap.data();
+      // Fusion CHAMP PAR CHAMP (voir fusionnerEnregistrementDistant, même
+      // fonction que pour les collections) -- correctif repéré par un test de
+      // ce chantier : sans elle, un instantané meta distant "en retard" (ne
+      // connaissant pas encore une écriture locale tout juste confirmée sur
+      // UN champ, ex: journalRegistre après une bascule) écrasait ce champ en
+      // entier, silencieusement, exactement le même risque déjà corrigé pour
+      // les collections (brebis/beliers/...) mais jusqu'ici jamais étendu à
+      // meta. Référence ANCIENNE (refConnueMeta) capturée ici, AVANT d'écraser
+      // sync.lastSynced.meta -- mais l'appel à fusionnerEnregistrementDistant
+      // lui-même reste DIFFÉRÉ dans le mutateur ci-dessous (jamais précalculé
+      // ici) : pendant une opération groupée, il doit relire DB au moment
+      // réel de l'application, pas son état d'il y a plusieurs secondes (même
+      // raison que pour les collections, voir fusionnerInstantaneDistant).
+      const refConnueMeta = sync.lastSynced.meta;
       sync.lastSynced.meta = deepClean(meta);
-      applyOrQueueRemoteUpdate('meta', () => { Object.assign(DB, meta); });
+      applyOrQueueRemoteUpdate('meta', () => {
+        const localMetaSubset = {};
+        META_FIELDS.forEach(k => { localMetaSubset[k] = DB[k]; });
+        Object.assign(DB, fusionnerEnregistrementDistant(localMetaSubset, meta, refConnueMeta));
+      });
       persisterSyncLastSynced();
     }
   }, err => console.error('Erreur d\'écoute Firestore (meta) :', err));
