@@ -22569,7 +22569,7 @@ import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
   onAuthStateChanged, signOut,
   initializeFirestore, persistentLocalCache, persistentSingleTabManager,
-  collection, doc, setDoc, updateDoc, deleteDoc, getDoc, onSnapshot, arrayUnion,
+  collection, doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, onSnapshot, arrayUnion,
   writeBatch
 } from './vendor/firebase.bundle.js';
 
@@ -22605,10 +22605,31 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
   'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
+  // 'registre' reste ICI (champ meta.registre) volontairement, même après
+  // l'introduction de la collection dédiée ci-dessous (voir DOC_COLLECTIONS)
+  // -- chantier "Registre : collection dédiée" (1re étape, migration seule) :
+  // aucune suppression de l'ancien champ dans cette étape, qui reste le
+  // filet de secours d'un appareil encore sur l'ancien code tant que tous
+  // les appareils n'ont pas mis à jour. À retirer d'ici dans un chantier
+  // séparé, une fois la migration confirmée sans risque sur la durée.
   'registre', 'traitementsCollectifs', 'mouvementsCollectifs', 'penalitesBacterio',
   'listeSerie', 'resumeControleLaitier', 'cahierControleLaitier', 'lactationModele',
-  'reproGestationMin', 'reproGestationMax', 'reproRetourMin', 'reproRetourMax'];
-const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite', 'ordonnances']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
+  'reproGestationMin', 'reproGestationMax', 'reproRetourMin', 'reproRetourMax',
+  // Drapeau de migration CÔTÉ CLOUD (jamais localStorage seul) -- voir
+  // migrerRegistreVersCollection : doit être visible de tous les appareils
+  // du compte, sinon un appareil qui vient de se réinstaller relancerait la
+  // migration à chaque fois qu'il ne trouve pas de trace locale.
+  'registreCollectionMigree20260930'];
+// 'registre' ici = la collection dédiée users/{uid}/registre/{id} (1 document
+// par animal archivé, chantier "Registre : collection dédiée") -- SANS
+// rapport avec meta.registre ci-dessus (champ conservé tel quel, voir son
+// commentaire) : deux emplacements Firestore distincts qui partagent
+// seulement ce nom de clé côté code JS. DB.registre lui-même GARDE sa forme
+// imbriquée actuelle ({brebis:{}, beliers:{}, agnelles:{}} indexé par EID)
+// pour tout le code existant (registreEntriesFor, effectifEntriesFor,
+// archiverDansRegistre...) -- voir registreVersRecords/appliquerRecordsRegistre
+// plus bas, qui font seules la traduction vers/depuis la collection.
+const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite', 'ordonnances', 'registre']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
 const BOOTSTRAP_FLAG_KEY = 'ovilog_sync_bootstrapped_uid';
 
 const sync = {
@@ -22619,7 +22640,7 @@ const sync = {
   // Dernier état connu de chaque collection/document tel qu'envoyé vers ou
   // reçu depuis Firestore, pour calculer un diff minimal à chaque sauvegarde
   // plutôt que de tout réécrire.
-  lastSynced: { brebis: {}, beliers: {}, agnelles: {}, prelevementsQualite: {}, ordonnances: {}, meta: undefined }
+  lastSynced: { brebis: {}, beliers: {}, agnelles: {}, prelevementsQualite: {}, ordonnances: {}, registre: {}, meta: undefined }
 };
 
 /* Copie profonde + remplace toute valeur undefined par null (Firestore
@@ -22684,6 +22705,52 @@ function buildUpdatePayload(oldRec, newRec) {
     }
   });
   return Object.keys(updates).length ? updates : null;
+}
+
+/* ---------- Traduction DB.registre (forme imbriquée) <-> collection Firestore
+   dédiée (forme à plat, un document par animal) ----------
+   Chantier "Registre : collection dédiée" (1re étape, migration seule) --
+   voir le commentaire sur DOC_COLLECTIONS plus haut. DB.registre reste EN
+   MÉMOIRE exactement dans sa forme actuelle ({brebis:{}, beliers:{},
+   agnelles:{}}, indexé par EID) pour ne rien casser du code déjà en place
+   (registreEntriesFor, effectifEntriesFor, ensureRegistreEntry,
+   archiverDansRegistre...) -- ces deux fonctions sont les SEULES à connaître
+   la forme à plat qu'exige la synchro générique par collection
+   (buildAnimalCollectionOps/fusionnerInstantaneDistant, qui ignorent tout du
+   sens métier d'un enregistrement et ne savent que manipuler des tableaux de
+   `{id, ...}`). */
+function registreVersRecords(data) {
+  const out = [];
+  ['brebis', 'beliers', 'agnelles'].forEach(categorie => {
+    const archive = (data.registre && data.registre[categorie]) || {};
+    Object.keys(archive).forEach(eid => {
+      const record = Object.assign({ id: categorie + '_' + cleanEid(eid), categorie: categorie, eid: eid }, archive[eid]);
+      out.push(record);
+    });
+  });
+  return out;
+}
+function appliquerRecordsRegistre(records) {
+  const nouveau = { brebis: {}, beliers: {}, agnelles: {} };
+  records.forEach(r => {
+    if (!r || !nouveau[r.categorie] || !r.eid) return; // catégorie/eid inconnu ou absent -- ignoré plutôt que de planter
+    const entry = Object.assign({}, r);
+    delete entry.id;
+    delete entry.categorie;
+    delete entry.eid;
+    nouveau[r.categorie][r.eid] = entry;
+  });
+  DB.registre = nouveau;
+}
+// Point d'entrée unique utilisé par le reste du module de synchro (jamais
+// DB[colName] directement pour 'registre') -- passthrough strict pour
+// toutes les autres collections, donc sans risque de régression sur elles.
+function getRecordsArrayForSync(colName, data) {
+  return colName === 'registre' ? registreVersRecords(data) : data[colName];
+}
+function setRecordsArrayForSync(colName, arr) {
+  if (colName === 'registre') appliquerRecordsRegistre(arr);
+  else DB[colName] = arr;
 }
 
 /* Construit la liste des opérations Firestore pour une collection, SANS
@@ -22872,7 +22939,7 @@ async function commitOpsInBatches(ops) {
 
 async function syncAllToCloud(data) {
   const ops = [];
-  for (const col of DOC_COLLECTIONS) buildAnimalCollectionOps(col, data[col], ops);
+  for (const col of DOC_COLLECTIONS) buildAnimalCollectionOps(col, getRecordsArrayForSync(col, data), ops);
   buildMetaOp(data, ops);
   if (!ops.length) { marquerSynchroEnAttente(false); syncRetryAttempt = 0; return; }
   const echecsAvant = compteurEchecsSynchro;
@@ -23002,7 +23069,7 @@ function fusionnerEnregistrementDistant(local, remote, refConnue) {
 
 function fusionnerInstantaneDistant(colName, arr) {
   const ancienneRef = sync.lastSynced[colName] || {};
-  const localParId = new Map((DB[colName] || []).map(r => [r.id, r]));
+  const localParId = new Map((getRecordsArrayForSync(colName, DB) || []).map(r => [r.id, r]));
   const idsDistants = new Set();
   arr.forEach(remoteRec => {
     idsDistants.add(remoteRec.id);
@@ -23130,7 +23197,7 @@ async function startListeners(dejaAppairePrecedemment) {
       // différence à repousser pour un enregistrement dont la fusion aurait
       // gardé la version locale.
       arr.forEach(r => { sync.lastSynced[colName][r.id] = deepClean(r); });
-      applyOrQueueRemoteUpdate(colName, () => { DB[colName] = fusion; });
+      applyOrQueueRemoteUpdate(colName, () => { setRecordsArrayForSync(colName, fusion); });
       persisterSyncLastSynced();
     }, err => console.error('Erreur d\'écoute Firestore (' + colName + ') :', err));
     sync.unsubscribers.push(unsub);
@@ -23176,6 +23243,53 @@ async function bootstrapDevice(uid) {
   return metaSnap.exists();
 }
 
+/* Migration UNIQUE (chantier "Registre : collection dédiée", 1re étape --
+   migration seule, l'extension du périmètre d'archivage vient dans une
+   2e étape séparée) : convertit DB.registre (forme imbriquée, jusqu'ici
+   stockée uniquement dans le champ meta.registre, voir son commentaire sur
+   META_FIELDS) en documents de la nouvelle collection
+   users/{uid}/registre/{id}. Ne crée JAMAIS un document déjà présent côté
+   cloud (getDocs AVANT toute écriture) : deux appareils qui migrent en même
+   temps, ou l'un après l'autre, ne s'écrasent jamais -- le premier arrivé
+   fait foi pour chaque document. Drapeau posé côté CLOUD
+   (meta.registreCollectionMigree20260930, voir META_FIELDS), jamais en
+   localStorage seul : un appareil qui reçoit ce drapeau déjà vrai par
+   synchro (posé par un AUTRE appareil) ne retente jamais la migration lui-
+   même. Ne marque JAMAIS "fait" si au moins une création a échoué --
+   nouvelle tentative à la prochaine ouverture, protégée par le même
+   getDocs (ne recrée que ce qui manque encore). N'écrit rien qui vienne
+   remplacer/supprimer meta.registre : il reste en place tel quel (filet de
+   secours), voir le commentaire sur META_FIELDS. */
+async function migrerRegistreVersCollection() {
+  if (DB.registreCollectionMigree20260930) return;
+  if (!sync.uid) return;
+  const registreCollRef = collection(fbDb, 'users', sync.uid, 'registre');
+  let dejaPresents;
+  try {
+    const snap = await getDocs(registreCollRef);
+    dejaPresents = new Set();
+    snap.forEach(d => dejaPresents.add(d.id));
+  } catch (e) {
+    console.error('Migration du registre : lecture de l\'existant impossible, migration reportée à la prochaine ouverture', e);
+    return;
+  }
+  const aCreer = registreVersRecords(DB).filter(r => !dejaPresents.has(r.id));
+  if (aCreer.length) {
+    const ops = aCreer.map(r => {
+      const data = deepClean(r);
+      return { type: 'set', ref: doc(registreCollRef, r.id), data: data, colName: 'registre', id: r.id, newValue: data };
+    });
+    const echecsAvant = compteurEchecsSynchro;
+    await commitOpsInBatches(ops);
+    if (compteurEchecsSynchro !== echecsAvant) {
+      console.error('Migration du registre : au moins une création a échoué -- le drapeau n\'est pas posé, nouvelle tentative à la prochaine ouverture (voir le journal de synchro, Paramètres > Exploitation).');
+      return;
+    }
+  }
+  DB.registreCollectionMigree20260930 = true;
+  saveData(DB);
+}
+
 /* Détermine si le compte a DÉJÀ des données connues -- soit localement
    (déjà bootstrappé au moins une fois sur cet appareil, ce qui implique
    forcément qu'un document meta cloud a été posé à ce moment-là), soit
@@ -23191,6 +23305,7 @@ async function onSignedIn(user) {
   const alreadyBootstrapped = localStorage.getItem(BOOTSTRAP_FLAG_KEY) === user.uid;
   const hadDonneesExistantes = alreadyBootstrapped ? true : await bootstrapDevice(user.uid);
   await startListeners(alreadyBootstrapped);
+  await migrerRegistreVersCollection();
   return hadDonneesExistantes;
 }
 
