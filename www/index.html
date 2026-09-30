@@ -120,6 +120,27 @@
   .brand-lockup .brand-name { font-size: 19px; font-weight: 700; letter-spacing: 0.5px; opacity: 1; }
   .header-farm-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; opacity: 0.85; padding: 0 2px; min-height: 14px; }
   .header-farm-row span:empty { display: none; }
+  .header-farm-right { display: flex; align-items: center; gap: 6px; }
+  /* Pastille "synchro en attente" -- même principe visuel que la LED du
+     lecteur LPR ci-dessus (petit disque de couleur, transition douce), mais
+     placée dans .header-farm-row : contrairement à #btn-lecteur-lpr, cette
+     ligne reste visible en mode desktop-shell (voir la règle qui masque
+     #btn-menu/#btn-lecteur-lpr plus bas), donc c'est le seul endroit du
+     header visible sur les deux plateformes pour cet indicateur. Masquée par
+     défaut (correctif audit "Changement de campagne", point 2 de la 3e
+     demande) -- affichée via la classe .show, posée par
+     window.updateHeaderSyncBadge (script de synchro, plus bas dans ce
+     fichier) d'après window.__syncEnAttente. */
+  .sync-badge {
+    display: none;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--warning);
+    flex-shrink: 0;
+  }
+  .sync-badge.show { display: inline-block; animation: sync-badge-pulse 1.6s ease-in-out infinite; }
+  @keyframes sync-badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   main { max-width: 700px; margin: 0 auto; padding: 16px; padding-bottom: 60px; }
   /* Voir render() -- appliqué écran par écran (classe posée/retirée à
      chaque navigation), jamais globalement : seuls les écrans desktop
@@ -608,7 +629,10 @@
   </div>
   <div class="header-farm-row">
     <span id="farm-name"></span>
-    <span id="farm-campagne"></span>
+    <span class="header-farm-right">
+      <span id="sync-badge" class="sync-badge" title="Synchronisation en attente" aria-hidden="true"></span>
+      <span id="farm-campagne"></span>
+    </span>
   </div>
   <h1 id="page-title">Mon troupeau</h1>
 </header>
@@ -16966,6 +16990,15 @@ async function writeAutoBackupFile(filename, data, { proposerPartage = false } =
    locale à la console. */
 const BACKUP_AUTO_MAX = 3;
 const BACKUP_AUTO_PREFIX = 'ovilog_backup_';
+/* Nom FIXE, volontairement en dehors de BACKUP_AUTO_PREFIX -- correctif de
+   l'audit "Changement de campagne" (point 5 de la 3e demande) : le bouton
+   "Tester la sauvegarde" (voir renderParametresSauvegarde) réutilise
+   writeAutoBackupFile tel quel, qui écrase ce même fichier à chaque test
+   (jamais un nouvel horodatage). Comme ce nom ne commence PAS par
+   BACKUP_AUTO_PREFIX, listAutoBackupFiles/purgeOldAutoBackups ne le voient
+   jamais : un test ne peut donc jamais faire sortir une vraie sauvegarde
+   pré-bascule du roulement à BACKUP_AUTO_MAX exemplaires. */
+const TEST_BACKUP_FILENAME = 'ovilog_test_sauvegarde.json';
 async function listAutoBackupFiles() {
   const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (!Filesystem) return null; // pas de dossier à lister hors app installée
@@ -20568,13 +20601,25 @@ function resumeContenuSauvegarde(data) {
    et réimporter un fichier. Un seul emplacement (écrasé à chaque nouvelle
    bascule) : c'est "l'état d'avant la dernière bascule", pas un historique. */
 const SNAPSHOT_PRE_CAMPAGNE_KEY = 'ovilog_pre_campagne_snapshot';
+/* Retourne { ok, raison } plutôt qu'un simple booléen (correctif de l'audit,
+   point 2 de la 3e demande) : le quota localStorage plein (QuotaExceededError,
+   ou son équivalent Firefox NS_ERROR_DOM_QUOTA_REACHED, souvent atteint par ce
+   snapshot lui-même puisqu'il duplique intégralement DB en JSON) est
+   distingué d'une autre panne d'écriture, pour que l'écran appelant affiche un
+   message qui nomme la vraie cause plutôt qu'un texte générique. */
 function ecrireSnapshotPreCampagne(data) {
   try {
     localStorage.setItem(SNAPSHOT_PRE_CAMPAGNE_KEY, JSON.stringify({ data, date: new Date().toISOString(), resume: resumeContenuSauvegarde(data) }));
-    return true;
+    return { ok: true };
   } catch (e) {
     console.error('Point de restauration interne : échec de l\'écriture', e);
-    return false;
+    const estQuotaPleine = e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22);
+    return {
+      ok: false,
+      raison: estQuotaPleine
+        ? "l'espace de stockage local de l'appli est plein (quota atteint) — libère de l'espace sur l'appareil (ou dans les données de l'appli) puis réessaie"
+        : "erreur inattendue (" + (e && e.message ? e.message : 'inconnue') + ')'
+    };
   }
 }
 function lireSnapshotPreCampagne() {
@@ -20674,8 +20719,9 @@ async function executerChangementCampagne() {
     // réutilise le clone déjà fait ci-dessus plutôt que d'en recalculer un
     // second. Bloquant comme le fichier JSON : un point de restauration qui
     // échoue à s'écrire n'est pas un point de restauration.
-    if (!ecrireSnapshotPreCampagne(avant)) {
-      return { ok: false, raison: "le point de restauration interne n'a pas pu être enregistré" };
+    const snapshotResult = ecrireSnapshotPreCampagne(avant);
+    if (!snapshotResult.ok) {
+      return { ok: false, raison: "le point de restauration interne n'a pas pu être enregistré : " + snapshotResult.raison };
     }
 
     // DB.luttes n'est plus alimenté depuis le module Reproduction (voir
@@ -20968,6 +21014,8 @@ function renderParametresExploitation(content) {
           ? `Connecté en tant que <strong style="color:var(--text);">${syncState.email}</strong> — tes données se synchronisent automatiquement entre tes appareils, y compris hors-ligne (elles se remettent à jour dès que la connexion revient).`
           : `Connexion en cours...`}
       </div>
+      <div id="sync-status-detail" style="font-size:12px;margin-bottom:10px;"></div>
+      <button class="btn btn-secondary" id="btn-voir-journal-synchro" style="margin-bottom:10px;display:none;">Voir le journal de synchro</button>
       <button class="btn btn-secondary" id="btn-sync-action" style="color:var(--danger);border-color:var(--danger);">Se déconnecter</button>
     </div>
 
@@ -21005,6 +21053,19 @@ function renderParametresExploitation(content) {
     if (!confirm("Se déconnecter ? Tu devras te reconnecter pour retrouver l'appli.")) return;
     window.OvilogSync.logout();
   };
+  // État initial de l'indicateur détaillé (voir rafraichirStatutSynchroParametres,
+  // aussi rappelée en direct depuis window.updateHeaderSyncBadge à chaque
+  // changement d'état pendant que cet écran reste affiché).
+  rafraichirStatutSynchroParametres();
+  const btnVoirJournal = document.getElementById('btn-voir-journal-synchro');
+  if (btnVoirJournal) {
+    btnVoirJournal.onclick = () => {
+      const journal = window.OvilogSync.lireJournal();
+      if (!journal.length) { alert('Journal de synchro vide.'); return; }
+      const texte = journal.map(e => '• ' + new Date(e.date).toLocaleString() + ' — ' + e.collection + '/' + e.id + ' (' + e.type + ') : ' + e.erreur).join('\n');
+      alert('Journal de synchro (' + journal.length + ' incident(s) le(s) plus récent(s)) :\n\n' + texte);
+    };
+  }
   document.getElementById('btn-save-exploitation').onclick = () => {
     // Étale DB.exploitation existant plutôt que de le remplacer entièrement
     // -- sans ça, ce bouton écraserait silencieusement campagneMoisDebut/
@@ -21397,6 +21458,12 @@ function renderParametresSauvegarde(content) {
     </div>
 
     <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Tester la sauvegarde${infoBulleHtml('Tester la sauvegarde', "Écrit un fichier de test sur l'appareil, le relit, vérifie que les effectifs (brebis/béliers/agnelles) correspondent, puis propose de le partager -- ne modifie AUCUNE donnée et ne déclenche jamais de changement de campagne. Fichier de test distinct des vraies sauvegardes automatiques (jamais compté ni supprimé par leur roulement).")}</div>
+      <button class="btn btn-secondary" id="btn-test-sauvegarde">Tester la sauvegarde</button>
+      <div id="test-sauvegarde-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+    </div>
+
+    <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
         ${iconCircle(ICON_SYNC, 'blue', 'sm')}
         <div style="font-size:14px;font-weight:600;">Mises à jour</div>
@@ -21433,6 +21500,27 @@ function renderParametresSauvegarde(content) {
 
   document.getElementById('btn-import').onclick = () => {
     document.getElementById('import-file').click();
+  };
+
+  // "Tester la sauvegarde" (correctif de l'audit, point 3 de la 3e demande) :
+  // réutilise writeAutoBackupFile tel quel (écriture + relecture + vérification
+  // des effectifs + proposition de partage déjà éprouvées par les vraies
+  // sauvegardes automatiques), avec TEST_BACKUP_FILENAME comme SEULE
+  // différence -- jamais un appel à saveData ni à executerChangementCampagne :
+  // aucune donnée n'est modifiée, aucune bascule n'est déclenchée.
+  document.getElementById('btn-test-sauvegarde').onclick = async () => {
+    const btn = document.getElementById('btn-test-sauvegarde');
+    const statusEl = document.getElementById('test-sauvegarde-status');
+    btn.disabled = true;
+    statusEl.textContent = 'Test en cours...';
+    try {
+      const result = await writeAutoBackupFile(TEST_BACKUP_FILENAME, DB, { proposerPartage: true });
+      statusEl.textContent = result.ok
+        ? '✅ Test réussi (' + resumeContenuSauvegarde(DB) + ') — fichier écrit, relu et vérifié.'
+        : '⚠️ Test échoué : ' + result.raison;
+    } finally {
+      btn.disabled = false;
+    }
   };
   document.getElementById('import-file').onchange = (e) => {
     const file = e.target.files[0];
@@ -21771,6 +21859,43 @@ function updateHeaderReaderButton() {
   const led = document.getElementById('led-lecteur-lpr');
   if (!led) return;
   led.classList.toggle('connected', !!btConnectedAddress);
+}
+
+// Pastille "synchro en attente" (voir .sync-badge en tête de fichier) --
+// posée sur window (pas une simple fonction locale) car appelée depuis le
+// script de synchro, un <script type="module"> distinct : ses déclarations
+// de haut niveau restent invisibles depuis ce script classique, l'inverse
+// n'est pas vrai (voir marquerSynchroEnAttente). Comme updateHeaderReaderButton
+// ci-dessus, indépendant de l'écran affiché : l'en-tête n'est jamais recréé
+// par un changement de vue.
+window.updateHeaderSyncBadge = function updateHeaderSyncBadge() {
+  const badge = document.getElementById('sync-badge');
+  if (badge) badge.classList.toggle('show', !!window.__syncEnAttente);
+  // Même déclencheur que la pastille d'en-tête ci-dessus -- rafraîchit aussi
+  // l'indicateur détaillé de Paramètres > Exploitation quand cet écran est
+  // affiché (no-op silencieux sinon, voir la fonction ci-dessous).
+  rafraichirStatutSynchroParametres();
+};
+
+// Indicateur détaillé + accès au journal, dans la carte "Synchronisation
+// cloud" de Paramètres > Exploitation (voir #sync-card) -- correctif de
+// l'audit "Changement de campagne" (point 1 de la 3e demande, "en plus du
+// toast et de l'indicateur Paramètres"). Appelée au rendu de cet écran ET à
+// chaque changement d'état (voir updateHeaderSyncBadge ci-dessus) ; ignore
+// silencieusement si cette carte n'est pas à l'écran.
+function rafraichirStatutSynchroParametres() {
+  const detail = document.getElementById('sync-status-detail');
+  if (!detail) return;
+  const btnJournal = document.getElementById('btn-voir-journal-synchro');
+  const journal = (window.OvilogSync && window.OvilogSync.lireJournal) ? window.OvilogSync.lireJournal() : [];
+  if (window.__syncEnAttente) {
+    detail.innerHTML = '<span style="color:var(--warning);">⏳ Synchronisation en attente — nouvelle tentative automatique en cours.</span>';
+  } else if (journal.length) {
+    detail.innerHTML = '<span style="color:var(--text-muted);">✅ Synchronisation à jour (dernier incident : ' + new Date(journal[0].date).toLocaleString() + ').</span>';
+  } else {
+    detail.innerHTML = '<span style="color:var(--success);">✅ Synchronisation à jour.</span>';
+  }
+  if (btnJournal) btnJournal.style.display = journal.length ? '' : 'none';
 }
 
 // Tap court sur le bouton d'en-tête : bascule connexion/déconnexion du
@@ -22571,6 +22696,17 @@ function buildUpdatePayload(oldRec, newRec) {
    à l'origine du bug réel du 29/09 (29 doublons). Un writeBatch commité en
    un seul envoi élimine cette fenêtre : soit tout l'état d'une bascule
    arrive d'un coup côté Firestore, soit rien n'arrive encore. */
+/* `sync.lastSynced` n'avance PLUS ici (voir marquerOpAppliquee) -- correctif
+   de l'audit "Changement de campagne" (point 4 de la 2e demande) : avant ce
+   correctif, `lastMap[rec.id] = rec` était posé ICI, pendant la CONSTRUCTION
+   de la liste d'opérations, AVANT même la tentative d'écriture Firestore. Si
+   le commit échouait ensuite, sync.lastSynced avait déjà été avancé comme si
+   ça avait réussi -- la tentative suivante ne voyait alors plus AUCUNE
+   différence à repousser pour cet enregistrement, et la relance sautait
+   silencieusement l'enregistrement resté réellement non synchronisé. Chaque
+   op porte maintenant colName/id/newValue pour que marquerOpAppliquee
+   puisse l'appliquer précisément une fois -- et seulement une fois -- son
+   écriture réellement confirmée. */
 function buildAnimalCollectionOps(colName, records, ops) {
   const colRef = collection(fbDb, 'users', sync.uid, colName);
   const lastMap = sync.lastSynced[colName];
@@ -22581,19 +22717,15 @@ function buildAnimalCollectionOps(colName, records, ops) {
     seenIds.add(rec.id);
     const old = lastMap[rec.id];
     if (old === undefined) {
-      ops.push({ type: 'set', ref: doc(colRef, rec.id), data: rec });
+      ops.push({ type: 'set', ref: doc(colRef, rec.id), data: rec, colName, id: rec.id, newValue: rec });
     } else {
       const payload = buildUpdatePayload(old, rec);
-      if (payload) ops.push({ type: 'update', ref: doc(colRef, rec.id), data: payload });
-    }
-    lastMap[rec.id] = rec;
-  }
-  for (const id of Object.keys(lastMap)) {
-    if (!seenIds.has(id)) {
-      ops.push({ type: 'delete', ref: doc(colRef, id) });
-      delete lastMap[id];
+      if (payload) ops.push({ type: 'update', ref: doc(colRef, rec.id), data: payload, colName, id: rec.id, newValue: rec });
     }
   }
+  Object.keys(lastMap).forEach(id => {
+    if (!seenIds.has(id)) ops.push({ type: 'delete', ref: doc(colRef, id), colName, id, newValue: undefined });
+  });
 }
 
 function buildMetaOp(data, ops) {
@@ -22601,12 +22733,90 @@ function buildMetaOp(data, ops) {
   META_FIELDS.forEach(k => { metaRecord[k] = deepClean(data[k]); });
   const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
   if (sync.lastSynced.meta === undefined) {
-    ops.push({ type: 'set', ref: metaRef, data: metaRecord });
+    ops.push({ type: 'set', ref: metaRef, data: metaRecord, colName: 'meta', id: 'main', newValue: metaRecord });
   } else {
     const payload = buildUpdatePayload(sync.lastSynced.meta, metaRecord);
-    if (payload) ops.push({ type: 'update', ref: metaRef, data: payload });
+    if (payload) ops.push({ type: 'update', ref: metaRef, data: payload, colName: 'meta', id: 'main', newValue: metaRecord });
   }
-  sync.lastSynced.meta = metaRecord;
+}
+
+/* Applique UNE opération à sync.lastSynced -- appelée UNIQUEMENT après
+   confirmation réelle de son écriture (voir commitOpsInBatches/
+   commitOpsIndividually), jamais avant. Relit sync.lastSynced[colName] à
+   chaque appel (jamais une référence capturée plus tôt) : un onSnapshot
+   entrant peut avoir remplacé cet objet entre-temps (voir startListeners),
+   l'écriture doit malgré tout s'appliquer sur l'objet COURANT. */
+function marquerOpAppliquee(op) {
+  if (op.colName === 'meta') { sync.lastSynced.meta = op.newValue; persisterSyncLastSynced(); return; }
+  const lastMap = sync.lastSynced[op.colName];
+  if (op.type === 'delete') delete lastMap[op.id];
+  else lastMap[op.id] = op.newValue;
+  persisterSyncLastSynced();
+}
+
+/* ---------- Journal de synchro + indicateur "en attente" ----------
+   Correctif de l'audit "Changement de campagne" (points 1-2 de la 2e
+   demande) : localStorage séparé, jamais synchronisé vers le cloud (un
+   journal de diagnostic n'a de sens que sur CET appareil). Borné aux
+   SYNC_JOURNAL_MAX entrées les plus récentes. */
+const SYNC_JOURNAL_KEY = 'ovilog_sync_journal';
+const SYNC_JOURNAL_MAX = 20;
+function lireJournalSynchro() {
+  try { return JSON.parse(localStorage.getItem(SYNC_JOURNAL_KEY) || '[]'); }
+  catch (e) { return []; }
+}
+function viderJournalSynchro() {
+  try { localStorage.removeItem(SYNC_JOURNAL_KEY); } catch (e) { /* ignoré */ }
+}
+let compteurEchecsSynchro = 0;
+function journaliserEchecSynchro(op, error) {
+  compteurEchecsSynchro++;
+  try {
+    const journal = lireJournalSynchro();
+    journal.unshift({
+      date: new Date().toISOString(), collection: op.colName, id: op.id, type: op.type,
+      erreur: (error && error.message) || String(error)
+    });
+    localStorage.setItem(SYNC_JOURNAL_KEY, JSON.stringify(journal.slice(0, SYNC_JOURNAL_MAX)));
+  } catch (e) { console.error('Journal de synchro : échec de l\'écriture', e); }
+  marquerSynchroEnAttente(true);
+  planifierRelanceSynchro();
+}
+// window.__syncEnAttente : lu par updateHeaderSyncBadge (script classique,
+// voir plus haut dans le fichier) pour la pastille d'en-tête -- doit passer
+// par window (pas une simple variable) car ce script est un module, dont
+// les déclarations de haut niveau ne sont PAS visibles depuis le script
+// classique (contrairement à l'inverse, voir DB/render/operationGroupeeEnCours
+// utilisés tels quels ci-dessus).
+function marquerSynchroEnAttente(enAttente) {
+  // Toast affiché uniquement au passage false -> true (voir garde ci-dessous)
+  // : sans elle, chaque échec individuel journalisé (voir
+  // journaliserEchecSynchro, appelé une fois par opération fautive) ferait
+  // apparaître un nouveau toast, y compris pendant les relances automatiques
+  // en arrière-plan -- répétitif et sans intérêt une fois l'état déjà connu.
+  if (enAttente && !window.__syncEnAttente) {
+    showToast('Synchro en attente — nouvelle tentative automatique (voir Paramètres).');
+  }
+  window.__syncEnAttente = enAttente;
+  if (window.updateHeaderSyncBadge) window.updateHeaderSyncBadge();
+}
+
+// Relance automatique après un échec, avec backoff -- reprend depuis DB
+// COURANT (pas un instantané figé de l'échec) : si d'autres saisies ont eu
+// lieu entre-temps, la relance les couvre aussi, et si l'échec venait d'un
+// document supprimé par un autre appareil, l'onSnapshot de suppression a
+// normalement eu le temps d'arriver d'ici là (voir buildAnimalCollectionOps,
+// qui ne verra alors plus ce document comme "à mettre à jour").
+const SYNC_RETRY_DELAYS_MS = [5000, 30000, 120000];
+let syncRetryTimer = null;
+let syncRetryAttempt = 0;
+function planifierRelanceSynchro() {
+  if (syncRetryTimer || syncRetryAttempt >= SYNC_RETRY_DELAYS_MS.length) return;
+  const delay = SYNC_RETRY_DELAYS_MS[syncRetryAttempt++];
+  syncRetryTimer = setTimeout(() => {
+    syncRetryTimer = null;
+    syncAllToCloud(DB).catch(e => console.error('Relance synchro : erreur', e));
+  }, delay);
 }
 
 // Limite Firestore : 500 opérations par writeBatch. Découpe en plusieurs
@@ -22615,15 +22825,48 @@ function buildMetaOp(data, ops) {
 // plusieurs centaines d'animaux ET un changement massif simultané), mais ne
 // doit jamais planter silencieusement.
 const FIRESTORE_BATCH_MAX = 500;
+
+/* Repli après échec d'un batch groupé -- correctif de l'audit (point 1 de la
+   2e demande) : JAMAIS un nouveau essai aveugle du même batch complet (qui
+   échouerait de nouveau à l'identique si la cause est un update ciblant un
+   document supprimé par un autre appareil -- voir l'explication donnée à la
+   validation du plan : Firestore rejette alors TOUT le batch, y compris les
+   opérations sans rapport). Chaque opération est rejouée séparément, dans
+   son propre mini-batch d'une seule opération : les opérations saines
+   s'appliquent, la ou les fautives sont journalisées précisément (id,
+   collection, erreur) sans bloquer les autres. */
+async function commitOpsIndividually(ops) {
+  for (const op of ops) {
+    try {
+      const b = writeBatch(fbDb);
+      if (op.type === 'set') b.set(op.ref, op.data);
+      else if (op.type === 'update') b.update(op.ref, op.data);
+      else if (op.type === 'delete') b.delete(op.ref);
+      await b.commit();
+      marquerOpAppliquee(op);
+    } catch (e) {
+      console.error('Synchro : échec sur ' + op.colName + '/' + op.id + ' (' + op.type + ')', e);
+      journaliserEchecSynchro(op, e);
+    }
+  }
+}
+
 async function commitOpsInBatches(ops) {
   for (let i = 0; i < ops.length; i += FIRESTORE_BATCH_MAX) {
+    const chunk = ops.slice(i, i + FIRESTORE_BATCH_MAX);
     const batch = writeBatch(fbDb);
-    ops.slice(i, i + FIRESTORE_BATCH_MAX).forEach(op => {
+    chunk.forEach(op => {
       if (op.type === 'set') batch.set(op.ref, op.data);
       else if (op.type === 'update') batch.update(op.ref, op.data);
       else if (op.type === 'delete') batch.delete(op.ref);
     });
-    await batch.commit();
+    try {
+      await batch.commit();
+      chunk.forEach(marquerOpAppliquee);
+    } catch (e) {
+      console.error('writeBatch groupé en échec (' + chunk.length + ' opération(s)), repli opération par opération', e);
+      await commitOpsIndividually(chunk);
+    }
   }
 }
 
@@ -22631,7 +22874,13 @@ async function syncAllToCloud(data) {
   const ops = [];
   for (const col of DOC_COLLECTIONS) buildAnimalCollectionOps(col, data[col], ops);
   buildMetaOp(data, ops);
-  if (ops.length) await commitOpsInBatches(ops);
+  if (!ops.length) { marquerSynchroEnAttente(false); syncRetryAttempt = 0; return; }
+  const echecsAvant = compteurEchecsSynchro;
+  await commitOpsInBatches(ops);
+  // "En attente" ne se lève que si CE passage n'a laissé aucun échec
+  // derrière lui -- un échec partiel reste signalé (voir
+  // journaliserEchecSynchro, qui a déjà programmé sa propre relance).
+  if (compteurEchecsSynchro === echecsAvant) { marquerSynchroEnAttente(false); syncRetryAttempt = 0; }
 }
 
 // Remplace la sauvegarde locale-uniquement par une version qui écrit aussi
@@ -22698,22 +22947,154 @@ window.drainPendingRemoteUpdates = function drainPendingRemoteUpdates() {
   applyRemoteUpdate(() => { mutators.forEach(m => m()); });
 };
 
-function startListeners() {
+/* Attend la réception du premier instantané de CHAQUE collection + du
+   document meta avant de déclencher une unique passe de réconciliation
+   (syncAllToCloud) -- correctif de l'audit "Changement de campagne" (point 3
+   de la 2e demande) : l'ancienne version ne déclenchait cette passe qu'à
+   l'arrivée du premier instantané META, en ignorant les collections
+   d'animaux. Une modification locale faite hors ligne -- ou restée en
+   attente après la fermeture de l'appli pendant une relance déjà planifiée,
+   voir planifierRelanceSynchro -- n'était alors repoussée vers le cloud qu'à
+   la prochaine VRAIE saisie, jamais automatiquement à la réouverture de
+   l'appli. Le diff repose entièrement sur sync.lastSynced (déjà à jour à ce
+   stade grâce aux instantanés reçus juste avant l'appel ci-dessous), donc
+   cette passe ne repousse QUE ce qui diffère réellement, jamais un
+   remplacement complet. */
+/* Fusionne un instantané distant avec l'état local ACTUEL, au lieu de le
+   remplacer en bloc -- correctif de l'audit "Changement de campagne" (repéré
+   par un test explicitement demandé, scénario C : une échographie saisie
+   hors-ligne sur un appareil ne doit jamais être écrasée par un instantané
+   distant qui ne la connaît pas encore, même si cet instantané porte par
+   ailleurs un changement légitime fait par un autre appareil sur un AUTRE
+   champ de la même fiche). Avant ce correctif, `DB[colName] = arr` posait
+   sans condition tout ce que Firestore venait de servir -- une brève panne
+   réseau qui laisse le temps à un instantané "en retard" (ne connaissant pas
+   encore la modification locale, pas encore confirmée synchronisée) de
+   passer AVANT la relance planifiée du push local suffisait à effacer
+   silencieusement cette modification, sans jamais la repousser (elle
+   disparaissait simplement de DB, donc de ce qui serait poussé ensuite).
+   Règle : un enregistrement dont la copie locale ACTUELLE diffère de la
+   dernière référence confirmée (sync.lastSynced[colName], telle qu'elle
+   était juste AVANT ce nouvel instantané) porte une modification locale pas
+   encore confirmée -- on garde alors la version locale telle quelle (le
+   chemin de sortie normal, syncAllToCloud, la repoussera dès que possible) ;
+   sinon, rien à protéger, on adopte la version distante sans réserve (y
+   compris une suppression distante). */
+/* Fusionne UN enregistrement, champ par champ -- indispensable dès qu'un SEUL
+   champ porte une modification locale pas encore confirmée : un enregistrement
+   entier gardé "tel quel" écraserait aussi les champs SAINS que l'instantané
+   distant vient de mettre à jour (ex: un soin sanitaire ajouté par un autre
+   appareil sur la même fiche pendant qu'une échographie, elle, est encore en
+   attente de synchro sur celui-ci) -- repéré par le test explicitement
+   demandé pour le scénario C, qui perdait le soin sanitaire distant tant que
+   la fusion raisonnait par enregistrement entier plutôt que par champ. */
+function fusionnerEnregistrementDistant(local, remote, refConnue) {
+  if (!local || refConnue === undefined) return remote; // rien à protéger : jamais connu avant, ou pas de copie locale
+  const localNettoye = deepClean(local);
+  const fusionne = {};
+  const cles = new Set([...Object.keys(localNettoye), ...Object.keys(remote), ...Object.keys(refConnue)]);
+  cles.forEach(cle => {
+    const champModifieLocalementNonConfirme = JSON.stringify(localNettoye[cle]) !== JSON.stringify(refConnue[cle]);
+    fusionne[cle] = champModifieLocalementNonConfirme ? local[cle] : remote[cle];
+  });
+  return fusionne;
+}
+
+function fusionnerInstantaneDistant(colName, arr) {
+  const ancienneRef = sync.lastSynced[colName] || {};
+  const localParId = new Map((DB[colName] || []).map(r => [r.id, r]));
+  const idsDistants = new Set();
+  arr.forEach(remoteRec => {
+    idsDistants.add(remoteRec.id);
+    const local = localParId.get(remoteRec.id);
+    const refConnue = ancienneRef[remoteRec.id];
+    localParId.set(remoteRec.id, fusionnerEnregistrementDistant(local, remoteRec, refConnue));
+  });
+  // Suppression distante : TOUJOURS honorée dès que l'id disparaît de
+  // l'instantané, même si une modification locale était encore en attente
+  // pour lui -- éditer un champ d'un document qui n'existe plus ailleurs est
+  // sans objet (voir aussi commitOpsIndividually/journaliserEchecSynchro,
+  // qui gère déjà l'échec d'un update ciblant un document supprimé). Une
+  // protection conditionnelle ici (comme pour les champs ci-dessus) a été
+  // testée et empêchait à tort la convergence : le document fautif restait
+  // indéfiniment "ressuscité" localement.
+  Object.keys(ancienneRef).forEach(id => {
+    if (!idsDistants.has(id)) localParId.delete(id);
+  });
+  return Array.from(localParId.values());
+}
+
+/* Persistance de sync.lastSynced ENTRE deux sessions (fermeture/réouverture
+   de l'appli) -- correctif de l'audit "Changement de campagne" (point 3 de
+   la 3e demande). Une première version de ce correctif attendait le premier
+   instantané de chaque collection + meta puis appelait syncAllToCloud une
+   fois -- testée, elle s'est révélée inefficace : le tout premier instantané
+   distant reçu écrase DÉJÀ DB[colName] en entier (voir
+   applyOrQueueRemoteUpdate ci-dessous), AVANT que la réconciliation n'ait la
+   moindre chance de voir une modification locale jamais confirmée
+   synchronisée -- elle disparaissait donc silencieusement. Sans mémoire de
+   "qu'est-ce qui a déjà été confirmé" survivant à la fermeture de l'appli
+   (sync.lastSynced n'était qu'une variable en mémoire, toujours vide à froid),
+   ce écrasement ne peut pas être distingué d'une vraie mise à jour distante
+   légitime. Corrigé en rendant sync.lastSynced persistant (clé par uid,
+   jamais partagée entre deux comptes sur le même appareil) et en réconciliant
+   AVANT de s'abonner aux instantanés (voir startListeners ci-dessous) --
+   uniquement pour un appareil déjà appairé à ce compte (voir
+   dejaAppairePrecedemment) : un TOUT PREMIER appairage reste géré par
+   bootstrapDevice (soit le cloud est vide et tout est poussé, soit il ne
+   l'est pas et les données locales de cet appareil sont sauvegardées puis
+   remplacées par celles du cloud -- jamais réconciliées en aveugle contre un
+   sync.lastSynced vide, qui pousserait à tort tout l'historique local). */
+function cleSyncLastSyncedPersiste(uid) { return 'ovilog_sync_last_synced_' + uid; }
+function persisterSyncLastSynced() {
+  if (!sync.uid) return;
+  try { localStorage.setItem(cleSyncLastSyncedPersiste(sync.uid), JSON.stringify(sync.lastSynced)); }
+  catch (e) { console.error('Persistance de sync.lastSynced : échec (sans conséquence autre qu\'une réconciliation moins précise à la prochaine ouverture)', e); }
+}
+/* Retourne true UNIQUEMENT si une vraie référence a été trouvée et chargée
+   -- distinct de "rien à charger" (compte jamais persisté sur cet appareil
+   depuis l'ajout de cette persistance -- voir startListeners : ce cas ne
+   doit JAMAIS être traité comme si tout l'historique local était nouveau,
+   scénario audité explicitement : 1re ouverture après mise à jour sur un
+   appareil déjà appairé, avant que sync.lastSynced n'ait jamais été
+   persisté). */
+function chargerSyncLastSyncedPersiste() {
+  try {
+    const raw = localStorage.getItem(cleSyncLastSyncedPersiste(sync.uid));
+    if (!raw) return false;
+    sync.lastSynced = JSON.parse(raw);
+    return true;
+  } catch (e) {
+    console.error('Chargement de sync.lastSynced persisté : échec (repli sur les instantanés cloud pour l\'établir, sans perte -- juste une resynchronisation redondante)', e);
+    return false;
+  }
+}
+
+async function startListeners(dejaAppairePrecedemment) {
+  if (dejaAppairePrecedemment && chargerSyncLastSyncedPersiste()) {
+    // Réconciliation AVANT tout abonnement : sans cet ordre précis, le
+    // premier instantané distant reçu écraserait DB[colName] (voir plus bas)
+    // avant que la moindre modification locale non confirmée n'ait pu être
+    // repoussée -- exactement le risque que ce correctif élimine (voir le
+    // commentaire ci-dessus).
+    await syncAllToCloud(DB).catch(e => console.error('Erreur de réconciliation au démarrage :', e));
+  }
+  // Sinon (aucune référence n'a jamais été persistée pour ce compte sur cet
+  // appareil -- typiquement la toute première ouverture après l'ajout de
+  // cette persistance, sur un appareil déjà appairé de longue date) :
+  // AUCUNE réconciliation proactive ici. sync.lastSynced se construit
+  // exclusivement à partir de la VRAIE valeur cloud reçue par chaque
+  // instantané ci-dessous (jamais depuis un état vide, qui déclencherait à
+  // tort une poussée massive de données déjà présentes dans le cloud, ou
+  // repousserait un état local devenu incohérent -- ex: doublons résiduels
+  // d'un ancien incident -- que le cloud, lui, n'a plus). persisterSyncLastSynced
+  // (appelée par chaque instantané ci-dessous) établit alors cette référence
+  // pour la première fois, disponible dès la prochaine ouverture.
   DOC_COLLECTIONS.forEach(colName => {
     const colRef = collection(fbDb, 'users', sync.uid, colName);
     const unsub = onSnapshot(colRef, snap => {
       const arr = [];
       snap.forEach(d => arr.push(d.data()));
-      sync.lastSynced[colName] = {};
-      // Instantané indépendant de ce qui va dans DB (voir deepClean) : DB
-      // continue de contenir les objets « vivants » que l'appli modifie
-      // directement sur place. IMPORTANT : cloné AVANT le correctif
-      // ci-dessous, pas après -- sync.lastSynced doit garder la valeur
-      // brute encore non corrigée telle que Firestore la sert, sinon
-      // buildUpdatePayload ne verrait plus aucune différence à repousser
-      // et le correctif ne remonterait jamais vers le cloud (voir
-      // migrateData pour le contexte complet de ce correctif).
-      arr.forEach(r => { sync.lastSynced[colName][r.id] = deepClean(r); });
       // Un instantané distant peut arriver AVANT que le correctif fait par
       // migrateData au chargement (encore seulement en mémoire, jamais
       // repoussé) n'ait eu la moindre chance d'être synchronisé -- sans ce
@@ -22722,8 +23103,8 @@ function startListeners() {
       // l'été redeviendraient invisibles sur la fiche jusqu'à la prochaine
       // vraie saisie. Reprend les 2 mêmes étapes que migrateData, dans le
       // même ordre (rétro-tag par date d'abord, puis 2025->2026). Corrige
-      // `arr` (donc DB via applyRemoteUpdate juste en dessous), jamais
-      // sync.lastSynced ci-dessus (voir remarque).
+      // `arr` AVANT la fusion ci-dessous (donc DB via applyRemoteUpdate),
+      // jamais sync.lastSynced (voir son propre commentaire plus bas).
       if (colName === 'brebis') {
         arr.forEach(s => {
           (s.echographies || []).forEach(e => {
@@ -22732,32 +23113,35 @@ function startListeners() {
           });
         });
       }
-      applyOrQueueRemoteUpdate(colName, () => { DB[colName] = arr; });
+      // Fusion (voir fusionnerInstantaneDistant) AVANT d'écraser
+      // sync.lastSynced[colName] ci-dessous : elle a besoin de la référence
+      // encore ANCIENNE pour distinguer un enregistrement légitimement à
+      // jour d'un enregistrement localement modifié mais pas encore
+      // confirmé synchronisé.
+      const fusion = fusionnerInstantaneDistant(colName, arr);
+      sync.lastSynced[colName] = {};
+      // Instantané indépendant de ce qui va dans DB : DB continue de
+      // contenir les objets « vivants » que l'appli modifie directement sur
+      // place, éventuellement préservés tels quels par la fusion ci-dessus.
+      // sync.lastSynced, lui, garde TOUJOURS la valeur distante brute telle
+      // que Firestore la sert (jamais la version fusionnée) : c'est la seule
+      // façon de savoir, au prochain instantané, ce que le cloud a HONNÊTEMENT
+      // confirmé -- sinon buildUpdatePayload ne verrait plus aucune
+      // différence à repousser pour un enregistrement dont la fusion aurait
+      // gardé la version locale.
+      arr.forEach(r => { sync.lastSynced[colName][r.id] = deepClean(r); });
+      applyOrQueueRemoteUpdate(colName, () => { DB[colName] = fusion; });
+      persisterSyncLastSynced();
     }, err => console.error('Erreur d\'écoute Firestore (' + colName + ') :', err));
     sync.unsubscribers.push(unsub);
   });
   const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
-  // Une seule poussée proactive de l'état local actuel, juste après avoir
-  // reçu le tout premier instantané distant (voir correctif synchro du
-  // 05/09/2026) -- sans ça, un appareil déjà connecté qui n'effectue aucune
-  // saisie après une mise à jour (ex: ouvrir l'appli pour vérifier un champ
-  // tout juste ajouté à META_FIELDS) ne pousse jamais ses données déjà
-  // présentes localement : saveData() n'est appelé que par une vraie action
-  // de saisie, jamais automatiquement à l'ouverture. Volontairement APRÈS
-  // le 1er instantané (jamais avant) : tant que sync.lastSynced.meta n'a
-  // pas encore la vraie valeur distante, syncMeta prendrait la branche
-  // setDoc (remplacement intégral) au lieu du diff protégé par
-  // estVideRecursif -- exactement le risque d'écrasement que ce correctif
-  // cherche à éviter.
-  let premierInstantaneMetaRecu = false;
   const unsubMeta = onSnapshot(metaRef, snap => {
-    if (!snap.exists()) return;
-    const meta = snap.data();
-    sync.lastSynced.meta = deepClean(meta);
-    applyOrQueueRemoteUpdate('meta', () => { Object.assign(DB, meta); });
-    if (!premierInstantaneMetaRecu) {
-      premierInstantaneMetaRecu = true;
-      syncAllToCloud(DB).catch(e => console.error('Erreur de synchronisation initiale :', e));
+    if (snap.exists()) {
+      const meta = snap.data();
+      sync.lastSynced.meta = deepClean(meta);
+      applyOrQueueRemoteUpdate('meta', () => { Object.assign(DB, meta); });
+      persisterSyncLastSynced();
     }
   }, err => console.error('Erreur d\'écoute Firestore (meta) :', err));
   sync.unsubscribers.push(unsubMeta);
@@ -22806,7 +23190,7 @@ async function onSignedIn(user) {
   sync.email = user.email;
   const alreadyBootstrapped = localStorage.getItem(BOOTSTRAP_FLAG_KEY) === user.uid;
   const hadDonneesExistantes = alreadyBootstrapped ? true : await bootstrapDevice(user.uid);
-  startListeners();
+  await startListeners(alreadyBootstrapped);
   return hadDonneesExistantes;
 }
 
@@ -22904,7 +23288,13 @@ window.OvilogSync = {
   },
   logout() {
     signOut(fbAuth).catch(e => console.error('Erreur de déconnexion :', e));
-  }
+  },
+  // Exposés pour l'indicateur Paramètres > Exploitation (script classique,
+  // voir rafraichirStatutSynchroParametres) -- lireJournalSynchro/
+  // viderJournalSynchro sont des déclarations de ce module, invisibles
+  // depuis le script classique sans ce passage explicite par window.
+  lireJournal() { return lireJournalSynchro(); },
+  viderJournal() { viderJournalSynchro(); }
 };
 </script>
 </body>
