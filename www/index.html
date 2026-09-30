@@ -2053,6 +2053,21 @@ function campagneAnneeDebutPourDate(dateStr, exploitation) {
   const apresDebut = m > moisDebut || (m === moisDebut && jour >= jourDebut);
   return apresDebut ? y : y - 1;
 }
+/* Vrai si `dateStr` tombe AVANT la date de démarrage configurée de la
+   campagne (même seuil que campagneAnneeDebutPourDate, exposé séparément
+   car la question posée est différente : pas "à quelle campagne appartient
+   cette date" mais "est-on en avance sur le calendrier habituel"). Utilisée
+   par l'écran de confirmation du changement de campagne (correctif de
+   l'audit "Changement de campagne", point 3) pour exiger une confirmation
+   explicite supplémentaire si l'éleveur démarre la campagne suivante avant
+   le seuil habituel -- jamais pour bloquer le calcul de l'année lui-même
+   (voir executerChangementCampagne, qui avance toujours de +1 quelle que
+   soit la date). */
+function estAvantSeuilCampagne(dateStr, exploitation) {
+  const [, m, jour] = dateStr.split('-').map(Number);
+  const moisDebut = campagneMoisDebutConfig(exploitation), jourDebut = campagneJourDebutConfig(exploitation);
+  return m < moisDebut || (m === moisDebut && jour < jourDebut);
+}
 
 /* ---------- Suivi qualité du lait ----------
    Le volume de chaque prélèvement (prelevementsQualite[].volumeLait) est
@@ -16807,20 +16822,70 @@ function uint8ToBase64(bytes) {
   return btoa(binary);
 }
 
+/* Dossier des sauvegardes automatiques -- EXTERNAL (privé à l'appli,
+   getExternalFilesDir côté Android), jamais DOCUMENTS. Correctif de l'audit
+   "Changement de campagne" (bug réel du 29/09) : Directory.Documents résout
+   côté plugin natif vers le dossier public partagé via l'API File legacy
+   (Environment.getExternalStoragePublicDirectory), sans la moindre
+   compatibilité stockage cloisonné -- sur la quasi-totalité du parc Android
+   réel (10+, cible de cette appli, voir android/variables.gradle
+   targetSdkVersion=34 et l'absence de MANAGE_EXTERNAL_STORAGE), l'écriture y
+   échoue ou produit un fichier non indexé/invisible sans qu'aucune
+   exception ne soit forcément levée. EXTERNAL reste accessible sans
+   permission sur toutes les versions, et partageable à la demande via le
+   plugin Share déjà présent si l'éleveur veut l'extraire. */
+const BACKUP_AUTO_DIRECTORY = 'EXTERNAL';
+
 /* Sauvegarde JSON silencieuse déclenchée juste avant l'exécution réelle
    d'une action irréversible qui remplace ou reconstruit une partie de la
    base (changement de campagne — voir executerChangementCampagne — et
    import d'une sauvegarde JSON, voir renderParametres) — filet de sécurité
    sans AUCUNE interaction utilisateur supplémentaire : contrairement à
    saveOrShareBinaryFile, pas de modale "Fichier enregistré" à fermer sur
-   l'app installée. Retourne true/false plutôt que de retomber sur une
-   modale ou un partage en cas de souci, pour que l'appelant puisse bloquer
-   l'action en toute connaissance de cause si l'écriture a réellement
-   échoué (voir correctif "sauvegarde automatique" — pas d'option de
-   secours silencieuse ici, uniquement le repli navigateur classique
-   ci-dessous qui n'est pas un échec en soi, seulement un mode différent
-   hors app installée). */
-async function writeAutoBackupFile(filename, bytes) {
+   l'app installée.
+   `data` est l'objet DB à sauvegarder (jamais des octets déjà sérialisés) :
+   la fonction sérialise elle-même ET relit ensuite ce qu'elle vient
+   d'écrire pour vérifier le contenu réel -- correctif de l'audit : une
+   promesse résolue sans exception ne prouve pas qu'un fichier lisible et
+   complet existe (voir le dossier ci-dessus). Retourne { ok, raison }
+   plutôt qu'un simple booléen, pour que l'appelant puisse bloquer l'action
+   avec un message qui nomme la vraie cause plutôt qu'un texte générique
+   ("vérifie l'espace de stockage") qui ne l'est pas toujours. */
+/* Propose la feuille de partage native (Drive, fichiers, e-mail...) pour un
+   fichier déjà écrit et vérifié dans BACKUP_AUTO_DIRECTORY -- correctif de
+   l'audit "Changement de campagne" (point 1) : ce dossier est app-scoped
+   (getExternalFilesDir, voir BACKUP_AUTO_DIRECTORY), jamais listé par un
+   gestionnaire de fichiers ni visible ailleurs -- sans partage explicite, le
+   fichier reste piégé sur l'appareil, inaccessible à l'éleveur sur Android
+   11+. Jamais bloquant : une annulation ou une indisponibilité du plugin ne
+   remet pas en cause la sauvegarde elle-même (déjà écrite et vérifiée avant
+   cet appel), donc jamais attendue par l'appelant (voir writeAutoBackupFile
+   ci-dessous, `.catch` sans `await`). Nécessite le FileProvider déclaré côté
+   Android (file_paths.xml, entrée external-files-path). */
+async function partagerFichierBackup(filename) {
+  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  const Share = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Share;
+  if (!Filesystem || !Share) return; // hors app installée : le repli navigateur a déjà proposé un téléchargement direct
+  try {
+    const { uri } = await Filesystem.getUri({ path: filename, directory: BACKUP_AUTO_DIRECTORY });
+    await Share.share({ url: uri, title: filename, dialogTitle: 'Mettre la sauvegarde à l\'abri (Drive, fichiers...)' });
+  } catch (e) {
+    // Annulation de l'éleveur (feuille de partage fermée sans choix) ou
+    // plugin indisponible sur cet appareil -- jamais une erreur à
+    // remonter, le fichier reste de toute façon en sécurité sur l'appareil.
+    console.error('Partage de la sauvegarde : ignoré ou annulé', e);
+  }
+}
+
+/* `proposerPartage` (défaut false) : ouvre la feuille de partage native
+   juste après une écriture réussie -- réservé aux déclenchements explicites
+   de l'éleveur (changement de campagne, import JSON) ; jamais pour la
+   vérification périodique silencieuse au démarrage (voir
+   verifierSauvegardeAutoPeriodique), qui ne doit jamais faire apparaître une
+   fenêtre sans action de l'éleveur. */
+async function writeAutoBackupFile(filename, data, { proposerPartage = false } = {}) {
+  const bytes = bytesBackupAuto(data, new Date());
+  const attendu = { brebis: (data.brebis || []).length, agnelles: (data.agnelles || []).length, beliers: (data.beliers || []).length };
   const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (Filesystem) {
     try {
@@ -16830,17 +16895,45 @@ async function writeAutoBackupFile(filename, bytes) {
           await Filesystem.requestPermissions();
         }
       } catch (e) { /* API non implémentée sur cette plateforme — on tente l'écriture quand même */ }
-      await Filesystem.writeFile({ path: filename, data: uint8ToBase64(bytes), directory: 'DOCUMENTS' });
-      return true;
+      await Filesystem.writeFile({ path: filename, data: uint8ToBase64(bytes), directory: BACKUP_AUTO_DIRECTORY });
     } catch (e) {
-      console.error('Sauvegarde automatique : échec Filesystem', e);
-      return false;
+      console.error('Sauvegarde automatique : échec Filesystem (écriture)', e);
+      return { ok: false, raison: "l'écriture du fichier a échoué (" + (e && e.message ? e.message : 'erreur inconnue') + ')' };
+    }
+    // Relecture immédiate -- ne jamais faire confiance à une promesse
+    // résolue sans exception (voir le commentaire ci-dessus sur
+    // Directory.Documents : le même risque, à un degré moindre, n'est
+    // jamais totalement exclu sur EXTERNAL non plus selon l'appareil).
+    try {
+      const relu = await Filesystem.readFile({ path: filename, directory: BACKUP_AUTO_DIRECTORY, encoding: 'utf8' });
+      if (!relu.data || relu.data.length === 0) {
+        return { ok: false, raison: 'le fichier relu est vide' };
+      }
+      let parsed;
+      try { parsed = JSON.parse(relu.data); }
+      catch (e) { return { ok: false, raison: 'le fichier relu est illisible (JSON invalide)' }; }
+      const obtenu = { brebis: (parsed.brebis || []).length, agnelles: (parsed.agnelles || []).length, beliers: (parsed.beliers || []).length };
+      if (obtenu.brebis !== attendu.brebis || obtenu.agnelles !== attendu.agnelles || obtenu.beliers !== attendu.beliers) {
+        return { ok: false, raison: 'les compteurs relus (' + JSON.stringify(obtenu) + ') ne correspondent pas à ceux attendus (' + JSON.stringify(attendu) + ')' };
+      }
+      // Jamais attendu : la validité de la sauvegarde ne dépend pas de ce
+      // que l'éleveur fait ensuite de la feuille de partage (voir
+      // partagerFichierBackup).
+      if (proposerPartage) partagerFichierBackup(filename);
+      return { ok: true };
+    } catch (e) {
+      console.error('Sauvegarde automatique : échec Filesystem (relecture de vérification)', e);
+      return { ok: false, raison: 'la relecture de vérification a échoué (' + (e && e.message ? e.message : 'erreur inconnue') + ')' };
     }
   }
   // Pas de plugin natif disponible (navigateur classique, tests) : repli sur
   // un téléchargement navigateur discret plutôt que de bloquer une action
-  // pour une raison indépendante des données de l'utilisateur.
+  // pour une raison indépendante des données de l'utilisateur. Un fichier
+  // téléchargé ne peut pas être relu par le JS (sandbox navigateur) : seule
+  // la taille du contenu avant déclenchement du téléchargement est
+  // vérifiable ici.
   try {
+    if (bytes.length === 0) return { ok: false, raison: 'contenu à sauvegarder vide' };
     const blob = new Blob([bytes], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -16850,10 +16943,10 @@ async function writeAutoBackupFile(filename, bytes) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    return true;
+    return { ok: true };
   } catch (e) {
     console.error('Sauvegarde automatique : échec téléchargement navigateur', e);
-    return false;
+    return { ok: false, raison: 'le téléchargement navigateur a échoué' };
   }
 }
 
@@ -16877,7 +16970,7 @@ async function listAutoBackupFiles() {
   const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (!Filesystem) return null; // pas de dossier à lister hors app installée
   try {
-    const res = await Filesystem.readdir({ path: '', directory: 'DOCUMENTS' });
+    const res = await Filesystem.readdir({ path: '', directory: BACKUP_AUTO_DIRECTORY });
     // Capacitor 6 renvoie des objets {name, ...} ; une éventuelle plateforme
     // encore sur l'ancien format (chaînes brutes) reste gérée par sécurité.
     const noms = (res.files || []).map(f => (typeof f === 'string' ? f : f.name));
@@ -16885,7 +16978,7 @@ async function listAutoBackupFiles() {
     // alphabétique descendant suffit (ovilog_backup_AAAAMMJJ_HHMMSS.json).
     return noms.filter(n => n.startsWith(BACKUP_AUTO_PREFIX) && n.endsWith('.json')).sort().reverse();
   } catch (e) {
-    console.error('Sauvegarde automatique : échec de la lecture du dossier Documents', e);
+    console.error('Sauvegarde automatique : échec de la lecture du dossier de sauvegarde', e);
     return null;
   }
 }
@@ -16895,7 +16988,7 @@ async function purgeOldAutoBackups() {
   const noms = await listAutoBackupFiles();
   if (!noms) return;
   for (const nom of noms.slice(BACKUP_AUTO_MAX)) {
-    try { await Filesystem.deleteFile({ path: nom, directory: 'DOCUMENTS' }); }
+    try { await Filesystem.deleteFile({ path: nom, directory: BACKUP_AUTO_DIRECTORY }); }
     catch (e) { console.error('Sauvegarde automatique : échec de la suppression de ' + nom, e); }
   }
 }
@@ -16922,8 +17015,7 @@ async function verifierSauvegardeAutoPeriodique() {
     const derniere = noms.length ? dateDepuisNomBackup(noms[0]) : null;
     const tropAncienne = !derniere || (Date.now() - derniere.getTime()) > BACKUP_AUTO_INTERVALLE_JOURS * 86400000;
     if (tropAncienne) {
-      const backupDate = new Date();
-      await writeAutoBackupFile(nomFichierBackupAuto(backupDate), bytesBackupAuto(DB, backupDate));
+      await writeAutoBackupFile(nomFichierBackupAuto(new Date()), DB);
     }
     await purgeOldAutoBackups();
   } catch (e) {
@@ -20466,80 +20558,232 @@ function resumeContenuSauvegarde(data) {
   return n(data.brebis) + ' brebis, ' + n(data.beliers) + ' bélier(s), ' + n(data.agnelles) + ' agnelle(s)';
 }
 
+/* ---------- Point de restauration interne avant bascule ----------
+   Correctif de l'audit "Changement de campagne" (point 2) : distinct du
+   fichier JSON (BACKUP_AUTO_DIRECTORY, quitte l'appareil ou pas selon ce
+   que l'éleveur en fait) -- un second filet purement local, jamais
+   synchronisé vers le cloud (clé localStorage séparée de DB_KEY, jamais lue
+   par saveData/syncAllToCloud), pour restaurer l'état d'avant la DERNIÈRE
+   bascule en un geste depuis l'appli elle-même, sans dépendre de retrouver
+   et réimporter un fichier. Un seul emplacement (écrasé à chaque nouvelle
+   bascule) : c'est "l'état d'avant la dernière bascule", pas un historique. */
+const SNAPSHOT_PRE_CAMPAGNE_KEY = 'ovilog_pre_campagne_snapshot';
+function ecrireSnapshotPreCampagne(data) {
+  try {
+    localStorage.setItem(SNAPSHOT_PRE_CAMPAGNE_KEY, JSON.stringify({ data, date: new Date().toISOString(), resume: resumeContenuSauvegarde(data) }));
+    return true;
+  } catch (e) {
+    console.error('Point de restauration interne : échec de l\'écriture', e);
+    return false;
+  }
+}
+function lireSnapshotPreCampagne() {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_PRE_CAMPAGNE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.error('Point de restauration interne : échec de la lecture', e);
+    return null;
+  }
+}
+function effacerSnapshotPreCampagne() {
+  try { localStorage.removeItem(SNAPSHOT_PRE_CAMPAGNE_KEY); } catch (e) { /* ignoré -- sera de toute façon écrasé à la prochaine bascule */ }
+}
+/* Restaure l'état d'avant la dernière bascule -- réutilisable partout où le
+   bouton est proposé (Paramètres > Campagne). Repasse par saveData(DB) comme
+   une restauration JSON classique : se propage donc aussi au cloud et aux
+   autres appareils, exactement comme l'import d'une sauvegarde. Efface le
+   point de restauration après usage -- un même snapshot ne se restaure
+   qu'une fois, pour ne jamais laisser croire qu'il reste utilisable après
+   coup si l'éleveur re-saisit des données entre-temps. */
+function restaurerSnapshotPreCampagne() {
+  const snap = lireSnapshotPreCampagne();
+  if (!snap) return false;
+  DB = migrateData(snap.data);
+  saveData(DB);
+  effacerSnapshotPreCampagne();
+  return true;
+}
+
+/* Verrou de ré-entrance (correctif de l'audit "Changement de campagne", bug
+   réel du 29/09/2026) : le seul garde-fou existant avant ce correctif était
+   `btn.disabled` sur l'instance DOM du bouton "Valider" -- inefficace dès
+   qu'un nouveau render() recrée un bouton neuf pendant que la fonction
+   tourne encore (observé en réel : une synchro Firestore partielle avait
+   repeuplé DB.agnelles et redéclenché un second clic 75 secondes après le
+   premier, créant 29 doublons). Ce flag est vérifié en tout premier, avant
+   le moindre `await`, et empêche toute exécution concurrente quelle que
+   soit son origine (reclic, ré-render, appel programmatique). Lu aussi par
+   le module de synchro cloud (voir operationGroupeeEnCours ci-dessous et le
+   script de synchro plus bas) pour suspendre la réactivité des écouteurs
+   Firestore pendant toute la durée de l'opération. */
+let campagneChangeEnCours = false;
+let operationGroupeeEnCours = false;
+
 /* Exécution réelle du "changement de campagne", déclenchée UNIQUEMENT depuis
    le bouton "Valider" de l'écran de vérification (voir
    renderConfirmationNouvelleCampagne) — plus aucun confirm() natif ici.
-   Ordre des opérations, volontairement strict :
-     1. Sauvegarde JSON automatique et silencieuse de toute la base — voir
-        writeAutoBackupFile. Si elle échoue, on s'arrête ici : AUCUNE
-        donnée n'est modifiée, l'appelant doit permettre de réessayer.
-     2. Une fois la sauvegarde confirmée, exécution de tout ce qui était
-        auparavant dans le confirm() natif (lutte remise à zéro, mouvements
-        archivés puis vidés, bascule agnelles→brebis avec généalogie
-        recopiée, campagne + flag d'initialisation posés).
-   Retourne true en cas de succès, false si la sauvegarde a échoué (rien
-   n'a alors été modifié dans DB). */
+   Ordre des opérations, volontairement strict (correctifs de l'audit
+   "Changement de campagne" entre parenthèses) :
+     0. Verrou de ré-entrance -- refuse toute exécution concurrente.
+     1. État complet AVANT mutation gardé en mémoire (deepClone de DB), pour
+        une restauration immédiate et fiable au point 4 si besoin -- ne
+        dépend pas de la réussite d'une lecture de fichier.
+     2. Sauvegarde JSON automatique et silencieuse de toute la base, relue
+        et vérifiée (taille, compteurs) avant de continuer — voir
+        writeAutoBackupFile — puis feuille de partage native proposée (Drive,
+        fichiers...) pour que ce fichier soit récupérable hors de l'appareil
+        (dossier app-scoped, invisible ailleurs sur Android 11+). Un second
+        point de restauration purement interne (localStorage, jamais
+        synchronisé) est aussi posé -- voir ecrireSnapshotPreCampagne et le
+        bouton "Restaurer l'état d'avant bascule" de Paramètres > Campagne.
+        Si l'un des deux échoue, on s'arrête ici : AUCUNE donnée n'est
+        modifiée, l'appelant doit permettre de réessayer.
+     3. Bascule (mouvements archivés puis vidés, agnelles converties en
+        brebis avec généalogie recopiée -- en écartant toute agnelle dont
+        l'EID existe déjà ailleurs, jamais un doublon silencieux --, campagne
+        SUIVANTE (jamais recalculée depuis la date du jour, voir plus bas) +
+        flag d'initialisation posés). operationGroupeeEnCours reste vrai
+        pendant toute cette étape ET sa synchro cloud, pour qu'aucun
+        instantané Firestore partiel ne remplace DB entre-temps.
+     4. Vérification arithmétique AVANT toute écriture (localStorage +
+        cloud) : actives après = actives avant + agnelles réellement
+        converties. Le moindre écart annule tout en mémoire (aucune
+        persistance) plutôt que de continuer silencieusement.
+   Retourne { ok: true, agnellesEnConflit } en cas de succès, ou
+   { ok: false, raison, detail? } sinon — jamais un simple booléen, pour que
+   l'écran appelant affiche un message qui nomme la vraie cause. */
 async function executerChangementCampagne() {
-  const backupDate = new Date();
-  const backupOk = await writeAutoBackupFile(nomFichierBackupAuto(backupDate), bytesBackupAuto(DB, backupDate));
-  if (!backupOk) return false;
-  await purgeOldAutoBackups(); // roulement : ne garde que les BACKUP_AUTO_MAX plus récentes
+  if (campagneChangeEnCours) {
+    return { ok: false, raison: 'un changement de campagne est déjà en cours sur cet appareil' };
+  }
+  campagneChangeEnCours = true;
+  operationGroupeeEnCours = true;
+  try {
+    const activesAvant = DB.brebis.filter(s => (s.statut || 'active') === 'active').length;
+    const agnellesAvant = (DB.agnelles || []).length;
+    // Clone mémoire de l'état AVANT -- indépendant du fichier de sauvegarde,
+    // sert de filet de restauration immédiate au point 4 (voir plus bas).
+    const avant = JSON.parse(JSON.stringify(DB));
 
-  // DB.luttes n'est plus alimenté depuis le module Reproduction (voir
-  // modesRepro, campagne-tagué comme les agnelages/échographies) : plus
-  // rien à remettre à zéro ici, contrairement à l'ancien pense-bête "Lutte".
+    const backup = await writeAutoBackupFile(nomFichierBackupAuto(new Date()), DB, { proposerPartage: true });
+    if (!backup.ok) return { ok: false, raison: 'la sauvegarde automatique a échoué : ' + backup.raison };
+    await purgeOldAutoBackups(); // roulement : ne garde que les BACKUP_AUTO_MAX plus récentes
 
-  // Archive puis vide les mouvements des brebis déjà actives AVANT d'ajouter
-  // les nouvelles (renouvelées depuis les agnelles), pour ne pas effacer le
-  // mouvement d'entrée qu'on vient de créer pour ces dernières. Les
-  // agnelages, eux, ne sont plus jamais archivés/vidés ici : chaque
-  // agnelage porte son propre champ `campagne` et reste sur la fiche pour
-  // toujours (voir agnelageCampagneActuelleIdx et la fiche brebis).
-  DB.brebis.forEach(sheep => {
-    if ((sheep.statut || 'active') === 'active') {
-      archiverDansRegistre('brebis', sheep.eid, { mouvements: sheep.mouvements });
-      sheep.mouvements = [];
+    // Point de restauration interne (voir écran Paramètres > Campagne) --
+    // réutilise le clone déjà fait ci-dessus plutôt que d'en recalculer un
+    // second. Bloquant comme le fichier JSON : un point de restauration qui
+    // échoue à s'écrire n'est pas un point de restauration.
+    if (!ecrireSnapshotPreCampagne(avant)) {
+      return { ok: false, raison: "le point de restauration interne n'a pas pu être enregistré" };
     }
-  });
 
-  const dateRenouvellement = new Date().toISOString().slice(0,10);
-  (DB.agnelles || []).forEach(ag => {
-    DB.brebis.push({
-      id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: ag.eid, mereEid: ag.motherEid || null,
-      // Généalogie déclarative (texte libre, cas achat/IA) recopiée depuis
-      // l'agnelle — sans quoi elle était perdue à la bascule (voir correctif
-      // Généalogie). numeroLongTravailSieol/numeroCourtTravailSieol : même
-      // principe (voir chantier "Numéro travail SIEOL"), sans quoi l'alias
-      // renseigné sur l'agnelle serait perdu à la bascule.
-      pere: ag.pere || '', mere: ag.mere || '',
-      numeroLongTravailSieol: ag.numeroLongTravailSieol || null, numeroCourtTravailSieol: ag.numeroCourtTravailSieol || null,
-      createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: ag.sanitaire || [],
-      mouvements: [{ type: 'Entrée', cause: 'Renouvellement (agnelle devenue brebis)', date: dateRenouvellement }],
-      // modesRepro : une agnelle peut déjà avoir été mise en lot de
-      // reproduction (IA/Éponge) avant sa bascule en brebis (lutte des
-      // antenaises pendant l'été, avant le changement de campagne de
-      // septembre/octobre) — sans cette reprise, ce module de reproduction
-      // aurait le même bug que la généalogie avant son correctif : la
-      // donnée existe sur l'agnelle mais disparaît à la bascule.
-      modesRepro: ag.modesRepro || [],
-      controleLaitier: [], statut: 'active'
+    // DB.luttes n'est plus alimenté depuis le module Reproduction (voir
+    // modesRepro, campagne-tagué comme les agnelages/échographies) : plus
+    // rien à remettre à zéro ici, contrairement à l'ancien pense-bête "Lutte".
+
+    // Archive puis vide les mouvements des brebis déjà actives AVANT d'ajouter
+    // les nouvelles (renouvelées depuis les agnelles), pour ne pas effacer le
+    // mouvement d'entrée qu'on vient de créer pour ces dernières. Les
+    // agnelages, eux, ne sont plus jamais archivés/vidés ici : chaque
+    // agnelage porte son propre champ `campagne` et reste sur la fiche pour
+    // toujours (voir agnelageCampagneActuelleIdx et la fiche brebis).
+    DB.brebis.forEach(sheep => {
+      if ((sheep.statut || 'active') === 'active') {
+        archiverDansRegistre('brebis', sheep.eid, { mouvements: sheep.mouvements });
+        sheep.mouvements = [];
+      }
     });
-    archiverDansRegistre('agnelles', ag.eid, { mouvements: ag.mouvements });
-  });
-  DB.agnelles = [];
 
-  DB.campagneDebut = campagneAnneeDebutPourDate(dateRenouvellement);
-  // Date réelle de ce clic, utilisée comme référence pour "brebis présentes"
-  // dans Bilan de reproduction (voir campagneCohortPresente) — plus fidèle
-  // que le 1er octobre calculé, puisque c'est le vrai instant de bascule
-  // agnelles→brebis pour CETTE campagne.
-  DB.campagneDateDemarrage = dateRenouvellement;
-  // Verrouille définitivement le champ rapide "Campagne actuelle" (voir
-  // renderParametres) : à partir d'ici, ce bouton reste l'unique source de
-  // vérité pour campagneDebut et campagneDateDemarrage.
-  DB.campagneInitialisee = true;
-  saveData(DB);
-  return true;
+    const dateRenouvellement = new Date().toISOString().slice(0,10);
+    // Une agnelle dont l'EID existe déjà ailleurs (brebis/bélier/autre
+    // agnelle) n'est PAS convertie -- jamais un doublon silencieux, même
+    // garde-fou que les 8 autres points de saisie (voir verifierEidUnique).
+    // Elle reste dans DB.agnelles pour investigation manuelle plutôt que de
+    // disparaître ou d'être dupliquée.
+    const agnellesEnConflit = [];
+    (DB.agnelles || []).forEach(ag => {
+      // exclureId=ag.id : verifierEidUnique matche aussi DB.agnelles (voir
+      // sa définition), et cette agnelle s'y trouve encore elle-même à cet
+      // instant -- sans l'exclure, chaque agnelle se signalerait comme "en
+      // conflit avec elle-même" et aucune ne serait jamais convertie.
+      const conflit = verifierEidUnique(ag.eid, ag.id);
+      if (conflit) { agnellesEnConflit.push({ eid: ag.eid, conflit }); return; }
+      DB.brebis.push({
+        id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: ag.eid, mereEid: ag.motherEid || null,
+        // Généalogie déclarative (texte libre, cas achat/IA) recopiée depuis
+        // l'agnelle — sans quoi elle était perdue à la bascule (voir correctif
+        // Généalogie). numeroLongTravailSieol/numeroCourtTravailSieol : même
+        // principe (voir chantier "Numéro travail SIEOL"), sans quoi l'alias
+        // renseigné sur l'agnelle serait perdu à la bascule.
+        pere: ag.pere || '', mere: ag.mere || '',
+        numeroLongTravailSieol: ag.numeroLongTravailSieol || null, numeroCourtTravailSieol: ag.numeroCourtTravailSieol || null,
+        createdAt: Date.now(), echographies: [], agnelages: [], sanitaire: ag.sanitaire || [],
+        mouvements: [{ type: 'Entrée', cause: 'Renouvellement (agnelle devenue brebis)', date: dateRenouvellement }],
+        // modesRepro : une agnelle peut déjà avoir été mise en lot de
+        // reproduction (IA/Éponge) avant sa bascule en brebis (lutte des
+        // antenaises pendant l'été, avant le changement de campagne de
+        // septembre/octobre) — sans cette reprise, ce module de reproduction
+        // aurait le même bug que la généalogie avant son correctif : la
+        // donnée existe sur l'agnelle mais disparaît à la bascule.
+        modesRepro: ag.modesRepro || [],
+        controleLaitier: [], statut: 'active'
+      });
+      archiverDansRegistre('agnelles', ag.eid, { mouvements: ag.mouvements });
+    });
+    // Seules les agnelles en conflit restent -- jamais DB.agnelles = []
+    // inconditionnel, qui ferait disparaître silencieusement un conflit non
+    // résolu (voir agnellesEnConflit).
+    const agnellesEnConflitEids = new Set(agnellesEnConflit.map(c => c.eid));
+    DB.agnelles = (DB.agnelles || []).filter(ag => agnellesEnConflitEids.has(ag.eid));
+
+    // Campagne SUIVANTE, jamais recalculée depuis la date du jour : le
+    // bouton signifie "clore la campagne en cours", pas "quelle campagne
+    // est en cours aujourd'hui". L'ancien calcul
+    // (campagneAnneeDebutPourDate(dateDuJour)) retombait sur la MÊME année
+    // quand le bouton était cliqué avant le seuil paramétré (1er octobre par
+    // défaut) -- bug confirmé en réel le 29/09/2026 (campagne restée 2025
+    // affichée "2026" au lieu de passer à 2026 affichée "2027").
+    // campagneAnneeDebutPourDate reste utilisée UNIQUEMENT pour le tout
+    // premier réglage (DB.campagneDebut encore jamais posé) : elle répond
+    // alors à sa vraie question ("quelle campagne pour cette date ?").
+    DB.campagneDebut = DB.campagneDebut == null ? campagneAnneeDebutPourDate(dateRenouvellement) : DB.campagneDebut + 1;
+    // Date réelle de ce clic, utilisée comme référence pour "brebis présentes"
+    // dans Bilan de reproduction (voir campagneCohortPresente) — plus fidèle
+    // que le 1er octobre calculé, puisque c'est le vrai instant de bascule
+    // agnelles→brebis pour CETTE campagne.
+    DB.campagneDateDemarrage = dateRenouvellement;
+    // Verrouille définitivement le champ rapide "Campagne actuelle" (voir
+    // renderParametres) : à partir d'ici, ce bouton reste l'unique source de
+    // vérité pour campagneDebut et campagneDateDemarrage.
+    DB.campagneInitialisee = true;
+
+    // Vérification arithmétique AVANT toute persistance (localStorage +
+    // cloud) : les actives d'après doivent correspondre EXACTEMENT aux
+    // actives d'avant + les agnelles réellement converties (celles en
+    // conflit exclues). Le moindre écart annule tout en mémoire -- jamais
+    // un retour silencieux, voir le bug réel du 29/09 (457 actives au lieu
+    // de 428).
+    const activesApres = DB.brebis.filter(s => (s.statut || 'active') === 'active').length;
+    const attendu = activesAvant + (agnellesAvant - agnellesEnConflit.length);
+    if (activesApres !== attendu) {
+      DB = avant;
+      return { ok: false, raison: 'incohérence détectée après la bascule (rien n\'a été enregistré)', detail: { activesAvant, agnellesAvant, activesApres, attendu } };
+    }
+
+    saveData(DB);
+    return { ok: true, agnellesEnConflit };
+  } finally {
+    campagneChangeEnCours = false;
+    operationGroupeeEnCours = false;
+    // window.drainPendingRemoteUpdates (pas une simple variable globale) :
+    // défini dans le <script type="module"> de synchro plus bas, qui a sa
+    // propre portée de plus haut niveau -- contrairement à DB/saveData/
+    // render (déclarés dans CE script classique et donc lisibles tels quels
+    // depuis le module), une fonction déclarée dans le module doit être
+    // explicitement posée sur window pour être appelable d'ici.
+    if (window.drainPendingRemoteUpdates) window.drainPendingRemoteUpdates();
+  }
 }
 
 /* Écran de vérification détaillé avant de valider le changement de
@@ -20564,7 +20808,25 @@ function renderConfirmationNouvelleCampagne() {
   const agesKeys = Object.keys(agesCount).sort((a, b) => a === '?' ? 1 : b === '?' ? -1 : Number(a) - Number(b));
   const brebisParAgeHtml = agesKeys.map(k => `<div class="history-item"><div class="content">${k === '?' ? 'Âge inconnu' : k + ' an(s)'} — ${agesCount[k]} brebis</div></div>`).join('');
 
+  // Correctif de l'audit "Changement de campagne" (point 3) : la date du
+  // jour, comparée au seuil configuré (1er octobre par défaut) -- jamais un
+  // blocage pur (un besoin réel peut exister de démarrer en avance), mais
+  // une confirmation explicite supplémentaire qui verrouille le bouton
+  // "Valider" tant qu'elle n'est pas cochée.
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+  const avantSeuil = estAvantSeuilCampagne(aujourdhui);
+  const avantSeuilHtml = !avantSeuil ? '' : `
+    <div class="card" style="border-color:var(--danger);">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;color:var(--danger);">Avant la date habituelle</div>
+      <div style="font-size:13px;margin-bottom:8px;">La campagne démarre normalement le ${campagneDateDebutLabel()} — valider maintenant clôt la campagne en cours plus tôt que d'habitude.</div>
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);margin-bottom:0;">
+        <input type="checkbox" id="f-avant-seuil-confirm" style="width:16px;height:16px;margin-top:1px;flex-shrink:0;">
+        <span>Je confirme vouloir démarrer la campagne suivante maintenant, avant le ${campagneDateDebutLabel()}</span>
+      </label>
+    </div>`;
+
   app.innerHTML = `
+    ${avantSeuilHtml}
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Agnelles → brebis (${agnelles.length})</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Ces agnelles rejoindront le troupeau de brebis actives.</div>
@@ -20588,10 +20850,15 @@ function renderConfirmationNouvelleCampagne() {
       <div style="font-size:13px;color:var(--text-muted);">Un fichier <code>ovilog_backup_AAAAMMJJ_HHMMSS.json</code> sera automatiquement créé au moment de la validation, avant toute modification — filet de sécurité silencieux.</div>
     </div>
     <div id="confirmation-campagne-err" class="error-box hidden" style="margin-bottom:12px;"></div>
-    <button class="btn btn-primary" id="btn-confirmer-nouvelle-campagne" style="background:var(--accent);margin-bottom:10px;">Valider le changement de campagne</button>
+    <button class="btn btn-primary" id="btn-confirmer-nouvelle-campagne" style="background:var(--accent);margin-bottom:10px;" ${avantSeuil ? 'disabled' : ''}>Valider le changement de campagne</button>
     <button class="btn btn-secondary" id="btn-annuler-nouvelle-campagne">Annuler</button>
   `;
 
+  if (avantSeuil) {
+    document.getElementById('f-avant-seuil-confirm').onchange = (e) => {
+      document.getElementById('btn-confirmer-nouvelle-campagne').disabled = !e.target.checked;
+    };
+  }
   document.getElementById('btn-annuler-nouvelle-campagne').onclick = () => render('parametres');
   document.getElementById('btn-confirmer-nouvelle-campagne').onclick = async () => {
     const btn = document.getElementById('btn-confirmer-nouvelle-campagne');
@@ -20600,16 +20867,53 @@ function renderConfirmationNouvelleCampagne() {
     btn.disabled = true;
     const originalLabel = btn.textContent;
     btn.textContent = 'Sauvegarde en cours...';
-    const ok = await executerChangementCampagne();
-    if (!ok) {
-      errBox.textContent = "La sauvegarde automatique a échoué — le changement de campagne a été annulé, aucune donnée n'a été modifiée. Réessaie (vérifie l'espace de stockage disponible) ou contacte le support si le problème persiste.";
+    const activesAvant = activesConcernees.length;
+    const agnellesAvant = agnelles.length;
+    const result = await executerChangementCampagne();
+    if (!result.ok) {
+      // Message qui nomme la vraie cause (correctif de l'audit) -- jamais le
+      // texte générique "vérifie l'espace de stockage", qui ne l'est pas
+      // toujours (voir writeAutoBackupFile). Dans les deux cas (sauvegarde
+      // échouée ou incohérence détectée), rien n'a été modifié dans DB.
+      errBox.textContent = 'Changement de campagne annulé, aucune donnée n\'a été modifiée — ' + result.raison + '.' + (result.detail ? ' (' + JSON.stringify(result.detail) + ')' : '') + ' Réessaie ou contacte le support si le problème persiste.';
       errBox.classList.remove('hidden');
       btn.disabled = false;
       btn.textContent = originalLabel;
       return;
     }
-    render('parametres');
+    renderResultatNouvelleCampagne(activesAvant, agnellesAvant, result.agnellesEnConflit);
   };
+}
+
+/* Écran affiché juste après une bascule réussie -- correctif de l'audit
+   "Changement de campagne" (point 8) : remplace le retour silencieux et
+   immédiat vers Paramètres par une relecture chiffrée avant/après, pour que
+   toute anomalie future (même passée au travers des autres correctifs) saute
+   aux yeux immédiatement plutôt que d'être découverte des jours plus tard
+   sur l'accueil. Les agnelles écartées pour cause de doublon d'EID (voir
+   executerChangementCampagne) sont listées explicitement : elles restent
+   dans DB.agnelles, à traiter à la main. */
+function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnConflit) {
+  pageTitle.textContent = 'Changement de campagne effectué';
+  const activesApres = DB.brebis.filter(s => (s.statut || 'active') === 'active').length;
+  const attendu = activesAvant + agnellesAvant - agnellesEnConflit.length;
+  const conflitHtml = agnellesEnConflit.length === 0 ? '' : `
+    <div class="card" style="border-color:var(--danger);">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;color:var(--danger);">${agnellesEnConflit.length} agnelle(s) non basculée(s)</div>
+      <div style="font-size:13px;margin-bottom:8px;">EID déjà utilisé ailleurs -- restées dans l'inventaire Agnelles, à résoudre à la main.</div>
+      ${agnellesEnConflit.map(c => `<div class="history-item"><div class="content">n°${numeroVisuel(c.eid)} — ${c.conflit.statutLabel}</div></div>`).join('')}
+    </div>`;
+  app.innerHTML = `
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Brebis actives</div>
+      <div style="font-size:20px;font-weight:700;">${activesAvant} → ${activesApres}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">${agnellesAvant} agnelle(s) basculée(s)${agnellesEnConflit.length ? ' (' + agnellesEnConflit.length + ' écartée(s), voir ci-dessous)' : ''} — ${activesApres === attendu ? 'conforme à l\'attendu.' : 'ÉCART INATTENDU avec l\'attendu (' + attendu + ') — vérifie le Registre et contacte le support.'}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">Besoin de revenir en arrière ? Paramètres > Campagne propose de restaurer l'état d'avant cette bascule.</div>
+    </div>
+    ${conflitHtml}
+    <button class="btn btn-primary" id="btn-continuer-resultat-campagne">Continuer</button>
+  `;
+  document.getElementById('btn-continuer-resultat-campagne').onclick = () => render('parametres');
 }
 
 /* ---------- Écran Paramètres : 5 onglets (chantier "Refonte de l'écran
@@ -20936,6 +21240,17 @@ function renderParametresImports(content) {
 
 /* ---------- Onglet Campagne ---------- */
 function renderParametresCampagne(content) {
+  // Correctif de l'audit "Changement de campagne" (point 2) : bouton
+  // conditionnel, uniquement affiché tant qu'un point de restauration
+  // interne existe (posé juste avant chaque bascule, voir
+  // ecrireSnapshotPreCampagne/executerChangementCampagne) -- disparaît une
+  // fois utilisé (restaurerSnapshotPreCampagne l'efface).
+  const snapshotPreCampagne = lireSnapshotPreCampagne();
+  const snapshotPreCampagneHtml = !snapshotPreCampagne ? '' : `
+    <div style="margin-top:10px;padding:10px;border:1px solid var(--danger);border-radius:10px;">
+      <div style="font-size:12.5px;color:var(--text);margin-bottom:8px;">Point de restauration disponible : état d'avant la dernière bascule (${formatDateFr(snapshotPreCampagne.date.slice(0,10))}, ${snapshotPreCampagne.resume}).</div>
+      <button type="button" class="btn btn-secondary" id="btn-restaurer-pre-campagne" style="color:var(--danger);border-color:var(--danger);width:100%;">Restaurer l'état d'avant bascule</button>
+    </div>`;
   const cardsHtml = `
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Date de démarrage de la campagne</div>
@@ -20992,6 +21307,7 @@ function renderParametresCampagne(content) {
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Changement de campagne</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? ('Campagne ' + (DB.campagneDebut + 1) + ' (' + campagneDateDebutLabel() + ' ' + DB.campagneDebut + ' au ' + campagneDateFinLabel() + ' ' + (DB.campagneDebut + 1) + ')') : 'non définie'}. À déclencher le ${campagneDateDebutLabel()} : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis. Un écran de vérification détaillé s'affiche avant toute validation.</div>
       <button class="btn btn-secondary" id="btn-nouvelle-campagne" style="color:var(--danger);border-color:var(--danger);">Démarrer une nouvelle campagne</button>
+      ${snapshotPreCampagneHtml}
     </div>
   `;
   content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
@@ -21060,6 +21376,14 @@ function renderParametresCampagne(content) {
   // simple confirm() natif — l'exécution réelle est dans
   // executerChangementCampagne(), déclenchée depuis cet écran.
   document.getElementById('btn-nouvelle-campagne').onclick = () => render('confirmation-nouvelle-campagne');
+  const btnRestaurerPreCampagne = document.getElementById('btn-restaurer-pre-campagne');
+  if (btnRestaurerPreCampagne) {
+    btnRestaurerPreCampagne.onclick = () => {
+      if (!confirm('Restaurer l\'état d\'avant la dernière bascule (' + snapshotPreCampagne.resume + ') ? Toute donnée saisie DEPUIS cette bascule sera perdue. Cette action se propage aussi au cloud et aux autres appareils, comme un import de sauvegarde.')) return;
+      if (restaurerSnapshotPreCampagne()) render('parametres');
+      else alert("Aucun point de restauration disponible (peut-être déjà utilisé).");
+    };
+  }
 }
 
 /* ---------- Onglet Sauvegarde ---------- */
@@ -21125,12 +21449,11 @@ function renderParametresSauvegarde(content) {
         // executerChangementCampagne) : si elle échoue, l'import est
         // bloqué plutôt que de risquer d'écraser des données sans aucun
         // filet.
-        const backupDate = new Date();
-        const backupFilename = nomFichierBackupAuto(backupDate);
+        const backupFilename = nomFichierBackupAuto(new Date());
         const backupResume = resumeContenuSauvegarde(DB);
-        const backupOk = await writeAutoBackupFile(backupFilename, bytesBackupAuto(DB, backupDate));
-        if (!backupOk) {
-          alert("Import annulé : la sauvegarde automatique de tes données actuelles a échoué (avant de les remplacer). Réessaie, ou exporte-les manuellement d'abord.");
+        const backup = await writeAutoBackupFile(backupFilename, DB, { proposerPartage: true });
+        if (!backup.ok) {
+          alert("Import annulé : la sauvegarde automatique de tes données actuelles a échoué (avant de les remplacer) -- " + backup.raison + ". Réessaie, ou exporte-les manuellement d'abord.");
           return;
         }
         await purgeOldAutoBackups(); // roulement : ne garde que les BACKUP_AUTO_MAX plus récentes
@@ -22121,7 +22444,8 @@ import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
   onAuthStateChanged, signOut,
   initializeFirestore, persistentLocalCache, persistentSingleTabManager,
-  collection, doc, setDoc, updateDoc, deleteDoc, getDoc, onSnapshot, arrayUnion
+  collection, doc, setDoc, updateDoc, deleteDoc, getDoc, onSnapshot, arrayUnion,
+  writeBatch
 } from './vendor/firebase.bundle.js';
 
 const firebaseConfig = {
@@ -22237,7 +22561,17 @@ function buildUpdatePayload(oldRec, newRec) {
   return Object.keys(updates).length ? updates : null;
 }
 
-async function syncAnimalCollection(colName, records) {
+/* Construit la liste des opérations Firestore pour une collection, SANS
+   rien envoyer (voir commitOpsInBatches/syncAllToCloud ci-dessous) --
+   correctif de l'audit "Changement de campagne" (point 4) : l'ancienne
+   version enchaînait un setDoc/updateDoc/deleteDoc par enregistrement,
+   attendu individuellement (des centaines d'allers-retours séquentiels pour
+   une bascule de campagne), ce qui exposait un instantané onSnapshot
+   partiel pendant toute la durée de l'opération -- exactement le mécanisme
+   à l'origine du bug réel du 29/09 (29 doublons). Un writeBatch commité en
+   un seul envoi élimine cette fenêtre : soit tout l'état d'une bascule
+   arrive d'un coup côté Firestore, soit rien n'arrive encore. */
+function buildAnimalCollectionOps(colName, records, ops) {
   const colRef = collection(fbDb, 'users', sync.uid, colName);
   const lastMap = sync.lastSynced[colName];
   const seenIds = new Set();
@@ -22247,37 +22581,57 @@ async function syncAnimalCollection(colName, records) {
     seenIds.add(rec.id);
     const old = lastMap[rec.id];
     if (old === undefined) {
-      await setDoc(doc(colRef, rec.id), rec);
+      ops.push({ type: 'set', ref: doc(colRef, rec.id), data: rec });
     } else {
       const payload = buildUpdatePayload(old, rec);
-      if (payload) await updateDoc(doc(colRef, rec.id), payload);
+      if (payload) ops.push({ type: 'update', ref: doc(colRef, rec.id), data: payload });
     }
     lastMap[rec.id] = rec;
   }
   for (const id of Object.keys(lastMap)) {
     if (!seenIds.has(id)) {
-      await deleteDoc(doc(colRef, id));
+      ops.push({ type: 'delete', ref: doc(colRef, id) });
       delete lastMap[id];
     }
   }
 }
 
-async function syncMeta(data) {
+function buildMetaOp(data, ops) {
   const metaRecord = {};
   META_FIELDS.forEach(k => { metaRecord[k] = deepClean(data[k]); });
   const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
   if (sync.lastSynced.meta === undefined) {
-    await setDoc(metaRef, metaRecord);
+    ops.push({ type: 'set', ref: metaRef, data: metaRecord });
   } else {
     const payload = buildUpdatePayload(sync.lastSynced.meta, metaRecord);
-    if (payload) await updateDoc(metaRef, payload);
+    if (payload) ops.push({ type: 'update', ref: metaRef, data: payload });
   }
   sync.lastSynced.meta = metaRecord;
 }
 
+// Limite Firestore : 500 opérations par writeBatch. Découpe en plusieurs
+// batches si besoin (chacun atomique individuellement) -- un dépassement de
+// cette limite reste extrêmement improbable en usage réel (un compte avec
+// plusieurs centaines d'animaux ET un changement massif simultané), mais ne
+// doit jamais planter silencieusement.
+const FIRESTORE_BATCH_MAX = 500;
+async function commitOpsInBatches(ops) {
+  for (let i = 0; i < ops.length; i += FIRESTORE_BATCH_MAX) {
+    const batch = writeBatch(fbDb);
+    ops.slice(i, i + FIRESTORE_BATCH_MAX).forEach(op => {
+      if (op.type === 'set') batch.set(op.ref, op.data);
+      else if (op.type === 'update') batch.update(op.ref, op.data);
+      else if (op.type === 'delete') batch.delete(op.ref);
+    });
+    await batch.commit();
+  }
+}
+
 async function syncAllToCloud(data) {
-  for (const col of DOC_COLLECTIONS) await syncAnimalCollection(col, data[col]);
-  await syncMeta(data);
+  const ops = [];
+  for (const col of DOC_COLLECTIONS) buildAnimalCollectionOps(col, data[col], ops);
+  buildMetaOp(data, ops);
+  if (ops.length) await commitOpsInBatches(ops);
 }
 
 // Remplace la sauvegarde locale-uniquement par une version qui écrit aussi
@@ -22316,6 +22670,34 @@ function applyRemoteUpdate(mutatorFn) {
   }
 }
 
+/* Report des instantanés Firestore pendant une opération groupée locale
+   (voir operationGroupeeEnCours, posé par executerChangementCampagne) --
+   correctif de l'audit "Changement de campagne" (point 3) : un onSnapshot
+   qui se déclenche PENDANT une telle opération peut porter un état encore
+   partiel côté Firestore (la bascule est en train d'y être écrite) ; lui
+   laisser remplacer DB[colName]/DB à ce moment-là, PUIS redessiner l'écran
+   (render(currentView), qui peut recréer un bouton "Valider" actif si
+   l'écran affiché est encore celui de confirmation), est exactement le
+   mécanisme à l'origine du bug réel du 29/09/2026. Le dernier instantané
+   reçu par collection est gardé de côté et appliqué d'un coup, une seule
+   fois, dès que l'opération groupée se termine (voir
+   window.drainPendingRemoteUpdates, appelé depuis executerChangementCampagne). */
+let pendingRemoteUpdates = {};
+function applyOrQueueRemoteUpdate(key, mutatorFn) {
+  if (typeof operationGroupeeEnCours !== 'undefined' && operationGroupeeEnCours) {
+    pendingRemoteUpdates[key] = mutatorFn;
+    return;
+  }
+  applyRemoteUpdate(mutatorFn);
+}
+window.drainPendingRemoteUpdates = function drainPendingRemoteUpdates() {
+  const keys = Object.keys(pendingRemoteUpdates);
+  if (!keys.length) return;
+  const mutators = keys.map(k => pendingRemoteUpdates[k]);
+  pendingRemoteUpdates = {};
+  applyRemoteUpdate(() => { mutators.forEach(m => m()); });
+};
+
 function startListeners() {
   DOC_COLLECTIONS.forEach(colName => {
     const colRef = collection(fbDb, 'users', sync.uid, colName);
@@ -22350,7 +22732,7 @@ function startListeners() {
           });
         });
       }
-      applyRemoteUpdate(() => { DB[colName] = arr; });
+      applyOrQueueRemoteUpdate(colName, () => { DB[colName] = arr; });
     }, err => console.error('Erreur d\'écoute Firestore (' + colName + ') :', err));
     sync.unsubscribers.push(unsub);
   });
@@ -22372,7 +22754,7 @@ function startListeners() {
     if (!snap.exists()) return;
     const meta = snap.data();
     sync.lastSynced.meta = deepClean(meta);
-    applyRemoteUpdate(() => { Object.assign(DB, meta); });
+    applyOrQueueRemoteUpdate('meta', () => { Object.assign(DB, meta); });
     if (!premierInstantaneMetaRecu) {
       premierInstantaneMetaRecu = true;
       syncAllToCloud(DB).catch(e => console.error('Erreur de synchronisation initiale :', e));
