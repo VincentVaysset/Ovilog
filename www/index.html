@@ -17072,6 +17072,138 @@ async function writeAutoBackupFile(filename, data, { proposerPartage = false } =
   }
 }
 
+/* ---------- Export visible (sélecteur système, SAF) ----------
+   Chantier "Export SAF" : BACKUP_AUTO_DIRECTORY (getExternalFilesDir) est un
+   dossier app-scoped, masqué par le gestionnaire de fichiers depuis Android
+   11 -- le fichier qui y est écrit est vérifié mais JAMAIS accessible à
+   l'éleveur, et la feuille de partage lancée en tâche de fond (voir
+   partagerFichierBackup) échoue en silence. Pour toute opération qui modifie
+   les données (bascule, nettoyage du registre), la sauvegarde n'est donc
+   considérée comme valide que si l'éleveur l'a enregistrée à un emplacement
+   de SON choix via le plugin natif FileSaver (ACTION_CREATE_DOCUMENT), puis
+   relue via l'URI obtenue. Jamais de contenu dans l'appel natif : le fichier
+   est écrit avant par Filesystem, FileSaver ne reçoit que son nom (voir
+   FileSaverPlugin.java : l'état d'instance Android est limité en taille). */
+const EXPORT_EN_COURS_KEY = 'ovilog_export_en_cours';
+function pluginFileSaver() {
+  return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FileSaver) || null;
+}
+function compteursSauvegarde(data) {
+  const n = arr => (arr || []).length;
+  return { brebis: n(data.brebis), beliers: n(data.beliers), agnelles: n(data.agnelles) };
+}
+/* Marqueur posé pendant que le sélecteur système est au premier plan. Si
+   l'activité Android est détruite puis recréée (mémoire, "ne pas conserver
+   les activités"), tout l'état JS est perdu : au rechargement, ce marqueur
+   encore présent prouve qu'un export a été interrompu AVANT la moindre
+   modification (voir verifierExportInterrompu) -- aucun verrou ni état
+   intermédiaire ne survit à un rechargement, tous sont en mémoire. */
+function poserMarqueurExport(fileName) {
+  try { localStorage.setItem(EXPORT_EN_COURS_KEY, JSON.stringify({ fileName, date: new Date().toISOString() })); } catch (e) { /* ignoré */ }
+}
+function effacerMarqueurExport() {
+  try { localStorage.removeItem(EXPORT_EN_COURS_KEY); } catch (e) { /* ignoré */ }
+}
+function verifierExportInterrompu() {
+  let marqueur = null;
+  try { marqueur = localStorage.getItem(EXPORT_EN_COURS_KEY); } catch (e) { return; }
+  if (!marqueur) return;
+  effacerMarqueurExport();
+  setTimeout(() => {
+    if (typeof showToast === 'function') {
+      showToast("Un export de sauvegarde a été interrompu (l'appli a été rechargée pendant le sélecteur de fichiers). Aucune donnée n'a été modifiée : relance l'opération.");
+    }
+  }, 800);
+}
+/* Copie un fichier déjà écrit côté appli vers un emplacement choisi par
+   l'éleveur, puis le RELIT via l'URI obtenue. Retourne toujours
+   { ok, cancelled?, raison?, uri?, nom?, taille? } -- jamais d'exception.
+   `verifierCompteurs` (facultatif, JSON de sauvegarde) : compteurs
+   { brebis, beliers, agnelles } attendus, comparés à ceux du fichier relu. */
+async function exporterFichierVisible({ directory, path, fileName, mimeType, verifierCompteurs = null, supprimerSource = false }) {
+  const FileSaver = pluginFileSaver();
+  if (!FileSaver) {
+    return { ok: false, raison: "le module d'export visible est absent de cette version de l'appli (installe la dernière version)" };
+  }
+  poserMarqueurExport(fileName);
+  try {
+    let res;
+    try {
+      res = await FileSaver.saveAs({ directory, path, fileName, mimeType, deleteSource: supprimerSource });
+    } catch (e) {
+      return { ok: false, raison: "l'export a échoué (" + (e && e.message ? e.message : 'erreur inconnue') + ')' };
+    }
+    if (res && res.cancelled) return { ok: false, cancelled: true, raison: "tu as fermé le sélecteur de fichiers sans enregistrer" };
+    if (!res || !res.ok) return { ok: false, raison: (res && res.raison) || "l'export a échoué (réponse inattendue)" };
+    if (!res.uri || !(res.taille > 0)) return { ok: false, raison: "le fichier enregistré est vide ou son emplacement est inconnu" };
+
+    // Relecture indépendante via l'URI (en plus de la vérification faite côté
+    // natif juste après l'écriture) : taille identique, et pour le JSON de
+    // sauvegarde, mêmes compteurs que la base au moment de la sérialisation.
+    let relu;
+    try {
+      relu = await FileSaver.readUri({ uri: res.uri, asText: !!verifierCompteurs });
+    } catch (e) {
+      return { ok: false, raison: "la relecture du fichier enregistré a échoué (" + (e && e.message ? e.message : 'erreur inconnue') + ')' };
+    }
+    if (!relu || !relu.ok) return { ok: false, raison: "la relecture du fichier enregistré a échoué (" + ((relu && relu.raison) || 'réponse inattendue') + ')' };
+    if (!(relu.taille > 0)) return { ok: false, raison: 'le fichier relu est vide' };
+    if (relu.taille !== res.taille) return { ok: false, raison: 'la taille relue (' + relu.taille + ' octets) diffère de la taille écrite (' + res.taille + ' octets)' };
+    if (verifierCompteurs) {
+      let parsed;
+      try { parsed = JSON.parse(relu.texte); }
+      catch (e) { return { ok: false, raison: 'le fichier relu est illisible (JSON invalide)' }; }
+      const obtenu = compteursSauvegarde(parsed);
+      if (obtenu.brebis !== verifierCompteurs.brebis || obtenu.beliers !== verifierCompteurs.beliers || obtenu.agnelles !== verifierCompteurs.agnelles) {
+        return { ok: false, raison: 'les compteurs du fichier relu (' + JSON.stringify(obtenu) + ') ne correspondent pas à ceux de la base (' + JSON.stringify(verifierCompteurs) + ')' };
+      }
+    }
+    return { ok: true, uri: res.uri, nom: res.nom || null, taille: relu.taille };
+  } finally {
+    effacerMarqueurExport();
+  }
+}
+/* LA sauvegarde utilisée avant toute opération qui modifie les données
+   (bascule, nettoyage du registre, bouton "Tester la sauvegarde") :
+   1) copie interne app-scoped écrite, relue et vérifiée (writeAutoBackupFile,
+      inchangé -- filet rapide, détecte stockage plein/corrompu) ;
+   2) sur l'app Android, export visible via le sélecteur système, relu via
+      l'URI. L'appelant ne doit modifier AUCUNE donnée tant que ok !== true.
+   Sur navigateur/Bureau (pas de Filesystem natif), writeAutoBackupFile a déjà
+   déclenché un téléchargement : seul ce que le navigateur permet est vérifiable
+   (mode:'telechargement'), comme avant ce chantier.
+   Retourne { ok, interneOk, cancelled?, raison?, mode?, visible? }. */
+async function sauvegardeVisibleAvantMutation(filename, data) {
+  const attendu = compteursSauvegarde(data); // même instant que la sérialisation de writeAutoBackupFile
+  const interne = await writeAutoBackupFile(filename, data);
+  if (!interne.ok) return { ok: false, interneOk: false, raison: interne.raison };
+  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!Filesystem) return { ok: true, interneOk: true, mode: 'telechargement' };
+  const visible = await exporterFichierVisible({
+    directory: BACKUP_AUTO_DIRECTORY, path: filename, fileName: filename, mimeType: 'application/json', verifierCompteurs: attendu
+  });
+  if (!visible.ok) return { ok: false, interneOk: true, cancelled: !!visible.cancelled, raison: visible.raison };
+  return { ok: true, interneOk: true, mode: 'saf', visible };
+}
+/* Partage à la demande (bouton "Partager le fichier") d'un fichier présent
+   dans BACKUP_AUTO_DIRECTORY. Contrairement à partagerFichierBackup (tâche de
+   fond, erreurs avalées), retourne { ok, cancelled?, raison? } pour que
+   l'écran affiche exactement ce qui s'est passé. */
+async function partagerFichierExistant(filename) {
+  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  const Share = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Share;
+  if (!Filesystem || !Share) return { ok: false, raison: "le partage n'est disponible que dans l'appli installée sur téléphone" };
+  try {
+    const { uri } = await Filesystem.getUri({ path: filename, directory: BACKUP_AUTO_DIRECTORY });
+    await Share.share({ url: uri, title: filename, dialogTitle: 'Partager la sauvegarde (Drive, e-mail, fichiers...)' });
+    return { ok: true };
+  } catch (e) {
+    const msg = e && e.message ? e.message : 'erreur inconnue';
+    if (/cancel/i.test(msg)) return { ok: false, cancelled: true, raison: 'partage annulé' };
+    return { ok: false, raison: msg };
+  }
+}
+
 /* ---------- Roulement des sauvegardes automatiques locales ----------
    Chantier "Sauvegarde locale automatique" : ne garde que les
    BACKUP_AUTO_MAX (3) fichiers ovilog_backup_*.json les plus récents dans
@@ -20858,11 +20990,12 @@ function journaliserArchivageRegistre(action, resultat) {
      1. État complet AVANT mutation gardé en mémoire (deepClone de DB), pour
         une restauration immédiate et fiable au point 4 si besoin -- ne
         dépend pas de la réussite d'une lecture de fichier.
-     2. Sauvegarde JSON automatique et silencieuse de toute la base, relue
-        et vérifiée (taille, compteurs) avant de continuer — voir
-        writeAutoBackupFile — puis feuille de partage native proposée (Drive,
-        fichiers...) pour que ce fichier soit récupérable hors de l'appareil
-        (dossier app-scoped, invisible ailleurs sur Android 11+). Un second
+     2. Sauvegarde JSON de toute la base : copie interne relue et vérifiée
+        (taille, compteurs) PUIS, sur Android, export visible via le
+        sélecteur système "Enregistrer sous", relu via l'URI (taille,
+        compteurs) -- voir sauvegardeVisibleAvantMutation. Le dossier interne
+        est app-scoped, invisible ailleurs sur Android 11+ : sans export
+        visible, la sauvegarde n'est pas considérée comme valide. Un second
         point de restauration purement interne (localStorage, jamais
         synchronisé) est aussi posé -- voir ecrireSnapshotPreCampagne et le
         bouton "Restaurer l'état d'avant bascule" de Paramètres > Campagne.
@@ -20895,8 +21028,15 @@ async function executerChangementCampagne() {
     // sert de filet de restauration immédiate au point 4 (voir plus bas).
     const avant = JSON.parse(JSON.stringify(DB));
 
-    const backup = await writeAutoBackupFile(nomFichierBackupAuto(new Date()), DB, { proposerPartage: true });
-    if (!backup.ok) return { ok: false, raison: 'la sauvegarde automatique a échoué : ' + backup.raison };
+    // Sauvegarde interne vérifiée + export visible (sélecteur système) relu :
+    // AVANT toute mutation de DB. Annulation ou échec : on sort ici, rien
+    // n'est modifié, et le finally ci-dessous libère les verrous.
+    const backup = await sauvegardeVisibleAvantMutation(nomFichierBackupAuto(new Date()), DB);
+    if (!backup.ok) {
+      return backup.cancelled
+        ? { ok: false, annule: true, raison: "l'export de la sauvegarde a été annulé (" + backup.raison + ')' }
+        : { ok: false, raison: "la sauvegarde a échoué : " + backup.raison };
+    }
     await purgeOldAutoBackups(); // roulement : ne garde que les BACKUP_AUTO_MAX plus récentes
 
     // Point de restauration interne (voir écran Paramètres > Campagne) --
@@ -21096,7 +21236,9 @@ function renderConfirmationNouvelleCampagne() {
     </div>
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Sauvegarde automatique</div>
-      <div style="font-size:13px;color:var(--text-muted);">Un fichier <code>ovilog_backup_AAAAMMJJ_HHMMSS.json</code> sera automatiquement créé au moment de la validation, avant toute modification — filet de sécurité silencieux.</div>
+      <div style="font-size:13px;color:var(--text-muted);">${pluginFileSaver()
+        ? 'Au moment de la validation, Android va te demander <strong>où enregistrer</strong> un fichier <code>ovilog_backup_AAAAMMJJ_HHMMSS.json</code> (Téléchargements, Drive...) : choisis un emplacement que tu retrouveras. Le fichier est relu pour vérification. Si tu fermes le sélecteur sans enregistrer, <strong>rien n\'est modifié</strong>.'
+        : 'Un fichier <code>ovilog_backup_AAAAMMJJ_HHMMSS.json</code> sera automatiquement créé au moment de la validation, avant toute modification.'}</div>
     </div>
     <div id="confirmation-campagne-err" class="error-box hidden" style="margin-bottom:12px;"></div>
     <button class="btn btn-primary" id="btn-confirmer-nouvelle-campagne" style="background:var(--accent);margin-bottom:10px;" ${avantSeuil ? 'disabled' : ''}>Valider le changement de campagne</button>
@@ -21122,9 +21264,12 @@ function renderConfirmationNouvelleCampagne() {
     if (!result.ok) {
       // Message qui nomme la vraie cause (correctif de l'audit) -- jamais le
       // texte générique "vérifie l'espace de stockage", qui ne l'est pas
-      // toujours (voir writeAutoBackupFile). Dans les deux cas (sauvegarde
-      // échouée ou incohérence détectée), rien n'a été modifié dans DB.
-      errBox.textContent = 'Changement de campagne annulé, aucune donnée n\'a été modifiée — ' + result.raison + '.' + (result.detail ? ' (' + JSON.stringify(result.detail) + ')' : '') + ' Réessaie ou contacte le support si le problème persiste.';
+      // toujours (voir writeAutoBackupFile). Dans tous les cas (sauvegarde
+      // échouée, export annulé ou incohérence détectée), rien n'a été
+      // modifié dans DB.
+      errBox.textContent = result.annule
+        ? 'Changement de campagne annulé, aucune donnée n\'a été modifiée — ' + result.raison + '. Relance « Valider » quand tu veux, et enregistre le fichier de sauvegarde à un emplacement que tu retrouveras (Téléchargements, Drive...).'
+        : 'Changement de campagne annulé, aucune donnée n\'a été modifiée — ' + result.raison + '.' + (result.detail ? ' (' + JSON.stringify(result.detail) + ')' : '') + ' Réessaie ou contacte le support si le problème persiste.';
       errBox.classList.remove('hidden');
       btn.disabled = false;
       btn.textContent = originalLabel;
@@ -21198,6 +21343,9 @@ let parametresTab = 'exploitation';
 // message doit être relu depuis cette variable, pas seulement écrit dans le
 // DOM (repéré par un test de ce chantier).
 let nettoyageRegistreStatusMsg = '';
+let nettoyageRegistreEnCours = false;
+let testSauvegardeEtat = { message: '', partageable: false };
+let testSauvegardeEnCours = false;
 const PARAMETRES_TABS = [
   { key: 'exploitation', label: 'Exploitation' },
   { key: 'listes', label: 'Listes' },
@@ -21623,7 +21771,7 @@ function renderParametresCampagne(content) {
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Nettoyage ponctuel du registre${infoBulleHtml('Nettoyage ponctuel du registre', "Archive dans le registre d'élevage, puis retire des onglets Brebis/Béliers/Mouvements, toute fiche déjà vendue ou morte mais jamais archivée (sortie antérieure à aujourd'hui) -- sans relancer un changement de campagne. À utiliser une fois pour rattraper des sorties anciennes, ou ponctuellement si besoin.")}</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">${cptSortiesNonArchivees} fiche(s) sortie(s) non encore archivée(s) trouvée(s) (${cptSortiesNonArchiveesBrebis} brebis, ${cptSortiesNonArchiveesBeliers} bélier(s)).</div>
       <button class="btn btn-secondary" id="btn-nettoyer-registre" style="color:var(--danger);border-color:var(--danger);" ${cptSortiesNonArchivees === 0 ? 'disabled' : ''}>Nettoyer le registre maintenant</button>
-      <div id="nettoyage-registre-status" style="font-size:12px;margin-top:8px;">${nettoyageRegistreStatusMsg}</div>
+      <div id="nettoyage-registre-status" style="font-size:12px;margin-top:8px;">${xlsxEscape(nettoyageRegistreStatusMsg)}</div>
     </div>
   `;
   content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
@@ -21708,7 +21856,7 @@ function renderParametresCampagne(content) {
   const btnNettoyerRegistreInit = document.getElementById('btn-nettoyer-registre');
   if (btnNettoyerRegistreInit) {
     btnNettoyerRegistreInit.onclick = async () => {
-      if (!confirm(cptSortiesNonArchivees + ' fiche(s) vont être archivées dans le registre puis retirées des onglets Brebis/Béliers/Mouvements. Ferme l\'appli sur tes AUTRES appareils avant de continuer. Une sauvegarde JSON sera créée automatiquement avant. Continuer ?')) return;
+      if (!confirm(cptSortiesNonArchivees + ' fiche(s) vont être archivées dans le registre puis retirées des onglets Brebis/Béliers/Mouvements. Ferme l\'appli sur tes AUTRES appareils avant de continuer. ' + (pluginFileSaver() ? 'Android va d\'abord te demander où enregistrer une sauvegarde JSON (si tu annules, rien n\'est modifié). ' : 'Une sauvegarde JSON sera créée automatiquement avant. ') + 'Continuer ?')) return;
       // Re-interroge le bouton/le statut à CHAQUE mise à jour (jamais une
       // référence capturée une seule fois ici) ET persiste le message dans
       // nettoyageRegistreStatusMsg (pas seulement dans le DOM) :
@@ -21725,28 +21873,44 @@ function renderParametresCampagne(content) {
         nettoyageRegistreStatusMsg = texte;
         if (statusEl()) statusEl().textContent = texte;
       }
-      if (btnNettoyerRegistre()) btnNettoyerRegistre().disabled = true;
-      setStatus('Sauvegarde en cours...');
-      const backup = await writeAutoBackupFile(nomFichierBackupAuto(new Date()), DB, { proposerPartage: true });
-      if (!backup.ok) {
-        setStatus('⚠️ Nettoyage annulé : la sauvegarde automatique a échoué -- ' + backup.raison + '.');
-        if (btnNettoyerRegistre()) btnNettoyerRegistre().disabled = false;
-        return;
+      // Verrou de ré-entrance (en mémoire, libéré par le finally ci-dessous) :
+      // `disabled` sur le bouton ne suffit pas, un re-rendu recrée le bouton.
+      if (nettoyageRegistreEnCours) return;
+      nettoyageRegistreEnCours = true;
+      let desactiverBouton = false;
+      try {
+        if (btnNettoyerRegistre()) btnNettoyerRegistre().disabled = true;
+        setStatus(pluginFileSaver()
+          ? 'Sauvegarde en cours... Android va te demander où enregistrer le fichier.'
+          : 'Sauvegarde en cours...');
+        // Sauvegarde interne vérifiée + export visible relu, AVANT toute
+        // modification du registre ou des fiches. Annulation ou échec :
+        // on s'arrête ici, rien n'est modifié.
+        const backup = await sauvegardeVisibleAvantMutation(nomFichierBackupAuto(new Date()), DB);
+        if (!backup.ok) {
+          setStatus(backup.cancelled
+            ? "⚠️ Nettoyage annulé : l'export de la sauvegarde a été annulé (" + backup.raison + "). Rien n'a été modifié."
+            : '⚠️ Nettoyage annulé : la sauvegarde a échoué -- ' + backup.raison + ". Rien n'a été modifié.");
+          return;
+        }
+        await purgeOldAutoBackups();
+        setStatus('Archivage en cours...');
+        const resultat = await archiverSortiesAnterieures(dateRefNettoyage);
+        journaliserArchivageRegistre('nettoyage_registre', resultat);
+        saveData(DB);
+        let msg = resultat.archives.length + ' fiche(s) archivée(s) et retirée(s).';
+        if (resultat.echecs.length) {
+          msg += ' ' + resultat.echecs.length + ' échec(s) (laissée(s) en place) : ' +
+            resultat.echecs.map(e => 'n°' + numeroVisuel(e.eid) + ' (' + e.raison + ')').join(', ') + '.';
+        }
+        setStatus((resultat.echecs.length ? '⚠️ ' : '✅ ') + msg);
+        // désactivé seulement si tout a réussi (le compteur resterait sinon à
+        // 0 tant que l'écran n'est pas rouvert)
+        desactiverBouton = resultat.archives.length > 0 && resultat.echecs.length === 0;
+      } finally {
+        nettoyageRegistreEnCours = false;
+        if (btnNettoyerRegistre()) btnNettoyerRegistre().disabled = desactiverBouton;
       }
-      await purgeOldAutoBackups();
-      setStatus('Archivage en cours...');
-      const resultat = await archiverSortiesAnterieures(dateRefNettoyage);
-      journaliserArchivageRegistre('nettoyage_registre', resultat);
-      saveData(DB);
-      let msg = resultat.archives.length + ' fiche(s) archivée(s) et retirée(s).';
-      if (resultat.echecs.length) {
-        msg += ' ' + resultat.echecs.length + ' échec(s) (laissée(s) en place) : ' +
-          resultat.echecs.map(e => 'n°' + numeroVisuel(e.eid) + ' (' + e.raison + ')').join(', ') + '.';
-      }
-      setStatus((resultat.echecs.length ? '⚠️ ' : '✅ ') + msg);
-      // désactivé seulement si tout a réussi (le compteur resterait sinon à
-      // 0 tant que l'écran n'est pas rouvert)
-      if (btnNettoyerRegistre()) btnNettoyerRegistre().disabled = resultat.archives.length > 0 && resultat.echecs.length === 0;
     };
   }
 }
@@ -21762,9 +21926,10 @@ function renderParametresSauvegarde(content) {
     </div>
 
     <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Tester la sauvegarde${infoBulleHtml('Tester la sauvegarde', "Écrit un fichier de test sur l'appareil, le relit, vérifie que les effectifs (brebis/béliers/agnelles) correspondent, puis propose de le partager -- ne modifie AUCUNE donnée et ne déclenche jamais de changement de campagne. Fichier de test distinct des vraies sauvegardes automatiques (jamais compté ni supprimé par leur roulement).")}</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Tester la sauvegarde${infoBulleHtml('Tester la sauvegarde', "Fait exactement la même sauvegarde que le changement de campagne et le nettoyage du registre : écrit un fichier de test dans l'espace privé de l'appli (relu et vérifié), puis ouvre le sélecteur de fichiers d'Android pour l'enregistrer à l'emplacement de ton choix, et le relit à cet emplacement. Un bouton « Partager le fichier » reste ensuite disponible. Ne modifie AUCUNE donnée et ne déclenche jamais de changement de campagne. Fichier de test distinct des vraies sauvegardes automatiques (jamais compté ni supprimé par leur roulement).")}</div>
       <button class="btn btn-secondary" id="btn-test-sauvegarde">Tester la sauvegarde</button>
-      <div id="test-sauvegarde-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+      <div id="test-sauvegarde-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;white-space:pre-line;">${xlsxEscape(testSauvegardeEtat.message)}</div>
+      <button class="btn btn-secondary ${testSauvegardeEtat.partageable ? '' : 'hidden'}" id="btn-partager-test" style="margin-top:8px;">Partager le fichier</button>
     </div>
 
     <div class="card">
@@ -21806,24 +21971,58 @@ function renderParametresSauvegarde(content) {
     document.getElementById('import-file').click();
   };
 
-  // "Tester la sauvegarde" (correctif de l'audit, point 3 de la 3e demande) :
-  // réutilise writeAutoBackupFile tel quel (écriture + relecture + vérification
-  // des effectifs + proposition de partage déjà éprouvées par les vraies
-  // sauvegardes automatiques), avec TEST_BACKUP_FILENAME comme SEULE
-  // différence -- jamais un appel à saveData ni à executerChangementCampagne :
-  // aucune donnée n'est modifiée, aucune bascule n'est déclenchée.
-  document.getElementById('btn-test-sauvegarde').onclick = async () => {
-    const btn = document.getElementById('btn-test-sauvegarde');
+  // "Tester la sauvegarde" : exécute EXACTEMENT la même sauvegarde que la
+  // bascule et le nettoyage du registre (sauvegardeVisibleAvantMutation :
+  // copie interne vérifiée + export visible relu), avec TEST_BACKUP_FILENAME
+  // comme SEULE différence -- jamais un appel à saveData ni à
+  // executerChangementCampagne : aucune donnée n'est modifiée, aucune bascule
+  // n'est déclenchée. Le message est persisté dans testSauvegardeEtat (pas
+  // seulement dans le DOM) : un re-rendu de l'écran le régénère sinon vide.
+  // Chaque phrase affichée n'affirme que ce qui a réellement été vérifié.
+  function majTestSauvegarde(message, partageable) {
+    testSauvegardeEtat = { message, partageable };
     const statusEl = document.getElementById('test-sauvegarde-status');
-    btn.disabled = true;
-    statusEl.textContent = 'Test en cours...';
+    const btnPartage = document.getElementById('btn-partager-test');
+    if (statusEl) statusEl.textContent = message;
+    if (btnPartage) btnPartage.classList.toggle('hidden', !partageable);
+  }
+  document.getElementById('btn-test-sauvegarde').onclick = async () => {
+    if (testSauvegardeEnCours) return;
+    testSauvegardeEnCours = true;
+    const btn = () => document.getElementById('btn-test-sauvegarde');
+    if (btn()) btn().disabled = true;
+    majTestSauvegarde(pluginFileSaver() ? 'Test en cours... Android va te demander où enregistrer le fichier.' : 'Test en cours...', false);
     try {
-      const result = await writeAutoBackupFile(TEST_BACKUP_FILENAME, DB, { proposerPartage: true });
-      statusEl.textContent = result.ok
-        ? '✅ Test réussi (' + resumeContenuSauvegarde(DB) + ') — fichier écrit, relu et vérifié.'
-        : '⚠️ Test échoué : ' + result.raison;
+      const res = await sauvegardeVisibleAvantMutation(TEST_BACKUP_FILENAME, DB);
+      const partageable = !!(res.interneOk && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Share);
+      const copieInterne = " Une copie vérifiée existe dans l'espace privé de l'appli (invisible depuis le gestionnaire de fichiers sur Android 11+) : « Partager le fichier » permet de la récupérer.";
+      if (res.ok && res.mode === 'saf') {
+        const v = res.visible;
+        majTestSauvegarde('✅ Test réussi (' + resumeContenuSauvegarde(DB) + ') — fichier enregistré à l\'emplacement que tu as choisi'
+          + (v.nom ? ' (« ' + v.nom + ' »)' : '') + ', puis relu depuis cet emplacement (' + v.taille + ' octets, compteurs identiques à la base).', partageable);
+      } else if (res.ok) {
+        majTestSauvegarde('✅ Test réussi (' + resumeContenuSauvegarde(DB) + ') — fichier écrit, relu et vérifié. Sur navigateur/Bureau, il est téléchargé par le navigateur : son emplacement dépend de celui-ci et ne peut pas être vérifié par l\'appli.', partageable);
+      } else if (res.cancelled) {
+        majTestSauvegarde('⚠️ Export annulé : ' + res.raison + ". Aucun fichier n'a été enregistré à un emplacement visible." + copieInterne, partageable);
+      } else {
+        majTestSauvegarde('⚠️ Test échoué : ' + res.raison + '.' + (res.interneOk ? copieInterne : ''), partageable);
+      }
     } finally {
-      btn.disabled = false;
+      testSauvegardeEnCours = false;
+      if (btn()) btn().disabled = false;
+    }
+  };
+  document.getElementById('btn-partager-test').onclick = async () => {
+    const btnPartage = () => document.getElementById('btn-partager-test');
+    if (btnPartage()) btnPartage().disabled = true;
+    try {
+      const r = await partagerFichierExistant(TEST_BACKUP_FILENAME);
+      const base = testSauvegardeEtat.message.split('\n')[0];
+      if (r.ok) majTestSauvegarde(base + '\nFeuille de partage ouverte.', true);
+      else if (r.cancelled) majTestSauvegarde(base + '\nPartage annulé : aucun envoi.', true);
+      else majTestSauvegarde(base + '\n⚠️ Partage impossible : ' + r.raison + '.', true);
+    } finally {
+      if (btnPartage()) btnPartage().disabled = false;
     }
   };
   document.getElementById('import-file').onchange = (e) => {
@@ -22853,6 +23052,9 @@ btEnsureConnectionListener();
 // -- jamais attendue : ne doit jamais retarder l'affichage de l'accueil,
 // entièrement silencieuse (voir verifierSauvegardeAutoPeriodique).
 verifierSauvegardeAutoPeriodique();
+// Export visible interrompu par un rechargement de l'appli (voir
+// verifierExportInterrompu) : prévient l'éleveur que rien n'a été modifié.
+verifierExportInterrompu();
 // Mises à jour automatiques In-App -- jamais attendue, entièrement
 // silencieuse tant qu'aucune mise à jour n'est trouvée (voir
 // verifierMiseAJourAuDemarrage).

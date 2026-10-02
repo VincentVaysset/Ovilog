@@ -11,6 +11,7 @@ public class MainActivity extends BridgeActivity {
         // ce dernier qui construit le pont Capacitor avec la liste des
         // plugins accumulée jusque-là (voir BridgeActivity.load()).
         registerPlugin(ApkInstallerPlugin.class);
+        registerPlugin(FileSaverPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
