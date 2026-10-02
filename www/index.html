@@ -1167,10 +1167,10 @@ async function exportBackupFile(data, filenamePrefix) {
   // ni <a download> sur une blob: URL ne sont fiables dans la WebView Android
   // packagée (aucun DownloadListener natif configuré) -- un clic "réussi" ne
   // produisait alors rien de visible, sans le moindre message d'erreur
-  // (signalé en usage réel). Corrigé en réutilisant le même pont natif
-  // Capacitor que les autres exports (Registre, PDF), avec sa confirmation
-  // "Fichier enregistré".
-  await saveOrShareBinaryFile(filename, bytes, 'application/json');
+  // (signalé en usage réel). Passe par le même export visible (sélecteur
+  // système + relecture, compteurs brebis/béliers/agnelles comparés) que les
+  // autres exports (Registre, PDF).
+  await saveOrShareBinaryFile(filename, bytes, 'application/json', { verifierCompteurs: compteursSauvegarde(data) });
 }
 
 /* Point de passage unique pour toute écriture des données (~100 appelants
@@ -17111,7 +17111,7 @@ function verifierExportInterrompu() {
   effacerMarqueurExport();
   setTimeout(() => {
     if (typeof showToast === 'function') {
-      showToast("Un export de sauvegarde a été interrompu (l'appli a été rechargée pendant le sélecteur de fichiers). Aucune donnée n'a été modifiée : relance l'opération.");
+      showToast("Un export de fichier a été interrompu (l'appli a été rechargée pendant le sélecteur de fichiers). Aucune donnée n'a été modifiée : relance l'opération.");
     }
   }, 800);
 }
@@ -17207,7 +17207,8 @@ async function partagerFichierExistant(filename) {
 /* ---------- Roulement des sauvegardes automatiques locales ----------
    Chantier "Sauvegarde locale automatique" : ne garde que les
    BACKUP_AUTO_MAX (3) fichiers ovilog_backup_*.json les plus récents dans
-   le dossier Documents, pour ne jamais encombrer le téléphone. Ne touche
+   le dossier interne de l'appli (BACKUP_AUTO_DIRECTORY), pour ne jamais
+   encombrer le téléphone. Ne touche
    JAMAIS aux données elles-mêmes (DB, Firestore) -- uniquement à ces
    copies redondantes sur l'appareil ; la base reste intégralement
    conservée (voir migrateData, qui ne supprime jamais un champ), comme
@@ -17286,23 +17287,26 @@ async function verifierSauvegardeAutoPeriodique() {
   }
 }
 
-/* Confirmation affichée après un enregistrement réussi via le pont natif
-   Capacitor (voir saveOrShareBinaryFile) — indique où retrouver le fichier,
-   la WebView elle-même n'ayant pas de gestionnaire de téléchargements
-   visible pour l'utilisateur. */
-function showFileSavedModal(filename) {
+/* Confirmation affichée après un export réellement vérifié (voir
+   saveOrShareBinaryFile et exporterFichierVisible) : le fichier a été écrit à
+   l'emplacement choisi par l'éleveur dans le sélecteur système, PUIS relu via
+   l'URI obtenue. On ne prétend rien de plus : l'appli ne connaît pas le
+   chemin lisible de cet emplacement (il peut être sur Drive, une carte SD...),
+   elle indique donc seulement comment le retrouver. */
+function showFileSavedModal(nomFichier, taille) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
+  const ko = taille ? ' (' + (taille < 1024 ? taille + ' octets' : Math.round(taille / 1024) + ' Ko') + ')' : '';
   overlay.innerHTML = `
     <div class="modal-card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
         ${iconCircle(ICON_JOURNAL, 'green', 'md')}
         <div>
           <div style="font-weight:700;font-size:15px;">Fichier enregistré</div>
-          <div style="font-size:12px;color:var(--text-muted);word-break:break-all;">${filename}</div>
+          <div style="font-size:12px;color:var(--text-muted);word-break:break-all;">${xlsxEscape(nomFichier)}</div>
         </div>
       </div>
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Le fichier a été enregistré dans le dossier <strong>Documents</strong> de ton téléphone. Ouvre l'application "Fichiers" (ou ton explorateur de fichiers) pour le retrouver et l'ouvrir avec Excel, Google Sheets ou une autre application de tableur.</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Le fichier a été enregistré à l'emplacement que tu as choisi dans le sélecteur de fichiers d'Android, puis relu pour vérifier qu'il est complet${ko}. Pour le retrouver, ouvre l'application que tu as utilisée pour le choisir (Fichiers, Téléchargements, Drive...).</div>
       <button type="button" class="btn btn-primary" id="file-saved-close">Fermer</button>
     </div>
   `;
@@ -17310,40 +17314,56 @@ function showFileSavedModal(filename) {
   overlay.querySelector('#file-saved-close').onclick = () => document.body.removeChild(overlay);
 }
 
-/* Enregistre un fichier binaire généré en mémoire. Priorité au plugin natif
-   @capacitor/filesystem (Directory.Documents) : dans la WebView Android
-   packagée, ni navigator.share() ni <a download> sur une blob: URL ne se
-   sont montrés fiables (aucun DownloadListener natif configuré, et
-   navigator.share n'est pas garanti disponible selon la version de
-   WebView) — écrire directement le fichier via le pont natif Capacitor
-   est la voie recommandée par Capacitor lui-même pour ce cas d'usage.
-   Si le pont natif n'est pas présent (test en navigateur desktop
-   classique, hors app packagée), on retombe sur partage/téléchargement web
-   qui fonctionne normalement dans ce contexte-là. */
-async function saveOrShareBinaryFile(filename, bytes, mimeType) {
+/* Enregistre un fichier binaire généré en mémoire (PDF, tableur, JSON).
+   Sur l'app Android : le fichier est d'abord écrit dans le cache privé de
+   l'appli (@capacitor/filesystem, Directory.Cache) puis copié par le plugin
+   natif FileSaver vers l'emplacement que l'éleveur choisit dans le sélecteur
+   système "Enregistrer sous", et relu depuis cet emplacement (voir
+   exporterFichierVisible). L'ancien chemin (Directory.Documents) est
+   abandonné : cassé par le stockage cloisonné d'Android 10+, il pouvait
+   afficher "enregistré dans Documents" pour un fichier introuvable.
+   Annulation = simple toast (aucun fichier créé) ; échec = message avec la
+   vraie raison, jamais de confirmation non vérifiée. Sur navigateur/Bureau
+   (pas de pont natif), partage/téléchargement web inchangés.
+   Retourne { ok, cancelled?, raison? } (la plupart des appelants l'ignorent).
+   `verifierCompteurs` (facultatif) : compteurs attendus d'un JSON de
+   sauvegarde, comparés à ceux du fichier relu. */
+async function saveOrShareBinaryFile(filename, bytes, mimeType, { verifierCompteurs = null } = {}) {
   const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (Filesystem) {
+    if (!pluginFileSaver()) {
+      const raison = "le module d'export est absent de cette version de l'appli (installe la dernière version)";
+      alert('Export impossible : ' + raison + '.');
+      return { ok: false, raison };
+    }
+    const ext = (filename.match(/\.[A-Za-z0-9]{1,5}$/) || [''])[0];
+    const tmp = 'export_tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) + ext;
     try {
       try {
-        const perm = await Filesystem.checkPermissions();
-        if (perm && perm.publicStorage && perm.publicStorage !== 'granted') {
-          await Filesystem.requestPermissions();
-        }
-      } catch (e) { /* API non implémentée sur cette plateforme (ex: Android 11+, permission obsolète) — on tente l'écriture quand même */ }
-      await Filesystem.writeFile({ path: filename, data: uint8ToBase64(bytes), directory: 'DOCUMENTS' });
-      showFileSavedModal(filename);
-      return;
-    } catch (e) {
-      console.error('Filesystem.writeFile a échoué, on tente le partage/téléchargement web', e);
+        await Filesystem.writeFile({ path: tmp, data: uint8ToBase64(bytes), directory: 'CACHE' });
+      } catch (e) {
+        const raison = "l'écriture du fichier temporaire a échoué (" + (e && e.message ? e.message : 'erreur inconnue') + ')';
+        alert('Export impossible : ' + raison + '.');
+        return { ok: false, raison };
+      }
+      const res = await exporterFichierVisible({ directory: 'CACHE', path: tmp, fileName: filename, mimeType, verifierCompteurs, supprimerSource: true });
+      if (res.ok) showFileSavedModal(res.nom || filename, res.taille);
+      else if (res.cancelled) showToast('Export annulé : aucun fichier enregistré.');
+      else alert('Export non validé : ' + res.raison + ".\n\nSi un fichier a été créé à l'emplacement choisi, ne l'utilise pas : relance l'export.");
+      return res;
+    } finally {
+      // meilleur effort : le natif supprime déjà la source (deleteSource) ;
+      // ceci couvre les échecs survenus avant son appel.
+      try { await Filesystem.deleteFile({ path: tmp, directory: 'CACHE' }); } catch (e) { /* déjà supprimé */ }
     }
   }
   try {
     if (typeof navigator.canShare === 'function' && typeof navigator.share === 'function') {
       const file = new File([bytes], filename, { type: mimeType });
-      if (navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+      if (navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return { ok: true }; }
     }
   } catch (e) {
-    if (e && e.name === 'AbortError') return;
+    if (e && e.name === 'AbortError') return { ok: false, cancelled: true, raison: 'partage annulé' };
   }
   const blob = new Blob([bytes], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -17354,6 +17374,7 @@ async function saveOrShareBinaryFile(filename, bytes, mimeType) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  return { ok: true };
 }
 
 // Libellés courts pour Listéria/Salmonelles dans le récapitulatif imprimé
