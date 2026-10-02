@@ -17252,7 +17252,7 @@ function calculerDatesSoin(p) {
 function datesDuSoin(soin) {
   return calculerDatesSoin({ date: soin && soin.date, dureeJours: soin && soin.dureeJours, delaiLaitJours: soin && soin.delaiLaitJours, delaiViandeJours: soin && soin.delaiViandeJours });
 }
-function jourAujourdhuiISO() { return new Date().toISOString().slice(0, 10); }
+function jourAujourdhuiISO() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }   // jour LOCAL (pas UTC)
 // Un soin est « en délai » tant que la date de reprise (lait) ou de vente (viande) n'est pas atteinte (strictement future)
 function soinSousDelai(soin, aujourdhui) {
   const d = datesDuSoin(soin), t = aujourdhui || jourAujourdhuiISO();
@@ -17370,6 +17370,30 @@ function animalFiltresCarnet(liste, f) {
 function annulerLotSoinsCarnet(lot) {
   lot.soins.forEach(({ animal, soin }) => { animal.sanitaire = (animal.sanitaire || []).filter(x => x !== soin); });
   if (lot.collectifId) DB.traitementsCollectifs = (DB.traitementsCollectifs || []).filter(t => t.id !== lot.collectifId);
+}
+
+/* Tableaux de la page : « En délai d'attente aujourd'hui » = un soin PAR LIGNE dont la reprise du lait ou la vente possible est
+   strictement future (même règle que la pastille de l'écran 2 et que delaiEnCoursAnimal) ; « Derniers soins » = les plus récents,
+   un lot collectif étant regroupé sur une seule ligne. Les anciens soins (sans durée ni délais) s'affichent avec « — ». Fonctions pures. */
+function soinsEnDelaiCarnet(aujourdhui) {
+  const rows = [];
+  animauxEligiblesCarnet().forEach(a => (a.obj.sanitaire || []).forEach(soin => {
+    const r = soinSousDelai(soin, aujourdhui);
+    if (!r.lait && !r.viande) return;
+    const libere = [r.lait ? r.dates.repriseLait : null, r.viande ? r.dates.venteDes : null].filter(Boolean).sort().pop();
+    rows.push({ animal: a, soin, dates: r.dates, lait: r.lait, viande: r.viande, libere });
+  }));
+  return rows.sort((x, y) => x.libere.localeCompare(y.libere) || x.animal.numero.localeCompare(y.animal.numero));
+}
+function derniersSoinsCarnet(n) {
+  const groupes = new Map();
+  animauxEligiblesCarnet().forEach(a => (a.obj.sanitaire || []).forEach((soin, i) => {
+    if (!soin || !soin.date) return;
+    const cle = soin.collectifId || (a.eid + '#' + i);
+    if (!groupes.has(cle)) groupes.set(cle, { cle, soin, animaux: [] });
+    groupes.get(cle).animaux.push(a);
+  }));
+  return Array.from(groupes.values()).sort((x, y) => String(y.soin.date).localeCompare(String(x.soin.date))).slice(0, n || 15);
 }
 
 function renderCarnetSanitairePc() {
@@ -17512,6 +17536,29 @@ function ecranCarnetSoin() {
     E.ecran = 2; render('sanitaire');
   };
   colonneDroite();
+  tableauxCarnet();
+}
+
+// Tableaux sous le formulaire (écran 1)
+function tableauxCarnet() {
+  const cont = document.getElementById('cs-ecran');
+  const fmt = iso => iso ? formatDateFr(iso) : '—';
+  const nom = a => a.court || 'n°' + a.numero;
+  const delai = soinsEnDelaiCarnet();
+  const nAnimaux = new Set(delai.map(r => r.animal.eid)).size;
+  const echappe = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const bloc = document.createElement('div');
+  bloc.id = 'cs-tableaux';
+  bloc.innerHTML = `
+    <div class="card" id="cs-en-delai" style="margin-top:16px;">
+      <div class="pc-cardhead"><div><p class="brd-ttl" style="margin:0;">En délai d'attente aujourd'hui</p><p class="brd-note" style="margin:2px 0 0;">${delai.length ? libAnimaux(nAnimaux) + ' · ' + delai.length + ' soin' + (delai.length > 1 ? 's' : '') + ' dont la reprise du lait ou la vente n\'est pas encore possible' : 'Aucun animal en délai d\'attente.'}</p></div></div>
+      ${delai.length ? `<table class="pc-t"><tr><th class="l">Animal</th><th class="l">Produit</th><th class="l">Dernière administration</th><th class="l">Reprise du lait</th><th class="l">Vente / départ dès le</th><th class="l">Libre le</th></tr>${delai.map(r => `<tr><td class="l">${echappe(nom(r.animal))} <small style="color:var(--text-muted);">${r.animal.categorie}</small></td><td class="l">${echappe(r.soin.produit || r.soin.type)}</td><td class="l">${fmt(r.dates.derniere)}</td><td class="l">${r.lait ? pcPill('warn', fmt(r.dates.repriseLait)) : (r.dates.aucuneAttenteLait ? 'aucune attente' : (r.dates.repriseLait ? fmt(r.dates.repriseLait) + ' <small style="color:var(--text-muted);">(passée)</small>' : '—'))}</td><td class="l">${r.viande ? pcPill('warn', fmt(r.dates.venteDes)) : (r.dates.aucuneAttenteViande ? 'aucune attente' : (r.dates.venteDes ? fmt(r.dates.venteDes) + ' <small style="color:var(--text-muted);">(passée)</small>' : '—'))}</td><td class="l"><b>${fmt(r.libere)}</b></td></tr>`).join('')}</table>` : ''}
+    </div>
+    <div class="card" id="cs-derniers" style="margin-top:16px;">
+      <div class="pc-cardhead"><div><p class="brd-ttl" style="margin:0;">Derniers soins</p><p class="brd-note" style="margin:2px 0 0;">Un traitement collectif est regroupé sur une ligne. « — » : soin ancien, saisi sans durée ni délais.</p></div></div>
+      <table class="pc-t"><tr><th class="l">Date</th><th class="l">Animal(aux)</th><th class="l">Produit</th><th class="l">Dose · voie</th><th class="l">Durée</th><th class="l">Date de fin</th><th class="l">Fait par</th><th class="l">Reprise du lait</th><th class="l">Vente dès le</th></tr>${derniersSoinsCarnet(15).map(g => { const d = datesDuSoin(g.soin), x = g.soin; return `<tr><td class="l">${fmt(x.date)}</td><td class="l">${g.animaux.length > 1 ? libAnimaux(g.animaux.length) : echappe(nom(g.animaux[0]))}</td><td class="l">${echappe(x.produit || x.type || '—')}</td><td class="l">${(x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? x.quantiteCc + ' cc' : (x.dose || '—')) + (x.voie ? ' · ' + echappe(x.voie) : '')}</td><td class="l">${x.dureeJours ? x.dureeJours + ' j' : '—'}</td><td class="l">${fmt(d.derniere)}</td><td class="l">${echappe(x.intervenant || '—')}</td><td class="l">${d.repriseLait ? fmt(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—')}</td><td class="l">${d.venteDes ? fmt(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')}</td></tr>`; }).join('') || '<tr><td colspan="9" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun soin enregistré.</td></tr>'}</table>
+    </div>`;
+  cont.appendChild(bloc);
 }
 
 function ecranCarnetAnimaux() {
