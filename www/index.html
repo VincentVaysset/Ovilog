@@ -4037,6 +4037,17 @@ function bilanDepuisResume(r) {
     anomalies: [], source: r.source, derives: r.derives || RESUME_DERIVES, creeLe: r.creeLe
   };
 }
+/* Bilan à AFFICHER pour la campagne N : les données vivantes s'il y a des mises bas, sinon le résumé figé de
+   cette campagne s'il existe (campagne archivée / antérieure à l'appli), sinon le calcul vivant (vide). */
+function bilanPourAffichage(N) {
+  const vif = bilanReproductionCampagne(N);
+  if (vif.groupes.total.misesBas > 0) return vif;
+  const r = DB.resumesCampagne && DB.resumesCampagne[N];
+  if (r && r.groupes && r.groupes.adultes && r.groupes.antenaises) {
+    try { return bilanDepuisResume(r); } catch (e) { return vif; }
+  }
+  return vif;
+}
 /* Garde de la bascule (voir executerChangementCampagne) : appelée AVANT toute écriture, elle ne
    modifie rien. Retourne { aucune: true } s'il n'y a aucune mise bas à figer (la bascule demande alors
    une décision à l'éleveur), { existe: true } si un résumé existe déjà (jamais écrasé). */
@@ -6543,6 +6554,14 @@ function brdCourbeSvg(semaines) {
   return svg + '</svg>';
 }
 
+// Écart coloré pour un tableau (null si l'un des deux est inconnu) : bonSiHausse décide de la couleur
+function brdEcart(actuel, precedent, { unite, dec, bonSiHausse, neutre }) {
+  if (actuel === null || actuel === undefined || precedent === null || precedent === undefined) return '—';
+  const d = unite === 'pt' ? (actuel - precedent) * 100 : actuel - precedent;
+  if (Math.abs(d) < Math.pow(10, -dec) / 2) return '=';
+  const classe = neutre ? '' : ((bonSiHausse ? d > 0 : d < 0) ? 'brd-bon' : 'brd-mauvais');
+  return `<span class="${classe}">${d > 0 ? '+' : '−'}${fmtDecimal(Math.abs(d), dec)}${unite === 'pt' ? ' pt' : ''}</span>`;
+}
 function brdDelta(actuel, precedent, { unite, dec, bonSiHausse, labelPrec }) {
   if (actuel === null || actuel === undefined || precedent === null || precedent === undefined) return '';
   const d = unite === 'pt' ? (actuel - precedent) * 100 : actuel - precedent;
@@ -6555,9 +6574,9 @@ function bilanReproductionDesktopHtml() {
   const campagnes = campagnesBilanReproduction();
   if (campagnes.length === 0) return `<div class="card"><div class="brd-vide">Aucune campagne définie : renseigne l'année de campagne dans Paramètres pour voir le bilan de reproduction.</div></div>`;
   const N = campagnes.includes(bilanReproductionCampagneAffichee) ? bilanReproductionCampagneAffichee : campagnes[0];
-  const b = bilanReproductionCampagne(N);
+  const b = bilanPourAffichage(N);
   const T = b.groupes.total, AD = b.groupes.adultes, AN = b.groupes.antenaises;
-  const prevB = bilanReproductionCampagne(N - 1);
+  const prevB = bilanPourAffichage(N - 1);
   const prev = prevB.groupes.total.misesBas > 0 ? prevB.groupes.total : null;
   const labelPrec = 'vs campagne ' + (N);
   const e = xlsxEscape;
@@ -6591,7 +6610,7 @@ function bilanReproductionDesktopHtml() {
   const ligne = (cls, label, f, fmt) => `<tr class="${cls}"><td>${label}</td><td>${fmt(f(AD))}</td><td>${fmt(f(AN))}</td><td class="tot">${fmt(f(T))}</td></tr>`;
   const id = v => v;
   let lignes = '';
-  lignes += ligne('', 'Brebis présentes', g => g.presentes, id);
+  lignes += ligne('', 'Brebis présentes', g => g.presentes, v => v === null || v === undefined ? '—' : v);
   lignes += ligne('b', 'Mises bas', g => g.misesBas, id);
   lignes += ligne('i', 'Fertilité (mises bas ÷ présentes)', g => g.fertilite, v => brdPct(v));
   lignes += ligne('i', 'Portées simples', g => g.portees.simples, id);
@@ -6603,6 +6622,7 @@ function bilanReproductionDesktopHtml() {
   lignes += ligne('i', 'Femelles', g => g.nes.femelles, id);
   lignes += ligne('i', 'Mâles', g => g.nes.males, id);
   lignes += ligne('i', 'Morts-nés', g => g.nes.mortNes, id);
+  lignes += ligne('i', 'Agneaux adoptés', g => g.adoptes || 0, id);
   if (T.nes.sexeInvalide > 0) lignes += ligne('i', 'Sexe non renseigné', g => g.nes.sexeInvalide, id);
   lignes += ligne('b', 'Morts après naissance', g => g.mortsApres, id);
   lignes += ligne('b', 'Prolificité', g => g.prolificite, v => brdNum(v));
@@ -6621,8 +6641,8 @@ function bilanReproductionDesktopHtml() {
   const maxSem = sem.reduce((m, w) => w.misesBas > m.misesBas ? w : m, sem[0] || { misesBas: -1 });
   const carteCourbe = `<div class="card">
     <p class="brd-ttl">Mises bas par semaine</p>
-    <p class="brd-note">${sem.length ? 'Semaines lundi-dimanche, S1 = semaine du ' + formatDateFr(sem[0].debut) + ' (première mise bas) · pic en ' + maxSem.semaine + ' : ' + maxSem.misesBas + ' mise' + (maxSem.misesBas > 1 ? 's' : '') + ' bas · ' + sem.length + ' semaine' + (sem.length > 1 ? 's' : '') : 'Semaines lundi-dimanche depuis la première mise bas'}</p>
-    ${brdCourbeSvg(sem)}
+    <p class="brd-note">${b.depuisResume && !b.semainesDisponibles ? 'Non disponible pour cette campagne (absente du résumé saisi)' : sem.length ? 'Semaines lundi-dimanche, S1 = semaine du ' + formatDateFr(sem[0].debut) + ' (première mise bas) · pic en ' + maxSem.semaine + ' : ' + maxSem.misesBas + ' mise' + (maxSem.misesBas > 1 ? 's' : '') + ' bas · ' + sem.length + ' semaine' + (sem.length > 1 ? 's' : '') : 'Semaines lundi-dimanche depuis la première mise bas'}</p>
+    ${b.depuisResume && !b.semainesDisponibles ? '<div class="brd-vide">Courbe hebdomadaire non disponible pour cette campagne.</div>' : brdCourbeSvg(sem)}
   </div>`;
   const totPortees = T.portees.simples + T.portees.doubles + T.portees.triples + T.portees.quatreEtPlus;
   const rangee = (label, n, couleur) => `<div class="brd-porteerow"><span>${label}</span><div class="brd-bar"><div style="width:${totPortees > 0 ? (n / totPortees * 100) : 0}%;background:${couleur};"></div></div><span>${n}</span></div>`;
@@ -6639,7 +6659,7 @@ function bilanReproductionDesktopHtml() {
     <p class="brd-note">Année de naissance déduite de l'EID · fertilité = mises bas ÷ présentes · durée de mise bas = jours entre la première et la dernière mise bas du millésime</p>
     <table class="brd-t"><colgroup><col style="width:26%"><col style="width:13%"><col style="width:13%"><col style="width:20%"><col style="width:13%"><col style="width:15%"></colgroup>
       <tr><th>Millésime</th><th>Présentes</th><th>Mises bas</th><th>Fertilité</th><th>Prolificité</th><th>Durée mise bas</th></tr>
-      ${mill.length ? mill.map(m => `<tr><td>${m.millesime === null ? 'Année inconnue' : m.millesime}${m.antenaises ? '<span class="brd-pill">antenaises</span>' : ''}</td><td>${m.presentes}</td><td>${m.misesBas}</td><td>${brdPct(m.fertilite === null ? null : m.fertilite / 100)}${m.fertilite !== null ? `<span class="brd-fert"><i style="width:${Math.min(100, m.fertilite)}%"></i></span>` : ''}</td><td>${brdNum(m.prolificite)}</td><td>${m.dureeMiseBas !== null ? m.dureeMiseBas + ' j' : '—'}</td></tr>`).join('') : '<tr><td colspan="6" class="brd-vide">Aucune brebis présente.</td></tr>'}
+      ${b.depuisResume && !b.millesimesDisponibles ? '<tr><td colspan="6" class="brd-vide">Détail par millésime non disponible pour cette campagne.</td></tr>' : mill.length ? mill.map(m => `<tr><td>${m.millesime === null ? 'Année inconnue' : m.millesime}${m.antenaises ? '<span class="brd-pill">antenaises</span>' : ''}</td><td>${m.presentes}</td><td>${m.misesBas}</td><td>${brdPct(m.fertilite === null ? null : m.fertilite / 100)}${m.fertilite !== null ? `<span class="brd-fert"><i style="width:${Math.min(100, m.fertilite)}%"></i></span>` : ''}</td><td>${brdNum(m.prolificite)}</td><td>${m.dureeMiseBas !== null ? m.dureeMiseBas + ' j' : '—'}</td></tr>`).join('') : '<tr><td colspan="6" class="brd-vide">Aucune brebis présente.</td></tr>'}
     </table>
   </div>`;
 
@@ -6683,6 +6703,27 @@ function bilanReproductionDesktopHtml() {
     </table>
   </div>`;
 
+  // ---- source des chiffres (résumé) et comparatif avec la campagne précédente
+  const e2 = xlsxEscape;
+  const srcNote = b.depuisResume ? `<div class="brd-alert info" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><span><strong>Chiffres du résumé de la campagne ${b.libelle}</strong> — ${e2((b.source && b.source.libelle) || 'source inconnue')}${b.source && b.source.periodeSource ? ' (période source du ' + formatDateFr(b.source.periodeSource.debut) + ' au ' + formatDateFr(b.source.periodeSource.fin) + ')' : ''}${b.creeLe ? ' · enregistré le ' + formatDateFr(String(b.creeLe).slice(0, 10)) : ''}. Valeurs dérivées, calculées à partir des comptages : ${e2((b.derives || []).join(', '))}.</span><button type="button" class="btn btn-secondary" id="btn-saisie-resume" data-campagne="${N}" style="width:auto;padding:7px 14px;font-size:12.5px;">Remplacer le résumé</button></div>` : '';
+  const cur = T.misesBas > 0 ? T : null;
+  const lc = (lib, f, fmt, opt) => `<tr><td>${lib}</td><td>${cur ? fmt(f(cur)) : '—'}</td><td>${prev ? fmt(f(prev)) : '—'}</td><td>${brdEcart(cur ? f(cur) : null, prev ? f(prev) : null, opt)}</td></tr>`;
+  const entierPlain = v => v === null || v === undefined ? '—' : v;
+  const carteComparatif = `<div class="card">
+    <p class="brd-ttl">Comparatif ${b.libelle} vs ${prevB.libelle}</p>
+    <p class="brd-note">${!prev ? 'Aucun chiffre pour la campagne ' + prevB.libelle + (resumeCampagneSaisi(N - 1) ? '.' : ' : résumé de campagne non saisi (voir le sélecteur de campagne).') : !cur ? 'Les écarts apparaîtront dès les premières mises bas de la campagne ' + b.libelle + '.' : 'Écart = campagne ' + b.libelle + ' − campagne ' + prevB.libelle + (prevB.depuisResume ? ' · campagne ' + prevB.libelle + ' lue dans son résumé (' + e2((prevB.source && prevB.source.libelle) || 'source inconnue') + ')' : '') + '.'}</p>
+    <table class="brd-t"><colgroup><col style="width:34%"><col style="width:22%"><col style="width:22%"><col style="width:22%"></colgroup>
+      <tr><th>Indicateur</th><th>Campagne ${b.libelle}</th><th>Campagne ${prevB.libelle}</th><th>Écart</th></tr>
+      ${lc('Mises bas', g => g.misesBas, entierPlain, { dec: 0, neutre: true })}
+      ${lc('Agneaux nés', g => g.nes.total, entierPlain, { dec: 0, neutre: true })}
+      ${lc('Prolificité', g => g.prolificite, v => brdNum(v), { dec: 2, bonSiHausse: true })}
+      ${lc('Mortinatalité', g => g.mortinatalite, v => brdPct(v, 2), { unite: 'pt', dec: 2, bonSiHausse: false })}
+      ${lc('Mortalité après naissance', g => g.mortaliteApresNaissance, v => brdPct(v, 2), { unite: 'pt', dec: 2, bonSiHausse: false })}
+      ${lc('Mortalité totale', g => g.mortaliteTotale, v => brdPct(v, 2), { unite: 'pt', dec: 2, bonSiHausse: false })}
+      ${lc('Agneaux adoptés', g => g.adoptes || 0, entierPlain, { dec: 0, neutre: true })}
+    </table>
+  </div>`;
+
   // ---- lots IA / Éponge (campagne en cours seulement : ils lisent l'agnelage de la campagne en cours)
   let lots = '';
   if (b.courante) {
@@ -6707,9 +6748,10 @@ function bilanReproductionDesktopHtml() {
         <button type="button" class="btn btn-primary" id="btn-export-bilan-complet-pdf">PDF bilan complet</button>
       </div>
     </div>
-    ${alertes}${taux}
+    ${srcNote}${alertes}${taux}
     ${kpis}
     <div class="brd-grid2">${carteGroupes}<div class="brd-col">${carteCourbe}${cartePortees}</div></div>
+    ${carteComparatif}
     ${carteMillesimes}
     <div class="brd-grid2">${carteMvBrebis}${carteMvAgneaux}</div>
     ${lots}
@@ -19115,7 +19157,7 @@ function buildBilanAgeExactPdfBytes(campagne) {
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
   const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
   // `campagne` (facultatif) : une campagne passée choisie sur la page PC ; absent = campagne en cours, comme avant.
-  const autre = campagne !== undefined && campagne !== null && campagne !== DB.campagneDebut ? bilanReproductionCampagne(campagne) : null;
+  const autre = campagne !== undefined && campagne !== null && campagne !== DB.campagneDebut ? bilanPourAffichage(campagne) : null;
   const campagnePdf = autre ? campagne : DB.campagneDebut;
   const cohort = autre ? { length: autre.population.presentes } : campagneCohortPresente();
   const classement = autre
@@ -19258,9 +19300,9 @@ function buildMultiPagePdfBytes(contents) {
 
 function buildBilanCompletPdfBytes(N) {
   const C = PDF_COULEURS;
-  const b = bilanReproductionCampagne(N);
+  const b = bilanPourAffichage(N);
   const T = b.groupes.total, AD = b.groupes.adultes, AN = b.groupes.antenaises;
-  const prevB = bilanReproductionCampagne(N - 1);
+  const prevB = bilanPourAffichage(N - 1);
   const prev = prevB.groupes.total.misesBas > 0 ? prevB.groupes.total : null;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
   const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
@@ -19336,6 +19378,7 @@ function buildBilanCompletPdfBytes(N) {
 
   // ---- alertes (texte coloré)
   const alertes = [];
+  if (b.depuisResume) alertes.push([C.bleu, 'Chiffres du résumé de la campagne ' + b.libelle + ' - ' + ((b.source && b.source.libelle) || 'source inconnue') + (b.source && b.source.periodeSource ? ' (période source du ' + formatDateFr(b.source.periodeSource.debut) + ' au ' + formatDateFr(b.source.periodeSource.fin) + ')' : '') + '. Valeurs dérivées (calculées) : ' + (b.derives || []).join(', ') + '.']);
   if (b.population.classement.avertissement) alertes.push([C.ambre, 'Attention : ' + b.population.classement.avertissement]);
   if (b.horsBilan.misesBasHorsCohorte > 0) alertes.push([C.bleu, b.horsBilan.misesBasHorsCohorte + ' mise(s) bas de brebis absente(s) de la population de depart (entrees apres le demarrage) comptee(s) dans les totaux, pas dans la fertilite.'.replace(/depart/, 'départ').replace(/entrees apres le demarrage/, 'entrées après le démarrage').replace(/comptee/, 'comptée').replace(/fertilite/, 'fertilité')]);
   if (b.population.classement.sansAnnee > 0) alertes.push([C.bleu, b.population.classement.sansAnnee + " brebis sans année de naissance lisible dans l'EID (ligne « Année inconnue »), rangée(s) avec les brebis."]);
@@ -19370,7 +19413,7 @@ function buildBilanCompletPdfBytes(N) {
   const xG = L, wG = 258, xD = L + 273, wD = LARG - 273;
   const yTop = y;
   const l3 = (cls, label, f, fmt) => ({ b: cls === 'b', i: cls === 'i', cells: [label, fmt(f(AD)), fmt(f(AN)), fmt(f(T))] });
-  const idf = v => String(v);
+  const idf = v => v === null || v === undefined ? '—' : String(v);
   const lg = [
     l3('', 'Brebis présentes', g => g.presentes, idf), l3('b', 'Mises bas', g => g.misesBas, idf),
     l3('i', 'Fertilité', g => g.fertilite, v => pct(v)),
@@ -19378,7 +19421,7 @@ function buildBilanCompletPdfBytes(N) {
   ];
   if (T.portees.quatreEtPlus > 0) lg.push(l3('i', 'Portées de 4 et plus', g => g.portees.quatreEtPlus, idf));
   if (T.sansAgneau > 0) lg.push(l3('i', 'Mises bas sans agneau', g => g.sansAgneau, idf));
-  lg.push(l3('b', 'Agneaux nés', g => g.nes.total, idf), l3('i', 'Femelles', g => g.nes.femelles, idf), l3('i', 'Mâles', g => g.nes.males, idf), l3('i', 'Morts-nés', g => g.nes.mortNes, idf));
+  lg.push(l3('b', 'Agneaux nés', g => g.nes.total, idf), l3('i', 'Femelles', g => g.nes.femelles, idf), l3('i', 'Mâles', g => g.nes.males, idf), l3('i', 'Morts-nés', g => g.nes.mortNes, idf), l3('i', 'Agneaux adoptés', g => g.adoptes || 0, idf));
   if (T.nes.sexeInvalide > 0) lg.push(l3('i', 'Sexe non renseigné', g => g.nes.sexeInvalide, idf));
   lg.push(l3('b', 'Morts après naissance', g => g.mortsApres, idf), l3('b', 'Prolificité', g => g.prolificite, v => num(v)),
     l3('i', 'Mortinatalité', g => g.mortinatalite, v => pct(v, 2)), l3('i', 'Mortalité après naissance', g => g.mortaliteApresNaissance, v => pct(v, 2)),
@@ -19392,7 +19435,7 @@ function buildBilanCompletPdfBytes(N) {
   y = yTop;
   const sem = b.semaines;
   const pic = sem.reduce((m, w) => w.misesBas > m.misesBas ? w : m, sem[0] || { misesBas: -1 });
-  titre(xD, 'Mises bas par semaine', sem.length ? 'S1 = semaine du ' + formatDateFr(sem[0].debut) + ' · pic ' + pic.semaine + ' : ' + pic.misesBas : 'Aucune mise bas datée');
+  titre(xD, 'Mises bas par semaine', sem.length ? 'S1 = semaine du ' + formatDateFr(sem[0].debut) + ' · pic ' + pic.semaine + ' : ' + pic.misesBas : (b.depuisResume && !b.semainesDisponibles ? 'Non disponible pour cette campagne' : 'Aucune mise bas datée'));
   if (sem.length) {
     const hC = 100, x0 = xD + 18, wC = wD - 22, yB = y - hC;
     const maxV = Math.max.apply(null, sem.map(w => w.misesBas).concat([1]));
@@ -19436,7 +19479,18 @@ function buildBilanCompletPdfBytes(N) {
   assurer(40 + 13.5 * Math.min(mill.length + 1, 6));
   titre(L, 'Détail par millésime', "Année de naissance déduite de l'EID · fertilité = mises bas ÷ présentes · durée de mise bas = jours entre la première et la dernière mise bas");
   tableau({ x: L, largeurs: [135, 70, 70, 85, 75, 80], entete: ['Millésime', 'Présentes', 'Mises bas', 'Fertilité', 'Prolificité', 'Durée mise bas'], colTotal: false,
-    lignes: mill.length ? mill.map(m => ({ cells: [m.millesime === null ? 'Année inconnue' : m.millesime + (m.antenaises ? '  (antenaises)' : ''), String(m.presentes), String(m.misesBas), pct(m.fertilite === null ? null : m.fertilite / 100), num(m.prolificite), m.dureeMiseBas !== null ? m.dureeMiseBas + ' j' : '—'] })) : [{ cells: ['Aucune brebis présente', '', '', '', '', ''] }] });
+    lignes: b.depuisResume && !b.millesimesDisponibles ? [{ cells: ['Non disponible pour cette campagne', '', '', '', '', ''] }] : mill.length ? mill.map(m => ({ cells: [m.millesime === null ? 'Année inconnue' : m.millesime + (m.antenaises ? '  (antenaises)' : ''), String(m.presentes), String(m.misesBas), pct(m.fertilite === null ? null : m.fertilite / 100), num(m.prolificite), m.dureeMiseBas !== null ? m.dureeMiseBas + ' j' : '—'] })) : [{ cells: ['Aucune brebis présente', '', '', '', '', ''] }] });
+  y -= 14;
+
+  // ---- comparatif avec la campagne précédente
+  assurer(40 + 13.5 * 5);
+  const cur = T.misesBas > 0 ? T : null;
+  titre(L, 'Comparatif ' + b.libelle + ' vs ' + prevB.libelle, !prev ? 'Aucun chiffre pour la campagne ' + prevB.libelle + (resumeCampagneSaisi(N - 1) ? '.' : ' : résumé de campagne non saisi.') : (!cur ? 'Les écarts apparaîtront dès les premières mises bas de la campagne ' + b.libelle + '.' : 'Écart = campagne ' + b.libelle + ' - campagne ' + prevB.libelle + '.'));
+  const ecartPdf = (a, p, dec, pt) => { if (a === null || a === undefined || p === null || p === undefined) return '—'; const d = pt ? (a - p) * 100 : a - p; return Math.abs(d) < Math.pow(10, -dec) / 2 ? '=' : (d > 0 ? '+' : '-') + fmtDecimal(Math.abs(d), dec) + (pt ? ' pt' : ''); };
+  const lcp = (lib, f, fmt, dec, pt) => ({ cells: [lib, cur ? fmt(f(cur)) : '—', prev ? fmt(f(prev)) : '—', ecartPdf(cur ? f(cur) : null, prev ? f(prev) : null, dec, pt)] });
+  tableau({ x: L, largeurs: [195, 110, 110, 100], colTotal: false, entete: ['Indicateur', 'Campagne ' + b.libelle, 'Campagne ' + prevB.libelle, 'Écart'],
+    lignes: [lcp('Mises bas', g => g.misesBas, String, 0), lcp('Agneaux nés', g => g.nes.total, String, 0), lcp('Prolificité', g => g.prolificite, v => num(v), 2),
+      lcp('Mortinatalité', g => g.mortinatalite, v => pct(v, 2), 2, true), lcp('Mortalité après naissance', g => g.mortaliteApresNaissance, v => pct(v, 2), 2, true), lcp('Mortalité totale', g => g.mortaliteTotale, v => pct(v, 2), 2, true)] });
   y -= 14;
 
   // ---- mouvements des brebis

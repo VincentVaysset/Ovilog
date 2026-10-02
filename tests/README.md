@@ -77,6 +77,7 @@ Sans `URL_AVANT`, seuls les attendus de la version actuelle sont vérifiés.
 | `test_bilan_pdf` | PDF « bilan de reproduction complet » A4 : structure valide (xref), chiffres du bilan du 23/09 relus dans le texte du PDF, campagne passée / vide / grosse campagne, nom de fichier et type MIME, bouton de la page PC, PDF « par âge » d'une campagne passée |
 | `test_resume_campagne` | Résumé de campagne figé (`DB.resumesCampagne`) : aller-retour identique au calcul vivant, adoptés, migrateData, synchro meta vers un 2e appareil, création à la bascule après l'export visible et avant toute modification, jamais écrasé, garde « aucune mise bas » |
 | `test_saisie_resume` | Saisie guidée du résumé 2026 (bilan externe du 23/09) : écran prérempli, valeurs dérivées, taux imprimés retrouvés, incohérences signalées sans correction, rien d'écrit sans confirmation ni export visible, remplacement sur confirmation |
+| `test_comparatif_resume` | Page PC et PDF « bilan complet » : comparaison « 2027 vs 2026 » (écarts des KPI et du tableau comparatif, couleurs), campagne 2026 lue dans son résumé (source, KPI, adoptés 3/1/4, courbe et millésimes « non disponibles », pas d'« allaitement artificiel »), données vivantes prioritaires dès qu'il y a des mises bas, 0 écriture |
 | `test_bilan_mobile_reference` | HTML mobile du bilan comparé octet pour octet à `ref/bilan_mobile.html` (jeu synthétique, référence prise après la règle antenaise ; `OVILOG_MAJ_REF=1` pour la régénérer volontairement) |
 
 ## Ce que ces tests ne couvrent pas

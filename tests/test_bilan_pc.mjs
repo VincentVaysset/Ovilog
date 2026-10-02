@@ -94,16 +94,16 @@ check(courbe.barres.join(',') === '12,38,71,84,63,41,26,15,9,4' && courbe.pic ==
 check(/pic en S4 : 84/.test(courbe.note) && /S1 = semaine du 05-01-2026/.test(courbe.note), 'légende de la courbe : ' + courbe.note);
 const portees = await page.evaluate(() => [...document.querySelectorAll('.brd-porteerow')].map(r => r.textContent.replace(/\s+/g, ' ').trim()));
 check(portees.join('|') === 'Simples299|Doubles64|Triples0', 'répartition des portées (nombres, sans pourcentage) : ' + portees);
-const mill = await page.evaluate(() => [...document.querySelectorAll('.brd-t')[1].querySelectorAll('tr')].slice(1).map(r => [...r.cells].map(c => c.textContent.replace(/\s+/g, ' ').trim())));
+const mill = await page.evaluate(() => [...document.querySelectorAll('.brd-t')[2].querySelectorAll('tr')].slice(1).map(r => [...r.cells].map(c => c.textContent.replace(/\s+/g, ' ').trim())));
 check(mill.length === 3 && mill[0][0].startsWith('2025') && /antenaises/.test(mill[0][0]) && mill[0][1] === '75' && mill[0][2] === '67' && mill[1][0] === '2024' && mill[1].slice(1, 3).join() === '163,148' && mill[2][0] === '2023' && mill[2].slice(1, 3).join() === '163,148', 'détail par millésime (le plus jeune d\'abord, repéré antenaises) : ' + JSON.stringify(mill));
 console.log('OK 1b courbe (12,38,71,84,63,41,26,15,9,4 ; pic S4 en vert plein), portées 299/64/0 sans pourcentage, détail par millésime (2025 antenaises en tête).');
 
 // ---- mouvements
-const mvB = await ligneTable(page, 2, 'Entrées');
+const mvB = await ligneTable(page, 3, 'Entrées');
 check(mvB && mvB.join('|') === '0|75|0|75', 'mouvements brebis : entrées adultes 0, antenaises 75 (les 75 présentes ont été renouvelées le 01/10/2025), agnelles 0 : ' + mvB);
-const renouvB = await ligneTable(page, 2, 'Renouvelées');
+const renouvB = await ligneTable(page, 3, 'Renouvelées');
 check(renouvB && renouvB.join('|') === '0|75|0|75', 'dont renouvelées : ' + renouvB);
-const mvA = await page.evaluate(() => [...document.querySelectorAll('.brd-t')[3].querySelectorAll('tr')].map(r => [...r.cells].map(c => c.textContent.replace(/\s+/g, ' ').trim())));
+const mvA = await page.evaluate(() => [...document.querySelectorAll('.brd-t')[4].querySelectorAll('tr')].map(r => [...r.cells].map(c => c.textContent.replace(/\s+/g, ' ').trim())));
 const nes = mvA.find(r => r[0] === 'Nés vivants');
 check(nes && nes.slice(1).join('|') === '175|172|38|28|413', 'mouvements agneaux : nés vivants 175 | 172 | 38 | 28 = 413 : ' + nes);
 console.log('OK 1c mouvements des brebis et des agneaux (nés vivants 413).');
