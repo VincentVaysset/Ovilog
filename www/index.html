@@ -2755,6 +2755,13 @@ function agnelageCampagneActuelle(sheep) {
   const idx = agnelageCampagneActuelleIdx(sheep);
   return idx === -1 ? null : sheep.agnelages[idx];
 }
+/* Agnelage d'une campagne N explicite (pas forcément la campagne en cours) :
+   le premier agnelage dont le tag `campagne` vaut N, ou null. Les agnelages ne
+   sont jamais remis à zéro à la bascule, donc une campagne passée reste
+   lisible tant que la fiche (ou son entrée de registre) existe. */
+function agnelageDeCampagne(sheep, campagne) {
+  return (sheep.agnelages || []).find(a => a && a.campagne === campagne) || null;
+}
 /* Anti-doublon contrôle laitier (voir renderAddControle) : une brebis ne
    devrait avoir qu'un seul contrôle n°`controle` (1er/2e/3e) par campagne —
    retourne l'index d'un contrôle déjà enregistré avec ce même numéro pour
@@ -2945,36 +2952,46 @@ function campagneDateFinReelle() {
    troupeau sans fiche retirée en cours de campagne, rien ne change. Une
    brebis encore présente dans DB.brebis garde sa fiche (jamais doublée par
    son éventuelle copie de registre). */
-function campagneCohortPresente() {
-  const refDate = campagneRefDate();
-  if (!refDate) return DB.brebis.filter(s => (s.statut || 'active') === 'active');
+/* Brebis du bilan = fiches de DB.brebis + brebis présentes SEULEMENT dans le
+   registre (voir campagneCohortPresente) ; une fiche vivante n'est jamais
+   doublée par sa copie de registre. Même forme qu'une fiche pour tout ce que lit
+   le bilan (mouvements, agnelages, vides définitives, dates d'entrée) ; statut
+   'sortie' : jamais active, donc jugée sur sa date de sortie. */
+function brebisDuBilan() {
   const dejaPresentes = new Set(DB.brebis.map(s => s.eid));
   const dansRegistre = Object.keys((DB.registre && DB.registre.brebis) || {})
     .filter(eid => !dejaPresentes.has(eid))
     .map(eid => {
       const a = DB.registre.brebis[eid] || {};
-      // Même forme qu'une fiche brebis pour tout ce que lit le bilan
-      // (mouvements, agnelages, vides définitives, dates d'entrée) ; statut
-      // 'sortie' : jamais active, donc jugée sur sa date de sortie.
       return Object.assign({}, a, {
         eid, statut: 'sortie', depuisRegistre: true,
         mouvements: a.mouvements || [], agnelages: a.agnelages || [],
         videesDefinitives: a.videesDefinitives || []
       });
     });
-  return DB.brebis.concat(dansRegistre).filter(s => {
-    const mouvements = s.mouvements || [];
-    const entreeMvt = mouvements.find(m => m.type === 'Entrée');
-    const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
-    const entreeDate = entreeDateStr ? new Date(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
-    if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > refDate) return false; // entrée après la date de référence : pas présente au démarrage
-    if ((s.statut || 'active') === 'active') return true;
-    // Inactive aujourd'hui : ne compte que si sa sortie a eu lieu APRÈS la date de référence.
-    const sortieMvt = [...mouvements].reverse().find(m => ['Vente', 'Morte', 'Vente reproduction', 'Perte', 'Autoconsommation'].includes(m.type));
-    if (!sortieMvt || !sortieMvt.date) return true; // pas de mouvement de sortie retrouvé (anomalie de données) : on la compte plutôt que de la perdre silencieusement
-    const sortieDate = new Date(sortieMvt.date);
-    return isNaN(sortieDate.getTime()) || sortieDate >= refDate;
-  });
+  return DB.brebis.concat(dansRegistre);
+}
+/* Vrai si la brebis était présente à `refDate` : déjà entrée (avant ou ce
+   jour-là) et pas encore sortie (une sortie postérieure ou le jour même ne la
+   retire pas). Prédicat de campagneCohortPresente, paramétré par la date pour
+   servir aussi aux campagnes passées (bilanReproductionCampagne). */
+function estBrebisPresenteALaDate(s, refDate) {
+  const mouvements = s.mouvements || [];
+  const entreeMvt = mouvements.find(m => m.type === 'Entrée');
+  const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
+  const entreeDate = entreeDateStr ? new Date(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
+  if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > refDate) return false; // entrée après la date de référence : pas présente au démarrage
+  if ((s.statut || 'active') === 'active') return true;
+  // Inactive aujourd'hui : ne compte que si sa sortie a eu lieu APRÈS la date de référence.
+  const sortieMvt = [...mouvements].reverse().find(m => ['Vente', 'Morte', 'Vente reproduction', 'Perte', 'Autoconsommation'].includes(m.type));
+  if (!sortieMvt || !sortieMvt.date) return true; // pas de mouvement de sortie retrouvé (anomalie de données) : on la compte plutôt que de la perdre silencieusement
+  const sortieDate = new Date(sortieMvt.date);
+  return isNaN(sortieDate.getTime()) || sortieDate >= refDate;
+}
+function campagneCohortPresente() {
+  const refDate = campagneRefDate();
+  if (!refDate) return DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  return brebisDuBilan().filter(s => estBrebisPresenteALaDate(s, refDate));
 }
 
 /* Date de début de la campagne en cours au format 'YYYY-MM-DD' : la date
@@ -3572,8 +3589,9 @@ function resumeLotParGroupeAge(lot, parAgeExact, classement) {
    dernière ligne `millesime: null` pour que le total reste exact. Ajoute la
    "durée de mise bas" (jours entre la 1ère et la dernière mise bas de la
    campagne, pour ce millésime). */
-function statsParAgeExactTroupeau(cohort, classement) {
+function statsParAgeExactTroupeau(cohort, classement, campagne) {
   classement = classement || classementAntenaisesCampagne(cohort);
+  if (campagne === undefined) campagne = DB.campagneDebut;
   const groupes = {};
   cohort.forEach(s => {
     const millesime = anneeNaissance(s.eid || '');
@@ -3581,7 +3599,7 @@ function statsParAgeExactTroupeau(cohort, classement) {
     if (!groupes[cle]) groupes[cle] = { presentes: 0, misesBas: 0, nesTotal: 0, dates: [] };
     const g = groupes[cle];
     g.presentes++;
-    const ag = agnelageCampagneActuelle(s);
+    const ag = agnelageDeCampagne(s, campagne);
     if (!ag) return;
     g.misesBas++;
     g.nesTotal += (ag.lambs || []).length;
@@ -3606,6 +3624,256 @@ function statsParAgeExactTroupeau(cohort, classement) {
       dureeMiseBas
     };
   });
+}
+
+/* ---------- Calculs purs du Bilan de reproduction d'une campagne ----------
+   bilanReproductionCampagne(N) : TOUS les chiffres du bilan d'une campagne
+   (N = valeur interne DB.campagneDebut de cette campagne, affichée N+1),
+   en une seule fonction PURE -- ne lit que DB et DB.registre, n'écrit rien
+   (aucun saveData), aucun accès au DOM. Alimente la page PC, le PDF complet
+   et le résumé figé ; l'écran mobile garde ses propres fonctions (recoupées
+   par test). Formules : prolificité = nés (morts-nés inclus) ÷ mises bas ;
+   mortinatalité = morts-nés ÷ nés ; mortalité après naissance = morts après ÷
+   nés vivants ; mortalité totale = (morts-nés + morts après) ÷ nés ; % doubles
+   = portées de 2 ÷ mises bas. Un dénominateur nul donne null, jamais 0. Les
+   ratios sont rendus BRUTS (non arrondis) : l'arrondi relève de l'affichage.
+   Mises bas / agneaux = TOUS les agnelages taggés N (brebis actives ET
+   registre), y compris ceux d'une brebis hors cohorte (entrée après le
+   démarrage) -- sans quoi des mises bas réelles disparaîtraient du bilan ; la
+   fertilité, elle, garde la cohorte (présentes au démarrage) pour
+   dénominateur. Le compteur `horsBilan` dit combien de brebis et de mises bas
+   sont dans ce cas. Les incohérences sont REMONTÉES dans `anomalies`, jamais
+   corrigées. Un agneau adopté n'existe qu'une fois (chez sa mère biologique).
+   Agneaux : nés = lambs.length (un agneau sans sexe valide est compté parmi
+   les nés et signalé) ; morts après naissance = non mort-né avec statutFinal
+   'mort'. */
+function formatISOLocal(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function lundiDeLaSemaineISO(dateISO) {
+  const [y, m, j] = String(dateISO).slice(0, 10).split('-').map(Number);
+  const t = Date.UTC(y, m - 1, j);
+  const dow = new Date(t).getUTCDay(); // 0 = dimanche
+  return t - ((dow + 6) % 7) * 86400000;
+}
+function bilanReproductionCampagne(N) {
+  const estCourante = N === DB.campagneDebut;
+  const mois = campagneMoisDebutConfig(), jour = campagneJourDebutConfig();
+  const debutNominal = new Date(N, mois - 1, jour);
+  const finNominal = new Date(N + 1, mois - 1, jour);
+  finNominal.setDate(finNominal.getDate() - 1);
+  const debutNominalISO = formatISOLocal(debutNominal), finNominalISO = formatISOLocal(finNominal);
+  const jj = d => String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+  const refDate = estCourante && campagneRefDate() ? campagneRefDate() : debutNominal;
+  const debutReelISO = estCourante && campagneDateDebutISO() ? campagneDateDebutISO() : debutNominalISO;
+  const debutFenetreISO = debutReelISO < debutNominalISO ? debutReelISO : debutNominalISO;
+  let finFenetreISO = finNominalISO;
+  const aujourdhuiISO = formatISOLocal(new Date());
+  if (estCourante && aujourdhuiISO < finFenetreISO) finFenetreISO = aujourdhuiISO;
+  const dansFenetre = d => !!d && String(d).slice(0, 10) >= debutFenetreISO && String(d).slice(0, 10) <= finFenetreISO;
+
+  // ---- population et classement antenaises / adultes
+  const toutes = brebisDuBilan();
+  const cohort = toutes.filter(s => estBrebisPresenteALaDate(s, refDate));
+  const classement = classementAntenaisesCampagne(cohort);
+  const idCohort = new Set(cohort.map(s => s.eid));
+  const groupeDe = eid => classement.groupe(eid) === 'antenaises' ? 'antenaises' : 'adultes';
+
+  const anomalies = {};
+  const signaler = (code, message, brebis) => {
+    const a = anomalies[code] || (anomalies[code] = { code, message, nombre: 0, exemples: [] });
+    a.nombre++;
+    if (brebis && a.exemples.length < 5) a.exemples.push('n°' + numeroVisuel(brebis.eid || ''));
+  };
+
+  const vide = () => ({
+    presentes: 0, misesBas: 0, misesBasCohorte: 0, sansAgneau: 0,
+    portees: { simples: 0, doubles: 0, triples: 0, quatreEtPlus: 0 },
+    nes: { femelles: 0, males: 0, mortNes: 0, sexeInvalide: 0, total: 0 },
+    mortsApres: 0
+  });
+  const G = { adultes: vide(), antenaises: vide() };
+  cohort.forEach(s => { G[groupeDe(s.eid)].presentes++; });
+
+  // ---- mises bas, agneaux, courbe hebdomadaire
+  const mvAgneaux = {
+    adultes: { femelles: { nes: 0, gardes: 0, vendus: 0, morts: 0, presents: 0 }, males: { nes: 0, vendus: 0, morts: 0, presents: 0 }, mortNes: 0 },
+    antenaises: { femelles: { nes: 0, gardes: 0, vendus: 0, morts: 0, presents: 0 }, males: { nes: 0, vendus: 0, morts: 0, presents: 0 }, mortNes: 0 }
+  };
+  const parSemaine = {};
+  let horsCohorteBrebis = new Set(), misesBasHorsCohorte = 0;
+  toutes.forEach(s => {
+    const liste = (s.agnelages || []).filter(a => a && a.campagne === N);
+    if (liste.length === 0) return;
+    if (liste.length > 1) signaler('mises-bas-multiples', 'Brebis avec plusieurs mises bas sur la même campagne (seule la première est comptée)', s);
+    const ag = liste[0];
+    const grp = groupeDe(s.eid);
+    const g = G[grp];
+    const dansCohorte = idCohort.has(s.eid);
+    g.misesBas++;
+    if (dansCohorte) g.misesBasCohorte++;
+    else { misesBasHorsCohorte++; horsCohorteBrebis.add(s.eid); signaler('mise-bas-hors-cohorte', 'Mise bas d\'une brebis absente de la population de départ (entrée après le démarrage de la campagne) : comptée dans les totaux, pas dans la fertilité', s); }
+    const lambs = Array.isArray(ag.lambs) ? ag.lambs : [];
+    if (lambs.length === 0) { g.sansAgneau++; signaler('mise-bas-sans-agneau', 'Mise bas sans aucun agneau enregistré', s); }
+    else if (lambs.length === 1) g.portees.simples++;
+    else if (lambs.length === 2) g.portees.doubles++;
+    else if (lambs.length === 3) g.portees.triples++;
+    else g.portees.quatreEtPlus++;
+    lambs.forEach(l => {
+      g.nes.total++;
+      const m = mvAgneaux[grp];
+      if (l.sexe === 'Mort-né') { g.nes.mortNes++; m.mortNes++; return; }
+      const sexeOk = l.sexe === 'Mâle' || l.sexe === 'Femelle';
+      if (l.sexe === 'Mâle') g.nes.males++;
+      else if (l.sexe === 'Femelle') g.nes.femelles++;
+      else { g.nes.sexeInvalide++; signaler('agneau-sexe-invalide', 'Agneau sans sexe valide (compté parmi les nés, ni mâle ni femelle)', s); }
+      const mort = l.statutFinal === 'mort';
+      if (mort) {
+        g.mortsApres++;
+        const aDate = (l.mouvements || []).some(x => x && x.type === 'Mort' && x.date);
+        if (!aDate) signaler('agneau-mort-sans-date', 'Agneau mort après naissance sans date de mort', s);
+      }
+      if (sexeOk) {
+        const cat = l.sexe === 'Femelle' ? m.femelles : m.males;
+        cat.nes++;
+        if (mort) cat.morts++;
+        else if (l.statutFinal === 'vendu') cat.vendus++;
+        else if (l.sexe === 'Femelle' && l.triStatut === 'gardée') cat.gardes++;
+        else cat.presents++;
+      }
+    });
+    if (!ag.date) signaler('mise-bas-sans-date', 'Mise bas sans date (absente de la courbe hebdomadaire)', s);
+    else if (String(ag.date).slice(0, 10) < debutFenetreISO || String(ag.date).slice(0, 10) > finNominalISO) signaler('mise-bas-date-hors-periode', 'Mise bas datée hors de la période de la campagne (absente de la courbe hebdomadaire)', s);
+    else {
+      const lundi = lundiDeLaSemaineISO(ag.date);
+      const w = parSemaine[lundi] || (parSemaine[lundi] = { misesBas: 0, agneaux: 0 });
+      w.misesBas++;
+      w.agneaux += lambs.length;
+    }
+  });
+  cohort.forEach(s => { if (anneeNaissance(s.eid || '') === null) signaler('brebis-eid-illisible', 'Brebis dont l\'EID ne donne pas d\'année de naissance (rangée avec les adultes)', s); });
+
+  // ---- groupes : ratios
+  const div = (a, b) => b > 0 ? a / b : null;
+  const finaliser = g => {
+    const vivants = g.nes.total - g.nes.mortNes;
+    return Object.assign({}, g, {
+      nes: Object.assign({}, g.nes, { vivants }),
+      fertilite: div(g.misesBasCohorte, g.presentes),
+      prolificite: div(g.nes.total, g.misesBas),
+      pctDoubles: div(g.portees.doubles, g.misesBas),
+      mortinatalite: div(g.nes.mortNes, g.nes.total),
+      mortaliteApresNaissance: div(g.mortsApres, vivants),
+      mortaliteTotale: div(g.nes.mortNes + g.mortsApres, g.nes.total)
+    });
+  };
+  const somme = (a, b) => {
+    const t = vide();
+    ['presentes', 'misesBas', 'misesBasCohorte', 'sansAgneau', 'mortsApres'].forEach(k => { t[k] = a[k] + b[k]; });
+    Object.keys(t.portees).forEach(k => { t.portees[k] = a.portees[k] + b.portees[k]; });
+    Object.keys(t.nes).forEach(k => { t.nes[k] = a.nes[k] + b.nes[k]; });
+    return t;
+  };
+  const groupes = { adultes: finaliser(G.adultes), antenaises: finaliser(G.antenaises), total: finaliser(somme(G.adultes, G.antenaises)) };
+
+  // ---- courbe hebdomadaire : S1, S2... depuis la première mise bas (lundi-dimanche)
+  const lundis = Object.keys(parSemaine).map(Number).sort((a, b) => a - b);
+  const semaines = [];
+  if (lundis.length) {
+    let cumulMB = 0, cumulAg = 0;
+    for (let t = lundis[0], i = 1; t <= lundis[lundis.length - 1]; t += 7 * 86400000, i++) {
+      const w = parSemaine[t] || { misesBas: 0, agneaux: 0 };
+      cumulMB += w.misesBas; cumulAg += w.agneaux;
+      semaines.push({ semaine: 'S' + i, debut: new Date(t).toISOString().slice(0, 10), misesBas: w.misesBas, agneaux: w.agneaux, cumulMisesBas: cumulMB, cumulAgneaux: cumulAg });
+    }
+  }
+
+  // ---- détail par millésime (même calcul que le PDF « par âge »)
+  const parMillesime = statsParAgeExactTroupeau(cohort, classement, N);
+
+  // ---- hors bilan
+  const entreesTardives = toutes.filter(s => {
+    if (idCohort.has(s.eid)) return false;
+    const mv = (s.mouvements || []).find(m => m.type === 'Entrée');
+    const d = (mv && mv.date) || s.dateEntree || null;
+    return !!d && new Date(d) > refDate && dansFenetre(d);
+  }).length;
+  const horsBilan = { entreesTardives, brebisAvecMiseBasHorsCohorte: horsCohorteBrebis.size, misesBasHorsCohorte };
+
+  // ---- mouvements des brebis et des agnelles (par date, dans la fenêtre de la campagne)
+  let doublonsIgnores = 0;
+  const sansDoublons = mv => {
+    const vus = new Set();
+    return (mv || []).filter(m => { const c = canonJson(m); if (vus.has(c)) { doublonsIgnores++; return false; } vus.add(c); return true; });
+  };
+  const mvVide = () => ({ entrees: { total: 0, renouvellement: 0, achat: 0, autres: 0, naissance: 0 }, sorties: { total: 0, ventes: 0, ventesReproduction: 0, mortes: 0, pertes: 0, autoconsommation: 0 } });
+  const mvBrebis = { adultes: mvVide(), antenaises: mvVide() };
+  effectifEntriesFor('brebis').forEach(e => {
+    const m = mvBrebis[groupeDe(e.eid)];
+    sansDoublons(e.mouvements).forEach(x => {
+      if (!x || !dansFenetre(x.date)) return;
+      if (x.type === 'Entrée') {
+        m.entrees.total++;
+        if (/^Renouvellement/.test(x.cause || '')) m.entrees.renouvellement++;
+        else if (/^Achat/.test(x.cause || '')) m.entrees.achat++;
+        else m.entrees.autres++;
+      } else if (TYPES_SORTIE.includes(x.type)) {
+        m.sorties.total++;
+        if (x.type === 'Vente') m.sorties.ventes++;
+        else if (x.type === 'Vente reproduction') m.sorties.ventesReproduction++;
+        else if (x.type === 'Morte' || x.type === 'Mort') m.sorties.mortes++;
+        else if (x.type === 'Perte') m.sorties.pertes++;
+        else m.sorties.autoconsommation++;
+      }
+    });
+  });
+  const mvAgnelles = mvVide();
+  effectifEntriesFor('agnelles').forEach(e => {
+    sansDoublons(e.mouvements).forEach(x => {
+      if (!x || !dansFenetre(x.date)) return;
+      if (x.type === 'Entrée') {
+        mvAgnelles.entrees.total++;
+        if (x.cause === 'Naissance') mvAgnelles.entrees.naissance++;
+        else if (/^Achat/.test(x.cause || '')) mvAgnelles.entrees.achat++;
+        else mvAgnelles.entrees.autres++;
+      } else if (TYPES_SORTIE.includes(x.type)) {
+        mvAgnelles.sorties.total++;
+        if (x.type === 'Vente') mvAgnelles.sorties.ventes++;
+        else if (x.type === 'Vente reproduction') mvAgnelles.sorties.ventesReproduction++;
+        else if (x.type === 'Morte' || x.type === 'Mort') mvAgnelles.sorties.mortes++;
+        else if (x.type === 'Perte') mvAgnelles.sorties.pertes++;
+        else mvAgnelles.sorties.autoconsommation++;
+      }
+    });
+  });
+  if (doublonsIgnores > 0) {
+    anomalies['mouvements-doublons-registre'] = { code: 'mouvements-doublons-registre', message: 'Mouvements strictement identiques en double dans le registre (comptés une seule fois ; voir Paramètres > Campagne > Doublons du registre)', nombre: doublonsIgnores, exemples: [] };
+  }
+  const sommeMv = (a, b) => ({
+    entrees: Object.keys(a.entrees).reduce((o, k) => (o[k] = a.entrees[k] + b.entrees[k], o), {}),
+    sorties: Object.keys(a.sorties).reduce((o, k) => (o[k] = a.sorties[k] + b.sorties[k], o), {})
+  });
+
+  const t = groupes.total;
+  return {
+    campagne: N, libelle: campagneLabel(N), courante: estCourante,
+    periode: {
+      debut: debutNominalISO, fin: finNominalISO, debutReel: debutReelISO,
+      titre: 'du ' + jj(debutNominal) + ' au ' + jj(finNominal)
+    },
+    population: { presentes: cohort.length, classement: { millesimeAntenaise: classement.millesimeAntenaise, effectifAntenaises: classement.effectifAntenaises, effectifAdultes: classement.effectifBrebis, sansAnnee: classement.sansAnnee, renouvellement: classement.renouvellement, avertissement: estCourante ? classement.avertissement : null } },
+    horsBilan,
+    groupes,
+    kpis: { misesBas: t.misesBas, prolificite: t.prolificite, mortinatalite: t.mortinatalite, mortaliteApresNaissance: t.mortaliteApresNaissance },
+    semaines,
+    parMillesime,
+    mouvements: {
+      brebis: { adultes: mvBrebis.adultes, antenaises: mvBrebis.antenaises, total: sommeMv(mvBrebis.adultes, mvBrebis.antenaises) },
+      agnelles: mvAgnelles,
+      agneaux: mvAgneaux
+    },
+    anomalies: Object.values(anomalies)
+  };
 }
 
 /* Millésime affiché d'une campagne à partir de sa valeur interne
