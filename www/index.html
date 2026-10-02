@@ -5964,7 +5964,7 @@ function renderBilanCampagne() {
   const bodyHtml = bilanCampagneTab === 'incoherences' ? (isDesktopMode() ? bilanARegulariserDesktopHtml() : bilanIncoherencesHtml(actives))
     : bilanCampagneTab === 'reproduction' ? (isDesktopMode() ? bilanReproductionDesktopHtml() : bilanReproductionHtml())
     : bilanCampagneTab === 'economique' ? bilanEconomiqueHtml()
-    : bilanLactationHtml();
+    : (isDesktopMode() ? bilanLactationDesktopHtml() : bilanLactationHtml());
 
   // Chantier "Refonte desktop" (étape Bilan de campagne) : même technique
   // que Paramètres/Production laitière -- le corps de l'onglet actif est
@@ -5973,7 +5973,7 @@ function renderBilanCampagne() {
   // assemblé génériquement ci-dessus). La tab-bar reste hors de la grille,
   // inchangée. Mobile strictement inchangé.
   // La page PC du Bilan de reproduction (bilanReproductionDesktopHtml) a sa propre mise en page pleine largeur : pas de grille de cartes.
-  app.innerHTML = tabBarHtml + (isDesktopMode() && bilanCampagneTab !== 'reproduction' && bilanCampagneTab !== 'incoherences' ? `<div class="fiche-desktop-grid">${bodyHtml}</div>` : bodyHtml);
+  app.innerHTML = tabBarHtml + (isDesktopMode() && bilanCampagneTab !== 'reproduction' && bilanCampagneTab !== 'incoherences' && bilanCampagneTab !== 'lactation' ? `<div class="fiche-desktop-grid">${bodyHtml}</div>` : bodyHtml);
 
   document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
     btn.onclick = () => { bilanCampagneTab = btn.dataset.tab; render('bilan-campagne'); };
@@ -6032,6 +6032,8 @@ function renderBilanCampagne() {
     if (btnResetBrebisTraite) btnResetBrebisTraite.onclick = () => effacerChampLactation('brebisTraite');
     const btnResetPresentes = document.getElementById('btn-reset-lactation-presentes');
     if (btnResetPresentes) btnResetPresentes.onclick = () => effacerChampLactation('brebisPresentes');
+    const btnVoirReg = document.getElementById('btn-lact-voir-regulariser');
+    if (btnVoirReg) btnVoirReg.onclick = () => { bilanCampagneTab = 'incoherences'; render('bilan-campagne'); };
     const btnExportLactationPdf = document.getElementById('btn-export-bilan-lactation-pdf');
     if (btnExportLactationPdf) btnExportLactationPdf.onclick = () => {
       btnExportLactationPdf.disabled = true;
@@ -6262,6 +6264,138 @@ function bilanLactationHtml() {
       <button type="button" class="btn btn-secondary" id="btn-export-bilan-lactation-xlsx" style="flex:1;">Export Excel</button>
     </div>
   `;
+}
+
+/* ---------- Page PC « Bilan de lactation » ----------
+   Mêmes indicateurs que l'écran mobile (bilanLactationIndicateurs, jamais recalculés à part) + répartition mensuelle
+   du litrage (tank) et de l'effectif (mêmes dates d'échantillonnage que moyennePresenceMensuelleCampagne), comparaison
+   avec la campagne précédente et la règle « mise bas sans contrôle laitier ». Fonction PURE (aucune écriture).
+   Quand aucune mise bas n'est enregistrée, le total du résumé de campagne sert de dénominateur du ratio
+   (ind.misesBasSource = 'resume'). Donnée absente = null (tiret à l'écran). */
+function periodeNominaleTitre(N) {
+  const d = new Date(N, campagneMoisDebutConfig() - 1, campagneJourDebutConfig());
+  const f = new Date(N + 1, campagneMoisDebutConfig() - 1, campagneJourDebutConfig()); f.setDate(f.getDate() - 1);
+  const jj = x => formatDateFr(formatISOLocal(x)).replace(/-/g, '/');
+  return { debut: formatISOLocal(d), fin: formatISOLocal(f), titre: 'du ' + jj(d) + ' au ' + jj(f) };
+}
+function bilanLactationPcData(campagne) {
+  const opts = { avecResume: true };
+  const ind = bilanLactationIndicateurs(campagne, opts), indN1 = bilanLactationIndicateurs(campagne - 1, opts);
+  const moisDebut = campagneMoisDebutConfig(), jourDebut = campagneJourDebutConfig();
+  const mensuel = [];
+  for (let i = 0; i < 12; i++) {
+    const info = moisInfoPourIndex(campagne, i);
+    mensuel.push({ cle: info.key, label: MOIS_LABELS_CAMPAGNE[i], litres: volumeTankMois(info.key), effectif: effectifPresentADate(new Date(campagne, (moisDebut - 1) + i, jourDebut)) });
+  }
+  const sansControle = brebisMiseBasSansControleLaitier(campagne);
+  const ecart = (a, b) => (a === null || a === undefined || b === null || b === undefined) ? null : Math.round((a - b) * 10) / 10;
+  return {
+    campagne, libelle: campagneLabel(campagne), periode: periodeNominaleTitre(campagne), ind, indN1, mensuel,
+    litrageTank: mensuel.reduce((a, m) => a + m.litres, 0),
+    moyenneEffectifCalculee: Math.round(mensuel.reduce((a, m) => a + m.effectif, 0) / 12 * 10) / 10,
+    sansControle,
+    comparatif: [
+      { cle: 'litrage', label: 'Litrage total', unite: ' L', dec: 0, n: ind.litrageTotal, n1: indN1.litrageTotal },
+      { cle: 'traites', label: 'Brebis traites', unite: '', dec: 0, n: (ind.brebisTraite === 0 && !ind.brebisTraiteCorrige) ? null : ind.brebisTraite, n1: (indN1.brebisTraite === 0 && !indN1.brebisTraiteCorrige) ? null : indN1.brebisTraite },   // 0 non saisi = inconnu (tiret), pas « 0 brebis »
+      { cle: 'parTraite', label: 'Litrage / brebis traite', unite: ' L', dec: 1, n: ind.litragePartraite, n1: indN1.litragePartraite },
+      { cle: 'parPresente', label: 'Litrage / brebis présente', unite: ' L', dec: 1, n: ind.litrageParPresente, n1: indN1.litrageParPresente },
+      { cle: 'ratio', label: 'Traites / mises bas', unite: ' %', dec: 1, n: ind.ratioTraitesMisesBas, n1: indN1.ratioTraitesMisesBas }
+    ].map(l => Object.assign(l, { ecart: ecart(l.n, l.n1) }))
+  };
+}
+function bilanLactationDesktopHtml() {
+  const campagnes = campagnesDisponiblesSieol();
+  if (bilanLactationCampagneAffichee === null || !campagnes.includes(bilanLactationCampagneAffichee)) bilanLactationCampagneAffichee = campagnes.length > 1 ? campagnes[1] : campagnes[0];
+  const campagne = bilanLactationCampagneAffichee;
+  const d = bilanLactationPcData(campagne), ind = d.ind, indN1 = d.indN1, sc = d.sansControle;
+  const nb = (v, dec, suf) => v === null || v === undefined ? '—' : fmtDecimal(v, dec === undefined ? 1 : dec) + (suf || '');
+  const entier = (v, suf) => v === null || v === undefined ? '—' : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (suf || '');
+  const litres = v => v === null || v === undefined ? '—' : entier(v, ' L');
+  // ---- indicateur « mises bas sans contrôle laitier »
+  let kSans;
+  if (!sc.controleImporte) kSans = pcKpi('Mises bas sans contrôle laitier', '—', 'dès le 1er contrôle importé', 'var(--text-muted)');
+  else if (sc.misesBasActives === 0) kSans = pcKpi('Mises bas sans contrôle laitier', '—', 'aucune mise bas enregistrée', 'var(--text-muted)');
+  else kSans = pcKpi('Mises bas sans contrôle laitier', sc.sansControle, sc.sansControle > 0 ? 'brebis actives · ' + sc.signauxForts + ' attendue' + (sc.signauxForts > 1 ? 's' : '') + ' à la traite' : 'toutes ont un contrôle', sc.sansControle > 0 ? 'var(--amber-fg)' : 'var(--green-fg)');
+  const ratioSous = ind.misesBas > 0 && ind.brebisTraite !== null ? ind.brebisTraite + ' sur ' + ind.misesBas + (ind.misesBasSource === 'resume' ? ' (mises bas du résumé de campagne)' : '') : 'aucune mise bas enregistrée';
+  const n1 = v => 'N-1 : ' + v;
+  // ---- graphiques
+  const maxL = Math.max(...d.mensuel.map(m => m.litres));
+  const barresLitrage = pcBarres(d.mensuel.map(m => ({ label: m.label, valeur: m.litres, texte: m.litres > 0 ? fmtDecimal(m.litres / 1000, 1) : '0' })), { hauteur: 150, couleur: '#cfe3d5', couleurPic: 'var(--primary)' });
+  const moyEff = ind.moyennePresence !== null && ind.moyennePresence !== undefined ? ind.moyennePresence : d.moyenneEffectifCalculee;
+  const barresEffectif = pcBarres(d.mensuel.map(m => ({ label: m.label, valeur: m.effectif, texte: String(m.effectif) })), { hauteur: 150, couleur: '#cfe3d5', couleurPic: '#cfe3d5', moyenne: moyEff > 0 ? { valeur: moyEff, label: 'moyenne ' + fmtDecimal(moyEff, 0) } : null });
+  // ---- valeurs modifiables (mêmes champs, mêmes identifiants et mêmes gestionnaires que l'écran mobile)
+  const ligneValeur = (titre, sous, id, valeur, corrige, resetId, pas) => `<div class="pc-li" style="cursor:default;">
+      <div class="a"><div>${titre}</div><div class="b">${sous}</div></div>
+      <input type="number" step="${pas}" id="${id}" value="${valeur !== null && valeur !== undefined ? valeur : ''}" style="width:110px;text-align:right;padding:6px 8px;border-radius:10px;font-weight:700;">
+      ${corrige ? `<span class="pc-pill warn">Valeur corrigée</span><button type="button" class="btn btn-secondary" id="${resetId}" style="width:auto;padding:3px 10px;font-size:12px;">Recalculer</button>` : ''}
+    </div>`;
+  // ---- carte sans contrôle laitier (3 premières, signaux forts d'abord)
+  const jjmm = x => x ? x.slice(8, 10) + '/' + x.slice(5, 7) : 'date inconnue';
+  const carteSans = sc.controleImporte && sc.liste.length ? `<div class="card pc-card-warn" id="carte-sans-controle-laitier">
+      ${pcCardHead('Mises bas sans contrôle laitier', pcPill('warn', sc.liste.length + ' brebis'))}
+      <p class="brd-note" style="margin-top:4px;">${sc.liste.length} brebis active${sc.liste.length > 1 ? 's' : ''} ayant mis bas cette campagne sans aucun contrôle laitier. Elles peuvent être sorties sans avoir été enregistrées. Rien n'est modifié seul.</p>
+      ${sc.liste.slice(0, 3).map(l => `<div class="pc-li bilan-eid-link sans-controle-ligne" data-id="${l.id}"><span class="a">n°${l.numero} · mise bas le ${jjmm(l.dateMiseBas)}</span>${l.attendueTraite ? pcPill('danger', 'attendue à la traite') : pcPill('neutral', 'pas encore attendue à la traite')}<span class="f">Ouvrir la fiche</span></div>`).join('')}
+      ${sc.liste.length > 3 ? `<button type="button" class="pc-more" id="btn-lact-voir-regulariser">Voir les ${sc.liste.length - 3} autres dans Brebis à régulariser</button>` : `<button type="button" class="pc-more" id="btn-lact-voir-regulariser">Voir dans Brebis à régulariser</button>`}
+    </div>` : '';
+  const ligneComp = l => {
+    const f = v => v === null || v === undefined ? '—' : (l.dec === 0 ? entier(v, l.unite) : fmtDecimal(v, l.dec) + l.unite);
+    const e = l.ecart === null ? '—' : (l.ecart === 0 ? '=' : (l.ecart > 0 ? '+' : '−') + (l.dec === 0 ? entier(Math.abs(l.ecart)) : fmtDecimal(Math.abs(l.ecart), l.dec)) + (l.unite === ' %' ? ' pt' : l.unite));
+    return `<tr><td>${l.label}</td><td>${f(l.n1)}</td><td>${f(l.n)}</td><td>${e}</td></tr>`;
+  };
+  const corrigeLitrage = ind.litrageTotalCorrige && d.litrageTank > 0 && Math.round(d.litrageTank) !== Math.round(ind.litrageTotal);
+  return `<div class="brd" id="pc-lactation">
+    <div class="brd-head">
+      <div><h2 class="brd-title">Bilan de lactation</h2><div class="brd-sub">Campagne ${d.libelle} · ${d.periode.titre}</div></div>
+      <div class="brd-actions">
+        <select id="bilan-lactation-campagne-select" aria-label="Campagne consultée">${campagnes.map(c => `<option value="${c}" ${c === campagne ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}</select>
+        <button type="button" class="btn btn-secondary" id="btn-export-bilan-lactation-pdf">Export PDF</button>
+        <button type="button" class="btn btn-secondary" id="btn-export-bilan-lactation-xlsx">Export Excel</button>
+      </div>
+    </div>
+
+    <div class="pc-kpis">
+      ${pcKpi('Litrage total', litres(ind.litrageTotal), ind.litrageTotalCorrige ? 'valeur corrigée' : 'tank, toute la campagne')}
+      ${pcKpi('Brebis passées à la traite', entier(ind.brebisTraite), ind.brebisTraiteCorrige ? 'valeur corrigée' : 'au moins un contrôle laitier')}
+      ${pcKpi('Litrage / brebis traite', nb(ind.litragePartraite, 1, ' L'), n1(nb(indN1.litragePartraite, 1, ' L')), 'var(--primary)')}
+      ${pcKpi('Litrage / brebis présente', nb(ind.litrageParPresente, 1, ' L'), n1(nb(indN1.litrageParPresente, 1, ' L')), 'var(--primary)')}
+      ${kSans}
+      ${pcKpi('Traites / brebis ayant mis bas', nb(ind.ratioTraitesMisesBas, 1, ' %'), ratioSous)}
+    </div>
+
+    <div class="brd-grid2">
+      <div class="card">
+        <p class="brd-ttl">Litrage par mois</p>
+        <p class="brd-note">Tank · octobre à septembre · en milliers de litres${corrigeLitrage ? ' · total du tank ' + litres(d.litrageTank) + ', litrage total corrigé à la main' : ''}</p>
+        ${maxL > 0 ? barresLitrage : '<div class="brd-vide">Aucune saisie tank sur cette campagne.</div>'}
+      </div>
+      <div class="card">
+        <p class="brd-ttl">Brebis présentes, moyenne mensuelle</p>
+        <p class="brd-note">Effectif au premier jour de chaque mois, ajusté des entrées et sorties · moyenne ${fmtDecimal(d.moyenneEffectifCalculee, 1)}${ind.moyennePresenceCorrige ? ' (valeur corrigée affichée : ' + fmtDecimal(ind.moyennePresence, 1) + ')' : ''}</p>
+        ${d.mensuel.some(m => m.effectif > 0) ? barresEffectif : '<div class="brd-vide">Aucun effectif connu sur cette campagne.</div>'}
+      </div>
+    </div>
+
+    <div class="brd-grid2">
+      <div class="card">
+        <p class="brd-ttl">Valeurs de la campagne</p>
+        <p class="brd-note">Pré-remplies par Ovilog, modifiables. Une correction manuelle est signalée et jamais écrasée automatiquement.</p>
+        ${ligneValeur('Litrage total produit (L)', 'Pré-rempli depuis le tank de production laitière', 'bilan-lactation-litrage-total', ind.litrageTotal, ind.litrageTotalCorrige, 'btn-reset-lactation-litrage', '0.1')}
+        ${ligneValeur('Brebis passées à la traite', 'Brebis ayant eu au moins un contrôle laitier', 'bilan-lactation-brebis-traite', ind.brebisTraite, ind.brebisTraiteCorrige, 'btn-reset-lactation-brebis-traite', '1')}
+        ${ligneValeur('Brebis présentes (moyenne)', 'Moyenne mensuelle de l\'effectif sur 12 mois', 'bilan-lactation-brebis-presentes', ind.moyennePresence, ind.moyennePresenceCorrige, 'btn-reset-lactation-presentes', '0.1')}
+      </div>
+      <div class="brd-col">
+        ${carteSans}
+        <div class="card">
+          <p class="brd-ttl">Comparaison avec la campagne précédente</p>
+          <table class="brd-t"><colgroup><col style="width:34%"><col style="width:22%"><col style="width:22%"><col style="width:22%"></colgroup>
+            <tr><th>Indicateur</th><th>${campagneLabel(campagne - 1)}</th><th>${d.libelle}</th><th>Écart</th></tr>
+            ${d.comparatif.map(ligneComp).join('')}
+          </table>
+          <p class="brd-note" style="margin:10px 0 0;">${d.comparatif.every(l => l.n1 === null || l.n1 === undefined) ? 'Les écarts s\'afficheront dès qu\'une campagne précédente est saisie. ' : ''}${ind.misesBasSource === 'resume' ? 'Le ratio utilise les ' + ind.misesBas + ' mises bas du résumé de campagne ' + d.libelle + '.' : ''}</p>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* Sous-onglet "Bilan économique" de Bilan de campagne (chantier "Refonte
@@ -19899,20 +20033,26 @@ function bilanLactationSaisieCampagne(campagne) {
    valeur auto brute une fois qu'une correction existe. misesBas reste
    recalculé depuis les données déjà présentes dans Ovilog
    (misesBasTroupeauCampagne) -- jamais ressaisi à la main. */
-function bilanLactationIndicateurs(campagne) {
+function bilanLactationIndicateurs(campagne, opts) {
   const saisie = bilanLactationSaisieCampagne(campagne);
   const litrageAuto = productionTankCampagne(campagne);
   const litrageTotalCorrige = !!(saisie && typeof saisie.litrageTotal === 'number');
   const litrageTotal = litrageTotalCorrige ? saisie.litrageTotal : (litrageAuto > 0 ? litrageAuto : null);
   const brebisTraiteCorrige = !!(saisie && typeof saisie.brebisTraite === 'number');
   const brebisTraite = brebisTraiteCorrige ? saisie.brebisTraite : brebisPasseesTraiteCampagne(campagne);
-  const misesBas = misesBasTroupeauCampagne(campagne);
+  let misesBas = misesBasTroupeauCampagne(campagne), misesBasSource = misesBas > 0 ? 'donnees' : null;
+  // PC (et exports lancés depuis le PC) : sans mise bas enregistrée, le total du résumé de campagne (bilan externe saisi) sert de dénominateur.
+  // Sur mobile (opts absent) : comportement inchangé.
+  if (misesBas === 0 && opts && opts.avecResume) {
+    const r = DB.resumesCampagne && DB.resumesCampagne[campagne];
+    if (r && r.groupes && r.groupes.adultes && r.groupes.antenaises) { misesBas = (r.groupes.adultes.misesBas || 0) + (r.groupes.antenaises.misesBas || 0); misesBasSource = misesBas > 0 ? 'resume' : null; }
+  }
   const moyennePresenceCorrige = !!(saisie && typeof saisie.brebisPresentes === 'number');
   const moyennePresence = moyennePresenceCorrige ? saisie.brebisPresentes : moyennePresenceMensuelleCampagne(campagne);
   const litragePartraite = (litrageTotal !== null && brebisTraite > 0) ? Math.round((litrageTotal / brebisTraite) * 10) / 10 : null;
   const litrageParPresente = (litrageTotal !== null && moyennePresence > 0) ? Math.round((litrageTotal / moyennePresence) * 10) / 10 : null;
   const ratioTraitesMisesBas = (brebisTraite !== null && misesBas > 0) ? Math.round((brebisTraite / misesBas) * 1000) / 10 : null;
-  return { litrageTotal, litrageTotalCorrige, brebisTraite, brebisTraiteCorrige, misesBas, moyennePresence, moyennePresenceCorrige, litragePartraite, litrageParPresente, ratioTraitesMisesBas };
+  return { litrageTotal, litrageTotalCorrige, brebisTraite, brebisTraiteCorrige, misesBas, misesBasSource, moyennePresence, moyennePresenceCorrige, litragePartraite, litrageParPresente, ratioTraitesMisesBas };
 }
 
 /* Export PDF du Bilan de lactation (refonte troupeau, voir bouton "Export
@@ -19925,8 +20065,8 @@ function buildBilanLactationPdfBytes(campagne) {
   const rightEdge = pageW - PDF_MARGIN;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
   const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
-  const ind = bilanLactationIndicateurs(campagne);
-  const indN1 = bilanLactationIndicateurs(campagne - 1);
+  const ind = bilanLactationIndicateurs(campagne, { avecResume: isDesktopMode() });
+  const indN1 = bilanLactationIndicateurs(campagne - 1, { avecResume: isDesktopMode() });
   const txt = (v, suffix) => v !== null && v !== undefined ? fmtDecimal(v, 1) + (suffix || '') : '—';
   const txtInt = (v, suffix) => v !== null && v !== undefined ? v + (suffix || '') : '—';
 
@@ -19977,8 +20117,8 @@ async function exportBilanLactationPdf(campagne) {
    pour l'éleveur qui voudrait ses propres calculs/graphiques d'une
    campagne à l'autre. */
 async function exportBilanLactationXlsx(campagne) {
-  const ind = bilanLactationIndicateurs(campagne);
-  const indN1 = bilanLactationIndicateurs(campagne - 1);
+  const ind = bilanLactationIndicateurs(campagne, { avecResume: isDesktopMode() });
+  const indN1 = bilanLactationIndicateurs(campagne - 1, { avecResume: isDesktopMode() });
   const rows = [
     ['Indicateur', 'Campagne ' + campagneLabel(campagne), 'Campagne ' + campagneLabel(campagne - 1)],
     ['Litrage total produit (L)', ind.litrageTotal, indN1.litrageTotal],
