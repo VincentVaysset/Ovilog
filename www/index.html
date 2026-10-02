@@ -1203,8 +1203,10 @@ let DB = loadData();
    bas, les mouvements, les échographies, le contrôle laitier et la
    généalogie de chaque brebis/bélier/agnelle — y compris après suppression
    de la fiche active ou remise à zéro de campagne. Rien n'écrase jamais une
-   entrée déjà archivée : les tableaux s'additionnent (concat), au cas où un
-   même EID serait archivé plusieurs fois au fil des années ; seuls les
+   entrée déjà archivée : les tableaux s'additionnent (fusionnerElementsRegistre :
+   seulement ce qui dépasse ce que l'entrée contient déjà, pour que rejouer un
+   archivage ne double rien), au cas où un même EID serait archivé plusieurs
+   fois au fil des années ; seuls les
    champs "état final" (généalogie, numéros SIEOL, dates d'entrée...) sont
    remplacés par leur toute dernière valeur connue, jamais concaténés.
    Chantier "Compléter le changement de campagne" (2e étape) : périmètre
@@ -1214,6 +1216,39 @@ let DB = loadData();
 const REGISTRE_ARRAY_FIELDS = ['sanitaire', 'agnelages', 'mouvements', 'echographies', 'controleLaitier', 'modesRepro'];
 const REGISTRE_SCALAR_FIELDS = ['pere', 'mere', 'mereEid', 'numeroLongTravailSieol', 'numeroCourtTravailSieol',
   'numeroSieol', 'numeroTravailSieol', 'dateEntree', 'createdAt', 'videesDefinitives'];
+/* Forme canonique d'un élément du registre (JSON, clés triées à tous les
+   niveaux) : sert à décider si deux éléments sont IDENTIQUES, quel que soit
+   l'ordre de leurs clés. Une clé valant null/undefined équivaut à une clé
+   absente : une entrée relue du cloud (undefined -> null, voir deepClean)
+   doit rester égale à la même entrée en mémoire. */
+function canonJson(v) {
+  if (Array.isArray(v)) return '[' + v.map(canonJson).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return '{' + Object.keys(v).filter(k => v[k] !== undefined && v[k] !== null).sort()
+      .map(k => JSON.stringify(k) + ':' + canonJson(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+/* Fusion « par comptage d'occurrences » utilisée par l'archivage : on
+   n'ajoute à `existants` que ce que `source` contient EN PLUS de ce qu'ils
+   contiennent déjà, élément identique par élément identique.
+   registre [a] + source [a,a] -> [a,a] (1 ajouté) ; registre [a,a] + source
+   [a,a] -> inchangé ; registre [] + source [a,a] -> [a,a]. Rejouer le même
+   archivage (ex. la bascule exécutée deux fois, incident du 29/09/2026) ne
+   double donc plus rien, et deux éléments légitimement identiques dans la
+   source sont conservés. L'ordre existant est préservé, les ajouts suivent. */
+function fusionnerElementsRegistre(existants, source) {
+  const res = (existants || []).slice();
+  const deja = {};
+  res.forEach(x => { const c = canonJson(x); deja[c] = (deja[c] || 0) + 1; });
+  const vus = {};
+  (source || []).forEach(x => {
+    const c = canonJson(x);
+    vus[c] = (vus[c] || 0) + 1;
+    if (vus[c] > (deja[c] || 0)) res.push(x);
+  });
+  return res;
+}
 /* Calcule la nouvelle entrée de registre SANS la poser dans DB.registre --
    utilisée telle quelle par archiverDansRegistre (pose immédiatement) ET par
    archiverEtRetirerFicheComplete (a besoin de l'écrire et de la vérifier
@@ -1223,7 +1258,7 @@ function calculerEntreeRegistreApresArchivage(categorie, eid, data) {
   const entry = existante ? JSON.parse(JSON.stringify(existante)) : { eid: eid };
   REGISTRE_ARRAY_FIELDS.forEach(k => {
     entry[k] = entry[k] || [];
-    if (data[k] && data[k].length) entry[k] = entry[k].concat(data[k]);
+    if (data[k] && data[k].length) entry[k] = fusionnerElementsRegistre(entry[k], data[k]);
   });
   REGISTRE_SCALAR_FIELDS.forEach(k => { if (data[k] !== undefined && data[k] !== null) entry[k] = data[k]; });
   entry.eid = eid;
@@ -21226,11 +21261,126 @@ function journaliserArchivageRegistre(action, resultat) {
   DB.journalRegistre = DB.journalRegistre || [];
   DB.journalRegistre.unshift({
     date: new Date().toISOString(),
-    action: action, // 'bascule' | 'nettoyage_registre'
+    action: action, // 'bascule' | 'nettoyage_registre' | 'dedoublonnage_registre'
     eidsArchives: resultat.archives.map(a => a.categorie + ':' + a.eid),
     echecs: resultat.echecs
   });
+  if (typeof resultat.retires === 'number') DB.journalRegistre[0].elementsRetires = resultat.retires;
   DB.journalRegistre = DB.journalRegistre.slice(0, JOURNAL_REGISTRE_MAX);
+}
+
+/* ---------- Doublons du registre (chantier « Dédoublonnage du registre ») ----------
+   Détection en LECTURE SEULE + application explicite, jamais automatique :
+   rien ne s'exécute au démarrage, à la bascule ni à l'import. Ne touche
+   qu'à DB.registre (jamais aux fiches, agnelages ou à l'effectif).
+   Un « doublon » = même élément (égalité exacte, voir canonJson) présent
+   plusieurs fois dans le MÊME champ de la MÊME entrée. Une ligne d'analyse
+   = un élément distinct présent `avant` fois ; l'appliquer le ramène à
+   `apres` = ⌈avant ÷ 2⌉ occurrences (2 -> 1, 4 -> 2, 3 -> 2 : on retire une
+   « couche » de rejeu, jamais tout). Cochées par défaut : exactement 2
+   occurrences dans mouvements ou agnelages ; toutes les autres lignes (3
+   occurrences ou plus, carnet sanitaire, autres champs) sont listées à part,
+   décochées. */
+const CHAMPS_DEDOUBLON_COCHES = ['mouvements', 'agnelages'];
+function resumeElementRegistre(champ, el) {
+  el = el || {};
+  const join = a => a.filter(x => x !== undefined && x !== null && x !== '').join(' · ');
+  if (champ === 'mouvements') return join([el.type, el.cause, el.acheteur, el.date]);
+  if (champ === 'agnelages') return join(['Mise bas', el.date, el.campagne != null ? 'campagne ' + el.campagne : null, Array.isArray(el.lambs) ? el.lambs.length + ' agneau(x)' : null]);
+  if (champ === 'sanitaire') return join([el.produit || el.type, el.date]);
+  const scalaires = Object.keys(el).filter(k => typeof el[k] === 'string' || typeof el[k] === 'number').slice(0, 3).map(k => el[k]);
+  return join(scalaires) || '(élément)';
+}
+function analyserDoublonsRegistre() {
+  const lignes = [];
+  const entrees = new Set();
+  ['brebis', 'beliers', 'agnelles'].forEach(categorie => {
+    const archive = (DB.registre && DB.registre[categorie]) || {};
+    Object.keys(archive).forEach(eid => {
+      REGISTRE_ARRAY_FIELDS.forEach(champ => {
+        const arr = archive[eid] && archive[eid][champ];
+        if (!Array.isArray(arr) || arr.length < 2) return;
+        const groupes = new Map();
+        arr.forEach(el => {
+          const c = canonJson(el);
+          const g = groupes.get(c);
+          if (g) g.avant++; else groupes.set(c, { element: el, avant: 1 });
+        });
+        groupes.forEach((g, canon) => {
+          if (g.avant < 2) return;
+          const parDefaut = CHAMPS_DEDOUBLON_COCHES.includes(champ) && g.avant === 2;
+          const motifs = [];
+          if (g.avant >= 3) motifs.push(g.avant + ' occurrences');
+          if (champ === 'sanitaire') motifs.push('carnet sanitaire');
+          else if (!CHAMPS_DEDOUBLON_COCHES.includes(champ)) motifs.push('champ ' + champ);
+          lignes.push({ id: lignes.length, categorie, eid, champ, canon, resume: resumeElementRegistre(champ, g.element), avant: g.avant, apres: Math.ceil(g.avant / 2), parDefaut, motif: parDefaut ? null : motifs.join(' · ') });
+          entrees.add(categorie + '|' + eid);
+        });
+      });
+    });
+  });
+  return { lignes, nbEntrees: entrees.size };
+}
+
+/* Applique les lignes choisies (sous-ensemble de analyserDoublonsRegistre().lignes),
+   entrée par entrée, INDÉPENDAMMENT : l'échec d'une entrée la laisse intacte et ne
+   bloque pas les autres. Pour chaque entrée : (1) contrôles internes -- le nombre
+   d'occurrences actuel de chaque élément est bien celui de l'aperçu, l'ensemble des
+   éléments distincts est identique avant/après, et le nombre d'éléments retirés est
+   exactement celui annoncé ; (2) écriture cloud + relecture, précédée d'une garde
+   « modifiée ailleurs » (voir ecrireEtVerifierDocRegistre) ; (3) SEULEMENT ENSUITE,
+   mise à jour de DB.registre. On garde les premières occurrences, l'ordre est
+   conservé, derniereMiseAJour est inchangée. Retourne { archives (entrées
+   modifiées), echecs, retires }. */
+async function appliquerDedoublonnageRegistre(lignesChoisies) {
+  const archives = [];
+  const echecs = [];
+  let retires = 0;
+  const parEntree = new Map();
+  lignesChoisies.forEach(l => {
+    const k = l.categorie + '|' + l.eid;
+    if (!parEntree.has(k)) parEntree.set(k, []);
+    parEntree.get(k).push(l);
+  });
+  for (const lignes of parEntree.values()) {
+    const { categorie, eid } = lignes[0];
+    const avantEntree = DB.registre && DB.registre[categorie] && DB.registre[categorie][eid];
+    if (!avantEntree) { echecs.push({ categorie, eid, raison: 'entrée du registre introuvable' }); continue; }
+    const nouvelle = JSON.parse(JSON.stringify(avantEntree));
+    const cibles = {};
+    let attendu = 0;
+    let incoherente = null;
+    lignes.forEach(l => {
+      const actuel = (avantEntree[l.champ] || []).filter(el => canonJson(el) === l.canon).length;
+      if (actuel !== l.avant) incoherente = 'le registre a changé depuis l\'aperçu (' + l.champ + ' : ' + actuel + ' occurrence(s) au lieu de ' + l.avant + ')';
+      (cibles[l.champ] = cibles[l.champ] || {})[l.canon] = l.apres;
+      attendu += l.avant - l.apres;
+    });
+    if (incoherente) { echecs.push({ categorie, eid, raison: incoherente }); continue; }
+    let retiresEntree = 0;
+    Object.keys(cibles).forEach(champ => {
+      const gardes = {};
+      nouvelle[champ] = (avantEntree[champ] || []).filter(el => {
+        const c = canonJson(el);
+        if (!(c in cibles[champ])) return true;
+        gardes[c] = (gardes[c] || 0) + 1;
+        if (gardes[c] <= cibles[champ][c]) return true;
+        retiresEntree++;
+        return false;
+      });
+      const distinct = arr => Array.from(new Set((arr || []).map(canonJson))).sort().join('|');
+      if (distinct(avantEntree[champ]) !== distinct(nouvelle[champ])) incoherente = 'contrôle interne : un élément distinct aurait disparu (' + champ + ')';
+    });
+    if (!incoherente && retiresEntree !== attendu) incoherente = 'contrôle interne : ' + retiresEntree + ' élément(s) à retirer au lieu de ' + attendu;
+    if (incoherente) { echecs.push({ categorie, eid, raison: incoherente }); continue; }
+    if (!window.ecrireEtVerifierDocRegistre) { echecs.push({ categorie, eid, raison: 'synchro cloud non initialisée sur cet appareil' }); continue; }
+    const resultat = await window.ecrireEtVerifierDocRegistre(categorie, eid, nouvelle, { attendu: avantEntree });
+    if (!resultat.ok) { echecs.push({ categorie, eid, raison: resultat.raison }); continue; }
+    DB.registre[categorie][eid] = nouvelle;
+    archives.push({ categorie, eid });
+    retires += retiresEntree;
+  }
+  return { archives, echecs, retires };
 }
 
 /* Exécution réelle du "changement de campagne", déclenchée UNIQUEMENT depuis
@@ -21596,6 +21746,11 @@ let parametresTab = 'exploitation';
 // DOM (repéré par un test de ce chantier).
 let nettoyageRegistreStatusMsg = '';
 let nettoyageRegistreEnCours = false;
+// Doublons du registre (voir analyserDoublonsRegistre) : état en mémoire seulement,
+// relu par le template pour survivre à un re-rendu (écho onSnapshot) ; verrou de
+// ré-entrance libéré par un finally.
+let doublonsRegistreEtat = { analyse: null, coches: {}, message: '' };
+let dedoublonRegistreEnCours = false;
 let testSauvegardeEtat = { message: '', partageable: false };
 let testSauvegardeEnCours = false;
 let importJsonEnCours = false;
@@ -22026,6 +22181,12 @@ function renderParametresCampagne(content) {
       <button class="btn btn-secondary" id="btn-nettoyer-registre" style="color:var(--danger);border-color:var(--danger);" ${cptSortiesNonArchivees === 0 ? 'disabled' : ''}>Nettoyer le registre maintenant</button>
       <div id="nettoyage-registre-status" style="font-size:12px;margin-top:8px;">${xlsxEscape(nettoyageRegistreStatusMsg)}</div>
     </div>
+
+    <div class="card">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Doublons du registre${infoBulleHtml('Doublons du registre', "Cherche, dans les entrées archivées du registre, les éléments strictement identiques présents plusieurs fois (par exemple après une bascule exécutée deux fois). L'analyse ne modifie rien. Rien n'est retiré sans ta confirmation, après une sauvegarde JSON ; les fiches, l'effectif et les bilans ne sont jamais touchés. Un élément présent 2 fois dans mouvements ou agnelages est coché par défaut ; les autres cas (3 occurrences ou plus, carnet sanitaire, autres champs) sont listés à part, décochés.")}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Analyse en lecture seule des doublons exacts du registre d'élevage.</div>
+      <div id="dd-registre-zone">${doublonsRegistreZoneHtml()}</div>
+    </div>
   `;
   content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
 
@@ -22166,6 +22327,119 @@ function renderParametresCampagne(content) {
       }
     };
   }
+  wireDoublonsRegistre();
+}
+
+/* ---- Carte « Doublons du registre » (Paramètres > Campagne) ---- */
+function doublonsRegistreZoneHtml() {
+  const e = doublonsRegistreEtat;
+  const statut = `<div id="dd-registre-status" style="font-size:12px;margin-top:8px;white-space:pre-line;">${xlsxEscape(e.message)}</div>`;
+  if (!e.analyse) return `<button class="btn btn-secondary" id="btn-dd-analyser">Rechercher les doublons du registre</button>${statut}`;
+  const a = e.analyse;
+  if (a.lignes.length === 0) {
+    return `<div style="font-size:13px;margin-bottom:10px;">✅ Aucun doublon exact dans le registre.</div><button class="btn btn-secondary" id="btn-dd-analyser">Relancer l'analyse</button>${statut}`;
+  }
+  const libCat = { brebis: 'brebis', beliers: 'bélier', agnelles: 'agnelle' };
+  const ligneHtml = l => `<label class="dd-ligne" style="display:flex;gap:8px;align-items:flex-start;font-size:12px;padding:5px 0;border-top:1px solid var(--border);margin:0;">
+      <input type="checkbox" class="dd-check" data-id="${l.id}" ${e.coches[l.id] ? 'checked' : ''} style="margin-top:2px;flex-shrink:0;width:auto;">
+      <span style="flex:1;min-width:0;">n°${numeroVisuel(l.eid)} · ${libCat[l.categorie]} · ${xlsxEscape(l.champ)} · ${xlsxEscape(l.resume)}${l.motif ? `<br><span style="color:var(--text-muted);">${xlsxEscape(l.motif)}</span>` : ''}</span>
+      <span style="white-space:nowrap;font-weight:600;">${l.avant} → ${l.apres}</span>
+    </label>`;
+  const sect = (cle, titre, liste) => liste.length === 0 ? '' : `
+    <div style="margin-top:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;font-weight:600;margin-bottom:4px;">
+        <span>${titre} (${liste.length})</span>
+        <span style="font-weight:400;"><button type="button" class="dd-tout" data-section="${cle}" data-val="1" style="background:none;border:none;color:var(--accent);padding:2px 4px;font-size:12px;">Tout cocher</button><button type="button" class="dd-tout" data-section="${cle}" data-val="0" style="background:none;border:none;color:var(--accent);padding:2px 4px;font-size:12px;">Tout décocher</button></span>
+      </div>
+      <div style="max-height:300px;overflow-y:auto;">${liste.map(ligneHtml).join('')}</div>
+    </div>`;
+  const exacts = a.lignes.filter(l => l.parDefaut);
+  const aVerifier = a.lignes.filter(l => !l.parDefaut);
+  return `
+    <div style="font-size:13px;margin-bottom:4px;">${a.lignes.length} élément(s) en double dans ${a.nbEntrees} entrée(s) du registre : ${exacts.length} doublon(s) exact(s) à 2 occurrences, ${aVerifier.length} cas à vérifier.</div>
+    <div style="font-size:11.5px;color:var(--text-muted);">« 4 → 2 » = on retire une couche de rejeu (jamais tout). Les fiches, l'effectif et les bilans ne sont pas concernés.</div>
+    ${sect('exacts', 'Doublons exacts — mouvements et agnelages, 2 occurrences', exacts)}
+    ${sect('verifier', 'À vérifier — non appliqués par défaut', aVerifier)}
+    <button class="btn btn-secondary" id="btn-dd-appliquer" style="color:var(--danger);border-color:var(--danger);margin-top:12px;"></button>
+    <button class="btn btn-secondary" id="btn-dd-analyser" style="margin-top:8px;">Relancer l'analyse</button>
+    ${statut}`;
+}
+function doublonsRegistreChoisies() {
+  const e = doublonsRegistreEtat;
+  return e.analyse ? e.analyse.lignes.filter(l => e.coches[l.id]) : [];
+}
+function wireDoublonsRegistre() {
+  const e = doublonsRegistreEtat;
+  const zone = () => document.getElementById('dd-registre-zone');
+  const status = () => document.getElementById('dd-registre-status');
+  function setStatus(t) { e.message = t; if (status()) status().textContent = t; }
+  function majBoutonAppliquer() {
+    const b = document.getElementById('btn-dd-appliquer');
+    if (!b) return;
+    const ch = doublonsRegistreChoisies();
+    const n = ch.reduce((t, l) => t + l.avant - l.apres, 0);
+    b.textContent = n > 0 ? 'Dédoublonner (' + n + ' élément' + (n > 1 ? 's' : '') + ' à retirer)' : 'Aucune ligne cochée';
+    b.disabled = n === 0 || dedoublonRegistreEnCours;
+  }
+  function relancerAnalyse() {
+    e.analyse = analyserDoublonsRegistre();
+    e.coches = {};
+    e.analyse.lignes.forEach(l => { e.coches[l.id] = l.parDefaut; });
+  }
+  function brancher() {
+    const btnA = document.getElementById('btn-dd-analyser');
+    if (btnA) btnA.onclick = () => { if (dedoublonRegistreEnCours) return; relancerAnalyse(); e.message = ''; zone().innerHTML = doublonsRegistreZoneHtml(); brancher(); };
+    document.querySelectorAll('.dd-check').forEach(c => { c.onchange = () => { e.coches[c.dataset.id] = c.checked; majBoutonAppliquer(); }; });
+    document.querySelectorAll('.dd-tout').forEach(b => {
+      b.onclick = () => {
+        const exacts = b.dataset.section === 'exacts';
+        e.analyse.lignes.filter(l => l.parDefaut === exacts).forEach(l => { e.coches[l.id] = b.dataset.val === '1'; });
+        document.querySelectorAll('.dd-check').forEach(c => { c.checked = !!e.coches[c.dataset.id]; });
+        majBoutonAppliquer();
+      };
+    });
+    const btnP = document.getElementById('btn-dd-appliquer');
+    if (btnP) btnP.onclick = appliquer;
+    majBoutonAppliquer();
+  }
+  async function appliquer() {
+    const choisies = doublonsRegistreChoisies();
+    const aRetirer = choisies.reduce((t, l) => t + l.avant - l.apres, 0);
+    if (aRetirer === 0 || dedoublonRegistreEnCours) return;
+    const nbEntrees = new Set(choisies.map(l => l.categorie + '|' + l.eid)).size;
+    if (!confirm(aRetirer + ' élément(s) en double seront retirés dans ' + nbEntrees + ' entrée(s) du registre (fiches, effectif et bilans inchangés). Ferme l\'appli sur tes AUTRES appareils avant de continuer. ' + (pluginFileSaver() ? 'Android va d\'abord te demander où enregistrer une sauvegarde JSON (si tu annules, rien n\'est modifié). ' : 'Une sauvegarde JSON sera créée automatiquement avant. ') + 'Continuer ?')) return;
+    dedoublonRegistreEnCours = true;
+    try {
+      majBoutonAppliquer();
+      setStatus(pluginFileSaver() ? 'Sauvegarde en cours... Android va te demander où enregistrer le fichier.' : 'Sauvegarde en cours...');
+      // Sauvegarde interne vérifiée + export visible relu AVANT toute modification
+      // du registre. Annulation ou échec : rien n'est modifié.
+      const backup = await sauvegardeVisibleAvantMutation(nomFichierBackupAuto(new Date()), DB);
+      if (!backup.ok) {
+        setStatus(backup.cancelled
+          ? "⚠️ Dédoublonnage annulé : l'export de la sauvegarde a été annulé (" + backup.raison + "). Rien n'a été modifié."
+          : '⚠️ Dédoublonnage annulé : la sauvegarde a échoué -- ' + backup.raison + ". Rien n'a été modifié.");
+        return;
+      }
+      await purgeOldAutoBackups();
+      setStatus('Dédoublonnage en cours...');
+      const resultat = await appliquerDedoublonnageRegistre(choisies);
+      journaliserArchivageRegistre('dedoublonnage_registre', resultat);
+      saveData(DB);
+      let msg = resultat.retires + ' élément(s) retiré(s) dans ' + resultat.archives.length + ' entrée(s).';
+      if (resultat.echecs.length) {
+        msg += ' ' + resultat.echecs.length + ' échec(s) (entrée(s) laissée(s) intacte(s)) :\n' +
+          resultat.echecs.map(x => 'n°' + numeroVisuel(x.eid) + ' (' + x.raison + ')').join('\n');
+      }
+      relancerAnalyse();
+      e.message = (resultat.echecs.length ? '⚠️ ' : '✅ ') + msg;
+      if (zone()) { zone().innerHTML = doublonsRegistreZoneHtml(); brancher(); }
+    } finally {
+      dedoublonRegistreEnCours = false;
+      majBoutonAppliquer();
+    }
+  }
+  brancher();
 }
 
 /* ---------- Onglet Sauvegarde ---------- */
@@ -23623,10 +23897,27 @@ function marquerOpAppliquee(op) {
    pour cette entrée (comme marquerOpAppliquee) afin que la synchro normale
    qui suit (saveData, après le retrait de la fiche vivante) ne la repousse
    pas une 2e fois inutilement. */
-window.ecrireEtVerifierDocRegistre = async function ecrireEtVerifierDocRegistre(categorie, eid, entree) {
+window.ecrireEtVerifierDocRegistre = async function ecrireEtVerifierDocRegistre(categorie, eid, entree, options) {
   if (!sync.uid) return { ok: false, raison: "aucune synchro cloud active sur cet appareil -- impossible de garantir l'archivage avant suppression" };
   const docId = categorie + '_' + cleanEid(eid);
   const ref = doc(fbDb, 'users', sync.uid, 'registre', docId);
+  // Garde optionnelle (dédoublonnage) : relit le document cloud AVANT d'écrire et
+  // refuse si son contenu n'est plus celui de la copie locale `options.attendu`
+  // (autre appareil passé entre-temps, ou écriture locale pas encore synchronisée).
+  // Sans `options`, comportement inchangé (archivage).
+  if (options && options.attendu) {
+    let cloud = null;
+    try {
+      const avant = await getDoc(ref);
+      cloud = avant.exists() ? avant.data() : null;
+    } catch (e) {
+      return { ok: false, raison: 'la lecture de contrôle avant écriture a échoué (' + (e && e.message ? e.message : 'erreur inconnue') + ')' };
+    }
+    if (!cloud) return { ok: false, raison: 'modifiée ailleurs : le document n\'existe plus dans le cloud' };
+    const memes = REGISTRE_ARRAY_FIELDS.every(c => canonJson(cloud[c] || []) === canonJson(options.attendu[c] || []))
+      && (cloud.derniereMiseAJour || null) === (options.attendu.derniereMiseAJour || null);
+    if (!memes) return { ok: false, raison: 'modifiée ailleurs (le document du cloud ne correspond plus à celui de cet appareil) -- rien n\'a été écrit' };
+  }
   const dataEnvoyee = deepClean(Object.assign({ id: docId, categorie: categorie, eid: eid }, entree));
   try {
     const batch = writeBatch(fbDb);

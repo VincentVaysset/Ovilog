@@ -71,6 +71,7 @@ Sans `URL_AVANT`, seuls les attendus de la version actuelle sont vérifiés.
 | `test_misebas_tableau` | Tableau des mises bas : nombres par sexe, totaux |
 | `test_mouvements_affichage` | Écran « Mouvements d'animaux » : filtre d'affichage par campagne, aucune donnée modifiée |
 | `test_regle_antenaise` | Antenaises = millésime le plus jeune de la campagne (registre compris), avertissement « pas de renouvellement » daté de `campagneDateDemarrage`, EID illisible, brebis qui met bas puis passe au registre, cohérence écran / lots / PDF, aucune écriture ; avant/après sur l'export (`URL_AVANT`) |
+| `test_dedoublonnage_registre` | Fusion d'archivage par comptage d'occurrences ; analyse des doublons du registre en lecture seule ; écran (lignes cochées par défaut, « avant → après ») ; application : export visible avant, annulation / échec = rien modifié, garde « modifiée ailleurs », échec d'écriture d'une entrée, 2e appareil ; export réel (115 entrées / 230 éléments) |
 | `test_bilan_mobile_reference` | HTML mobile du bilan comparé octet pour octet à `ref/bilan_mobile.html` (jeu synthétique, référence prise après la règle antenaise ; `OVILOG_MAJ_REF=1` pour la régénérer volontairement) |
 
 ## Ce que ces tests ne couvrent pas
