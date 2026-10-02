@@ -10,6 +10,7 @@ const browser = await chromium.launch(LAUNCH);
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 1100 } });
 const page = await ctx.newPage();
+await page.clock.setFixedTime(new Date('2026-10-02T09:00:00'));   // horloge figée : les âges lus dans l'EID ne dépendent pas de l'année du jour
 await page.addInitScript(() => { window.electronAPI = { isDesktop: true, version: '1.0.test' }; });
 page.on('pageerror', e => { throw new Error('PAGEERROR: ' + e.message); });
 page.on('dialog', d => d.accept());
