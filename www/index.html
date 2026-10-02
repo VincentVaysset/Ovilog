@@ -547,6 +547,11 @@
   .pc-filtres { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; align-items: end; }
   .pc-filtres label { display: block; font-size: 12px; color: var(--text-muted); margin: 0 0 4px; }
   .pc-filtres input, .pc-filtres select { margin: 0; }
+  .pc-filtres-ligne { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; }
+  .pc-filtres-ligne > div { flex: 1 1 170px; min-width: 150px; }
+  .pc-filtres-ligne > div.pc-grand { flex: 2 1 260px; }
+  .pc-filtres-ligne label { display: block; font-size: 12px; color: var(--text-muted); margin: 0 0 4px; }
+  .pc-filtres-ligne input, .pc-filtres-ligne select { margin: 0; }
   .pc-seg2 { display: flex; gap: 6px; }
   .pc-seg2 .opt-btn { flex: 1; padding: 8px 6px; font-size: 13px; }
   .pc-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
@@ -4636,7 +4641,7 @@ const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 
 // Écrans redessinés en grille/tableau grand écran sur desktop (voir
 // render()) -- sortent du plafond main{max-width:700px}. Complété au fil
 // des chantiers desktop successifs, jamais un élargissement global.
-const DESKTOP_WIDE_VIEWS = new Set(['detail', 'home', 'list', 'beliers', 'controle-laitier', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'agneau-detail', 'parametres', 'bilan-campagne', 'saisie-resume-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
+const DESKTOP_WIDE_VIEWS = new Set(['detail', 'home', 'list', 'beliers', 'controle-laitier', 'registre', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'agneau-detail', 'parametres', 'bilan-campagne', 'saisie-resume-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -20850,7 +20855,136 @@ function renderRegistreBody() {
   });
 }
 
+/* ---------- Page PC « Registre d'élevage » ----------
+   Même données, mêmes filtres (registreFiltre / registreColFiltres) et mêmes exports que l'écran mobile : seul le gabarit
+   change. Écran en LECTURE SEULE : le registre est permanent, rien n'est modifié ni supprimé ici. Les indicateurs sont
+   calculés sur TOUT le registre (toutes campagnes, filtres ignorés) à partir de l'actif + des archives (registreEntriesFor).
+   « Animaux au registre » = animaux distincts des 3 catégories (brebis, béliers, agnelles), actifs et sortis ; les agneaux
+   bouclés vivent dans l'agnelage de leur mère et ne sont pas comptés ici. Fonction PURE. */
+function registreIndicateursPc() {
+  const animaux = { total: 0, actifs: 0, sortis: 0, parCategorie: {} };
+  REGISTRE_CATEGORIES.forEach(c => {
+    const entrees = registreEntriesFor(c.key);
+    // « actif » = fiche présente ET de statut actif (une brebis vendue pas encore retirée par une bascule compte parmi les sortis)
+    const fiches = c.key === 'brebis' ? DB.brebis : c.key === 'beliers' ? DB.beliers : DB.agnelles;
+    const eidsActifs = new Set((fiches || []).filter(x => (x.statut || 'active') === 'active').map(x => x.eid));
+    const actifs = entrees.filter(e => e.actif && eidsActifs.has(e.eid)).length;
+    animaux.parCategorie[c.key] = { label: c.label, total: entrees.length, actifs, sortis: entrees.length - actifs };
+    animaux.total += entrees.length; animaux.actifs += actifs; animaux.sortis += entrees.length - actifs;
+  });
+  const san = registreSanitaireRows(), mvt = registreMouvementsRows(), agn = registreAgnelageRows();
+  const typeSoin = r => String(r.type || '').split(' · ')[0];
+  return {
+    animaux,
+    sanitaire: { soins: san.length, traitements: san.filter(r => typeSoin(r) === 'Traitement').length, vaccins: san.filter(r => typeSoin(r) === 'Vaccin').length, autres: san.filter(r => !['Traitement', 'Vaccin'].includes(typeSoin(r))).length },
+    mouvements: { total: mvt.length, entrees: mvt.filter(r => r.type === 'Entrée').length, ventes: mvt.filter(r => /^Vent/.test(r.type)).length, morts: mvt.filter(r => ['Mort', 'Morte', 'Perte'].includes(r.type)).length, autres: mvt.filter(r => r.type !== 'Entrée' && !/^Vent/.test(r.type) && !['Mort', 'Morte', 'Perte'].includes(r.type)).length },
+    agnelage: { agneaux: agn.length, males: agn.filter(r => r.sexe === 'Mâle').length, femelles: agn.filter(r => r.sexe === 'Femelle').length, mortNes: agn.filter(r => r.sexe === 'Mort-né').length }
+  };
+}
+function registrePcFiltresHtml(view) {
+  const colF = registreColFiltres[view];
+  const sel = (col, label, valeurs, tous) => {
+    const distinct = Array.from(new Set(valeurs.filter(Boolean))).sort();
+    return `<div><label>${label}</label><select class="registre-col-filter" data-col="${col}"><option value="">${tous}</option>${distinct.map(v => `<option value="${v}"${v === colF[col] ? ' selected' : ''}>${v}</option>`).join('')}</select></div>`;
+  };
+  const camp = (valeurs) => {
+    const hasInconnue = valeurs.some(v => v === null || v === undefined);
+    const distinct = Array.from(new Set(valeurs.filter(v => v !== null && v !== undefined))).sort((a, b) => b - a);
+    return `<div><label>Campagne</label><select class="registre-col-filter" data-col="campagne"><option value="">Toutes</option>${distinct.map(v => `<option value="${v}"${String(v) === colF.campagne ? ' selected' : ''}>Campagne ${v + 1}</option>`).join('')}${hasInconnue ? `<option value="?"${colF.campagne === '?' ? ' selected' : ''}>Date inconnue</option>` : ''}</select></div>`;
+  };
+  if (view === 'agnelage') { const all = registreAgnelageRows(); return sel('sexe', 'Sexe', all.map(r => r.sexe), 'Tous') + camp(all.map(r => r.campagne)); }
+  const all = view === 'mouvements' ? registreMouvementsRows() : registreSanitaireRows();
+  return sel('categorie', 'Catégorie', all.map(r => r.categorie), 'Tous') + sel('type', view === 'mouvements' ? 'Type' : 'Type de soin', all.map(r => r.type), 'Tous') + camp(all.map(r => r.campagne));
+}
+function registrePcTableHtml(view) {
+  const f = registreFiltre, cf = registreColFiltres[view];
+  const vide = txt => `<div class="brd-vide">${txt}</div>`;
+  const td = v => `<td class="l">${v}</td>`;
+  const eidTxt = e => 'n°' + numeroVisuel(e);
+  if (view === 'agnelage') {
+    const rows = registreAgnelageFilteredRows(f, cf);
+    return { n: rows.length, unite: 'agneau', unites: 'agneaux', html: rows.length === 0 ? vide('Aucune mise bas ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N° mère</th><th class="l">N° agneau</th><th class="l">Sexe</th><th class="l">Date de naissance</th><th class="l">Campagne</th></tr>
+      ${rows.map(r => `<tr>${td(eidTxt(r.mereEid))}${td(r.agneauEid ? eidTxt(r.agneauEid) : '<span style="color:var(--text-muted);">Mort-né</span>')}${td(r.sexe)}${td(formatDateFr(r.date))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
+  }
+  if (view === 'mouvements') {
+    const rows = registreMouvementsFilteredRows(f, cf);
+    return { n: rows.length, unite: 'mouvement', unites: 'mouvements', html: rows.length === 0 ? vide('Aucun mouvement ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type</th><th class="l">Cause / détail</th><th class="l">Date</th><th class="l">Campagne</th></tr>
+      ${rows.map(r => `<tr>${td(eidTxt(r.eid))}${td(r.categorie)}${td(r.type)}${td(r.detail)}${td(formatDateFr(r.date))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
+  }
+  const rows = registreSanitaireFilteredRows(f, cf);
+  return { n: rows.length, unite: 'soin', unites: 'soins', html: rows.length === 0 ? vide('Aucun soin ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">N° ordonnance</th><th class="l">Campagne</th></tr>
+      ${rows.map(r => `<tr>${td(eidTxt(r.eid))}${td(r.categorie)}${td(r.type)}${td(r.produit)}${td(formatDateFr(r.date))}${td(r.dose)}${td(r.numeroOrdonnance || '—')}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
+}
+function renderRegistrePc() {
+  pageTitle.textContent = "Registre d'élevage";
+  const ind = registreIndicateursPc(), A = ind.animaux;
+  const tabs = [{ key: 'agnelage', label: 'Agnelage' }, { key: 'mouvements', label: 'Mouvements' }, { key: 'sanitaire', label: 'Sanitaire' }];
+  const tabBarHtml = `<div class="tab-bar">${tabs.map(t => `<button type="button" class="tab-btn${registreView === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`).join('')}</div>`;
+  const pct = (n, t) => t > 0 ? fmtDecimal(n / t * 100, 0) + ' %' : '—';
+  const kAnimaux = pcKpi('Animaux au registre', A.total, A.actifs + ' actifs · ' + A.sortis + ' sortis');
+  const kpis = registreView === 'sanitaire'
+    ? pcKpi('Soins enregistrés', ind.sanitaire.soins, 'toutes campagnes') + pcKpi('Traitements', ind.sanitaire.traitements, pct(ind.sanitaire.traitements, ind.sanitaire.soins)) + pcKpi('Vaccins', ind.sanitaire.vaccins, pct(ind.sanitaire.vaccins, ind.sanitaire.soins)) + pcKpi('Autres', ind.sanitaire.autres, pct(ind.sanitaire.autres, ind.sanitaire.soins)) + kAnimaux
+    : registreView === 'mouvements'
+    ? pcKpi('Mouvements enregistrés', ind.mouvements.total, 'toutes campagnes') + pcKpi('Entrées', ind.mouvements.entrees, pct(ind.mouvements.entrees, ind.mouvements.total)) + pcKpi('Ventes', ind.mouvements.ventes, pct(ind.mouvements.ventes, ind.mouvements.total)) + pcKpi('Morts et pertes', ind.mouvements.morts, pct(ind.mouvements.morts, ind.mouvements.total)) + pcKpi('Autres sorties', ind.mouvements.autres, pct(ind.mouvements.autres, ind.mouvements.total)) + kAnimaux
+    : pcKpi('Agneaux enregistrés', ind.agnelage.agneaux, 'toutes campagnes') + pcKpi('Mâles', ind.agnelage.males, pct(ind.agnelage.males, ind.agnelage.agneaux)) + pcKpi('Femelles', ind.agnelage.femelles, pct(ind.agnelage.femelles, ind.agnelage.agneaux)) + pcKpi('Morts-nés', ind.agnelage.mortNes, pct(ind.agnelage.mortNes, ind.agnelage.agneaux)) + kAnimaux;
+  app.innerHTML = `<div class="brd" id="pc-registre">
+    <div class="brd-head">
+      <div><h2 class="brd-title">Registre d'élevage</h2><div class="brd-sub">Traçabilité complète des animaux · conditionnalité PAC</div></div>
+      <div class="brd-actions">
+        <button type="button" class="btn btn-secondary" id="btn-export-registre">Exporter en Excel (.xlsx)</button>
+        <button type="button" class="btn btn-primary" id="btn-export-registre-pdf">Export PDF</button>
+      </div>
+    </div>
+    ${tabBarHtml}
+    <div class="pc-kpis" id="pc-registre-kpis">${kpis}</div>
+    <div class="card">
+      <div class="pc-filtres-ligne">
+        <div class="pc-grand"><label for="registre-filtre">Rechercher un numéro</label><input type="text" id="registre-filtre" placeholder="Rechercher un numéro…" value="${registreFiltre}" autocomplete="off"></div>
+        <span id="pc-registre-selects" style="display:contents;"></span>
+        <div><button type="button" class="btn btn-secondary" id="btn-registre-reset" style="width:100%;">Réinitialiser</button></div>
+      </div>
+      <p class="brd-note" style="margin:10px 0 0;">L'export Excel contient les 3 onglets, chacun avec ses filtres ; le PDF contient l'onglet affiché avec ses filtres. Ce tableau est en lecture seule : le registre est permanent.</p>
+    </div>
+    <div class="card">
+      <div class="pc-cardhead" style="margin-bottom:10px;flex-wrap:wrap;"><p class="brd-ttl" style="margin:0;" id="pc-registre-compte"></p><span style="font-size:12px;color:var(--text-muted);">Tri : date, du plus récent au plus ancien</span></div>
+      <div id="registre-body"></div>
+    </div>
+  </div>`;
+  const dessiner = () => {
+    const t = registrePcTableHtml(registreView);
+    document.getElementById('registre-body').innerHTML = t.html;
+    document.getElementById('pc-registre-compte').textContent = t.n + ' ' + (t.n > 1 ? t.unites : t.unite) + ' affiché' + (t.n > 1 ? 's' : '');
+  };
+  const brancherSelects = () => {
+    document.getElementById('pc-registre-selects').innerHTML = registrePcFiltresHtml(registreView);
+    document.querySelectorAll('#pc-registre-selects .registre-col-filter').forEach(sel => {
+      sel.onchange = () => { registreColFiltres[registreView][sel.dataset.col] = sel.value; dessiner(); };
+    });
+  };
+  brancherSelects();
+  document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => { btn.onclick = () => { registreView = btn.dataset.tab; render('registre'); }; });
+  document.getElementById('registre-filtre').addEventListener('input', (e) => { registreFiltre = e.target.value; dessiner(); });
+  document.getElementById('btn-registre-reset').onclick = () => {
+    registreFiltre = '';
+    Object.keys(registreColFiltres[registreView]).forEach(k => { registreColFiltres[registreView][k] = ''; });
+    document.getElementById('registre-filtre').value = '';
+    brancherSelects(); dessiner();
+  };
+  document.getElementById('btn-export-registre').onclick = () => {
+    const btn = document.getElementById('btn-export-registre');
+    btn.disabled = true; const original = btn.textContent; btn.textContent = 'Export en cours...';
+    exportRegistreXlsx().finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
+  document.getElementById('btn-export-registre-pdf').onclick = () => {
+    const btn = document.getElementById('btn-export-registre-pdf');
+    btn.disabled = true; const original = btn.textContent; btn.textContent = 'Export en cours...';
+    Promise.resolve(exportRegistrePdf()).finally(() => { btn.disabled = false; btn.textContent = original; });
+  };
+  dessiner();
+}
+
 function renderRegistre() {
+  if (isDesktopMode()) { renderRegistrePc(); return; }
   pageTitle.textContent = "Registre d'élevage";
   const tabs = [
     { key: 'agnelage', label: 'Agnelage' },
