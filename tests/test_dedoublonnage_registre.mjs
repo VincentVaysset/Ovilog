@@ -374,7 +374,11 @@ for (const [nom, chemin] of [['corrigé', EXPORT_CORRIGE], ['original', EXPORT_O
   const nLocal = () => p.evaluate(() => ['brebis', 'beliers', 'agnelles'].reduce((n, c) => n + Object.keys(DB.registre[c] || {}).length, 0));
   await waitFor(async () => Object.keys(await cloudDocs()).length === attendus, { timeout: 90000, label: 'registre de l\'export dans le cloud' });
   // l'écho de la synchro peut remplacer brièvement la mémoire par un instantané partiel : on attend la convergence complète
-  await waitFor(async () => (await nLocal()) === attendus && await cloudEgalLocal(p, attendus), { timeout: 90000, label: 'mémoire = cloud = ' + attendus + ' entrées' });
+  try {
+    await waitFor(async () => (await nLocal()) === attendus && await cloudEgalLocal(p, attendus), { timeout: 90000, label: 'mémoire = cloud = ' + attendus + ' entrées' });
+  } catch (e) {
+    throw new Error(e.message + ' -- état au moment du délai : mémoire ' + await nLocal() + ' entrées, cloud ' + Object.keys(await cloudDocs()).length + ' documents');
+  }
   await p.waitForTimeout(1500);
   check(await nLocal() === attendus, nom + ' : registre complet en mémoire (' + attendus + ' entrées)');
   const mesure = () => p.evaluate(() => {

@@ -5936,7 +5936,17 @@ function renderBilanCampagne() {
       btnExportAge.disabled = true;
       const original = btnExportAge.textContent;
       btnExportAge.textContent = 'Export en cours...';
-      exportBilanAgeExactPdf().finally(() => { btnExportAge.disabled = false; btnExportAge.textContent = original; });
+      // Sur PC, le PDF suit la campagne affichée (undefined = campagne en cours, comme sur mobile)
+      const nAff = isDesktopMode() && bilanReproductionCampagneAffichee !== null && bilanReproductionCampagneAffichee !== DB.campagneDebut ? bilanReproductionCampagneAffichee : undefined;
+      exportBilanAgeExactPdf(nAff).finally(() => { btnExportAge.disabled = false; btnExportAge.textContent = original; });
+    };
+    const btnExportComplet = document.getElementById('btn-export-bilan-complet-pdf');
+    if (btnExportComplet) btnExportComplet.onclick = () => {
+      btnExportComplet.disabled = true;
+      const original = btnExportComplet.textContent;
+      btnExportComplet.textContent = 'Export en cours...';
+      const nAff = bilanReproductionCampagneAffichee !== null && bilanReproductionCampagneAffichee !== DB.campagneDebut ? bilanReproductionCampagneAffichee : undefined;
+      exportBilanCompletPdf(nAff).finally(() => { btnExportComplet.disabled = false; btnExportComplet.textContent = original; });
     };
   }
 }
@@ -6596,6 +6606,7 @@ function bilanReproductionDesktopHtml() {
       </div>
       <div class="brd-actions">${selecteur}
         <button type="button" class="btn btn-secondary" id="btn-export-bilan-age-pdf">PDF bilan par âge</button>
+        <button type="button" class="btn" id="btn-export-bilan-complet-pdf">PDF bilan complet</button>
       </div>
     </div>
     ${alertes}${taux}
@@ -18751,22 +18762,26 @@ async function exportLotEpongePdf(lot) {
    (statsParAgeExactTroupeau), toutes brebis confondues (IA + Éponge + MN) --
    le tableau à l'écran (Agnelles/Brebis, statsDetailleesParGroupeAge) reste
    inchangé, ce PDF est un export complémentaire, jamais un remplacement. */
-function buildBilanAgeExactPdfBytes() {
+function buildBilanAgeExactPdfBytes(campagne) {
   const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
   const rightEdge = pageW - PDF_MARGIN;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
   const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
-  const cohort = campagneCohortPresente();
-  const refDate = campagneRefDate() || new Date();
-  const classement = classementAntenaisesCampagne(cohort);
-  const parAge = statsParAgeExactTroupeau(cohort, classement);
+  // `campagne` (facultatif) : une campagne passée choisie sur la page PC ; absent = campagne en cours, comme avant.
+  const autre = campagne !== undefined && campagne !== null && campagne !== DB.campagneDebut ? bilanReproductionCampagne(campagne) : null;
+  const campagnePdf = autre ? campagne : DB.campagneDebut;
+  const cohort = autre ? { length: autre.population.presentes } : campagneCohortPresente();
+  const classement = autre
+    ? { millesimeAntenaise: autre.population.classement.millesimeAntenaise, avertissement: null, sansAnnee: autre.population.classement.sansAnnee }
+    : classementAntenaisesCampagne(cohort);
+  const parAge = autre ? autre.parMillesime : statsParAgeExactTroupeau(cohort, classement);
   const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
   const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
 
   let y = pageH - PDF_MARGIN;
   let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Bilan de reproduction troupeau', 'FB', 14);
   y -= 16;
-  content += pdfTextOp(PDF_MARGIN, y, exploitationNom + (DB.campagneDebut !== null && DB.campagneDebut !== undefined ? ' · Campagne ' + campagneLabel(DB.campagneDebut) : ''), 'F1', 9);
+  content += pdfTextOp(PDF_MARGIN, y, exploitationNom + (campagnePdf !== null && campagnePdf !== undefined ? ' · Campagne ' + campagneLabel(campagnePdf) : ''), 'F1', 9);
   y -= 12;
   content += pdfTextOp(PDF_MARGIN, y, cohort.length + ' brebis présentes (toutes brebis confondues, IA + Éponge + MN) · édité le ' + aujourdhui, 'F1', 9);
   y -= 10;
@@ -18813,9 +18828,319 @@ function buildBilanAgeExactPdfBytes() {
   return buildSinglePagePdfBytes(content, false);
 }
 
-async function exportBilanAgeExactPdf() {
-  const bytes = buildBilanAgeExactPdfBytes();
+async function exportBilanAgeExactPdf(campagne) {
+  const bytes = buildBilanAgeExactPdfBytes(campagne);
   const filename = 'bilan-reproduction-par-age_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+}
+
+/* ---------- PDF « bilan de reproduction complet » (A4, même contenu que la page PC) ----------
+   Mêmes chiffres que bilanReproductionDesktopHtml (tous issus de
+   bilanReproductionCampagne) : KPI, bilan par groupe d'âge, courbe hebdomadaire,
+   répartition des portées, détail par millésime, mouvements des brebis et des
+   agneaux, points de données à vérifier. Deux pages A4 portrait au plus pour un
+   troupeau normal (une page de plus au besoin). Primitives PDF ajoutées ici :
+   remplissage et couleurs (rg/RG), largeur de texte approchée (Helvetica), pages
+   multiples (buildMultiPagePdfBytes). buildBilanAgeExactPdfBytes (« bilan par âge »)
+   reste un export distinct. */
+const PDF_COULEURS = {
+  vert: [0.235, 0.541, 0.333], vertPale: [0.663, 0.827, 0.710], vertFond: [0.882, 0.953, 0.902],
+  ambre: [0.702, 0.463, 0.039], ambreFond: [0.988, 0.937, 0.843], corail: [0.757, 0.251, 0.173],
+  texte: [0.169, 0.165, 0.133], gris: [0.475, 0.463, 0.373], fond: [0.965, 0.953, 0.918],
+  trait: [0.902, 0.867, 0.788], bleu: [0.247, 0.498, 0.690], indigo: [0.435, 0.451, 0.820], blanc: [1, 1, 1]
+};
+function pdfN(v) { return String(Math.round(v * 100) / 100); }
+function pdfCol(c) { return c.map(v => pdfN(v)).join(' '); }
+function pdfFillRectOp(x, y, w, h, c) { return 'q ' + pdfCol(c) + ' rg ' + pdfN(x) + ' ' + pdfN(y) + ' ' + pdfN(w) + ' ' + pdfN(h) + ' re f Q\n'; }
+function pdfLineColorOp(x1, y1, x2, y2, c, ep, tirets) {
+  return 'q ' + pdfCol(c) + ' RG ' + pdfN(ep || 0.5) + ' w ' + (tirets ? '[2 2] 0 d ' : '') + pdfN(x1) + ' ' + pdfN(y1) + ' m ' + pdfN(x2) + ' ' + pdfN(y2) + ' l S Q\n';
+}
+function pdfTextColorOp(x, y, text, font, size, c) { return 'q ' + pdfCol(c) + ' rg\n' + pdfTextOp(pdfN(x), pdfN(y), text, font, size) + 'Q\n'; }
+// Largeur approchée d'un texte Helvetica (quelques classes de caractères suffisent pour aligner à droite)
+function pdfTextWidth(str, size, bold) {
+  let w = 0;
+  for (const ch of String(str)) {
+    let k = 0.556;
+    if (ch === ' ') k = 0.278;
+    else if (',.:;|!\'/'.includes(ch)) k = 0.278;
+    else if ('()-'.includes(ch)) k = 0.333;
+    else if (ch === '%') k = 0.889;
+    else if ('ijl'.includes(ch)) k = 0.222;
+    else if ('frt'.includes(ch)) k = 0.3;
+    else if ('mw'.includes(ch)) k = 0.8;
+    else if ('cksvxyz'.includes(ch)) k = 0.5;
+    else if (/[A-ZÉÈÀ]/.test(ch)) k = 0.67;
+    else if (ch === '—') k = 1;
+    w += k;
+  }
+  return w * size * (bold ? 1.06 : 1);
+}
+function pdfFit(text, size, bold, maxW) {
+  let t = String(text);
+  if (pdfTextWidth(t, size, bold) <= maxW) return t;
+  while (t.length > 1 && pdfTextWidth(t + '...', size, bold) > maxW) t = t.slice(0, -1);
+  return t + '...';
+}
+// Plusieurs pages de contenu -> un seul PDF (mêmes polices F1/FB que buildSinglePagePdfBytes)
+function buildMultiPagePdfBytes(contents) {
+  const objects = [];
+  let nextNum = 1;
+  const alloc = () => nextNum++;
+  const catalogNum = alloc(), pagesNum = alloc(), fontNum = alloc(), fontBoldNum = alloc();
+  const pageNums = [];
+  contents.forEach(content => {
+    const pageNum = alloc(), contentNum = alloc();
+    pageNums.push(pageNum);
+    objects.push({ num: contentNum, body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
+    objects.push({ num: pageNum, body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + PDF_PAGE_W + ' ' + PDF_PAGE_H + '] /Contents ' + contentNum + ' 0 R >>' });
+  });
+  objects.push({ num: catalogNum, body: '<< /Type /Catalog /Pages ' + pagesNum + ' 0 R >>' });
+  objects.push({ num: pagesNum, body: '<< /Type /Pages /Kids [' + pageNums.map(n => n + ' 0 R').join(' ') + '] /Count ' + pageNums.length + ' >>' });
+  objects.push({ num: fontNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>' });
+  objects.push({ num: fontBoldNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>' });
+  objects.sort((a, b) => a.num - b.num);
+  let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
+  const offsets = [0];
+  objects.forEach(obj => { offsets[obj.num] = pdf.length; pdf += obj.num + ' 0 obj\n' + obj.body + '\nendobj\n'; });
+  const xrefStart = pdf.length;
+  pdf += 'xref\n0 ' + nextNum + '\n0000000000 65535 f \n';
+  for (let i = 1; i < nextNum; i++) pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  pdf += 'trailer\n<< /Size ' + nextNum + ' /Root ' + catalogNum + ' 0 R >>\nstartxref\n' + xrefStart + '\n%%EOF';
+  return pdfLatin1ToBytes(pdf);
+}
+
+function buildBilanCompletPdfBytes(N) {
+  const C = PDF_COULEURS;
+  const b = bilanReproductionCampagne(N);
+  const T = b.groupes.total, AD = b.groupes.adultes, AN = b.groupes.antenaises;
+  const prevB = bilanReproductionCampagne(N - 1);
+  const prev = prevB.groupes.total.misesBas > 0 ? prevB.groupes.total : null;
+  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
+  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const pageH = PDF_PAGE_H, L = PDF_MARGIN, R = PDF_PAGE_W - PDF_MARGIN, LARG = R - L;
+  const pct = (v, d) => v === null || v === undefined ? '—' : fmtDecimal(v * 100, d === undefined ? 1 : d) + ' %';
+  const num = (v, d) => v === null || v === undefined ? '—' : fmtDecimal(v, d === undefined ? 2 : d);
+
+  const pages = [];
+  let c = '', y = 0;
+  const entetePage = (premiere) => {
+    y = pageH - PDF_MARGIN;
+    if (premiere) {
+      c += pdfTextColorOp(L, y, 'Ovilog — Bilan de reproduction', 'FB', 17, C.texte);
+      const droite = 'Campagne ' + b.libelle;
+      c += pdfTextColorOp(R - pdfTextWidth(droite, 13, true), y, droite, 'FB', 13, C.vert);
+      y -= 15;
+      c += pdfTextColorOp(L, y, exploitationNom + ' · ' + b.periode.titre + ' · troupeau entier' + (b.courante ? '' : ' · campagne terminée'), 'F1', 9, C.gris);
+      const ed = 'édité le ' + aujourdhui;
+      c += pdfTextColorOp(R - pdfTextWidth(ed, 9, false), y, ed, 'F1', 9, C.gris);
+      y -= 9;
+      c += pdfLineColorOp(L, y, R, y, C.trait, 0.8);
+      y -= 14;
+    } else {
+      c += pdfTextColorOp(L, y, 'Ovilog — Bilan de reproduction · campagne ' + b.libelle + ' (suite)', 'FB', 10, C.gris);
+      y -= 8;
+      c += pdfLineColorOp(L, y, R, y, C.trait, 0.8);
+      y -= 14;
+    }
+  };
+  const nouvellePage = () => { pages.push(c); c = ''; entetePage(false); };
+  const assurer = (h) => { if (y - h < PDF_MARGIN + 18) nouvellePage(); };
+  entetePage(true);
+
+  // ---- tableau générique (1re colonne à gauche, les autres alignées à droite)
+  const tableau = ({ x, largeurs, entete, lignes, hLigne = 13.5, colTotal = true, colAmbre = -1, taille = 8.5, tailleEntete = 7 }) => {
+    const w = largeurs.reduce((s, v) => s + v, 0);
+    c += pdfFillRectOp(x, y - hLigne + 3.5, w, hLigne, C.fond);
+    let cx = x;
+    entete.forEach((t, i) => {
+      const fond = colTotal && i === largeurs.length - 1;
+      if (fond) c += pdfFillRectOp(cx, y - hLigne + 3.5, largeurs[i], hLigne, C.vertFond);
+      const couleur = fond ? C.vert : (i === colAmbre ? C.ambre : C.gris);
+      const txt = pdfFit(String(t).toUpperCase(), tailleEntete, true, largeurs[i] - 8);
+      c += i === 0 ? pdfTextColorOp(cx + 4, y - 4.5, txt, 'FB', tailleEntete, couleur) : pdfTextColorOp(cx + largeurs[i] - 4 - pdfTextWidth(txt, tailleEntete, true), y - 4.5, txt, 'FB', tailleEntete, couleur);
+      cx += largeurs[i];
+    });
+    y -= hLigne;
+    lignes.forEach(l => {
+      if (y - hLigne < PDF_MARGIN + 18) nouvellePage();
+      cx = x;
+      if (colTotal) c += pdfFillRectOp(x + w - largeurs[largeurs.length - 1], y - hLigne + 3.5, largeurs[largeurs.length - 1], hLigne, C.vertFond);
+      c += pdfLineColorOp(x, y - hLigne + 3.5, x + w, y - hLigne + 3.5, C.trait, 0.4);
+      l.cells.forEach((t, i) => {
+        const gras = !!l.b;
+        const font = gras ? 'FB' : 'F1';
+        const estTot = colTotal && i === largeurs.length - 1;
+        const couleur = estTot ? C.vert : (l.i && i === 0 ? C.gris : C.texte);
+        const txt = pdfFit(t, taille, gras, largeurs[i] - 8 - (i === 0 && l.i ? 8 : 0));
+        if (i === 0) c += pdfTextColorOp(cx + 4 + (l.i ? 8 : 0), y - 4.5, txt, font, taille, couleur);
+        else c += pdfTextColorOp(cx + largeurs[i] - 4 - pdfTextWidth(txt, taille, gras), y - 4.5, txt, font, taille, couleur);
+        cx += largeurs[i];
+      });
+      y -= hLigne;
+    });
+    return y;
+  };
+  const titre = (x, texte, note) => {
+    c += pdfTextColorOp(x, y, texte, 'FB', 10.5, C.texte);
+    y -= 11;
+    if (note) { c += pdfTextColorOp(x, y, pdfFit(note, 7.5, false, (x === L ? LARG : wD) - 2), 'F1', 7.5, C.gris); y -= 9; }
+    y -= 4;
+  };
+
+  // ---- alertes (texte coloré)
+  const alertes = [];
+  if (b.population.classement.avertissement) alertes.push([C.ambre, 'Attention : ' + b.population.classement.avertissement]);
+  if (b.horsBilan.misesBasHorsCohorte > 0) alertes.push([C.bleu, b.horsBilan.misesBasHorsCohorte + ' mise(s) bas de brebis absente(s) de la population de depart (entrees apres le demarrage) comptee(s) dans les totaux, pas dans la fertilite.'.replace(/depart/, 'départ').replace(/entrees apres le demarrage/, 'entrées après le démarrage').replace(/comptee/, 'comptée').replace(/fertilite/, 'fertilité')]);
+  if (b.population.classement.sansAnnee > 0) alertes.push([C.bleu, b.population.classement.sansAnnee + " brebis sans année de naissance lisible dans l'EID (ligne « Année inconnue »), rangée(s) avec les brebis."]);
+  alertes.forEach(([col, t]) => { pdfWrapLines(t, 118).forEach(line => { c += pdfTextColorOp(L, y, line, 'F1', 8, col); y -= 10.5; }); });
+  if (alertes.length) y -= 4;
+
+  // ---- KPI
+  const kpis = [
+    { l: 'MISES BAS', v: String(T.misesBas), s: T.nes.total + ' agneaux nés', d: prev ? { a: T.misesBas, p: prev.misesBas, dec: 0, bon: true } : null },
+    { l: 'PROLIFICITÉ', v: num(T.prolificite), s: 'agneaux nés par mise bas', d: prev ? { a: T.prolificite, p: prev.prolificite, dec: 2, bon: true } : null },
+    { l: 'MORTINATALITÉ', v: pct(T.mortinatalite), s: T.nes.mortNes + ' mort(s)-né(s)', d: prev ? { a: T.mortinatalite, p: prev.mortinatalite, dec: 1, bon: false, pt: true } : null },
+    { l: 'MORTALITÉ APRÈS NAISSANCE', v: pct(T.mortaliteApresNaissance), s: T.mortsApres + ' sur ' + T.nes.vivants + ' nés vivants', d: prev ? { a: T.mortaliteApresNaissance, p: prev.mortaliteApresNaissance, dec: 1, bon: false, pt: true } : null }
+  ];
+  const kw = (LARG - 3 * 8) / 4, kh = 58;
+  kpis.forEach((k, i) => {
+    const kx = L + i * (kw + 8);
+    c += pdfFillRectOp(kx, y - kh, kw, kh, C.fond);
+    c += pdfTextColorOp(kx + 8, y - 12, pdfFit(k.l, 6, true, kw - 14), 'FB', 6, C.gris);
+    c += pdfTextColorOp(kx + 8, y - 32, k.v, 'FB', 20, C.texte);
+    c += pdfTextColorOp(kx + 8, y - 42, pdfFit(k.s, 7.5, false, kw - 14), 'F1', 7.5, C.gris);
+    if (k.d && k.d.a !== null && k.d.a !== undefined && k.d.p !== null && k.d.p !== undefined) {
+      const dv = k.d.pt ? (k.d.a - k.d.p) * 100 : k.d.a - k.d.p;
+      if (Math.abs(dv) >= Math.pow(10, -k.d.dec) / 2) {
+        const bon = k.d.bon ? dv > 0 : dv < 0;
+        c += pdfTextColorOp(kx + 8, y - 52, (dv > 0 ? '+' : '-') + fmtDecimal(Math.abs(dv), k.d.dec) + (k.d.pt ? ' pt' : '') + ' vs campagne ' + N, 'FB', 7, bon ? C.vert : C.corail);
+      }
+    }
+  });
+  y -= kh + 14;
+
+  // ---- colonne gauche : bilan par groupe ; colonne droite : courbe + portées
+  const xG = L, wG = 258, xD = L + 273, wD = LARG - 273;
+  const yTop = y;
+  const l3 = (cls, label, f, fmt) => ({ b: cls === 'b', i: cls === 'i', cells: [label, fmt(f(AD)), fmt(f(AN)), fmt(f(T))] });
+  const idf = v => String(v);
+  const lg = [
+    l3('', 'Brebis présentes', g => g.presentes, idf), l3('b', 'Mises bas', g => g.misesBas, idf),
+    l3('i', 'Fertilité', g => g.fertilite, v => pct(v)),
+    l3('i', 'Portées simples', g => g.portees.simples, idf), l3('i', 'Portées doubles', g => g.portees.doubles, idf), l3('i', 'Portées triples', g => g.portees.triples, idf)
+  ];
+  if (T.portees.quatreEtPlus > 0) lg.push(l3('i', 'Portées de 4 et plus', g => g.portees.quatreEtPlus, idf));
+  if (T.sansAgneau > 0) lg.push(l3('i', 'Mises bas sans agneau', g => g.sansAgneau, idf));
+  lg.push(l3('b', 'Agneaux nés', g => g.nes.total, idf), l3('i', 'Femelles', g => g.nes.femelles, idf), l3('i', 'Mâles', g => g.nes.males, idf), l3('i', 'Morts-nés', g => g.nes.mortNes, idf));
+  if (T.nes.sexeInvalide > 0) lg.push(l3('i', 'Sexe non renseigné', g => g.nes.sexeInvalide, idf));
+  lg.push(l3('b', 'Morts après naissance', g => g.mortsApres, idf), l3('b', 'Prolificité', g => g.prolificite, v => num(v)),
+    l3('i', 'Mortinatalité', g => g.mortinatalite, v => pct(v, 2)), l3('i', 'Mortalité après naissance', g => g.mortaliteApresNaissance, v => pct(v, 2)),
+    l3('b', 'Mortalité totale', g => g.mortaliteTotale, v => pct(v, 2)));
+  const mAnt = b.population.classement.millesimeAntenaise;
+  titre(xG, "Bilan par groupe d'âge", mAnt !== null ? 'Antenaises = millésime ' + mAnt + ' (le plus jeune) ; brebis = les autres' : null);
+  tableau({ x: xG, largeurs: [118, 42, 56, 42], entete: ['Indicateur', 'Brebis', 'Antenaises', 'Total'], lignes: lg, colAmbre: 2, taille: 8 });
+  const yBasG = y;
+
+  // courbe hebdomadaire (colonne droite)
+  y = yTop;
+  const sem = b.semaines;
+  const pic = sem.reduce((m, w) => w.misesBas > m.misesBas ? w : m, sem[0] || { misesBas: -1 });
+  titre(xD, 'Mises bas par semaine', sem.length ? 'S1 = semaine du ' + formatDateFr(sem[0].debut) + ' · pic ' + pic.semaine + ' : ' + pic.misesBas : 'Aucune mise bas datée');
+  if (sem.length) {
+    const hC = 100, x0 = xD + 18, wC = wD - 22, yB = y - hC;
+    const maxV = Math.max.apply(null, sem.map(w => w.misesBas).concat([1]));
+    const pas = maxV <= 10 ? 2 : maxV <= 30 ? 5 : maxV <= 60 ? 10 : maxV <= 120 ? 20 : 50;
+    const yMax = Math.ceil(maxV / pas) * pas;
+    for (let v = 0; v <= yMax; v += pas) {
+      const yy = yB + (v / yMax) * hC;
+      c += pdfLineColorOp(x0, yy, x0 + wC, yy, C.trait, v === 0 ? 0.8 : 0.4, v !== 0);
+      c += pdfTextColorOp(x0 - 4 - pdfTextWidth(String(v), 6.5, false), yy - 2, String(v), 'F1', 6.5, C.gris);
+    }
+    const bw = wC / sem.length, barW = Math.min(bw * 0.66, 26);
+    const pasX = sem.length <= 14 ? 1 : Math.ceil(sem.length / 12);
+    sem.forEach((w, i) => {
+      const cx = x0 + bw * i + bw / 2, h = (w.misesBas / yMax) * hC;
+      if (w.misesBas > 0) {
+        c += pdfFillRectOp(cx - barW / 2, yB, barW, h, w === pic ? C.vert : C.vertPale);
+        if (sem.length <= 18 || w === pic || i % 2 === 0) { const t = String(w.misesBas); c += pdfTextColorOp(cx - pdfTextWidth(t, 6.5, w === pic) / 2, yB + h + 2.5, t, w === pic ? 'FB' : 'F1', 6.5, C.texte); }
+      }
+      if (i % pasX === 0 || i === sem.length - 1) { c += pdfTextColorOp(cx - pdfTextWidth(w.semaine, 6.5, false) / 2, yB - 9, w.semaine, 'F1', 6.5, C.gris); }
+    });
+    y = yB - 20;
+  } else y -= 14;
+  // répartition des portées
+  y -= 4;
+  titre(xD, 'Répartition des portées', (T.portees.simples + T.portees.doubles + T.portees.triples + T.portees.quatreEtPlus) + ' portée(s) avec au moins un agneau enregistré');
+  const totP = Math.max(1, T.portees.simples + T.portees.doubles + T.portees.triples + T.portees.quatreEtPlus);
+  const rangs = [['Simples', T.portees.simples, C.vert], ['Doubles', T.portees.doubles, C.ambre], ['Triples', T.portees.triples, C.bleu]];
+  if (T.portees.quatreEtPlus > 0) rangs.push(['4 et plus', T.portees.quatreEtPlus, C.indigo]);
+  rangs.forEach(([lab, n, col]) => {
+    c += pdfTextColorOp(xD, y - 7, lab, 'F1', 8.5, C.texte);
+    const bx = xD + 52, bwid = wD - 52 - 34;
+    c += pdfFillRectOp(bx, y - 8, bwid, 8, C.fond);
+    if (n > 0) c += pdfFillRectOp(bx, y - 8, bwid * n / totP, 8, col);
+    c += pdfTextColorOp(xD + wD - pdfTextWidth(String(n), 8.5, true), y - 7, String(n), 'FB', 8.5, C.texte);
+    y -= 14;
+  });
+  y = Math.min(yBasG, y) - 14;
+
+  // ---- détail par millésime
+  const mill = b.parMillesime.filter(m => m.millesime !== null).slice().reverse().concat(b.parMillesime.filter(m => m.millesime === null));
+  assurer(40 + 13.5 * Math.min(mill.length + 1, 6));
+  titre(L, 'Détail par millésime', "Année de naissance déduite de l'EID · fertilité = mises bas ÷ présentes · durée de mise bas = jours entre la première et la dernière mise bas");
+  tableau({ x: L, largeurs: [135, 70, 70, 85, 75, 80], entete: ['Millésime', 'Présentes', 'Mises bas', 'Fertilité', 'Prolificité', 'Durée mise bas'], colTotal: false,
+    lignes: mill.length ? mill.map(m => ({ cells: [m.millesime === null ? 'Année inconnue' : m.millesime + (m.antenaises ? '  (antenaises)' : ''), String(m.presentes), String(m.misesBas), pct(m.fertilite === null ? null : m.fertilite / 100), num(m.prolificite), m.dureeMiseBas !== null ? m.dureeMiseBas + ' j' : '—'] })) : [{ cells: ['Aucune brebis présente', '', '', '', '', ''] }] });
+  y -= 14;
+
+  // ---- mouvements des brebis
+  const mB = b.mouvements.brebis, mA = b.mouvements.agnelles;
+  const tri = f => [f(mB.adultes), f(mB.antenaises), f(mA)];
+  const ligne3 = (cls, label, v) => ({ b: cls === 'b', i: cls === 'i', cells: [label, String(v[0]), String(v[1]), String(v[2]), String(v[0] + v[1] + v[2])] });
+  const entrees = tri(m => m.entrees.total), renouv = [mB.adultes.entrees.renouvellement, mB.antenaises.entrees.renouvellement, mA.entrees.naissance];
+  const sorties = tri(m => m.sorties.total), mortes = tri(m => m.sorties.mortes), vendues = tri(m => m.sorties.ventes + m.sorties.ventesReproduction);
+  assurer(150);
+  titre(L, 'Mouvements des brebis', 'Du ' + formatDateFr(b.periode.debutFenetre) + ' au ' + formatDateFr(b.periode.finFenetre) + " · renouvelées = agnelles passées en brebis (Agnelles : gardées) · actifs au " + formatDateFr(b.actifsAu));
+  tableau({ x: L, largeurs: [185, 80, 85, 80, 85], entete: ['Brebis', 'Adultes', 'Antenaises', 'Agnelles', 'Total'], colAmbre: 2,
+    lignes: [ligne3('b', 'Entrées', entrees), ligne3('i', 'Renouvelées', renouv), ligne3('i', 'Achetées / autres', entrees.map((v, i) => v - renouv[i])),
+      ligne3('b', 'Sorties', sorties), ligne3('i', 'Mortes', mortes), ligne3('i', 'Vendues', vendues), ligne3('i', 'Autres (pertes, autoconsommation)', sorties.map((v, i) => v - mortes[i] - vendues[i])),
+      ligne3('b', 'Actifs', [b.actifs.adultes, b.actifs.antenaises, b.actifs.agnelles])] });
+  y -= 14;
+
+  // ---- mouvements des agneaux
+  const ag = b.mouvements.agneaux, cols = [ag.adultes.femelles, ag.adultes.males, ag.antenaises.femelles, ag.antenaises.males];
+  const v4 = f => cols.map(f);
+  const ligne4 = (cls, label, v) => ({ b: cls === 'b', i: cls === 'i', cells: [label].concat(v.map(String), [String(v.reduce((s, x) => s + x, 0))]) });
+  const nesV = v4(x => x.nes), mortsV = v4(x => x.morts), vendusV = v4(x => x.vendus), gardesV = v4(x => x.gardes || 0), presV = v4(x => x.presents);
+  assurer(120);
+  titre(L, 'Mouvements des agneaux', 'Agneaux nés pendant la campagne (toute date de sortie) · renouvelés = femelles gardées' + (T.nes.mortNes ? ' · ' + T.nes.mortNes + ' mort(s)-né(s) hors nés vivants' : ''));
+  tableau({ x: L, largeurs: [150, 66, 66, 66, 66, 101], tailleEntete: 6.5, entete: ['Agneaux', 'Adultes F', 'Adultes M', 'Antenaises F', 'Antenaises M', 'Total'],
+    lignes: [ligne4('b', 'Nés vivants', nesV), ligne4('b', 'Sortis', nesV.map((_, i) => mortsV[i] + vendusV[i] + gardesV[i])), ligne4('i', 'Morts', mortsV), ligne4('i', 'Vendus', vendusV), ligne4('i', 'Renouvelés', gardesV), ligne4('b', 'Actifs', presV)] });
+  y -= 14;
+
+  // ---- points de données à vérifier + formules
+  if (b.anomalies.length) {
+    assurer(30 + 10.5 * b.anomalies.length);
+    c += pdfTextColorOp(L, y, "Points de données à vérifier (rien n'a été corrigé)", 'FB', 9, C.corail);
+    y -= 12;
+    b.anomalies.forEach(a => {
+      pdfWrapLines('- ' + a.message + ' : ' + a.nombre + (a.exemples.length ? ' (' + a.exemples.join(', ') + (a.nombre > a.exemples.length ? '...' : '') + ')' : ''), 120).forEach(line => { assurer(12); c += pdfTextColorOp(L, y, line, 'F1', 7.5, C.texte); y -= 10; });
+    });
+    y -= 6;
+  }
+  assurer(46);
+  pdfWrapLines("Formules : prolificité = agneaux nés (morts-nés inclus) ÷ mises bas · mortinatalité = morts-nés ÷ nés · mortalité après naissance = morts après naissance ÷ nés vivants · mortalité totale = (morts-nés + morts après naissance) ÷ nés. Antenaises = millésime le plus jeune de l'effectif de la campagne ; brebis = tous les autres.", 128)
+    .forEach(line => { c += pdfTextColorOp(L, y, line, 'F1', 7, C.gris); y -= 9; });
+
+  pages.push(c);
+  const total = pages.length;
+  const finales = pages.map((pc, i) => pc + pdfTextColorOp(L, 22, 'Ovilog — bilan de reproduction · campagne ' + b.libelle + ' · export généré automatiquement', 'F1', 7.5, C.gris) + pdfTextColorOp(R - pdfTextWidth('page ' + (i + 1) + ' / ' + total, 7.5, false), 22, 'page ' + (i + 1) + ' / ' + total, 'F1', 7.5, C.gris));
+  return buildMultiPagePdfBytes(finales);
+}
+
+async function exportBilanCompletPdf(campagne) {
+  const N = campagne === undefined || campagne === null ? DB.campagneDebut : campagne;
+  const bytes = buildBilanCompletPdfBytes(N);
+  const filename = 'bilan-reproduction-complet_campagne-' + campagneLabel(N) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
