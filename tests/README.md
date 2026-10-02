@@ -75,6 +75,7 @@ Sans `URL_AVANT`, seuls les attendus de la version actuelle sont vérifiés.
 | `test_bilan_calculs` | `bilanReproductionCampagne(N)` : jeu synthétique qui reproduit le bilan externe du 23/09 (363 mises bas, 299/64/0, 427 nés, 38 morts, 1,20/1,07/1,18, 9,30/26,39/12,18 %), courbe S1…, cas limites, hors cohorte, registre, campagne passée stable, mouvements, recoupement avec le tableau mobile, export réel en lecture seule |
 | `test_bilan_pc` | Page PC du Bilan de reproduction (écran PC simulé) : 4 KPI, tableau par groupe du bilan du 23/09 lu dans le DOM, courbe SVG, portées, millésimes, mouvements, sélecteur de campagne, comparatif, lots IA/Éponge, alertes, campagne vide, bouton PDF par âge ; mobile inchangé |
 | `test_bilan_pdf` | PDF « bilan de reproduction complet » A4 : structure valide (xref), chiffres du bilan du 23/09 relus dans le texte du PDF, campagne passée / vide / grosse campagne, nom de fichier et type MIME, bouton de la page PC, PDF « par âge » d'une campagne passée |
+| `test_resume_campagne` | Résumé de campagne figé (`DB.resumesCampagne`) : aller-retour identique au calcul vivant, adoptés, migrateData, synchro meta vers un 2e appareil, création à la bascule après l'export visible et avant toute modification, jamais écrasé, garde « aucune mise bas » |
 | `test_bilan_mobile_reference` | HTML mobile du bilan comparé octet pour octet à `ref/bilan_mobile.html` (jeu synthétique, référence prise après la règle antenaise ; `OVILOG_MAJ_REF=1` pour la régénérer volontairement) |
 
 ## Ce que ces tests ne couvrent pas

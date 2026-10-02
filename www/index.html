@@ -903,6 +903,8 @@ function migrateData(d) {
   // agrégats troupeau, typiquement recopiés du récapitulatif SIEOL, pas
   // dérivables de DB.bilanLactation qui ne couvre que le détail par brebis).
   if (!d.bilanLactationSaisie) d.bilanLactationSaisie = [];
+  // Résumés figés par campagne (voir bilanDepuisResume) : objet { "<campagne>": résumé }, jamais null.
+  if (!d.resumesCampagne || typeof d.resumesCampagne !== 'object' || Array.isArray(d.resumesCampagne)) d.resumesCampagne = {};
   // Liste en série (onglet du Chantier de tri) : tableau {eid, espece} de
   // travail, persisté pour survivre à une fermeture de l'appli, mais jamais
   // relié aux fiches brebis/béliers/agnelles (espece n'est qu'une étiquette
@@ -1169,6 +1171,7 @@ function loadData() {
     // installation : les champs du sous-onglet Bilan de lactation
     // plantaient dès la première saisie sur une base neuve.
     bilanLactationSaisie: [],
+    resumesCampagne: {},
     lactationModele: [],
     sieolSansMiseBas: [],
     resumeControleLaitier: [],
@@ -3711,6 +3714,39 @@ function lundiDeLaSemaineISO(dateISO) {
   const dow = new Date(t).getUTCDay(); // 0 = dimanche
   return t - ((dow + 6) % 7) * 86400000;
 }
+/* Briques de calcul d'un groupe (adultes / antenaises / total) du bilan, partagées entre
+   bilanReproductionCampagne (calcul sur les données vivantes) et bilanDepuisResume (résumé
+   figé) pour que les deux donnent exactement les mêmes ratios. Ratios BRUTS (null si
+   dénominateur nul, jamais 0). `adoptes` = agneaux adoptés (indicateur du bilan externe). */
+function grpVide() {
+  return {
+    presentes: 0, misesBas: 0, misesBasCohorte: 0, sansAgneau: 0,
+    portees: { simples: 0, doubles: 0, triples: 0, quatreEtPlus: 0 },
+    nes: { femelles: 0, males: 0, mortNes: 0, sexeInvalide: 0, total: 0 },
+    mortsApres: 0, adoptes: 0
+  };
+}
+function grpFinaliser(g) {
+  const div = (a, b) => b > 0 ? a / b : null;
+  const vivants = g.nes.total - g.nes.mortNes;
+  return Object.assign({}, g, {
+    nes: Object.assign({}, g.nes, { vivants }),
+    fertilite: g.presentes === null || g.presentes === undefined ? null : div(g.misesBasCohorte, g.presentes),
+    prolificite: div(g.nes.total, g.misesBas),
+    pctDoubles: div(g.portees.doubles, g.misesBas),
+    mortinatalite: div(g.nes.mortNes, g.nes.total),
+    mortaliteApresNaissance: div(g.mortsApres, vivants),
+    mortaliteTotale: div(g.nes.mortNes + g.mortsApres, g.nes.total)
+  });
+}
+function grpSomme(a, b) {
+  const t = grpVide();
+  ['misesBas', 'misesBasCohorte', 'sansAgneau', 'mortsApres', 'adoptes'].forEach(k => { t[k] = a[k] + b[k]; });
+  t.presentes = a.presentes === null || b.presentes === null ? null : a.presentes + b.presentes;
+  Object.keys(t.portees).forEach(k => { t.portees[k] = a.portees[k] + b.portees[k]; });
+  Object.keys(t.nes).forEach(k => { t.nes[k] = a.nes[k] + b.nes[k]; });
+  return t;
+}
 function bilanReproductionCampagne(N) {
   const estCourante = N === DB.campagneDebut;
   const mois = campagneMoisDebutConfig(), jour = campagneJourDebutConfig();
@@ -3741,12 +3777,7 @@ function bilanReproductionCampagne(N) {
     if (brebis && a.exemples.length < 5) a.exemples.push('n°' + numeroVisuel(brebis.eid || ''));
   };
 
-  const vide = () => ({
-    presentes: 0, misesBas: 0, misesBasCohorte: 0, sansAgneau: 0,
-    portees: { simples: 0, doubles: 0, triples: 0, quatreEtPlus: 0 },
-    nes: { femelles: 0, males: 0, mortNes: 0, sexeInvalide: 0, total: 0 },
-    mortsApres: 0
-  });
+  const vide = grpVide;
   const G = { adultes: vide(), antenaises: vide() };
   cohort.forEach(s => { G[groupeDe(s.eid)].presentes++; });
 
@@ -3783,6 +3814,7 @@ function bilanReproductionCampagne(N) {
       else if (l.sexe === 'Femelle') g.nes.femelles++;
       else { g.nes.sexeInvalide++; signaler('agneau-sexe-invalide', 'Agneau sans sexe valide (compté parmi les nés, ni mâle ni femelle)', s); }
       const mort = l.statutFinal === 'mort';
+      if (l.adopte === true) g.adoptes++;
       if (mort) {
         g.mortsApres++;
         const aDate = (l.mouvements || []).some(x => x && x.type === 'Mort' && x.date);
@@ -3808,27 +3840,8 @@ function bilanReproductionCampagne(N) {
   });
   cohort.forEach(s => { if (anneeNaissance(s.eid || '') === null) signaler('brebis-eid-illisible', 'Brebis dont l\'EID ne donne pas d\'année de naissance (rangée avec les adultes)', s); });
 
-  // ---- groupes : ratios
-  const div = (a, b) => b > 0 ? a / b : null;
-  const finaliser = g => {
-    const vivants = g.nes.total - g.nes.mortNes;
-    return Object.assign({}, g, {
-      nes: Object.assign({}, g.nes, { vivants }),
-      fertilite: div(g.misesBasCohorte, g.presentes),
-      prolificite: div(g.nes.total, g.misesBas),
-      pctDoubles: div(g.portees.doubles, g.misesBas),
-      mortinatalite: div(g.nes.mortNes, g.nes.total),
-      mortaliteApresNaissance: div(g.mortsApres, vivants),
-      mortaliteTotale: div(g.nes.mortNes + g.mortsApres, g.nes.total)
-    });
-  };
-  const somme = (a, b) => {
-    const t = vide();
-    ['presentes', 'misesBas', 'misesBasCohorte', 'sansAgneau', 'mortsApres'].forEach(k => { t[k] = a[k] + b[k]; });
-    Object.keys(t.portees).forEach(k => { t.portees[k] = a.portees[k] + b.portees[k]; });
-    Object.keys(t.nes).forEach(k => { t.nes[k] = a.nes[k] + b.nes[k]; });
-    return t;
-  };
+  // ---- groupes : ratios (voir grpFinaliser / grpSomme, partagés avec bilanDepuisResume)
+  const finaliser = grpFinaliser, somme = grpSomme;
   const groupes = { adultes: finaliser(G.adultes), antenaises: finaliser(G.antenaises), total: finaliser(somme(G.adultes, G.antenaises)) };
 
   // ---- courbe hebdomadaire : S1, S2... depuis la première mise bas (lundi-dimanche)
@@ -3966,6 +3979,73 @@ function campagnesBilanReproduction() {
   Object.keys(DB.resumesCampagne || {}).forEach(k => { const n = parseInt(k, 10); if (Number.isInteger(n)) set.add(n); });
   brebisDuBilan().forEach(s => (s.agnelages || []).forEach(a => { if (a && Number.isInteger(a.campagne)) set.add(a.campagne); }));
   return Array.from(set).sort((a, b) => b - a);
+}
+
+/* ---------- Résumé de campagne (chiffres figés) ----------
+   DB.resumesCampagne = { "<N>": résumé } (N = valeur interne de la campagne, affichée N+1),
+   champ de meta synchronisé (voir META_FIELDS), ~2-3 Ko par campagne. Un résumé garde les
+   chiffres du bilan d'une campagne même quand les données vivantes ont été archivées ou
+   remises à zéro, et sert au comparatif « campagne en cours vs précédente ».
+   - Créé automatiquement à la bascule (creerResumeFinCampagne), AVANT toute modification, après
+     l'export visible ; jamais écrasé sans confirmation explicite.
+   - Ou saisi à la main (campagne antérieure à l'appli, ex. bilan externe) : source marquée.
+   Seuls les COMPTAGES sont stockés ; ratios et totaux sont recalculés à la lecture
+   (bilanDepuisResume) avec exactement les mêmes briques que le calcul vivant (grpFinaliser) et
+   listés dans `derives`. La courbe hebdomadaire n'existe que si elle a été calculée
+   (`semaines` null = « non disponible »). */
+const RESUME_DERIVES = ['prolificité', 'mortinatalité', 'mortalité après naissance', 'mortalité totale', 'totaux Adultes + Antenaises', 'nés vivants', 'sortis (agneaux)'];
+function jjISO(iso) { return String(iso).slice(8, 10) + '/' + String(iso).slice(5, 7) + '/' + String(iso).slice(0, 4); }
+function construireResumeCampagne(N, source, bilan) {
+  const b = bilan || bilanReproductionCampagne(N);
+  const brut = g => JSON.parse(JSON.stringify({
+    presentes: g.presentes, misesBas: g.misesBas, misesBasCohorte: g.misesBasCohorte, sansAgneau: g.sansAgneau,
+    portees: g.portees, nes: { femelles: g.nes.femelles, males: g.nes.males, mortNes: g.nes.mortNes, sexeInvalide: g.nes.sexeInvalide, total: g.nes.total },
+    mortsApres: g.mortsApres, adoptes: g.adoptes || 0
+  }));
+  return JSON.parse(JSON.stringify({
+    campagne: N, libelle: campagneLabel(N),
+    periode: { debut: b.periode.debut, fin: b.periode.fin },
+    source: source, creeLe: new Date().toISOString(),
+    groupes: { adultes: brut(b.groupes.adultes), antenaises: brut(b.groupes.antenaises) },
+    mouvements: b.mouvements, actifs: b.actifs, actifsAu: b.actifsAu,
+    semaines: b.semaines, parMillesime: b.parMillesime,
+    population: { classement: { millesimeAntenaise: b.population.classement.millesimeAntenaise } },
+    derives: RESUME_DERIVES
+  }));
+}
+// Reconstitue, depuis un résumé, un objet de même forme que bilanReproductionCampagne(N)
+function bilanDepuisResume(r) {
+  const A = r.groupes.adultes, T = r.groupes.antenaises;
+  const groupes = { adultes: grpFinaliser(A), antenaises: grpFinaliser(T), total: grpFinaliser(grpSomme(A, T)) };
+  const tot = groupes.total;
+  return {
+    campagne: r.campagne, libelle: r.libelle, courante: false, depuisResume: true,
+    periode: { debut: r.periode.debut, fin: r.periode.fin, debutReel: r.periode.debut, debutFenetre: r.periode.debut, finFenetre: r.periode.fin, titre: 'du ' + jjISO(r.periode.debut) + ' au ' + jjISO(r.periode.fin) },
+    population: { presentes: tot.presentes, classement: { millesimeAntenaise: (r.population && r.population.classement && r.population.classement.millesimeAntenaise) || null, effectifAntenaises: null, effectifAdultes: null, sansAnnee: 0, renouvellement: null, avertissement: null } },
+    horsBilan: { entreesTardives: 0, brebisAvecMiseBasHorsCohorte: 0, misesBasHorsCohorte: 0 },
+    groupes, kpis: { misesBas: tot.misesBas, prolificite: tot.prolificite, mortinatalite: tot.mortinatalite, mortaliteApresNaissance: tot.mortaliteApresNaissance },
+    semaines: r.semaines || [], semainesDisponibles: !!(r.semaines && r.semaines.length),
+    parMillesime: r.parMillesime || [], millesimesDisponibles: !!(r.parMillesime && r.parMillesime.length),
+    mouvements: r.mouvements, actifs: r.actifs, actifsAu: r.actifsAu,
+    anomalies: [], source: r.source, derives: r.derives || RESUME_DERIVES, creeLe: r.creeLe
+  };
+}
+/* Garde de la bascule (voir executerChangementCampagne) : appelée AVANT toute écriture, elle ne
+   modifie rien. Retourne { aucune: true } s'il n'y a aucune mise bas à figer (la bascule demande alors
+   une décision à l'éleveur), { existe: true } si un résumé existe déjà (jamais écrasé). */
+function etatResumeFinCampagne() {
+  const N = DB.campagneDebut;
+  if (N === null || N === undefined) return { sansCampagne: true };
+  if (resumeCampagneSaisi(N)) return { existe: true, N };
+  const b = bilanReproductionCampagne(N);
+  return b.groupes.total.misesBas === 0 ? { aucune: true, N, libelle: b.libelle } : { aFiger: true, N, bilan: b };
+}
+// Pose le résumé de la campagne qui se termine dans DB (en mémoire : persisté par le saveData de la bascule)
+function poserResumeFinCampagne(etat) {
+  if (!etat || !etat.aFiger) return false;
+  DB.resumesCampagne = DB.resumesCampagne || {};
+  DB.resumesCampagne[etat.N] = construireResumeCampagne(etat.N, { type: 'calcul-ovilog', libelle: 'Figé automatiquement à la bascule du ' + formatDateFr(new Date().toISOString().slice(0, 10)) }, etat.bilan);
+  return true;
 }
 
 /* Millésime affiché d'une campagne à partir de sa valeur interne
@@ -22345,6 +22425,14 @@ async function executerChangementCampagne() {
     // sert de filet de restauration immédiate au point 4 (voir plus bas).
     const avant = JSON.parse(JSON.stringify(DB));
 
+    // Résumé figé de la campagne qui se termine : état calculé ICI (lecture seule). S'il n'y a aucune mise
+    // bas à figer, on ne décide pas à la place de l'éleveur : OK = continuer SANS résumé, Annuler =
+    // interrompre la bascule (rien n'est modifié, aucune sauvegarde demandée).
+    const etatResume = etatResumeFinCampagne();
+    if (etatResume.aucune && !confirm("Aucune mise bas n'est enregistrée pour la campagne " + etatResume.libelle + " : aucun résumé ne peut être figé automatiquement (tu pourras en saisir un à la main depuis le Bilan de reproduction). Continuer la bascule SANS résumé ?\n\nOK = continuer la bascule sans résumé · Annuler = interrompre la bascule, rien n'est modifié.")) {
+      return { ok: false, annule: true, raison: "bascule interrompue : aucune mise bas enregistrée pour la campagne " + etatResume.libelle + ", pas de résumé à figer" };
+    }
+
     // Sauvegarde interne vérifiée + export visible (sélecteur système) relu :
     // AVANT toute mutation de DB. Annulation ou échec : on sort ici, rien
     // n'est modifié, et le finally ci-dessous libère les verrous.
@@ -22364,6 +22452,11 @@ async function executerChangementCampagne() {
     if (!snapshotResult.ok) {
       return { ok: false, raison: "le point de restauration interne n'a pas pu être enregistré : " + snapshotResult.raison };
     }
+
+    // Résumé figé de la campagne qui se termine : posé en mémoire APRÈS l'export visible et AVANT toute
+    // modification (les chiffres sont ceux d'avant la bascule), persisté par le saveData final ; jamais
+    // écrasé si un résumé existe déjà (voir etatResumeFinCampagne).
+    poserResumeFinCampagne(etatResume);
 
     // DB.luttes n'est plus alimenté depuis le module Reproduction (voir
     // modesRepro, campagne-tagué comme les agnelages/échographies) : plus
@@ -24595,7 +24688,9 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
   // Journal des bascules/nettoyages ayant archivé des fiches (voir
   // journaliserArchivageRegistre) -- synchronisé comme le reste, distinct du
   // journal de synchro purement local (SYNC_JOURNAL_KEY).
-  'journalRegistre'];
+  'journalRegistre',
+  // Résumés figés par campagne (chiffres du Bilan de reproduction) -- voir resumesCampagne.
+  'resumesCampagne'];
 // 'registre' ici = la collection dédiée users/{uid}/registre/{id} (1 document
 // par animal archivé, chantier "Registre : collection dédiée") -- SANS
 // rapport avec meta.registre ci-dessus (champ conservé tel quel, voir son
