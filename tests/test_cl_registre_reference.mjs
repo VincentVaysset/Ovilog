@@ -49,7 +49,10 @@ const attendu = JSON.parse(readFileSync(REF, 'utf8'));
 let ko = false;
 for (const k of Object.keys(attendu)) {
   if (k === 'exports') {
-    for (const e of Object.keys(attendu.exports)) if (JSON.stringify(attendu.exports[e]) !== JSON.stringify(out.exports[e])) { ko = true; console.log('FAIL: export « ' + e + ' » différent de la référence'); }
+    // Le Sanitaire a gagné des colonnes (carnet sanitaire PC) : sa feuille Excel et son PDF sont comparés colonne par colonne par
+    // test_export_sanitaire ; ici on ne compare que les autres feuilles / PDF (identiques octet pour octet) et le nom du fichier Sanitaire.
+    const norm = (e, cap) => { const c = JSON.parse(JSON.stringify(cap)); return /_xlsx$/.test(e) ? c.map(x => x.t === 'xlsx' ? { ...x, s: x.s.filter(f => f.name !== 'Sanitaire') } : x) : /_pdf_sanitaire$/.test(e) ? c.map(x => x.t === 'file' ? { nom: x.nom, mime: x.mime } : x) : c; };
+    for (const e of Object.keys(attendu.exports)) if (JSON.stringify(norm(e, attendu.exports[e])) !== JSON.stringify(norm(e, out.exports[e]))) { ko = true; console.log('FAIL: export « ' + e + ' » différent de la référence'); }
     continue;
   }
   if (attendu[k] !== out[k]) { ko = true; const i = [...out[k]].findIndex((c, n) => c !== attendu[k][n]); console.log('FAIL: écran mobile « ' + k + ' » modifié (caractère ' + i + ')\n  attendu : …' + attendu[k].slice(Math.max(0, i - 60), i + 100).replace(/\n/g, ' ') + '\n  obtenu  : …' + out[k].slice(Math.max(0, i - 60), i + 100).replace(/\n/g, ' ')); }

@@ -17535,11 +17535,13 @@ function renderCarnetSanitairePc() {
         <button type="button" class="btn btn-secondary" id="cs-sous-delai">Sous délai d'attente</button>
         <button type="button" class="btn btn-secondary" id="cs-historique">Traitements collectifs</button>
         <button type="button" class="btn btn-secondary" id="cs-agneaux" title="Les agneaux gardent leur écran actuel de traitement collectif">Traitement collectif agneaux</button>
+        <button type="button" class="btn btn-secondary" id="cs-export">Exporter le carnet (Excel)</button>
       </div>
     </div>`;
   const etapes = `<div class="pc-etapes"><span class="s ${E.ecran === 1 ? 'on' : 'fait'}">${E.ecran === 1 ? '1' : '✓ 1'} · Le soin</span><span>→</span><span class="s ${E.ecran === 2 ? 'on' : ''}">2 · Les animaux</span></div>`;
   app.innerHTML = `<div class="brd" id="pc-carnet">${entete}${bandeauLot}${etapes}<div id="cs-ecran"></div></div>`;
   const nav = (id, vue) => { document.getElementById(id).onclick = () => render(vue); };
+  document.getElementById('cs-export').onclick = () => exportCarnetSanitaireXlsx();
   nav('cs-produits', 'produits-delais'); nav('cs-ordonnances', 'ordonnances'); nav('cs-sous-delai', 'sous-delai'); nav('cs-historique', 'traitements-collectifs'); nav('cs-agneaux', 'traitement-collectif');
   const btnLot = document.getElementById('cs-annuler-lot');
   if (btnLot) btnLot.onclick = () => {
@@ -19401,7 +19403,8 @@ function lambSanitaireRows() {
             type: (s.type || '') + (s.sousType ? ' · ' + s.sousType : ''),
             produit: s.produit || '', date: s.date || '', dose: s.quantiteCc != null ? (s.quantiteCc + ' cc') : (s.dose || ''),
             numeroOrdonnance: s.numeroOrdonnance || '',
-            campagne: campagneDeDateRegistre(s.date)
+            campagne: campagneDeDateRegistre(s.date),
+            ...champsSanitaireExport(s)
           });
         });
       });
@@ -19410,6 +19413,26 @@ function lambSanitaireRows() {
   return rows;
 }
 
+/* Champs ajoutés au registre sanitaire par le carnet sanitaire PC (voie, durée, date de fin, fait par, reprise du lait, vente dès le).
+   Valeurs BRUTES (dates ISO) : le tableau mobile ne les affiche pas ; seuls les exports Excel / PDF les utilisent. Un ancien soin
+   (sans durée ni délais) donne des champs vides, affichés « — » à l'export ; « fait par » reprend l'intervenant déjà saisi. */
+function champsSanitaireExport(s) {
+  const e = datesEffectivesSoin(s), d = e.dates;
+  return {
+    voie: s.voie || '', dureeJours: Number.isInteger(s.dureeJours) ? s.dureeJours : null, dateFin: d.derniere || '', faitPar: s.intervenant || '',
+    repriseLait: d.repriseLait || '', venteDes: d.venteDes || '', aucuneAttenteLait: !!d.aucuneAttenteLait, aucuneAttenteViande: !!d.aucuneAttenteViande
+  };
+}
+// Libellés d'export des champs ajoutés : « — » quand la valeur est inconnue (ancien soin), « aucune attente » pour un délai de 0 jour
+const exportDateOuAttente = (iso, aucune) => iso ? formatDateFr(iso) : (aucune ? 'aucune attente' : '—');
+const EXPORT_SANITAIRE_AJOUTS = [
+  { label: 'Voie', valeur: r => r.voie || '—' },
+  { label: 'Durée (jours)', valeur: r => r.dureeJours === null || r.dureeJours === undefined ? '—' : r.dureeJours },
+  { label: 'Date de fin', valeur: r => r.dateFin ? formatDateFr(r.dateFin) : '—' },
+  { label: 'Fait par', valeur: r => r.faitPar || '—' },
+  { label: 'Reprise du lait', valeur: r => exportDateOuAttente(r.repriseLait, r.aucuneAttenteLait) },
+  { label: 'Vente / départ dès le', valeur: r => exportDateOuAttente(r.venteDes, r.aucuneAttenteViande) }
+];
 function registreSanitaireRows() {
   const rows = [];
   REGISTRE_CATEGORIES.forEach(c => {
@@ -19420,7 +19443,8 @@ function registreSanitaireRows() {
           type: (s.type || '') + (s.sousType ? ' · ' + s.sousType : ''),
           produit: s.produit || '', date: s.date || '', dose: s.quantiteCc != null ? (s.quantiteCc + ' cc') : (s.dose || ''),
           numeroOrdonnance: s.numeroOrdonnance || '',
-          campagne: campagneDeDateRegistre(s.date)
+          campagne: campagneDeDateRegistre(s.date),
+          ...champsSanitaireExport(s)
         });
       });
     });
@@ -19860,7 +19884,7 @@ function pdfTextOp(x, y, text, font, size) {
    affiché automatiquement sous le titre — un même en-tête pour tous les
    PDF générés par cette fonction. Retourne les octets du PDF complet
    (Uint8Array), prêt pour saveOrShareBinaryFile. */
-function buildPdfTable({ title, subtitle, columns, rows, landscape }) {
+function buildPdfTable({ title, subtitle, columns, rows, landscape, fontSize, headerSize }) {
   const pageW = landscape ? PDF_PAGE_H : PDF_PAGE_W;
   const pageH = landscape ? PDF_PAGE_W : PDF_PAGE_H;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || '';
@@ -19892,12 +19916,12 @@ function buildPdfTable({ title, subtitle, columns, rows, landscape }) {
     y -= 14;
     content += pdfTextOp(PDF_MARGIN, y, subtitle, 'F1', 9);
     y -= 22;
-    columns.forEach(col => { content += pdfTextOp(PDF_MARGIN + col.x, y, col.label, 'FB', 10); });
+    columns.forEach(col => { content += pdfTextOp(PDF_MARGIN + col.x, y, col.label, 'FB', headerSize || 10); });
     y -= 6;
     content += PDF_MARGIN + ' ' + y + ' m ' + (pageW - PDF_MARGIN) + ' ' + y + ' l S\n';
     y -= 14;
     pageRows.forEach(row => {
-      columns.forEach((col, ci) => { content += pdfTextOp(PDF_MARGIN + col.x, y, row[ci] || '', 'F1', 9.5); });
+      columns.forEach((col, ci) => { content += pdfTextOp(PDF_MARGIN + col.x, y, row[ci] || '', 'F1', fontSize || 9.5); });
       y -= PDF_ROW_HEIGHT;
     });
     content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Page ' + (pageIndex + 1) + '/' + pages.length, 'F1', 8);
@@ -21499,6 +21523,19 @@ async function exportLaitTankXlsx() {
    animaux distincts (numéro de cheptel différent) resterait indistinguable
    sur un document exporté sinon. colWidths élargit les colonnes N° pour
    que ce format à 11 chiffres ne soit jamais tronqué à l'affichage. */
+/* Feuille « Sanitaire » : les 8 colonnes d'origine, inchangées et dans le même ordre, PUIS les colonnes du carnet sanitaire
+   (voie, durée, date de fin, fait par, reprise du lait, vente / départ dès le). */
+function feuilleSanitaireXlsx(rows) {
+  return { name: 'Sanitaire', colWidths: [16, 14, 16, 20, 12, 12, 16, 14, 16, 12, 14, 16, 16, 20], rows: [
+    ['N°', 'Catégorie', 'Type de soin', 'Produit', 'Date', 'Dose', 'N° ordonnance', 'Campagne', ...EXPORT_SANITAIRE_AJOUTS.map(c => c.label)],
+    ...rows.map(r => ['n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, r.numeroOrdonnance, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1), ...EXPORT_SANITAIRE_AJOUTS.map(c => c.valeur(r))])
+  ] };
+}
+// Page PC « Carnet sanitaire » : le carnet complet (sans filtre) en un fichier Excel
+async function exportCarnetSanitaireXlsx() {
+  const bytes = await buildXlsxWorkbook([feuilleSanitaireXlsx(registreSanitaireRows())]);
+  await saveOrShareBinaryFile('carnet-sanitaire-' + new Date().toISOString().slice(0,10) + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
 async function exportRegistreXlsx() {
   const sheets = [
     { name: 'Agnelage', colWidths: [16, 16, 10, 18, 14], rows: [
@@ -21511,11 +21548,7 @@ async function exportRegistreXlsx() {
       ...registreMouvementsFilteredRows(registreFiltre, registreColFiltres.mouvements).map(r =>
         ['n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.detail, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]},
-    { name: 'Sanitaire', colWidths: [16, 14, 16, 20, 12, 12, 16, 14], rows: [
-      ['N°', 'Catégorie', 'Type de soin', 'Produit', 'Date', 'Dose', 'N° ordonnance', 'Campagne'],
-      ...registreSanitaireFilteredRows(registreFiltre, registreColFiltres.sanitaire).map(r =>
-        ['n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, r.numeroOrdonnance, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
-    ]}
+    feuilleSanitaireXlsx(registreSanitaireFilteredRows(registreFiltre, registreColFiltres.sanitaire))
   ];
   const bytes = await buildXlsxWorkbook(sheets);
   const filename = 'registre-elevage-' + new Date().toISOString().slice(0,10) + '.xlsx';
@@ -21550,10 +21583,45 @@ function registreResumeFiltresFichier(filtreNumero, colFiltres) {
    en paysage : le registre a jusqu'à 7 colonnes, trop serré en portrait.
    Colonnes N° : EID tronqué à 11 chiffres (eidAffichageCourt), toujours,
    même règle et même raison que exportRegistreXlsx() ci-dessus. */
+/* Mise en page du PDF Sanitaire (paysage, 762 pt utiles) : les 8 colonnes d'origine, puis EN PRIORITÉ date de fin, voie, fait par
+   (mentions réglementaires), puis reprise du lait et vente dès le SEULEMENT si la place le permet. Les positions sont calculées
+   d'après la largeur réelle du texte ; la police passe de 9,5 à 8 puis 7 pt si nécessaire, jamais de chevauchement. */
+function miseEnPageSanitairePdf(lignes) {
+  const base = [
+    { label: 'N°', val: r => 'n°' + eidAffichageCourt(r.eid) }, { label: 'Catégorie', val: r => r.categorie }, { label: 'Type de soin', val: r => r.type },
+    { label: 'Produit', val: r => r.produit }, { label: 'Date', val: r => formatDateFr(r.date) }, { label: 'Dose', val: r => r.dose },
+    { label: 'N° ordonnance', val: r => r.numeroOrdonnance }, { label: 'Campagne', val: r => registreCampagneLabelTexte(r) }
+  ];
+  const aj = i => ({ label: EXPORT_SANITAIRE_AJOUTS[i].label, val: r => String(EXPORT_SANITAIRE_AJOUTS[i].valeur(r)) });
+  const obligatoires = base.concat([aj(2), aj(0), aj(3)]);                 // date de fin, voie, fait par
+  const complets = obligatoires.concat([aj(4), aj(5)]);                    // + reprise du lait, vente dès le
+  const utile = PDF_PAGE_H - 2 * PDF_MARGIN, ecart = 8;
+  // plafond : largeur maximale d'une colonne (en points) ; un texte plus long est coupé par « ... » (jamais de chevauchement)
+  const valeur = (c, r) => { const v = c.val(r); return v === undefined || v === null ? '' : String(v); };
+  const calcul = (cols, taille, plafond) => {
+    let x = 0;
+    const out = cols.map(c => {
+      const largeur = Math.min(plafond, Math.max(pdfTextWidth(c.label, taille + 0.5, true), ...lignes.map(r => pdfTextWidth(valeur(c, r), taille, false))));
+      const col = { label: c.label, x: Math.round(x * 10) / 10, largeur };
+      x += largeur + ecart;
+      return col;
+    });
+    return { columns: out, total: x - ecart };
+  };
+  const plafondA = taille => 150 * taille / 9.5;
+  const essais = [[complets, 9.5, plafondA(9.5)], [complets, 8, plafondA(8)], [obligatoires, 9.5, plafondA(9.5)], [obligatoires, 8, plafondA(8)], [obligatoires, 7, plafondA(7)]];
+  let choix = null;
+  for (const [cols, taille, plafond] of essais) { const c = calcul(cols, taille, plafond); if (c.total <= utile) { choix = { cols, taille, plafond, ...c }; break; } }
+  if (!choix) {   // textes exceptionnellement longs : police 7 pt et plafond de colonne réduit jusqu'à tenir dans la page
+    for (let plafond = 100; plafond >= 30 && !choix; plafond -= 10) { const c = calcul(obligatoires, 7, plafond); if (c.total <= utile) choix = { cols: obligatoires, taille: 7, plafond, ...c }; }
+    if (!choix) { const c = calcul(obligatoires, 7, 30); choix = { cols: obligatoires, taille: 7, plafond: 30, ...c }; }
+  }
+  return { columns: choix.columns.map(c => ({ label: c.label, x: c.x })), taille: choix.taille === 9.5 ? null : choix.taille, rows: lignes.map(r => choix.cols.map((c, i) => pdfFit(valeur(c, r), choix.taille, false, choix.columns[i].largeur + 0.001))) };
+}
 async function exportRegistrePdf() {
   const filtreNumero = registreFiltre;
   const colFiltres = registreColFiltres[registreView];
-  let title, columns, rows;
+  let title, columns, rows, taillePolice = null;
   if (registreView === 'agnelage') {
     title = "Registre d'élevage — Agnelage";
     // Colonnes N° élargies (voir plus bas pour Mouvements/Sanitaire) pour
@@ -21577,20 +21645,16 @@ async function exportRegistrePdf() {
     ]);
   } else {
     title = "Registre d'élevage — Sanitaire";
-    columns = [
-      { label: 'N°', x: 0 }, { label: 'Catégorie', x: 100 }, { label: 'Type de soin', x: 190 },
-      { label: 'Produit', x: 360 }, { label: 'Date', x: 510 }, { label: 'Dose', x: 570 },
-      { label: 'N° ordonnance', x: 620 }, { label: 'Campagne', x: 690 }
-    ];
-    rows = registreSanitaireFilteredRows(filtreNumero, colFiltres).map(r => [
-      'n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, r.numeroOrdonnance, registreCampagneLabelTexte(r)
-    ]);
+    const lignes = registreSanitaireFilteredRows(filtreNumero, colFiltres);
+    const mise = miseEnPageSanitairePdf(lignes);
+    columns = mise.columns; rows = mise.rows; taillePolice = mise.taille;
   }
   const bytes = buildPdfTable({
     title,
     subtitle: rows.length + ' ligne(s) — ' + formatDateFr(new Date().toISOString().slice(0,10)),
     columns, rows,
-    landscape: true
+    landscape: true,
+    ...(taillePolice ? { fontSize: taillePolice, headerSize: taillePolice + 0.5 } : {})
   });
   const resume = registreResumeFiltresFichier(filtreNumero, colFiltres);
   const filename = 'registre_' + registreView + (resume ? '_' + resume : '') + '_' + new Date().toISOString().slice(0,10) + '.pdf';
