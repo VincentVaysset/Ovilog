@@ -1308,7 +1308,7 @@ function loadData() {
 async function exportBackupFile(data, filenamePrefix) {
   const dataStr = JSON.stringify(data, null, 2);
   const bytes = new TextEncoder().encode(dataStr);
-  const filename = filenamePrefix + '-' + new Date().toISOString().slice(0,10) + '.json';
+  const filename = filenamePrefix + '-' + jourAujourdhuiISO() + '.json';
   // Voir saveOrShareBinaryFile plus bas dans le fichier : ni navigator.share()
   // ni <a download> sur une blob: URL ne sont fiables dans la WebView Android
   // packagée (aucun DownloadListener natif configuré) -- un clic "réussi" ne
@@ -2853,7 +2853,7 @@ function marquerVideDefinitive(sheep, campagne) {
   const c = (campagne !== undefined && campagne !== null) ? campagne : DB.campagneDebut;
   if (estVideDefinitiveCampagneN(sheep, c)) return; // idempotent : pas de doublon si déjà marquée cette campagne
   sheep.videesDefinitives = sheep.videesDefinitives || [];
-  sheep.videesDefinitives.push({ campagne: c, date: new Date().toISOString().slice(0,10) });
+  sheep.videesDefinitives.push({ campagne: c, date: jourAujourdhuiISO() });
 }
 function annulerVideDefinitive(sheep) {
   if (!Array.isArray(sheep.videesDefinitives)) return;
@@ -2952,7 +2952,7 @@ function upsertCahierControleLaitier(eid, campagne, champs) {
    d'un vieux bilan, cas rare mais à ne pas bloquer). Toujours triées de la
    plus récente à la plus ancienne. */
 function campagnesDisponiblesSieol() {
-  const base = DB.campagneDebut !== null && DB.campagneDebut !== undefined ? DB.campagneDebut : campagneAnneeDebutPourDate(new Date().toISOString().slice(0,10));
+  const base = DB.campagneDebut !== null && DB.campagneDebut !== undefined ? DB.campagneDebut : campagneAnneeDebutPourDate(jourAujourdhuiISO());
   const set = new Set();
   for (let i = 0; i <= 5; i++) set.add(base - i);
   DB.bilanLactation.forEach(l => set.add(l.campagne));
@@ -3131,7 +3131,7 @@ function tauxReussiteGlobal(cohort) {
    recalculée rétroactivement : une campagne déjà en cours garde sa date
    calculée pour toujours. */
 function campagneRefDate() {
-  if (DB.campagneDateDemarrage) return new Date(DB.campagneDateDemarrage);
+  if (DB.campagneDateDemarrage) return dateLocaleDepuisISO(DB.campagneDateDemarrage);
   if (DB.campagneDebut) return new Date(DB.campagneDebut, campagneMoisDebutConfig() - 1, campagneJourDebutConfig());
   return null;
 }
@@ -3199,13 +3199,13 @@ function estBrebisPresenteALaDate(s, refDate) {
   const mouvements = s.mouvements || [];
   const entreeMvt = mouvements.find(m => m.type === 'Entrée');
   const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
-  const entreeDate = entreeDateStr ? new Date(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
+  const entreeDate = entreeDateStr ? dateLocaleDepuisISO(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
   if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > refDate) return false; // entrée après la date de référence : pas présente au démarrage
   if ((s.statut || 'active') === 'active') return true;
   // Inactive aujourd'hui : ne compte que si sa sortie a eu lieu APRÈS la date de référence.
   const sortieMvt = [...mouvements].reverse().find(m => ['Vente', 'Morte', 'Vente reproduction', 'Perte', 'Autoconsommation'].includes(m.type));
   if (!sortieMvt || !sortieMvt.date) return true; // pas de mouvement de sortie retrouvé (anomalie de données) : on la compte plutôt que de la perdre silencieusement
-  const sortieDate = new Date(sortieMvt.date);
+  const sortieDate = dateLocaleDepuisISO(sortieMvt.date);
   return isNaN(sortieDate.getTime()) || sortieDate >= refDate;
 }
 function campagneCohortPresente() {
@@ -3870,6 +3870,16 @@ function statsParAgeExactTroupeau(cohort, classement, campagne) {
 function formatISOLocal(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
+/* « Aujourd'hui » au format AAAA-MM-JJ, en jour LOCAL de l'appareil. Ne JAMAIS utiliser new Date().toISOString().slice(0, 10) :
+   c'est le jour UTC, qui retarde d'un jour entre minuit et 1 h / 2 h (heure de Paris) -- date par défaut d'un mouvement ou d'une mise bas
+   saisie de nuit, écran « Sous délai d'attente » gardé un jour de trop. */
+function jourAujourdhuiISO() { return formatISOLocal(new Date()); }
+/* Date seule (AAAA-MM-JJ) lue à MINUIT LOCAL, comme les dates construites par new Date(a, m, j) : new Date('AAAA-MM-JJ') est lue en UTC,
+   donc 2 h plus tard à Paris, et une entrée datée exactement du jour de référence paraissait postérieure. Autres formats : inchangés. */
+function dateLocaleDepuisISO(v) {
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) { const [a, m, j] = v.split('-').map(Number); return new Date(a, m - 1, j); }
+  return new Date(v);
+}
 function lundiDeLaSemaineISO(dateISO) {
   const [y, m, j] = String(dateISO).slice(0, 10).split('-').map(Number);
   const t = Date.UTC(y, m - 1, j);
@@ -4026,7 +4036,7 @@ function bilanReproductionCampagne(N) {
     if (idCohort.has(s.eid)) return false;
     const mv = (s.mouvements || []).find(m => m.type === 'Entrée');
     const d = (mv && mv.date) || s.dateEntree || null;
-    return !!d && new Date(d) > refDate && dansFenetre(d);
+    return !!d && dateLocaleDepuisISO(d) > refDate && dansFenetre(d);
   }).length;
   const horsBilan = { entreesTardives, brebisAvecMiseBasHorsCohorte: horsCohorteBrebis.size, misesBasHorsCohorte };
 
@@ -4080,7 +4090,7 @@ function bilanReproductionCampagne(N) {
     anomalies['mouvements-doublons-registre'] = { code: 'mouvements-doublons-registre', message: 'Mouvements strictement identiques en double dans le registre (comptés une seule fois ; voir Paramètres > Campagne > Doublons du registre)', nombre: doublonsIgnores, exemples: [] };
   }
   // ---- effectifs « actifs » en fin de fenêtre (fin de campagne, ou aujourd'hui pour la courante)
-  const iso = d => d.toISOString().slice(0, 10);
+  const iso = d => formatISOLocal(d);   // les dates d'entrée / sortie sont lues à minuit local (toDateOuNull)
   const presentLe = (e, jour) => {
     const de = animalDateEntree(e);
     if (!de || iso(de) > jour) return false;
@@ -4217,7 +4227,7 @@ function etatResumeFinCampagne() {
 function poserResumeFinCampagne(etat) {
   if (!etat || !etat.aFiger) return false;
   DB.resumesCampagne = DB.resumesCampagne || {};
-  DB.resumesCampagne[etat.N] = construireResumeCampagne(etat.N, { type: 'calcul-ovilog', libelle: 'Figé automatiquement à la bascule du ' + formatDateFr(new Date().toISOString().slice(0, 10)) }, etat.bilan);
+  DB.resumesCampagne[etat.N] = construireResumeCampagne(etat.N, { type: 'calcul-ovilog', libelle: 'Figé automatiquement à la bascule du ' + formatDateFr(jourAujourdhuiISO()) }, etat.bilan);
   return true;
 }
 
@@ -6913,7 +6923,7 @@ function brebisARegulariserRows(d) {
 async function exportBrebisARegulariserXlsx() {
   const d = bilanARegulariserData();
   const bytes = await buildXlsxWorkbook([{ name: 'Brebis à régulariser', rows: brebisARegulariserRows(d) }]);
-  await saveOrShareBinaryFile('brebis-a-regulariser_' + d.libelle + '_' + new Date().toISOString().slice(0, 10) + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  await saveOrShareBinaryFile('brebis-a-regulariser_' + d.libelle + '_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 function bilanARegulariserDesktopHtml() {
   const d = bilanARegulariserData();
@@ -7556,7 +7566,7 @@ function ouvrirSaisieResume(N) {
   const externe = N === RESUME_EXTERNE_2026.campagne;
   saisieResumeEtat = {
     N, externe, valeurs: externe ? JSON.parse(JSON.stringify(RESUME_EXTERNE_2026.valeurs)) : valeursSaisieVides(),
-    source: externe ? RESUME_EXTERNE_2026.source : { type: 'saisie-manuelle', libelle: 'Saisie manuelle du ' + formatDateFr(new Date().toISOString().slice(0, 10)), edite: new Date().toISOString().slice(0, 10) },
+    source: externe ? RESUME_EXTERNE_2026.source : { type: 'saisie-manuelle', libelle: 'Saisie manuelle du ' + formatDateFr(jourAujourdhuiISO()), edite: jourAujourdhuiISO() },
     message: '', enCours: false
   };
   render('saisie-resume-campagne');
@@ -8040,7 +8050,7 @@ function renderInventaireActifs() {
   // courts ; agnelles/agneaux : 2 numéros + l'EID complet, plus long).
   const pdfColX = cols.length === 2 ? [0, 260] : (inventaireActifsTab === 'brebis' ? [0, 110, 230] : [0, 90, 190]);
   document.getElementById('btn-export-inventaire-pdf').onclick = () => {
-    const todayIso = new Date().toISOString().slice(0,10);
+    const todayIso = jourAujourdhuiISO();
     const bytes = buildPdfTable({
       title: 'Inventaire — ' + cat.label,
       subtitle: items.length + ' animal(aux) — ' + formatDateFr(todayIso),
@@ -8054,7 +8064,7 @@ function renderInventaireActifs() {
       cols.map(c => c.header),
       ...items.map(it => cols.map(c => c.value(it)))
     ] }]);
-    saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + new Date().toISOString().slice(0,10) + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   };
 }
 
@@ -8303,7 +8313,7 @@ function renderMajInventaireValidation() {
       if (!confirm('Appliquer la mise à jour inventaire : ' + aSortir.length + ' sortie(s), ' + aReactiver.length + ' réactivation(s), ' + aCreer.length + ' création(s) ?')) return;
       errBox.classList.add('hidden');
 
-      const dateJour = new Date().toISOString().slice(0, 10);
+      const dateJour = jourAujourdhuiISO();
 
       if (aSortir.length > 0) {
         if (!DB.causesMortalite.includes(MOTIF_MAJ_INVENTAIRE)) DB.causesMortalite.push(MOTIF_MAJ_INVENTAIRE);
@@ -8396,7 +8406,7 @@ function renderAddSheep() {
     const pere = document.getElementById('f-pere').value.trim();
     const mere = document.getElementById('f-mere').value.trim();
     const sheep = { id: Date.now().toString(), eid, createdAt: Date.now(), dateEntree, pere, mere, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active' };
-    sheep.mouvements.push({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || new Date().toISOString().slice(0,10) });
+    sheep.mouvements.push({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || jourAujourdhuiISO() });
     DB.brebis.push(sheep);
     saveData(DB);
     render('detail', sheep.id);
@@ -8458,7 +8468,7 @@ function showLambSortieModal(lamb, type, onDone) {
   const isVendu = type === 'vendu';
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  const today = new Date().toISOString().slice(0,10);
+  const today = jourAujourdhuiISO();
   let acheteur = null;
   overlay.innerHTML = `
     <div class="modal-card">
@@ -9627,7 +9637,7 @@ function renderAddEcho(sheepId) {
   const editing = editContext && editContext.kind === 'echographies';
   const existing = editing ? sheep.echographies[editContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier l\'échographie' : 'Nouvelle échographie';
-  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
   let campagneChoisie = editing ? existing.campagne : DB.campagneDebut;
 
   app.innerHTML = `
@@ -9922,7 +9932,7 @@ function renderAddEcho(sheepId) {
    agnelle, agneau) -- seul le contexte (fiche visée, callback de
    sauvegarde) change d'un écran à l'autre. ---------- */
 function noteFormHtml(existing, editing, btnColor) {
-  const today = existing ? existing.date : new Date().toISOString().slice(0, 10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
   return `
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
@@ -10044,7 +10054,7 @@ function renderAddAgnelage(sheepId) {
     return;
   }
 
-  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
   let lambCount = 0;
   const lambs = {};
   // Code Repro (module Reproduction) : déduit à l'ouverture depuis la date
@@ -10642,9 +10652,9 @@ function renderEchoRapide() {
           const eidFormatted = unknownEid;
           const newSheep = {
             id: Date.now().toString() + Math.random().toString(36).slice(2,6),
-            eid: eidFormatted, createdAt: Date.now(), dateEntree: new Date().toISOString().slice(0,10),
+            eid: eidFormatted, createdAt: Date.now(), dateEntree: jourAujourdhuiISO(),
             echographies: [], agnelages: [], sanitaire: [], controleLaitier: [], statut: 'active',
-            mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: new Date().toISOString().slice(0,10) }]
+            mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: jourAujourdhuiISO() }]
           };
           DB.brebis.push(newSheep);
           saveData(DB);
@@ -10704,7 +10714,7 @@ function renderEchoRapide() {
             err.classList.remove('hidden');
             return;
           }
-          const dateEcho = new Date().toISOString().slice(0,10);
+          const dateEcho = jourAujourdhuiISO();
           currentSheep.echographies = currentSheep.echographies || [];
           if (currentSheep.echographies.some(e => e.date === dateEcho)) {
             err.textContent = "Une échographie a déjà été saisie aujourd'hui pour cette brebis — modifie-la depuis sa fiche si besoin.";
@@ -10888,7 +10898,7 @@ function miseBasRapideStatsPc(campagneRows) {
 }
 function miseBasRapidePcHtml(c) {
   const rows = c.campagneRows, st = miseBasRapideStatsPc(rows), cb = st.cb;
-  const aujourdhui = new Date().toISOString().slice(0, 10);
+  const aujourdhui = jourAujourdhuiISO();
   const nb = n => n > 0 ? String(n) : '<span style="color:var(--text-muted);">–</span>';
   const pct = cb.troupeauAMettreBas > 0 ? Math.round(cb.misesBasActives / cb.troupeauAMettreBas * 1000) / 10 : 0;
   const kpis = `<div class="pc-kpis">
@@ -11133,7 +11143,7 @@ function renderMiseBasRapide() {
     const formHtml = (currentSheep && !dejaAgnelage) ? `
       <div class="card">
         <label>Date de naissance</label>
-        <input type="date" id="f-date-rapide" value="${new Date().toISOString().slice(0,10)}" style="margin-bottom:16px;">
+        <input type="date" id="f-date-rapide" value="${jourAujourdhuiISO()}" style="margin-bottom:16px;">
         <label>Repro</label>
         <div class="grid4" id="repro-code-list-rapide" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">
           <button type="button" class="opt-btn repro-code-opt-rapide" data-val="IA">IA</button>
@@ -11247,7 +11257,7 @@ function renderMiseBasRapide() {
         playBeepTrouve();
         resetForm();
         currentSheep = sheep;
-        codeRepro = deduireCodeRepro(currentSheep, new Date().toISOString().slice(0,10));
+        codeRepro = deduireCodeRepro(currentSheep, jourAujourdhuiISO());
         draw();
       });
     }
@@ -11281,7 +11291,7 @@ function renderMiseBasRapide() {
       playBeepTrouve();
       resetForm();
       currentSheep = r.item;
-      codeRepro = deduireCodeRepro(currentSheep, new Date().toISOString().slice(0,10));
+      codeRepro = deduireCodeRepro(currentSheep, jourAujourdhuiISO());
       draw();
     });
     document.getElementById('btn-fin-session-mb').onclick = () => {
@@ -11301,15 +11311,15 @@ function renderMiseBasRapide() {
         }
         const newSheep = {
           id: Date.now().toString() + Math.random().toString(36).slice(2,6),
-          eid: unknownEid, createdAt: Date.now(), dateEntree: new Date().toISOString().slice(0,10),
+          eid: unknownEid, createdAt: Date.now(), dateEntree: jourAujourdhuiISO(),
           echographies: [], agnelages: [], sanitaire: [], controleLaitier: [], statut: 'active',
-          mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: new Date().toISOString().slice(0,10) }]
+          mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: jourAujourdhuiISO() }]
         };
         DB.brebis.push(newSheep);
         saveData(DB);
         unknownEid = null;
         currentSheep = newSheep;
-        codeRepro = deduireCodeRepro(currentSheep, new Date().toISOString().slice(0,10));
+        codeRepro = deduireCodeRepro(currentSheep, jourAujourdhuiISO());
         draw();
         if (!desktopMB) addLamb();
       };
@@ -11378,7 +11388,7 @@ function renderMiseBasRapide() {
         // PC : une date postérieure à aujourd'hui est une alerte à confirmer (jamais corrigée seule)
         if (desktopMB) {
           const dSaisie = document.getElementById('f-date-rapide').value;
-          if (dSaisie > new Date().toISOString().slice(0, 10) && !confirm('La date saisie (' + formatDateFr(dSaisie) + ') est postérieure à aujourd\'hui. Enregistrer la mise bas avec cette date ?')) return;
+          if (dSaisie > jourAujourdhuiISO() && !confirm('La date saisie (' + formatDateFr(dSaisie) + ') est postérieure à aujourd\'hui. Enregistrer la mise bas avec cette date ?')) return;
         }
         const ids = Object.keys(lambs);
         if (ids.length === 0) {
@@ -11585,7 +11595,7 @@ async function exportListeSerieXlsx(session) {
     })
   ];
   const bytes = await buildXlsxWorkbook([{ name: 'Liste', rows }]);
-  const filename = 'liste-serie-' + new Date().toISOString().slice(0, 10) + '.xlsx';
+  const filename = 'liste-serie-' + jourAujourdhuiISO() + '.xlsx';
   await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
@@ -11595,7 +11605,7 @@ function renderAddSanitaire(sheepId) {
   const editing = editContext && editContext.kind === 'sanitaire';
   const existing = editing ? sheep.sanitaire[editContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier le soin' : 'Carnet sanitaire';
-  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
 
   app.innerHTML = `
     <div class="card">
@@ -11868,7 +11878,7 @@ function renderAddControle(sheepId) {
   const editing = editContext && editContext.kind === 'controleLaitier';
   const existing = editing ? sheep.controleLaitier[editContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier le contrôle laitier' : 'Contrôle laitier';
-  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
 
   app.innerHTML = `
     <div class="card">
@@ -12518,7 +12528,7 @@ function showCreerLotControleLaitierModal(eids) {
       return;
     }
     DB.lots = DB.lots || [];
-    const lot = { id: Date.now().toString(), nom, dateCreation: new Date().toISOString().slice(0, 10), membres: eids };
+    const lot = { id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO(), membres: eids };
     DB.lots.push(lot);
     saveData(DB);
     effacerTrouveesLot(lot.id);
@@ -12620,7 +12630,7 @@ function getEcartees() {
 function showVendreAgnelleModal(ag, onDone) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  const today = new Date().toISOString().slice(0,10);
+  const today = jourAujourdhuiISO();
   let acheteur = null;
   overlay.innerHTML = `
     <div class="modal-card">
@@ -12802,7 +12812,7 @@ function renderAgnelles() {
 
   function garderAgnelle(c) {
     c.lamb.triStatut = 'gardée';
-    const dateEntree = new Date().toISOString().slice(0,10);
+    const dateEntree = jourAujourdhuiISO();
     // Deux mouvements posés dès la création, comme une agnelle achetée en a
     // déjà un ("Entrée"/"Achat") — sans ça, une agnelle née sur
     // l'exploitation n'avait ni date de naissance distincte de sa date de
@@ -12917,7 +12927,7 @@ function renderAddAgnelle() {
   const editing = !!editingAgnelleId;
   const existing = editing ? DB.agnelles.find(a => a.id === editingAgnelleId) : null;
   pageTitle.textContent = editing ? 'Modifier une agnelle' : 'Ajouter une agnelle';
-  const today = existing ? existing.dateEntree : new Date().toISOString().slice(0,10);
+  const today = existing ? existing.dateEntree : jourAujourdhuiISO();
   const origineFixe = existing ? existing.origine : null;
 
   const origineBlock = editing
@@ -13386,7 +13396,7 @@ function renderAddSanitaireAgnelle() {
   const editing = editAgnelleContext && editAgnelleContext.kind === 'sanitaire';
   const existing = editing ? ag.sanitaire[editAgnelleContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier le soin' : 'Carnet sanitaire';
-  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
 
   app.innerHTML = `
     <div class="card">
@@ -13877,7 +13887,7 @@ function renderAddSanitaireAgneau() {
   const editing = editAgneauContext && editAgneauContext.kind === 'sanitaire';
   const existing = editing ? lamb.sanitaire[editAgneauContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier le soin' : 'Carnet sanitaire';
-  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
 
   app.innerHTML = `
     <div class="card">
@@ -14218,7 +14228,7 @@ function renderAddBelier() {
     err.classList.add('hidden');
     const dateEntree = document.getElementById('input-date-entree').value || null;
     const belier = { id: Date.now().toString(), eid, createdAt: Date.now(), dateEntree, sanitaire: [], mouvements: [], statut: 'actif' };
-    belier.mouvements.push({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || new Date().toISOString().slice(0,10) });
+    belier.mouvements.push({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || jourAujourdhuiISO() });
     DB.beliers.push(belier);
     saveData(DB);
     currentBelierId = belier.id;
@@ -14417,7 +14427,7 @@ function renderAddSanitaireBelier() {
   const editing = editBelierContext && editBelierContext.kind === 'sanitaire';
   const existing = editing ? belier.sanitaire[editBelierContext.idx] : null;
   pageTitle.textContent = editing ? 'Modifier le soin' : 'Carnet sanitaire';
-  const today = existing ? existing.date : new Date().toISOString().slice(0,10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
 
   app.innerHTML = `
     <div class="card">
@@ -14734,7 +14744,7 @@ function evenementsCalendrierDerives() {
       const fin = campagneDateFinReelle();
       if (fin) {
         fin.setDate(fin.getDate() - 30);
-        dateRappel = fin.toISOString().slice(0, 10);
+        dateRappel = formatISOLocal(fin);   // fin = minuit LOCAL : toISOString() la ramenait à la veille à Paris
       }
     }
     if (dateRappel) events.push({ date: dateRappel, icon: '❗', label: 'Vide définitive à confirmer', derive: true });
@@ -14757,7 +14767,7 @@ function renderJournal() {
   DB.typesJournal = DB.typesJournal || [];
   pageTitle.textContent = 'Calendrier';
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = jourAujourdhuiISO();
   if (!calendrierMoisAffiche) calendrierMoisAffiche = todayStr.slice(0, 7); // 'YYYY-MM', mois affiché par défaut = mois en cours
 
   // Regroupe TOUS les événements (saisis + dérivés) par date 'YYYY-MM-DD'.
@@ -15012,7 +15022,7 @@ function renderQualite() {
   if (!DB.parametresPrixLait || !Array.isArray(DB.parametresPrixLait)) DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null }];
   pageTitle.textContent = 'Production laitière';
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = jourAujourdhuiISO();
   const campagneAujourdhui = DB.campagneDebut != null ? DB.campagneDebut : campagneAnneeDebutPourDate(today);
   const campagnesPresentes = new Set(DB.prelevementsQualite.map(p => campagneAnneeDebutPourDate(p.date)));
   campagnesPresentes.add(campagneAujourdhui);
@@ -15834,9 +15844,9 @@ function openAutoLot(id, nom, membres) {
   let lot = DB.lots.find(l => l.id === id);
   if (lot) {
     lot.membres = membres;
-    lot.dateCreation = new Date().toISOString().slice(0,10);
+    lot.dateCreation = jourAujourdhuiISO();
   } else {
-    lot = { id, nom, membres, dateCreation: new Date().toISOString().slice(0,10), auto: true };
+    lot = { id, nom, membres, dateCreation: jourAujourdhuiISO(), auto: true };
     DB.lots.push(lot);
   }
   saveData(DB);
@@ -16197,7 +16207,7 @@ function renderAddLot() {
     err.classList.add('hidden');
     const membres = actives.filter(s => selected.has(s.id)).map(s => s.eid);
     DB.lots = DB.lots || [];
-    DB.lots.push({ id: Date.now().toString(), nom, dateCreation: new Date().toISOString().slice(0,10), membres });
+    DB.lots.push({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO(), membres });
     saveData(DB);
     render('lots');
   };
@@ -16211,7 +16221,7 @@ function renderAddLot() {
 function renderAddLotReforme() {
   pageTitle.textContent = 'Nouveau lot de réforme';
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  const today = new Date().toISOString().slice(0,10);
+  const today = jourAujourdhuiISO();
 
   app.innerHTML = `
     <div class="card">
@@ -16258,7 +16268,7 @@ function renderAddLotRepro() {
   pageTitle.textContent = 'Nouveau lot de reproduction';
   let cible = 'Brebis';
   let mode = 'IA';
-  const today = new Date().toISOString().slice(0,10);
+  const today = jourAujourdhuiISO();
   const selected = new Set();
   // Pour un lot Éponge : la date de lutte effective n'est pas la date de
   // pose saisie, mais pose + 16 jours (retrait à J+14, introduction des
@@ -16844,7 +16854,7 @@ const CATEGORIE_TABS_COLLECTIF = [...CATEGORIE_TABS, { key: 'agneaux', label: 'A
    par catégorie (voir renderAddMouvement/renderAddMouvementBelier/
    renderAddMouvementAgnelle/renderAddMouvementAgneau). */
 function mouvementFormHtml(animalLabel, typeSortie, existing) {
-  const today = existing ? existing.date : new Date().toISOString().slice(0, 10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
   return `
     <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">${animalLabel}</div>
 
@@ -16999,7 +17009,7 @@ function renderMouvementGroupe() {
   function screenForm() {
   const cfg = CATEGORIE_ANIMAL_CONFIG[categorie];
   pageTitle.textContent = 'Mouvement collectif — ' + cfg.label;
-  const today = new Date().toISOString().slice(0,10);
+  const today = jourAujourdhuiISO();
   const actives = cfg.pool().filter(cfg.isActive);
 
   if (!window.__mouvementGroupeSelected) window.__mouvementGroupeSelected = { brebis: new Set(), beliers: new Set(), agnelles: new Set(), agneaux: new Set() };
@@ -17287,7 +17297,6 @@ function calculerDatesSoin(p) {
 function datesDuSoin(soin) {
   return calculerDatesSoin({ date: soin && soin.date, dureeJours: soin && soin.dureeJours, delaiLaitJours: soin && soin.delaiLaitJours, delaiViandeJours: soin && soin.delaiViandeJours });
 }
-function jourAujourdhuiISO() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }   // jour LOCAL (pas UTC)
 // Un soin est « en délai » tant que la date de reprise (lait) ou de vente (viande) n'est pas atteinte (strictement future)
 function soinSousDelai(soin, aujourdhui) {
   const d = datesDuSoin(soin), t = aujourdhui || jourAujourdhuiISO();
@@ -17969,7 +17978,7 @@ function renderAddOrdonnance() {
   const editing = editContext && editContext.kind === 'ordonnances';
   const existing = editing ? (DB.ordonnances || []).find(o => o.id === editContext.id) : null;
   pageTitle.textContent = editing ? 'Modifier l\'ordonnance' : 'Nouvelle ordonnance';
-  const today = existing ? existing.date : new Date().toISOString().slice(0, 10);
+  const today = existing ? existing.date : jourAujourdhuiISO();
   const rattachements = existing ? compterRattachementsOrdonnance(existing.numero) : null;
 
   app.innerHTML = `
@@ -18125,7 +18134,7 @@ function renderAddOrdonnance() {
    traitements actifs distincts reste traçable soin par soin plutôt que
    réduite à une seule date qui masquerait l'un des deux. */
 function sousDelaiBrebisRows() {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = jourAujourdhuiISO();
   const rows = [];
   DB.brebis.filter(s => (s.statut || 'active') === 'active').forEach(s => {
     (s.sanitaire || []).forEach(soin => {
@@ -18143,7 +18152,7 @@ function sousDelaiBrebisRows() {
 // Purement pour l'affichage ("jours restants") -- jamais utilisé pour
 // trier ou comparer (voir convention chaîne ISO ci-dessus/ailleurs).
 function joursRestantsAvant(dateIso) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = jourAujourdhuiISO();
   const d1 = new Date(todayStr + 'T00:00:00');
   const d2 = new Date(dateIso + 'T00:00:00');
   return Math.round((d2 - d1) / 86400000);
@@ -18177,7 +18186,7 @@ function renderSousDelai() {
 
   document.getElementById('btn-controle-lot-delai').onclick = () => render('controle-lot-delai');
   document.getElementById('btn-export-sous-delai-pdf').onclick = () => {
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayIso = jourAujourdhuiISO();
     const bytes = buildPdfTable({
       title: "Sous délai d'attente lait",
       subtitle: rows.length + ' traitement(s) — Édité le ' + formatDateFr(todayIso),
@@ -18724,7 +18733,7 @@ function renderTraitementCollectif() {
   // facultative pour brebis/béliers (comportement d'origine).
   const ordonnanceObligatoire = categorie === 'agnelles' || categorie === 'agneaux';
   pageTitle.textContent = 'Traitement collectif — ' + cfg.label;
-  const today = new Date().toISOString().slice(0,10);
+  const today = jourAujourdhuiISO();
   const actives = cfg.pool().filter(cfg.isActive);
 
   app.innerHTML = `
@@ -19163,7 +19172,7 @@ function registreEntriesFor(categorie) {
    invalide plutôt que de planter plus loin. */
 function toDateOuNull(valeur) {
   if (!valeur) return null;
-  const d = new Date(valeur);
+  const d = dateLocaleDepuisISO(valeur);
   return isNaN(d.getTime()) ? null : d;
 }
 // Date (chaîne ISO) du premier/dernier mouvement d'un des types donnés —
@@ -20397,7 +20406,7 @@ async function exportQualiteCampagnePdf(campagne) {
     subtitle: 'Campagne ' + (campagne + 1) + ' · ' + list.length + ' prélèvement(s)',
     columns, rows, landscape: true
   });
-  const filename = 'qualite-lait_campagne-' + (campagne + 1) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'qualite-lait_campagne-' + (campagne + 1) + '_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -20448,7 +20457,7 @@ function buildRapportCampagnePdfBytes(campagne) {
     .filter(p => campagneAnneeDebutPourDate(p.dateDebut) === campagne)
     .sort((a, b) => (a.dateDebut || '').localeCompare(b.dateDebut || ''));
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const aujourdhui = formatDateFr(jourAujourdhuiISO());
 
   // "Prix du lait final" = masse d'argent totale ÷ production totale de LA
   // CAMPAGNE ENTIÈRE (mois sans prélèvement inclus au dénominateur) --
@@ -20710,7 +20719,7 @@ function buildLotIaPdfBytes(lot) {
   const pageW = PDF_PAGE_H, pageH = PDF_PAGE_W;
   const rightEdge = pageW - PDF_MARGIN;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const aujourdhui = formatDateFr(jourAujourdhuiISO());
   const stats = statsLotIA(lot);
   const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
   const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
@@ -20792,7 +20801,7 @@ function buildLotIaPdfBytes(lot) {
 
 async function exportLotIaPdf(lot) {
   const bytes = buildLotIaPdfBytes(lot);
-  const filename = 'lot-ia_' + slugifyFiltre(lot.nom || lot.id) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'lot-ia_' + slugifyFiltre(lot.nom || lot.id) + '_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -20808,7 +20817,7 @@ function buildLotEpongePdfBytes(lot) {
   const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
   const rightEdge = pageW - PDF_MARGIN;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const aujourdhui = formatDateFr(jourAujourdhuiISO());
   const stats = statsLotEponge(lot);
   const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
   const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
@@ -20883,7 +20892,7 @@ function buildLotEpongePdfBytes(lot) {
 
 async function exportLotEpongePdf(lot) {
   const bytes = buildLotEpongePdfBytes(lot);
-  const filename = 'lot-eponge_' + slugifyFiltre(lot.nom || lot.id) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'lot-eponge_' + slugifyFiltre(lot.nom || lot.id) + '_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -20896,7 +20905,7 @@ function buildBilanAgeExactPdfBytes(campagne) {
   const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
   const rightEdge = pageW - PDF_MARGIN;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const aujourdhui = formatDateFr(jourAujourdhuiISO());
   // `campagne` (facultatif) : une campagne passée choisie sur la page PC ; absent = campagne en cours, comme avant.
   const autre = campagne !== undefined && campagne !== null && campagne !== DB.campagneDebut ? bilanPourAffichage(campagne) : null;
   const campagnePdf = autre ? campagne : DB.campagneDebut;
@@ -20960,7 +20969,7 @@ function buildBilanAgeExactPdfBytes(campagne) {
 
 async function exportBilanAgeExactPdf(campagne) {
   const bytes = buildBilanAgeExactPdfBytes(campagne);
-  const filename = 'bilan-reproduction-par-age_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'bilan-reproduction-par-age_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -21046,7 +21055,7 @@ function buildBilanCompletPdfBytes(N) {
   const prevB = bilanPourAffichage(N - 1);
   const prev = prevB.groupes.total.misesBas > 0 ? prevB.groupes.total : null;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const aujourdhui = formatDateFr(jourAujourdhuiISO());
   const pageH = PDF_PAGE_H, L = PDF_MARGIN, R = PDF_PAGE_W - PDF_MARGIN, LARG = R - L;
   const pct = (v, d) => v === null || v === undefined ? '—' : fmtDecimal(v * 100, d === undefined ? 1 : d) + ' %';
   const num = (v, d) => v === null || v === undefined ? '—' : fmtDecimal(v, d === undefined ? 2 : d);
@@ -21282,7 +21291,7 @@ function buildBilanCompletPdfBytes(N) {
 async function exportBilanCompletPdf(campagne) {
   const N = campagne === undefined || campagne === null ? DB.campagneDebut : campagne;
   const bytes = buildBilanCompletPdfBytes(N);
-  const filename = 'bilan-reproduction-complet_campagne-' + campagneLabel(N) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'bilan-reproduction-complet_campagne-' + campagneLabel(N) + '_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -21352,7 +21361,7 @@ function buildBilanLactationPdfBytes(campagne) {
   const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
   const rightEdge = pageW - PDF_MARGIN;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
+  const aujourdhui = formatDateFr(jourAujourdhuiISO());
   const ind = bilanLactationIndicateurs(campagne, { avecResume: isDesktopMode() });
   const indN1 = bilanLactationIndicateurs(campagne - 1, { avecResume: isDesktopMode() });
   const txt = (v, suffix) => v !== null && v !== undefined ? fmtDecimal(v, 1) + (suffix || '') : '—';
@@ -21396,7 +21405,7 @@ function buildBilanLactationPdfBytes(campagne) {
 
 async function exportBilanLactationPdf(campagne) {
   const bytes = buildBilanLactationPdfBytes(campagne);
-  const filename = 'bilan-lactation_' + campagneLabel(campagne) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'bilan-lactation_' + campagneLabel(campagne) + '_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -21418,13 +21427,13 @@ async function exportBilanLactationXlsx(campagne) {
     ['Ratio traites / mises bas (%)', ind.ratioTraitesMisesBas, indN1.ratioTraitesMisesBas]
   ];
   const bytes = await buildXlsxWorkbook([{ name: 'Bilan lactation', rows }]);
-  const filename = 'bilan-lactation_' + campagneLabel(campagne) + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+  const filename = 'bilan-lactation_' + campagneLabel(campagne) + '_' + jourAujourdhuiISO() + '.xlsx';
   await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
 async function exportRapportCampagnePdf(campagne) {
   const bytes = buildRapportCampagnePdfBytes(campagne);
-  const filename = 'rapport-campagne_' + (campagne + 1) + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'rapport-campagne_' + (campagne + 1) + '_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -21449,7 +21458,7 @@ async function exportControleLaitierPdf(filtered) {
     String(r.cumul)
   ]);
   const bytes = buildPdfTable({ title: 'Contrôle laitier', columns, rows, landscape: true });
-  const filename = 'controle-laitier_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'controle-laitier_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -21469,7 +21478,7 @@ async function exportControleLaitierXlsx(filtered) {
     ]
   }];
   const bytes = await buildXlsxWorkbook(sheets);
-  const filename = 'controle-laitier_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+  const filename = 'controle-laitier_' + jourAujourdhuiISO() + '.xlsx';
   await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
@@ -21491,11 +21500,11 @@ async function exportLaitTankPdf() {
   const columns = [{ label: 'Date', x: 0 }, { label: 'Quantité (L)', x: 150 }];
   const bytes = buildPdfTable({
     title: 'Calendrier du lait — relevés tank',
-    subtitle: rows.length + ' relevé(s) — ' + formatDateFr(new Date().toISOString().slice(0, 10)),
+    subtitle: rows.length + ' relevé(s) — ' + formatDateFr(jourAujourdhuiISO()),
     columns,
     rows: rows.map(l => [formatDateFr(l.date), fmtDecimal(l.quantite, 1)])
   });
-  const filename = 'calendrier-lait_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'calendrier-lait_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -21509,7 +21518,7 @@ async function exportLaitTankXlsx() {
     ]
   }];
   const bytes = await buildXlsxWorkbook(sheets);
-  const filename = 'calendrier-lait_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+  const filename = 'calendrier-lait_' + jourAujourdhuiISO() + '.xlsx';
   await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
@@ -21534,7 +21543,7 @@ function feuilleSanitaireXlsx(rows) {
 // Page PC « Carnet sanitaire » : le carnet complet (sans filtre) en un fichier Excel
 async function exportCarnetSanitaireXlsx() {
   const bytes = await buildXlsxWorkbook([feuilleSanitaireXlsx(registreSanitaireRows())]);
-  await saveOrShareBinaryFile('carnet-sanitaire-' + new Date().toISOString().slice(0,10) + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  await saveOrShareBinaryFile('carnet-sanitaire-' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 async function exportRegistreXlsx() {
   const sheets = [
@@ -21551,7 +21560,7 @@ async function exportRegistreXlsx() {
     feuilleSanitaireXlsx(registreSanitaireFilteredRows(registreFiltre, registreColFiltres.sanitaire))
   ];
   const bytes = await buildXlsxWorkbook(sheets);
-  const filename = 'registre-elevage-' + new Date().toISOString().slice(0,10) + '.xlsx';
+  const filename = 'registre-elevage-' + jourAujourdhuiISO() + '.xlsx';
   await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
@@ -21651,13 +21660,13 @@ async function exportRegistrePdf() {
   }
   const bytes = buildPdfTable({
     title,
-    subtitle: rows.length + ' ligne(s) — ' + formatDateFr(new Date().toISOString().slice(0,10)),
+    subtitle: rows.length + ' ligne(s) — ' + formatDateFr(jourAujourdhuiISO()),
     columns, rows,
     landscape: true,
     ...(taillePolice ? { fontSize: taillePolice, headerSize: taillePolice + 0.5 } : {})
   });
   const resume = registreResumeFiltresFichier(filtreNumero, colFiltres);
-  const filename = 'registre_' + registreView + (resume ? '_' + resume : '') + '_' + new Date().toISOString().slice(0,10) + '.pdf';
+  const filename = 'registre_' + registreView + (resume ? '_' + resume : '') + '_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -21960,11 +21969,11 @@ async function exportDeclarationAnnuellePdf(annee, c) {
   }
   const bytes = buildPdfTable({
     title: 'Déclaration annuelle — ' + annee,
-    subtitle: 'Registre PAC, recensement au 1er janvier — ' + formatDateFr(new Date().toISOString().slice(0, 10)),
+    subtitle: 'Registre PAC, recensement au 1er janvier — ' + formatDateFr(jourAujourdhuiISO()),
     columns: [{ label: 'Libellé', x: 0 }, { label: 'Valeur', x: 320 }],
     rows
   });
-  const filename = 'declaration-annuelle_' + annee + '_' + new Date().toISOString().slice(0, 10) + '.pdf';
+  const filename = 'declaration-annuelle_' + annee + '_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
@@ -23513,7 +23522,7 @@ function nouvelIdAnimalImporte() { return Date.now().toString() + Math.random().
 
 function creerBrebisImport(champs, validation) {
   const dateEntree = validation.dateParsee || null;
-  const dateMouvement = dateEntree || new Date().toISOString().slice(0, 10);
+  const dateMouvement = dateEntree || jourAujourdhuiISO();
   const sheep = {
     id: nouvelIdAnimalImporte(), eid: champs.eidVal, createdAt: Date.now(), dateEntree,
     pere: champs.pereVal || '', mere: champs.mereVal || '',
@@ -23532,7 +23541,7 @@ function creerBrebisImport(champs, validation) {
 }
 function creerBelierImport(champs, validation) {
   const dateEntree = validation.dateParsee || null;
-  const dateMouvement = dateEntree || new Date().toISOString().slice(0, 10);
+  const dateMouvement = dateEntree || jourAujourdhuiISO();
   const belier = { id: nouvelIdAnimalImporte(), eid: champs.eidVal, createdAt: Date.now(), dateEntree, sanitaire: [], mouvements: [], statut: 'actif' };
   belier.mouvements.push({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement });
   if (champs.numeroLibreVal) belier.numeroTravailSieol = champs.numeroLibreVal;
@@ -23546,7 +23555,7 @@ function creerBelierImport(champs, validation) {
 }
 function creerAgnelleImport(champs, validation) {
   const dateEntree = validation.dateParsee || null;
-  const dateMouvement = dateEntree || new Date().toISOString().slice(0, 10);
+  const dateMouvement = dateEntree || jourAujourdhuiISO();
   const ag = {
     id: nouvelIdAnimalImporte(), eid: champs.eidVal, origine: champs.origine.toLowerCase(), dateEntree,
     pere: champs.pereVal || '', mere: champs.mereVal || '', sanitaire: [], mouvements: []
@@ -24734,7 +24743,7 @@ async function executerChangementCampagne() {
       }
     });
 
-    const dateRenouvellement = new Date().toISOString().slice(0,10);
+    const dateRenouvellement = jourAujourdhuiISO();
     // Une agnelle dont l'EID existe déjà ailleurs (brebis/bélier/autre
     // agnelle) n'est PAS convertie -- jamais un doublon silencieux, même
     // garde-fou que les 8 autres points de saisie (voir verifierEidUnique).
@@ -24861,7 +24870,7 @@ function renderConfirmationNouvelleCampagne() {
   // blocage pur (un besoin réel peut exister de démarrer en avance), mais
   // une confirmation explicite supplémentaire qui verrouille le bouton
   // "Valider" tant qu'elle n'est pas cochée.
-  const aujourdhui = new Date().toISOString().slice(0, 10);
+  const aujourdhui = jourAujourdhuiISO();
   const avantSeuil = estAvantSeuilCampagne(aujourdhui);
   const avantSeuilHtml = !avantSeuil ? '' : `
     <div class="card" style="border-color:var(--danger);">
@@ -25357,7 +25366,7 @@ function renderParametresCampagne(content) {
   // avant). Repli sur aujourd'hui seulement si aucune campagne n'a jamais
   // été démarrée (ne devrait pas arriver en usage réel, cet écran suppose
   // déjà au moins une campagne active).
-  const dateRefNettoyage = DB.campagneDateDemarrage || new Date().toISOString().slice(0, 10);
+  const dateRefNettoyage = DB.campagneDateDemarrage || jourAujourdhuiISO();
   function compterSortiesAArchiver(tableau, statutActif) {
     return (tableau || []).filter(a => {
       if ((a.statut || statutActif) === statutActif) return false;
@@ -25502,7 +25511,7 @@ function renderParametresCampagne(content) {
     // installs déjà touchées). Une fois posée, campagneRefDate() retombe de
     // toute façon proprement sur le 1er octobre calculé de campagneDebut si
     // elle reste nulle : rien ne casse en ne la posant pas ici.
-    if (!DB.campagneDateDemarrage) DB.campagneDateDemarrage = new Date().toISOString().slice(0,10);
+    if (!DB.campagneDateDemarrage) DB.campagneDateDemarrage = jourAujourdhuiISO();
     saveData(DB);
     render('parametres');
   };
