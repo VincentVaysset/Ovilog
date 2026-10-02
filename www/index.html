@@ -3020,6 +3020,25 @@ function statutReproductionCampagne(sheep) {
   }
 }
 
+/* Prédicat DÉDIÉ à l'onglet "Brebis à régulariser" (Bilan de campagne >
+   Incohérences, voir bilanIncoherencesHtml) -- chantier "Compléter le
+   changement de campagne" (onglet "Brebis à régulariser") : distinct de
+   statutReproductionCampagne ci-dessus (jamais modifiée, toujours utilisée
+   telle quelle par la fiche brebis et les badges de l'onglet Brebis).
+   Une brebis reste "à régulariser" tant qu'elle n'a NI mise bas NI vide
+   définitive enregistrée pour la campagne en cours -- une échographie
+   (gestante, vide confirmée, avortée, pseudogestation) ne la retire JAMAIS
+   de cette liste, contrairement à statutReproductionCampagne qui, elle,
+   distingue ces cas. Avant ce correctif, l'onglet groupait par
+   statutReproductionCampagne(s) : une brebis avec écho tombait dans une
+   catégorie ni "Mise bas" ni "Vide définitive" ni "Aucune info repro",
+   et disparaissait silencieusement de l'onglet entier (bug constaté en
+   réel : 313 brebis avec écho invisibles, seules les 115 ex-agnelles sans
+   écho encore apparaissaient). */
+function estARegulariserCampagne(sheep) {
+  return agnelageCampagneActuelleIdx(sheep) === -1 && !estVideDefinitiveCampagne(sheep);
+}
+
 /* ---------- Module Reproduction (remplace l'ancien pense-bête "Lutte") ----------
    Codes SIEOL/UNOTEC (inspirés Unotec/Vénus) : IA, EP (Éponge/œstrus induit),
    RE (Retour IA) et MN (Monte naturelle). Seuls IA et EP se saisissent, et
@@ -5680,10 +5699,17 @@ function bilanEconomiqueHtml() {
 }
 
 function bilanIncoherencesHtml(actives) {
-  const groupes = { 'Aucune info repro': [], 'Mise bas': [], 'Vide définitive': [] };
+  // Groupement par 2 vérifications directes (voir estARegulariserCampagne) --
+  // PLUS par statutReproductionCampagne, dont la branche échographie
+  // (Gestante/Vide confirmée/Avortée/Pseudogestation) faisait disparaître à
+  // tort une brebis suivie de cet onglet entier. "Mise bas"/"Vide définitive"
+  // restent calculés exactement comme avant (mêmes 2 fonctions), donc ces 2
+  // groupes et l'alerte d'incohérence ci-dessous sont strictement inchangés.
+  const groupes = { 'À régulariser': [], 'Mise bas': [], 'Vide définitive': [] };
   actives.forEach(s => {
-    const statut = statutReproductionCampagne(s);
-    if (groupes[statut]) groupes[statut].push(s);
+    if (agnelageCampagneActuelleIdx(s) !== -1) groupes['Mise bas'].push(s);
+    else if (estVideDefinitiveCampagne(s)) groupes['Vide définitive'].push(s);
+    else groupes['À régulariser'].push(s);
   });
 
   // Incohérence fin de campagne : mise bas ET vide définitive enregistrées
@@ -5692,12 +5718,12 @@ function bilanIncoherencesHtml(actives) {
   // une correction manuelle, en plus du bouton "Annuler" déjà sur la fiche.
   const incoherentes = actives.filter(s => agnelageCampagneActuelleIdx(s) !== -1 && estVideDefinitiveCampagne(s));
 
-  // "Aucune info repro" en tête : c'est la liste la plus actionnable (aucune
-  // info de reproduction cette campagne — ni écho, ni mise bas, ni vide
-  // définitive — donc celle à vérifier en priorité pour ne rien laisser
-  // passer).
+  // "À régulariser" en tête : c'est la liste la plus actionnable (ni mise
+  // bas, ni vide définitive cette campagne, quelle que soit l'échographie —
+  // voir estARegulariserCampagne — donc celle à vérifier en priorité pour
+  // ne rien laisser passer avant la clôture).
   const config = [
-    { key: 'Aucune info repro', label: 'Aucune info repro', color: 'amber', intro: "Aucune information de reproduction cette campagne (ni échographie, ni mise bas) — à vérifier en priorité." },
+    { key: 'À régulariser', label: 'À régulariser', color: 'amber', intro: "Ni mise bas, ni vide définitive enregistrée cette campagne — une échographie seule ne suffit pas à sortir une brebis de cette liste." },
     { key: 'Mise bas', label: 'Ont mis bas', color: 'green' },
     { key: 'Vide définitive', label: 'Vides définitives', color: 'blue' }
   ];
@@ -21163,6 +21189,15 @@ function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnC
    (...DB.exploitation) pour ne pas écraser un champ absent du formulaire
    affiché. */
 let parametresTab = 'exploitation';
+// Message du nettoyage ponctuel du registre, persisté ici (pas seulement dans
+// le DOM) : archiverSortiesAnterieures écrit directement dans la collection
+// registre pendant l'opération, ce qui peut déclencher un re-rendu de cet
+// écran via onSnapshot (écho de notre propre écriture) à tout moment, y
+// compris APRÈS que le message final a été affiché -- un re-rendu régénère
+// le <div id="nettoyage-registre-status"> vide à partir du template, donc le
+// message doit être relu depuis cette variable, pas seulement écrit dans le
+// DOM (repéré par un test de ce chantier).
+let nettoyageRegistreStatusMsg = '';
 const PARAMETRES_TABS = [
   { key: 'exploitation', label: 'Exploitation' },
   { key: 'listes', label: 'Listes' },
@@ -21499,15 +21534,22 @@ function renderParametresCampagne(content) {
   // fois utilisé (restaurerSnapshotPreCampagne l'efface).
   const snapshotPreCampagne = lireSnapshotPreCampagne();
   // Compte ce qu'un nettoyage ponctuel prendrait EFFECTIVEMENT en charge --
-  // même prédicat que archiverSortiesAnterieures (sortie antérieure à
-  // aujourd'hui), pour que ce chiffre annonce exactement ce qui va se
-  // passer, ni plus ni moins.
-  const aujourdhuiPourNettoyage = new Date().toISOString().slice(0, 10);
+  // même prédicat que archiverSortiesAnterieures, avec la même date de
+  // référence (dateRefNettoyage ci-dessous), pour que ce chiffre annonce
+  // exactement ce qui va se passer, ni plus ni moins.
+  // Référence = date de démarrage de la DERNIÈRE campagne (campagneDateDemarrage),
+  // pas la date du jour -- correctif demandé : le nettoyage ponctuel rattrape
+  // des sorties antérieures à la dernière bascule, jamais des sorties de la
+  // campagne EN COURS (qui seront archivées à la prochaine bascule, pas
+  // avant). Repli sur aujourd'hui seulement si aucune campagne n'a jamais
+  // été démarrée (ne devrait pas arriver en usage réel, cet écran suppose
+  // déjà au moins une campagne active).
+  const dateRefNettoyage = DB.campagneDateDemarrage || new Date().toISOString().slice(0, 10);
   function compterSortiesAArchiver(tableau, statutActif) {
     return (tableau || []).filter(a => {
       if ((a.statut || statutActif) === statutActif) return false;
       const dernier = dernierMouvementParDate(a.mouvements);
-      return !!(dernier && dernier.date && dernier.date < aujourdhuiPourNettoyage);
+      return !!(dernier && dernier.date && dernier.date < dateRefNettoyage);
     }).length;
   }
   const cptSortiesNonArchiveesBrebis = compterSortiesAArchiver(DB.brebis, 'active');
@@ -21581,7 +21623,7 @@ function renderParametresCampagne(content) {
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Nettoyage ponctuel du registre${infoBulleHtml('Nettoyage ponctuel du registre', "Archive dans le registre d'élevage, puis retire des onglets Brebis/Béliers/Mouvements, toute fiche déjà vendue ou morte mais jamais archivée (sortie antérieure à aujourd'hui) -- sans relancer un changement de campagne. À utiliser une fois pour rattraper des sorties anciennes, ou ponctuellement si besoin.")}</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">${cptSortiesNonArchivees} fiche(s) sortie(s) non encore archivée(s) trouvée(s) (${cptSortiesNonArchiveesBrebis} brebis, ${cptSortiesNonArchiveesBeliers} bélier(s)).</div>
       <button class="btn btn-secondary" id="btn-nettoyer-registre" style="color:var(--danger);border-color:var(--danger);" ${cptSortiesNonArchivees === 0 ? 'disabled' : ''}>Nettoyer le registre maintenant</button>
-      <div id="nettoyage-registre-status" style="font-size:12px;margin-top:8px;"></div>
+      <div id="nettoyage-registre-status" style="font-size:12px;margin-top:8px;">${nettoyageRegistreStatusMsg}</div>
     </div>
   `;
   content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
@@ -21663,22 +21705,37 @@ function renderParametresCampagne(content) {
   // réutilise directement archiverSortiesAnterieures (même garantie
   // écriture+vérification avant retrait), avec une sauvegarde JSON avant,
   // exactement comme executerChangementCampagne.
-  const btnNettoyerRegistre = document.getElementById('btn-nettoyer-registre');
-  if (btnNettoyerRegistre) {
-    btnNettoyerRegistre.onclick = async () => {
+  const btnNettoyerRegistreInit = document.getElementById('btn-nettoyer-registre');
+  if (btnNettoyerRegistreInit) {
+    btnNettoyerRegistreInit.onclick = async () => {
       if (!confirm(cptSortiesNonArchivees + ' fiche(s) vont être archivées dans le registre puis retirées des onglets Brebis/Béliers/Mouvements. Ferme l\'appli sur tes AUTRES appareils avant de continuer. Une sauvegarde JSON sera créée automatiquement avant. Continuer ?')) return;
-      const statusEl = document.getElementById('nettoyage-registre-status');
-      btnNettoyerRegistre.disabled = true;
-      statusEl.textContent = 'Sauvegarde en cours...';
+      // Re-interroge le bouton/le statut à CHAQUE mise à jour (jamais une
+      // référence capturée une seule fois ici) ET persiste le message dans
+      // nettoyageRegistreStatusMsg (pas seulement dans le DOM) :
+      // archiverSortiesAnterieures écrit directement dans la collection
+      // registre pendant l'opération, ce qui peut déclencher un re-rendu de
+      // cet écran (onSnapshot, écho de notre propre écriture) à TOUT moment,
+      // y compris APRÈS la toute dernière affectation ci-dessous -- un tel
+      // re-rendu régénère le <div> depuis le template, donc sans variable
+      // persistée le message final redeviendrait invisible même avec des
+      // références toujours fraîches (repéré par un test de ce chantier).
+      function statusEl() { return document.getElementById('nettoyage-registre-status'); }
+      function btnNettoyerRegistre() { return document.getElementById('btn-nettoyer-registre'); }
+      function setStatus(texte) {
+        nettoyageRegistreStatusMsg = texte;
+        if (statusEl()) statusEl().textContent = texte;
+      }
+      if (btnNettoyerRegistre()) btnNettoyerRegistre().disabled = true;
+      setStatus('Sauvegarde en cours...');
       const backup = await writeAutoBackupFile(nomFichierBackupAuto(new Date()), DB, { proposerPartage: true });
       if (!backup.ok) {
-        statusEl.textContent = '⚠️ Nettoyage annulé : la sauvegarde automatique a échoué -- ' + backup.raison + '.';
-        btnNettoyerRegistre.disabled = false;
+        setStatus('⚠️ Nettoyage annulé : la sauvegarde automatique a échoué -- ' + backup.raison + '.');
+        if (btnNettoyerRegistre()) btnNettoyerRegistre().disabled = false;
         return;
       }
       await purgeOldAutoBackups();
-      statusEl.textContent = 'Archivage en cours...';
-      const resultat = await archiverSortiesAnterieures(aujourdhuiPourNettoyage);
+      setStatus('Archivage en cours...');
+      const resultat = await archiverSortiesAnterieures(dateRefNettoyage);
       journaliserArchivageRegistre('nettoyage_registre', resultat);
       saveData(DB);
       let msg = resultat.archives.length + ' fiche(s) archivée(s) et retirée(s).';
@@ -21686,8 +21743,10 @@ function renderParametresCampagne(content) {
         msg += ' ' + resultat.echecs.length + ' échec(s) (laissée(s) en place) : ' +
           resultat.echecs.map(e => 'n°' + numeroVisuel(e.eid) + ' (' + e.raison + ')').join(', ') + '.';
       }
-      statusEl.textContent = (resultat.echecs.length ? '⚠️ ' : '✅ ') + msg;
-      btnNettoyerRegistre.disabled = resultat.archives.length > 0 && resultat.echecs.length === 0; // désactivé seulement si tout a réussi (compteur ci-dessus resterait sinon à 0 tant que l'écran n'est pas rouvert)
+      setStatus((resultat.echecs.length ? '⚠️ ' : '✅ ') + msg);
+      // désactivé seulement si tout a réussi (le compteur resterait sinon à
+      // 0 tant que l'écran n'est pas rouvert)
+      if (btnNettoyerRegistre()) btnNettoyerRegistre().disabled = resultat.archives.length > 0 && resultat.echecs.length === 0;
     };
   }
 }
