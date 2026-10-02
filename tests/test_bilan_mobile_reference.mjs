@@ -27,7 +27,8 @@ const html = await page.evaluate(() => {
     fiche(eid(5, 1), { agnelages: [mb(['Mâle', 'Mort-né'])] }), fiche(eid(5, 2)), fiche(eid(3, 1), { agnelages: [mb(['Femelle'])] }), fiche(eid(3, 2)),
     fiche('1234')];
   DB.beliers = []; DB.agnelles = [];
-  DB.lots = [{ id: 'lot-ep', type: 'reproduction', mode: 'EP', cible: 'Brebis', nom: 'Lot éponge test', membres: [eid(6, 1), eid(5, 1), eid(3, 1), eid(3, 2)], dateCreation: '2026-07-01', dateEvenement: '2026-07-01' }];
+  DB.lots = [{ id: 'lot-ia', type: 'reproduction', mode: 'IA', cible: 'Brebis', nom: 'Lot IA test', membres: [eid(6, 1), eid(6, 3), eid(5, 1), eid(3, 1), eid(3, 2)], dateCreation: '2026-06-25', dateEvenement: '2026-06-25' },
+    { id: 'lot-ep', type: 'reproduction', mode: 'EP', cible: 'Brebis', nom: 'Lot éponge test', membres: [eid(6, 1), eid(5, 1), eid(3, 1), eid(3, 2)], dateCreation: '2026-07-01', dateEvenement: '2026-07-01' }];
   DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
   return bilanReproductionHtml();
 });
