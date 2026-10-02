@@ -16973,39 +16973,12 @@ const BACKUP_AUTO_DIRECTORY = 'EXTERNAL';
    plutôt qu'un simple booléen, pour que l'appelant puisse bloquer l'action
    avec un message qui nomme la vraie cause plutôt qu'un texte générique
    ("vérifie l'espace de stockage") qui ne l'est pas toujours. */
-/* Propose la feuille de partage native (Drive, fichiers, e-mail...) pour un
-   fichier déjà écrit et vérifié dans BACKUP_AUTO_DIRECTORY -- correctif de
-   l'audit "Changement de campagne" (point 1) : ce dossier est app-scoped
-   (getExternalFilesDir, voir BACKUP_AUTO_DIRECTORY), jamais listé par un
-   gestionnaire de fichiers ni visible ailleurs -- sans partage explicite, le
-   fichier reste piégé sur l'appareil, inaccessible à l'éleveur sur Android
-   11+. Jamais bloquant : une annulation ou une indisponibilité du plugin ne
-   remet pas en cause la sauvegarde elle-même (déjà écrite et vérifiée avant
-   cet appel), donc jamais attendue par l'appelant (voir writeAutoBackupFile
-   ci-dessous, `.catch` sans `await`). Nécessite le FileProvider déclaré côté
-   Android (file_paths.xml, entrée external-files-path). */
-async function partagerFichierBackup(filename) {
-  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
-  const Share = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Share;
-  if (!Filesystem || !Share) return; // hors app installée : le repli navigateur a déjà proposé un téléchargement direct
-  try {
-    const { uri } = await Filesystem.getUri({ path: filename, directory: BACKUP_AUTO_DIRECTORY });
-    await Share.share({ url: uri, title: filename, dialogTitle: 'Mettre la sauvegarde à l\'abri (Drive, fichiers...)' });
-  } catch (e) {
-    // Annulation de l'éleveur (feuille de partage fermée sans choix) ou
-    // plugin indisponible sur cet appareil -- jamais une erreur à
-    // remonter, le fichier reste de toute façon en sécurité sur l'appareil.
-    console.error('Partage de la sauvegarde : ignoré ou annulé', e);
-  }
-}
-
-/* `proposerPartage` (défaut false) : ouvre la feuille de partage native
-   juste après une écriture réussie -- réservé aux déclenchements explicites
-   de l'éleveur (changement de campagne, import JSON) ; jamais pour la
-   vérification périodique silencieuse au démarrage (voir
-   verifierSauvegardeAutoPeriodique), qui ne doit jamais faire apparaître une
-   fenêtre sans action de l'éleveur. */
-async function writeAutoBackupFile(filename, data, { proposerPartage = false } = {}) {
+/* Écrit la copie INTERNE (app-scoped, BACKUP_AUTO_DIRECTORY) d'une sauvegarde
+   JSON puis la relit et vérifie taille et compteurs. Ne la rend PAS
+   accessible à l'éleveur (dossier masqué sur Android 11+) : voir
+   sauvegardeVisibleAvantMutation pour l'export visible, et
+   partagerFichierExistant pour le partage à la demande. */
+async function writeAutoBackupFile(filename, data) {
   const bytes = bytesBackupAuto(data, new Date());
   const attendu = { brebis: (data.brebis || []).length, agnelles: (data.agnelles || []).length, beliers: (data.beliers || []).length };
   const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
@@ -17038,10 +17011,6 @@ async function writeAutoBackupFile(filename, data, { proposerPartage = false } =
       if (obtenu.brebis !== attendu.brebis || obtenu.agnelles !== attendu.agnelles || obtenu.beliers !== attendu.beliers) {
         return { ok: false, raison: 'les compteurs relus (' + JSON.stringify(obtenu) + ') ne correspondent pas à ceux attendus (' + JSON.stringify(attendu) + ')' };
       }
-      // Jamais attendu : la validité de la sauvegarde ne dépend pas de ce
-      // que l'éleveur fait ensuite de la feuille de partage (voir
-      // partagerFichierBackup).
-      if (proposerPartage) partagerFichierBackup(filename);
       return { ok: true };
     } catch (e) {
       console.error('Sauvegarde automatique : échec Filesystem (relecture de vérification)', e);
@@ -17076,9 +17045,9 @@ async function writeAutoBackupFile(filename, data, { proposerPartage = false } =
    Chantier "Export SAF" : BACKUP_AUTO_DIRECTORY (getExternalFilesDir) est un
    dossier app-scoped, masqué par le gestionnaire de fichiers depuis Android
    11 -- le fichier qui y est écrit est vérifié mais JAMAIS accessible à
-   l'éleveur, et la feuille de partage lancée en tâche de fond (voir
-   partagerFichierBackup) échoue en silence. Pour toute opération qui modifie
-   les données (bascule, nettoyage du registre), la sauvegarde n'est donc
+   l'éleveur (l'ancien partage lancé en tâche de fond échouait en silence,
+   il a été supprimé). Pour toute opération qui modifie les données
+   (bascule, nettoyage du registre, import JSON), la sauvegarde n'est donc
    considérée comme valide que si l'éleveur l'a enregistrée à un emplacement
    de SON choix via le plugin natif FileSaver (ACTION_CREATE_DOCUMENT), puis
    relue via l'URI obtenue. Jamais de contenu dans l'appel natif : le fichier
@@ -17186,9 +17155,8 @@ async function sauvegardeVisibleAvantMutation(filename, data) {
   return { ok: true, interneOk: true, mode: 'saf', visible };
 }
 /* Partage à la demande (bouton "Partager le fichier") d'un fichier présent
-   dans BACKUP_AUTO_DIRECTORY. Contrairement à partagerFichierBackup (tâche de
-   fond, erreurs avalées), retourne { ok, cancelled?, raison? } pour que
-   l'écran affiche exactement ce qui s'est passé. */
+   dans BACKUP_AUTO_DIRECTORY. Retourne { ok, cancelled?, raison? } pour que
+   l'écran affiche exactement ce qui s'est passé (jamais d'erreur avalée). */
 async function partagerFichierExistant(filename) {
   const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   const Share = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Share;
@@ -21367,6 +21335,7 @@ let nettoyageRegistreStatusMsg = '';
 let nettoyageRegistreEnCours = false;
 let testSauvegardeEtat = { message: '', partageable: false };
 let testSauvegardeEnCours = false;
+let importJsonEnCours = false;
 const PARAMETRES_TABS = [
   { key: 'exploitation', label: 'Exploitation' },
   { key: 'listes', label: 'Listes' },
@@ -22051,22 +22020,41 @@ function renderParametresSauvegarde(content) {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async () => {
+      let parsed;
       try {
-        const parsed = JSON.parse(reader.result);
+        parsed = JSON.parse(reader.result);
         if (!Array.isArray(parsed.brebis)) throw new Error('format invalide');
+      } catch (err) {
+        alert("Ce fichier ne semble pas être une sauvegarde valide.");
+        return;
+      }
+      if (importJsonEnCours) return;
+      importJsonEnCours = true; // verrou en mémoire, libéré par le finally
+      try {
         if (!confirm('Remplacer toutes les données actuelles par cette sauvegarde ? Cette action est irréversible.')) return;
-        // Sauvegarde automatique et silencieuse des données ACTUELLES (celles
-        // que l'import va remplacer) avant d'y toucher -- même filet de
-        // sécurité que le changement de campagne (voir
-        // executerChangementCampagne) : si elle échoue, l'import est
-        // bloqué plutôt que de risquer d'écraser des données sans aucun
-        // filet.
+        // Même sauvegarde que la bascule et le nettoyage du registre
+        // (sauvegardeVisibleAvantMutation : copie interne vérifiée + export
+        // visible relu), AVANT toute modification des données.
         const backupFilename = nomFichierBackupAuto(new Date());
         const backupResume = resumeContenuSauvegarde(DB);
-        const backup = await writeAutoBackupFile(backupFilename, DB, { proposerPartage: true });
+        const backup = await sauvegardeVisibleAvantMutation(backupFilename, DB);
+        let exportVisible = backup.ok && backup.mode === 'saf' ? backup.visible : null;
         if (!backup.ok) {
-          alert("Import annulé : la sauvegarde automatique de tes données actuelles a échoué (avant de les remplacer) -- " + backup.raison + ". Réessaie, ou exporte-les manuellement d'abord.");
-          return;
+          if (!backup.interneOk) {
+            // Aucun filet d'aucune sorte : jamais de remplacement dans ce cas.
+            alert("Import annulé : la sauvegarde de tes données actuelles a échoué (avant de les remplacer) -- " + backup.raison + ". Rien n'a été modifié. Réessaie, ou exporte-les manuellement d'abord.");
+            return;
+          }
+          // Voie de secours EXPLICITE, propre à l'import : la copie interne
+          // vérifiée existe, seul l'export visible manque (annulé ou échoué).
+          const continuer = confirm(
+            (backup.cancelled ? "L'export visible de ta sauvegarde a été annulé" : "L'export visible de ta sauvegarde a échoué") + ' (' + backup.raison + ').\n\n' +
+            "Une copie de sécurité INTERNE a bien été écrite et vérifiée, mais elle est dans l'espace privé de l'appli (invisible depuis le gestionnaire de fichiers).\n\n" +
+            "OK = continuer l'import SANS export visible (tes données actuelles seront remplacées).\nAnnuler = ne rien modifier.");
+          if (!continuer) {
+            showToast("Import annulé : aucune donnée n'a été modifiée.");
+            return;
+          }
         }
         await purgeOldAutoBackups(); // roulement : ne garde que les BACKUP_AUTO_MAX plus récentes
         // migrateData comble les champs qui n'existaient pas encore dans une
@@ -22074,10 +22062,15 @@ function renderParametresSauvegarde(content) {
         // manquant juste après la restauration.
         DB = migrateData(parsed);
         saveData(DB);
-        alert('Import réussi.\n\nPar sécurité, tes données précédentes (' + backupResume + ') ont été sauvegardées automatiquement dans le fichier ' + backupFilename + ' avant d\'être remplacées.');
+        alert('Import réussi.\n\nTes données précédentes (' + backupResume + ') ont été sauvegardées avant d\'être remplacées : '
+          + (exportVisible
+            ? 'fichier enregistré à l\'emplacement que tu as choisi' + (exportVisible.nom ? ' (« ' + exportVisible.nom + ' »)' : '') + ', plus une copie interne (' + backupFilename + ').'
+            : backup.ok
+              ? 'fichier ' + backupFilename + (backup.mode === 'telechargement' ? ' (téléchargé par le navigateur).' : '.')
+              : 'copie interne uniquement (' + backupFilename + '), invisible depuis le gestionnaire de fichiers, car tu as choisi de continuer sans export visible.'));
         render('home');
-      } catch (err) {
-        alert("Ce fichier ne semble pas être une sauvegarde valide.");
+      } finally {
+        importJsonEnCours = false;
       }
     };
     reader.readAsText(file);
