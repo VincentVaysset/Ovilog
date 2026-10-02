@@ -3,8 +3,8 @@
      « Vente reproduction », « Morte », « Perte » : aucune alerte ; mouvement individuel (brebis), collectif, agneau, agnelle ;
    - Séléphérol : traitement comme un autre (délais depuis sa fiche, jamais créée d'office, « — » + alerte pour créer la fiche, délais
      obligatoires, copiés sur le soin à la création) ;
-   - import contrôle laitier : liste (sans rien modifier) des contrôles tombant pendant un délai d'attente du lait ;
-   - mobile : aucune alerte ajoutée.
+   - import contrôle laitier : liste (sans rien modifier) des contrôles tombant pendant un délai d'attente du lait (PC) ;
+   - mobile : alerte de vente aussi (individuel, collectif, agneau, agnelle), jamais bloquante ; sans alerte l'écran reste identique (test_alertes_mobile_reference).
    saveData est REMPLACÉ par un compteur (rien n'est persisté). Jeu synthétique, aucun EID réel. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
@@ -165,19 +165,40 @@ al = await page.evaluate(() => { const e = document.getElementById('alerte-vente
 check(al && /Agnelle n°00070 est encore sous délai/.test(al) && /27-10-2026/.test(al), 'agnelle : alerte de vente, vente dès le 27/10 : ' + al);
 await page.click('#vendre-cancel');
 const mob = await page.evaluate(() => {
-  window.electronAPI.isDesktop = false;
-  currentSheepId = 'C'; editContext = null; render('add-mouvement');
-  document.querySelector('.type-opt[data-val="Vente"]').click();
-  document.getElementById('f-date').value = '2026-10-10'; document.getElementById('f-date').dispatchEvent(new Event('input'));
-  const r = { zone: !!document.getElementById('zone-alerte-vente-delai'), alerte: !!document.getElementById('alerte-vente-delai') };
+  window.electronAPI.isDesktop = false;       // écrans MOBILE
+  const r = {};
+  const vente = (date) => { document.querySelector('.type-opt[data-val="Vente"]').click(); document.getElementById('f-date').value = date; document.getElementById('f-date').dispatchEvent(new Event('input')); };
+  currentSheepId = 'C'; editContext = null; render('add-mouvement'); vente('2026-10-10');
+  r.individuel = !!document.getElementById('alerte-vente-delai') && /n°00003 est encore sous délai/.test(document.getElementById('zone-alerte-vente-delai').textContent) && /30-10-2026/.test(document.getElementById('zone-alerte-vente-delai').textContent);
+  document.getElementById('f-date').value = '2026-10-30'; document.getElementById('f-date').dispatchEvent(new Event('input'));
+  r.disparaitLe30 = !document.getElementById('zone-alerte-vente-delai');
+  currentSheepId = 'B'; render('add-mouvement'); vente('2026-10-10');
+  r.zoneSansAlerte = !!document.getElementById('zone-alerte-vente-delai');      // animal sans soin : aucune zone créée
+  window.__mouvementGroupeSelected = { brebis: new Set(['C']), beliers: new Set(), agnelles: new Set(), agneaux: new Set() };
+  render('mouvement-groupe'); document.querySelector('.cat-mc-opt[data-val="brebis"]').click(); vente('2026-10-10');
+  r.collectif = !!document.getElementById('alerte-vente-delai');
   showLambSortieModal(DB.brebis[1].agnelages[0].lambs[0], 'vendu', () => {});
-  r.modal = !!document.querySelector('.modal-overlay #zone-alerte-vente-delai');
+  r.agneau = !!document.querySelector('.modal-overlay #alerte-vente-delai') && /Séléphérol/.test(document.querySelector('.modal-overlay').textContent);   // fiche Séléphérol créée en 4 : délai viande de l'injection de naissance
+  document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
+  showVendreAgnelleModal(DB.agnelles[0], () => {}); document.getElementById('vendre-date').value = '2026-10-10'; document.getElementById('vendre-date').dispatchEvent(new Event('input'));
+  r.agnelle = !!document.querySelector('.modal-overlay #alerte-vente-delai');
   document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
   window.electronAPI.isDesktop = true;
   return r;
 });
-check(!mob.zone && !mob.alerte && !mob.modal, 'mobile : aucune zone ni alerte ajoutée : ' + JSON.stringify(mob));
-console.log('OK 7 agnelle : alerte de vente ; mobile : rien ajouté.');
+check(mob.individuel && mob.disparaitLe30 && !mob.zoneSansAlerte && mob.collectif && mob.agneau && mob.agnelle, 'mobile : alerte de vente (individuel, collectif, agneau, agnelle), sans zone quand il n\'y a rien à signaler : ' + JSON.stringify(mob));
+// jamais bloquante sur mobile non plus : la vente est enregistrée telle que saisie
+const venteMobile = await page.evaluate(async () => {
+  window.electronAPI.isDesktop = false;
+  currentSheepId = 'C'; editContext = null; render('add-mouvement');
+  document.querySelector('.type-opt[data-val="Vente"]').click(); document.getElementById('f-date').value = '2026-10-10'; document.getElementById('f-date').dispatchEvent(new Event('input'));
+  document.querySelector('#acheteur-list .chip').click(); document.getElementById('btn-save-mouvement').click();
+  await new Promise(r => setTimeout(r, 100));
+  window.electronAPI.isDesktop = true;
+  const m = DB.brebis[2].mouvements.find(x => x.type === 'Vente'); return m ? m.date : null;
+});
+check(venteMobile === '2026-10-10', 'mobile : vente enregistrée malgré l\'alerte, date non corrigée : ' + venteMobile);
+console.log('OK 7 agnelle : alerte de vente ; mobile : alerte aussi (individuel, collectif, agneau, agnelle), jamais bloquante, aucune zone sans alerte.');
 
 // ================================================================ 8. carte « Séléphérol à créer » dans Produits et délais
 await jeu();

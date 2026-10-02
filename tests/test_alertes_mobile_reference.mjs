@@ -1,7 +1,7 @@
 /* Référence « mobile identique » des écrans touchés par les alertes du carnet sanitaire : mouvement individuel (brebis) avec
    type Vente et date choisis, mouvement collectif (formulaire), fenêtre de vente d'un agneau, fenêtre « Vendre » d'une agnelle,
    écrans d'import du contrôle laitier (modèle Ovilog et SIEOL avant fichier) : HTML comparé octet pour octet à
-   tests/ref/alertes_mobile.json, pris AVANT les alertes (jeu SYNTHÉTIQUE, horloge figée, mobile = pas d'electronAPI.isDesktop).
+   tests/ref/alertes_mobile.json, pris AVANT les alertes de vente sur mobile (jeu SYNTHÉTIQUE sans délai viande en cours : l'alerte n'a rien à signaler, la zone d'alerte n'est donc PAS créée et les écrans restent identiques ; horloge figée, mobile = pas d'electronAPI.isDesktop).
    Régénérer volontairement : OVILOG_MAJ_REF=1 node test_alertes_mobile_reference.mjs */
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -23,9 +23,9 @@ const res = await page.evaluate(() => {
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
   DB.acheteurs = ['Acheteur test'];
-  const soin = { type: 'Traitement', sousType: 'Antibiotique', produit: 'Intramicine', date: '2026-09-30', quantiteCc: 8, intervenant: 'Éleveur', commentaire: '', dureeJours: 1, delaiLaitJours: 7, delaiViandeJours: 28 };
+  const soin = { type: 'Traitement', sousType: 'Antibiotique', produit: 'Intramicine', date: '2026-09-30', quantiteCc: 8, intervenant: 'Éleveur', commentaire: '', dureeJours: 1, delaiLaitJours: 7, delaiViandeJours: 0 };   // aucun délai viande : aucune alerte de vente, l'écran doit rester identique
   DB.brebis = [fiche(eid(3, 1), { id: 'A', sanitaire: [soin] }), fiche(eid(3, 2), { id: 'B' })];
-  DB.brebis[1].agnelages = [{ date: '2026-09-25', campagne: 2026, lambs: [{ eid: eid(6, 801), sexe: 'Mâle', statut: 'vivant', sanitaire: [{ type: 'Traitement', produit: 'Séléphérol', dose: '2 cc', date: '2026-09-25', commentaire: '' }], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-09-25' }] }] }];
+  DB.brebis[1].agnelages = [{ date: '2026-09-25', campagne: 2026, lambs: [{ eid: eid(6, 801), sexe: 'Mâle', statut: 'vivant', sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-09-25' }] }] }];
   DB.beliers = []; DB.agnelles = [fiche(eid(6, 70), { id: 'AG', sanitaire: [soin] })]; DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
   const app = () => document.getElementById('app').innerHTML;
   const R = {};
