@@ -70,6 +70,8 @@ Sans `URL_AVANT`, seuls les attendus de la version actuelle sont vérifiés.
 | `test_collisions_sieol` | Non-régression du résolveur partagé (écho rapide, mise bas rapide, mouvement collectif) |
 | `test_misebas_tableau` | Tableau des mises bas : nombres par sexe, totaux |
 | `test_mouvements_affichage` | Écran « Mouvements d'animaux » : filtre d'affichage par campagne, aucune donnée modifiée |
+| `test_regle_antenaise` | Antenaises = millésime le plus jeune de la campagne (registre compris), avertissement « pas de renouvellement » daté de `campagneDateDemarrage`, EID illisible, brebis qui met bas puis passe au registre, cohérence écran / lots / PDF, aucune écriture ; avant/après sur l'export (`URL_AVANT`) |
+| `test_bilan_mobile_reference` | HTML mobile du bilan comparé octet pour octet à `ref/bilan_mobile.html` (jeu synthétique, référence prise après la règle antenaise ; `OVILOG_MAJ_REF=1` pour la régénérer volontairement) |
 
 ## Ce que ces tests ne couvrent pas
 

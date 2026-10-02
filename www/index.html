@@ -1287,24 +1287,13 @@ function anneeNaissance(eid) {
 }
 // Affichage UI uniquement (badges "X an(s)" sur fiches/listes).
 // Glisse au 1er janvier, jamais recalé sur la campagne agricole.
-// Ne jamais utiliser pour un calcul statistique agrégé — voir ageADate()
-// qui reste figée sur campagneRefDate() pour tout Bilan de reproduction.
+// Ne jamais utiliser pour un calcul statistique : le classement
+// antenaises/brebis du Bilan de reproduction repose sur le millésime le plus
+// jeune de la campagne (voir classementAntenaisesCampagne), pas sur l'âge.
 function age(eid) {
   const y = anneeNaissance(eid);
   if (y === null) return null;
   return new Date().getFullYear() - y;
-}
-/* Âge à une date de référence donnée plutôt qu'à aujourd'hui -- utilisée
-   uniquement par statsDetailleesParGroupeAge (Bilan de reproduction) pour
-   que le classement agnelle/brebis d'une brebis reste figé sur toute la
-   durée de la campagne, au lieu de glisser au changement d'année civile.
-   anneeNaissance() elle-même n'a pas besoin d'une variante : son new Date()
-   sert seulement à désambiguïser la décennie d'un chiffre unique d'EID, ce
-   qui doit rester basé sur la vraie date du jour, jamais sur refDate. */
-function ageADate(eid, refDate) {
-  const y = anneeNaissance(eid);
-  if (y === null) return null;
-  return refDate.getFullYear() - y;
 }
 /* Format d'affichage compact d'un EID, utilisé pour lister des candidats en
    cas de numéro d'ordre ambigu : n'affiche que les 11 derniers chiffres (6
@@ -2909,11 +2898,36 @@ function campagneDateFinReelle() {
    ses lignes restent cohérentes entre elles (sinon une vente en cours de
    campagne gonflerait artificiellement "% mises bas"). Sans date de
    référence disponible (campagne non configurée du tout), retombe sur les
-   brebis actives aujourd'hui. */
+   brebis actives aujourd'hui.
+   Population UNIQUE du Bilan de reproduction (tableau, taux de réussite,
+   classement antenaises/brebis) : elle inclut aussi les brebis qui ne sont
+   plus que dans le registre (fiche retirée en entier pendant la campagne,
+   voir archiverEtRetirerFicheComplete) dès lors qu'elles étaient présentes à
+   la date de référence -- sinon une brebis qui a mis bas puis a été retirée
+   disparaissait des mises bas de sa propre campagne. À noter : le taux de
+   réussite (tauxReussiteGlobal) pourra donc différer de l'ancien calcul sur
+   les campagnes à venir, quand de telles brebis existeront ; sur un
+   troupeau sans fiche retirée en cours de campagne, rien ne change. Une
+   brebis encore présente dans DB.brebis garde sa fiche (jamais doublée par
+   son éventuelle copie de registre). */
 function campagneCohortPresente() {
   const refDate = campagneRefDate();
   if (!refDate) return DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  return DB.brebis.filter(s => {
+  const dejaPresentes = new Set(DB.brebis.map(s => s.eid));
+  const dansRegistre = Object.keys((DB.registre && DB.registre.brebis) || {})
+    .filter(eid => !dejaPresentes.has(eid))
+    .map(eid => {
+      const a = DB.registre.brebis[eid] || {};
+      // Même forme qu'une fiche brebis pour tout ce que lit le bilan
+      // (mouvements, agnelages, vides définitives, dates d'entrée) ; statut
+      // 'sortie' : jamais active, donc jugée sur sa date de sortie.
+      return Object.assign({}, a, {
+        eid, statut: 'sortie', depuisRegistre: true,
+        mouvements: a.mouvements || [], agnelages: a.agnelages || [],
+        videesDefinitives: a.videesDefinitives || []
+      });
+    });
+  return DB.brebis.concat(dansRegistre).filter(s => {
     const mouvements = s.mouvements || [];
     const entreeMvt = mouvements.find(m => m.type === 'Entrée');
     const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
@@ -2928,28 +2942,79 @@ function campagneCohortPresente() {
   });
 }
 
-/* Tableau détaillé de Bilan de reproduction, par groupe d'âge (antenaises de
-   1 an / brebis de 2 ans et plus, basé sur l'EID comme partout ailleurs —
-   voir campagneCohortPresente ci-dessus pour la population de référence).
-   `refDate` (voir campagneRefDate/bilanReproductionHtml) fige le calcul
-   d'âge sur la date de démarrage de la campagne plutôt qu'aujourd'hui : sans
-   ça, une brebis changerait de groupe au 1er janvier (changement d'année
-   civile) alors que la campagne, elle, n'a pas changé -- voir ageADate.
+/* Date de début de la campagne en cours au format 'YYYY-MM-DD' : la date
+   RÉELLE de la bascule (DB.campagneDateDemarrage) si elle est enregistrée,
+   sinon la date calculée/paramétrée (voir campagneRefDate) -- jamais le
+   1er octobre nominal quand la vraie date existe. Chaîne reconstruite depuis
+   les accesseurs locaux pour ne pas perdre un jour par conversion UTC. null
+   si aucune campagne n'est configurée. */
+function campagneDateDebutISO() {
+  if (DB.campagneDateDemarrage) return String(DB.campagneDateDemarrage).slice(0, 10);
+  const d = campagneRefDate();
+  if (!d) return null;
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+/* Règle antenaise/brebis du Bilan de reproduction (écran mobile, cartes de
+   lots, PDF « par âge ») -- UNE seule définition, pure (ne lit que
+   `cohort` et DB.campagneDateDemarrage, n'écrit jamais rien) :
+   - antenaises = le millésime (anneeNaissance, déduit de l'EID) le plus
+     jeune parmi les brebis de la population de la campagne
+     (campagneCohortPresente : actives + sorties, registre compris) ;
+   - brebis = toutes les autres. Plus de notion d'âge 0 ni d'exclusion ; une
+     brebis dont l'EID ne donne pas d'année est rangée avec les brebis et
+     comptée à part (`sansAnnee`) pour que les totaux tombent juste.
+   - `avertissement` (information seule, JAMAIS de reclassement) : aucune
+     brebis de ce millésime n'a de mouvement « Entrée » daté d'au moins le
+     début réel de la campagne (DB.campagneDateDemarrage) -- c'est-à-dire
+     aucune agnelle n'est entrée avec la bascule (pas de renouvellement). Le
+     millésime le plus jeune reste alors classé « antenaises ».
+   Retourne { millesimeAntenaise, effectifAntenaises, effectifBrebis,
+   sansAnnee, renouvellement (true/false, null si campagne non configurée),
+   avertissement (texte ou null), groupe(eid) -> 'antenaises' | 'brebis' }. */
+function classementAntenaisesCampagne(cohort) {
+  let millesimeAntenaise = null;
+  cohort.forEach(s => {
+    const y = anneeNaissance(s.eid || '');
+    if (y !== null && (millesimeAntenaise === null || y > millesimeAntenaise)) millesimeAntenaise = y;
+  });
+  const groupe = eid => {
+    const y = anneeNaissance(eid || '');
+    return (y !== null && y === millesimeAntenaise) ? 'antenaises' : 'brebis';
+  };
+  let effectifAntenaises = 0, effectifBrebis = 0, sansAnnee = 0;
+  cohort.forEach(s => {
+    if (anneeNaissance(s.eid || '') === null) sansAnnee++;
+    if (groupe(s.eid) === 'antenaises') effectifAntenaises++; else effectifBrebis++;
+  });
+  const debutISO = campagneDateDebutISO();
+  let renouvellement = null, avertissement = null;
+  if (debutISO && millesimeAntenaise !== null) {
+    renouvellement = cohort.some(s => anneeNaissance(s.eid || '') === millesimeAntenaise
+      && (s.mouvements || []).some(m => m && m.type === 'Entrée' && m.date && String(m.date).slice(0, 10) >= debutISO));
+    if (!renouvellement) {
+      avertissement = 'Aucune agnelle n\'est entrée dans le troupeau avec le début de cette campagne (' + formatDateFr(debutISO) + ') : pas de renouvellement détecté. Les antenaises ci-dessous sont le millésime le plus jeune présent (' + millesimeAntenaise + '), classement laissé tel quel.';
+    }
+  }
+  return { millesimeAntenaise, effectifAntenaises, effectifBrebis, sansAnnee, renouvellement, avertissement, groupe };
+}
+
+/* Tableau détaillé de Bilan de reproduction, par groupe antenaises / brebis
+   (règle : voir classementAntenaisesCampagne ; population de référence : voir
+   campagneCohortPresente). Le classement ne dépend plus de l'âge calendaire,
+   donc il ne glisse pas au changement d'année civile.
    Un agneau adopté n'existe qu'à un seul endroit dans les données (dans
    agnelages de sa mère biologique — le champ adoptif n'est qu'une note,
    jamais une entrée dupliquée chez la mère adoptive), donc pas de risque de
-   double-comptage en parcourant simplement les agnelages de chaque brebis.
-   Les brebis d'âge 0 (nées cette année, trop jeunes pour la lutte en cours)
-   ou d'âge inconnu (EID invalide) sont exclues des deux groupes. */
-function statsDetailleesParGroupeAge(cohort, refDate) {
+   double-comptage en parcourant simplement les agnelages de chaque brebis. */
+function statsDetailleesParGroupeAge(cohort, classement) {
+  classement = classement || classementAntenaisesCampagne(cohort);
   const groupes = {
-    '1 an': { presentes: 0, misesBas: 0, males: 0, femelles: 0, mortNes: 0, morts: 0 },
-    '2 ans et plus': { presentes: 0, misesBas: 0, males: 0, femelles: 0, mortNes: 0, morts: 0 }
+    'antenaises': { presentes: 0, misesBas: 0, males: 0, femelles: 0, mortNes: 0, morts: 0 },
+    'brebis': { presentes: 0, misesBas: 0, males: 0, femelles: 0, mortNes: 0, morts: 0 }
   };
   cohort.forEach(s => {
-    const a = ageADate(s.eid, refDate);
-    if (a === null || a < 1) return;
-    const g = groupes[a === 1 ? '1 an' : '2 ans et plus'];
+    const g = groupes[classement.groupe(s.eid)];
     g.presentes++;
     const agnelageCampagne = agnelageCampagneActuelle(s);
     if (!agnelageCampagne) return;
@@ -2973,7 +3038,7 @@ function statsDetailleesParGroupeAge(cohort, refDate) {
     const prolificite = div(nesTotal, g.misesBas);
     const pctMortalite = div(g.morts, nesTotal);
     return {
-      label: key === '1 an' ? 'Antenaises' : 'Brebis',
+      label: key === 'antenaises' ? 'Antenaises' : 'Brebis',
       presentes: g.presentes,
       misesBas: g.misesBas,
       males: g.males,
@@ -3432,8 +3497,8 @@ function statsLotEponge(lot) {
   return { effectif, misesBas, fertilite: pct(misesBas, effectif), prolificite: rat(agneaux, misesBas) };
 }
 
-/* Résumé PAR GROUPE D'ÂGE (Antenaises 1 an / Brebis 2 ans et plus, même
-   découpage que statsDetailleesParGroupeAge) d'un lot -- affiché à l'écran
+/* Résumé PAR GROUPE (antenaises / brebis, même règle que
+   statsDetailleesParGroupeAge : classementAntenaisesCampagne) d'un lot -- affiché à l'écran
    dans chaque carte de lot (IA et Éponge), contrairement au détail par
    millésime ci-dessus qui reste réservé au PDF. Agrège les COMPTEURS BRUTS
    (misesBas, agneaux) déjà calculés par millésime (parAgeExact), jamais une
@@ -3442,12 +3507,14 @@ function statsLotEponge(lot) {
    statsLotIAParAgeExact (mises bas = global.misesBas, agneaux =
    agneauxTotal) ou statsLotEpongeParAgeExact (à plat) -- géré via un
    sélecteur commun aux deux formes. */
-function resumeLotParGroupeAge(lot, parAgeExact) {
-  const refDate = campagneRefDate() || new Date();
-  const groupes = { '1 an': { effectif: 0, misesBas: 0, agneaux: 0 }, '2 ans et plus': { effectif: 0, misesBas: 0, agneaux: 0 } };
+function resumeLotParGroupeAge(lot, parAgeExact, classement) {
+  classement = classement || classementAntenaisesCampagne(campagneCohortPresente());
+  const groupes = { 'antenaises': { effectif: 0, misesBas: 0, agneaux: 0 }, 'brebis': { effectif: 0, misesBas: 0, agneaux: 0 } };
   parAgeExact.forEach(ligne => {
-    const ageEnAnnees = refDate.getFullYear() - ligne.millesime;
-    const g = groupes[ageEnAnnees <= 1 ? '1 an' : '2 ans et plus'];
+    // Même règle que le tableau du bilan (classementAntenaisesCampagne) ; un
+    // lot ciblant des agnelles (lot.cible === 'Agnelles') est par nature un
+    // lot d'antenaises, même avant leur bascule en brebis.
+    const g = groupes[lot.cible === 'Agnelles' || ligne.millesime === classement.millesimeAntenaise ? 'antenaises' : 'brebis'];
     const misesBas = ligne.global ? ligne.global.misesBas : ligne.misesBas;
     const agneaux = ligne.global ? ligne.agneauxTotal : ligne.agneaux;
     g.effectif += ligne.effectif;
@@ -3458,25 +3525,26 @@ function resumeLotParGroupeAge(lot, parAgeExact) {
   const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
   return Object.keys(groupes).map(key => {
     const g = groupes[key];
-    return { label: key === '1 an' ? 'Antenaises (1 an)' : 'Brebis (2 ans et plus)', effectif: g.effectif, fertilite: pct(g.misesBas, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
+    return { label: key === 'antenaises' ? 'Antenaises' + (classement.millesimeAntenaise !== null ? ' (millésime ' + classement.millesimeAntenaise + ')' : '') : 'Brebis (autres millésimes)', effectif: g.effectif, fertilite: pct(g.misesBas, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
   });
 }
 
-/* Bilan troupeau (Bloc 2, export PDF uniquement) par ÂGE EXACT -- jamais
-   plafonné à "5 ans et plus" comme l'écran (statsDetailleesParGroupeAge,
-   INCHANGÉ) : chaque âge réellement présent dans le troupeau a sa propre
-   ligne. Ajoute la "durée de mise bas" (jours entre la 1ère et la dernière
-   mise bas de la campagne, pour cet âge) -- nouvelle donnée demandée,
-   absente de statsDetailleesParGroupeAge. */
-function statsParAgeExactTroupeau(cohort, refDate) {
+/* Bilan troupeau (Bloc 2, export PDF uniquement) par MILLÉSIME -- jamais
+   plafonné comme l'écran : chaque millésime réellement présent dans le
+   troupeau a sa propre ligne, y compris le plus jeune (les antenaises,
+   `antenaises: true`, voir classementAntenaisesCampagne -- plus aucune
+   exclusion d'âge). Les brebis dont l'EID ne donne pas d'année forment une
+   dernière ligne `millesime: null` pour que le total reste exact. Ajoute la
+   "durée de mise bas" (jours entre la 1ère et la dernière mise bas de la
+   campagne, pour ce millésime). */
+function statsParAgeExactTroupeau(cohort, classement) {
+  classement = classement || classementAntenaisesCampagne(cohort);
   const groupes = {};
   cohort.forEach(s => {
-    const a = ageADate(s.eid, refDate);
-    if (a === null || a < 1) return;
-    const millesime = anneeNaissance(s.eid);
-    if (millesime === null) return;
-    if (!groupes[millesime]) groupes[millesime] = { presentes: 0, misesBas: 0, nesTotal: 0, dates: [] };
-    const g = groupes[millesime];
+    const millesime = anneeNaissance(s.eid || '');
+    const cle = millesime === null ? 'inconnu' : millesime;
+    if (!groupes[cle]) groupes[cle] = { presentes: 0, misesBas: 0, nesTotal: 0, dates: [] };
+    const g = groupes[cle];
     g.presentes++;
     const ag = agnelageCampagneActuelle(s);
     if (!ag) return;
@@ -3486,14 +3554,18 @@ function statsParAgeExactTroupeau(cohort, refDate) {
   });
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
   const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
-  return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(millesime => {
-    const g = groupes[millesime];
+  const cles = Object.keys(groupes).filter(k => k !== 'inconnu').map(Number).sort((a, b) => a - b);
+  if (groupes.inconnu) cles.push('inconnu');
+  return cles.map(cle => {
+    const millesime = cle === 'inconnu' ? null : cle;
+    const g = groupes[cle];
     const datesTri = g.dates.slice().sort();
     const dureeMiseBas = datesTri.length >= 2
       ? Math.round((new Date(datesTri[datesTri.length - 1]) - new Date(datesTri[0])) / 86400000)
       : (datesTri.length === 1 ? 0 : null);
     return {
-      millesime, presentes: g.presentes, misesBas: g.misesBas,
+      millesime, antenaises: millesime !== null && millesime === classement.millesimeAntenaise,
+      presentes: g.presentes, misesBas: g.misesBas,
       fertilite: pct(g.misesBas, g.presentes),
       prolificite: rat(g.nesTotal, g.misesBas),
       dureeMiseBas
@@ -5782,15 +5854,16 @@ function bilanReproductionHtml() {
   const lotsEponge = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'EP' && lotEpongeConcerneCampagneEnCours(l));
   // Même date de référence que la population ci-dessus, également utilisée
   // pour figer le groupe d'âge de chaque brebis sur toute la campagne (voir
-  // statsDetailleesParGroupeAge/ageADate) : sans repli sur aujourd'hui, une
-  // campagne non configurée (1er lancement) planterait le calcul d'âge.
+  // classementAntenaisesCampagne) : sans repli sur aujourd'hui, une
+  // campagne non configurée (1er lancement) planterait le libellé de date.
   const refDate = campagneRefDate() || new Date();
   const refDateLabel = DB.campagneDateDemarrage
     ? refDate.toLocaleDateString('fr-FR') + ' (date du changement de campagne)'
     : DB.campagneDebut
     ? campagneDateDebutLabel().replace('1er', '1<sup>er</sup>') + ' ' + DB.campagneDebut + ' (date calculée, campagne démarrée avant l\'enregistrement de cette date)'
     : null;
-  const [g1An, g2AnsPlus] = statsDetailleesParGroupeAge(cohort, refDate);
+  const classement = classementAntenaisesCampagne(cohort);
+  const [g1An, g2AnsPlus] = statsDetailleesParGroupeAge(cohort, classement);
   const rows = [
     { label: 'Brebis présentes', v1: g1An.presentes, v2: g2AnsPlus.presentes },
     { label: 'Brebis ayant mis bas', v1: g1An.misesBas, v2: g2AnsPlus.misesBas },
@@ -5857,7 +5930,7 @@ function bilanReproductionHtml() {
       ${sectionHeaderHtml(ICON_ECHO, 'green', 'Lots IA')}
       ${lotsIA.map(lot => {
         const s = statsLotIA(lot);
-        const resume = resumeLotParGroupeAge(lot, statsLotIAParAgeExact(lot));
+        const resume = resumeLotParGroupeAge(lot, statsLotIAParAgeExact(lot), classement);
         const tableHeadHtml = `<tr style="color:var(--text-muted);text-align:right;"><th style="text-align:left;font-weight:500;"></th><th style="font-weight:500;">IA</th><th style="font-weight:500;">1er retour</th><th style="font-weight:600;color:var(--green-fg);">Global</th></tr>`;
         const tableRowsHtml = `
           <tr style="border-top:1px solid var(--border);"><td>Mises bas</td><td style="text-align:right;">${s.ia.misesBas}</td><td style="text-align:right;">${s.retour.misesBas}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${s.global.misesBas}</td></tr>
@@ -5875,7 +5948,7 @@ function bilanReproductionHtml() {
       ${sectionHeaderHtml(ICON_SEARCH, 'blue', 'Lots Éponge')}
       ${lotsEponge.map(lot => {
         const s = statsLotEponge(lot);
-        const resume = resumeLotParGroupeAge(lot, statsLotEpongeParAgeExact(lot));
+        const resume = resumeLotParGroupeAge(lot, statsLotEpongeParAgeExact(lot), classement);
         const tableHeadHtml = `<tr style="color:var(--text-muted);text-align:right;"><th style="text-align:left;font-weight:500;"></th><th style="font-weight:600;color:var(--green-fg);">Global</th></tr>`;
         const tableRowsHtml = `
           <tr style="border-top:1px solid var(--border);"><td>Mises bas</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${s.misesBas}</td></tr>
@@ -5890,7 +5963,9 @@ function bilanReproductionHtml() {
 
     <div class="card" style="margin-bottom:10px;">
       ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Bilan de reproduction troupeau')}
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Population de référence : brebis présentes le ${refDateLabel || 'campagne non définie, brebis actives aujourd\'hui utilisées à la place'}. Colonnes : antenaises (1 an, première reproduction) / brebis (2 ans et plus) — tout le troupeau (IA, Éponge, retour IA et monte naturelle confondus).</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Population de référence : brebis présentes le ${refDateLabel || 'campagne non définie, brebis actives aujourd\'hui utilisées à la place'}. Colonnes : antenaises (${classement.millesimeAntenaise !== null ? 'millésime ' + classement.millesimeAntenaise + ' = le plus jeune présent, ' + classement.effectifAntenaises + ' brebis' : 'aucune brebis présente'}) / brebis (tous les autres millésimes) — tout le troupeau (IA, Éponge, retour IA et monte naturelle confondus).</div>
+      ${classement.avertissement ? `<div style="font-size:12px;color:var(--coral-fg);margin-bottom:10px;">⚠ ${classement.avertissement}</div>` : ''}
+      ${classement.sansAnnee > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">${classement.sansAnnee} brebis sans année de naissance lisible dans l'EID : rangée${classement.sansAnnee > 1 ? 's' : ''} avec les brebis.</div>` : ''}
       <div style="overflow-x:auto;">
         <table style="width:100%;font-size:13px;border-collapse:collapse;min-width:300px;">
           <tr style="color:var(--text-muted);text-align:left;">
@@ -18065,7 +18140,8 @@ function buildBilanAgeExactPdfBytes() {
   const aujourdhui = formatDateFr(new Date().toISOString().slice(0, 10));
   const cohort = campagneCohortPresente();
   const refDate = campagneRefDate() || new Date();
-  const parAge = statsParAgeExactTroupeau(cohort, refDate);
+  const classement = classementAntenaisesCampagne(cohort);
+  const parAge = statsParAgeExactTroupeau(cohort, classement);
   const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
   const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
 
@@ -18077,13 +18153,21 @@ function buildBilanAgeExactPdfBytes() {
   content += pdfTextOp(PDF_MARGIN, y, cohort.length + ' brebis présentes (toutes brebis confondues, IA + Éponge + MN) · édité le ' + aujourdhui, 'F1', 9);
   y -= 10;
   content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-  y -= 24;
+  y -= 16;
+  if (classement.avertissement) {
+    pdfWrapLines('Attention : ' + classement.avertissement, 95).forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'FB', 8.5); y -= 11; });
+  }
+  if (classement.sansAnnee > 0) {
+    content += pdfTextOp(PDF_MARGIN, y, classement.sansAnnee + ' brebis sans année de naissance lisible dans l\'EID (ligne « Année inconnue », rangées avec les brebis).', 'F1', 8.5);
+    y -= 11;
+  }
+  y -= 8;
 
   content += pdfTextOp(PDF_MARGIN, y, "DÉTAIL PAR MILLÉSIME", 'FB', 10.5);
   y -= 20;
   const cols = [
-    { label: 'Millésime', x: 0 }, { label: 'Présentes', x: 90 }, { label: 'Mises bas', x: 180 },
-    { label: 'Fertilité', x: 270 }, { label: 'Prolificité', x: 360 }, { label: 'Durée mise bas', x: 450 }
+    { label: 'Millésime', x: 0 }, { label: 'Présentes', x: 135 }, { label: 'Mises bas', x: 210 },
+    { label: 'Fertilité', x: 290 }, { label: 'Prolificité', x: 370 }, { label: 'Durée mise bas', x: 450 }
   ];
   cols.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
   y -= 5;
@@ -18095,7 +18179,7 @@ function buildBilanAgeExactPdfBytes() {
   } else {
     parAge.forEach(g => {
       const row = [
-        'Millésime ' + g.millesime, String(g.presentes), String(g.misesBas),
+        (g.millesime === null ? 'Année inconnue' : 'Millésime ' + g.millesime + (g.antenaises ? ' (antenaises)' : '')), String(g.presentes), String(g.misesBas),
         pctTxt(g.fertilite), ratTxt(g.prolificite),
         g.dureeMiseBas !== null ? g.dureeMiseBas + ' j' : '—'
       ];
@@ -18104,7 +18188,7 @@ function buildBilanAgeExactPdfBytes() {
     });
   }
   y -= 10;
-  pdfWrapLines("Le tableau à l'écran (Agnelles 1 an / Brebis 2 ans et plus) reste le regroupement de référence pour la lecture courante — ce détail par millésime (année de naissance déduite de l'EID) n'existe que dans cet export.", 95)
+  pdfWrapLines("Antenaises = millésime le plus jeune présent dans la campagne" + (classement.millesimeAntenaise !== null ? " (" + classement.millesimeAntenaise + ")" : "") + " ; brebis = tous les autres millésimes — même règle que le tableau à l'écran. Ce détail par millésime (année de naissance déduite de l'EID) n'existe que dans cet export.", 95)
     .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
 
   content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
