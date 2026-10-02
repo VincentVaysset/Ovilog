@@ -10369,7 +10369,7 @@ function showCreerLotControleLaitierModal(eids) {
     const lot = { id: Date.now().toString(), nom, dateCreation: new Date().toISOString().slice(0, 10), membres: eids };
     DB.lots.push(lot);
     saveData(DB);
-    if (window.__lotSessions) delete window.__lotSessions['trouvees_' + lot.id];
+    effacerTrouveesLot(lot.id);
     document.body.removeChild(overlay);
     currentLotId = lot.id;
     render('lot-search');
@@ -13678,7 +13678,7 @@ function openAutoLot(id, nom, membres) {
     DB.lots.push(lot);
   }
   saveData(DB);
-  if (window.__lotSessions) delete window.__lotSessions['trouvees_' + id];
+  effacerTrouveesLot(id); // lot régénéré : nouvelle recherche
   currentLotId = id;
   render('lot-search');
 }
@@ -13766,6 +13766,7 @@ function renderLots() {
         a.modesRepro = (a.modesRepro || []).filter(m => m.lotId !== lot.id);
       });
       DB.lots = DB.lots.filter(l => l.id !== btn.dataset.id);
+      effacerTrouveesLot(btn.dataset.id);
       saveData(DB);
       render('lots');
     };
@@ -14395,62 +14396,147 @@ function renderEditRepro() {
   };
 }
 
+/* État "trouvé" d'une recherche de lot -- propre à CET appareil : stocké dans
+   localStorage sous une clé par id de lot, JAMAIS dans DB (donc jamais
+   synchronisé vers le cloud, jamais sauvegardé/exporté avec les données, et
+   le contenu du lot n'est jamais modifié). Survit à un rechargement de
+   l'appli ; remis à zéro par le bouton "Remettre à zéro", à la suppression
+   du lot, ou quand un lot automatique de l'accueil est régénéré (voir
+   openAutoLot). Les EID mémorisés qui ne sont plus membres du lot (lot
+   modifié depuis) restent ignorés par l'affichage et le compteur. */
+const LOT_TROUVEES_PREFIX = 'ovilog_lot_trouvees_';
+function lireTrouveesLot(lotId) {
+  try {
+    const raw = localStorage.getItem(LOT_TROUVEES_PREFIX + lotId);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.map(cleanEid) : []);
+  } catch (e) { return new Set(); }
+}
+function ecrireTrouveesLot(lotId, set) {
+  // Échec (quota, mode privé) : l'état reste valable pour l'écran en cours,
+  // seule la survie à un rechargement est perdue.
+  try { localStorage.setItem(LOT_TROUVEES_PREFIX + lotId, JSON.stringify([...set])); } catch (e) { /* ignoré */ }
+}
+function effacerTrouveesLot(lotId) {
+  try { localStorage.removeItem(LOT_TROUVEES_PREFIX + lotId); } catch (e) { /* ignoré */ }
+}
+
 function renderLotSearch(lotId) {
   const lot = DB.lots.find(l => l.id === lotId);
   if (!lot) { render('lots'); return; }
   pageTitle.textContent = lot.nom;
 
-  const trouveesKey = 'trouvees_' + lot.id;
-  if (!window.__lotSessions) window.__lotSessions = {};
-  if (!window.__lotSessions[trouveesKey]) window.__lotSessions[trouveesKey] = new Set();
-  const trouvees = window.__lotSessions[trouveesKey];
+  const trouvees = lireTrouveesLot(lot.id);
 
-  function render_() {
-    const restants = lot.membres.filter(eid => !trouvees.has(cleanEid(eid)));
-    app.innerHTML = `
-      <div class="card">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
-          ${iconCircle(ICON_SEARCH, 'green', 'sm')}
-          <div style="font-size:13px;color:var(--text-muted);display:flex;align-items:center;">Recherche en bergerie${infoBulleHtml('Recherche en bergerie', 'Scanne les brebis à la suite — en lecture continue ou brebis par brebis selon le réglage du bâton, chaque bip valide est pris en compte immédiatement.')}</div>
-        </div>
-        <div style="font-size:22px;font-weight:600;margin-bottom:14px;">${trouvees.size} / ${lot.membres.length} trouvée(s)</div>
-        <label>Scanner une brebis</label>
-        <input type="text" id="scan-lot" placeholder="Scanner ou saisir l'EID" autofocus>
-        <div id="scan-feedback" style="margin-top:10px;font-size:14px;"></div>
+  // Une ligne par membre du lot, triée comme partout ailleurs (sortByAge :
+  // plus vieux d'abord, puis n° croissant). Construite UNE fois : cocher ou
+  // décocher ne réordonne jamais le tableau, et ne le reconstruit pas (le
+  // défilement d'un long lot reste en place).
+  const lignes = sortByAge(lot.membres.map(eid => {
+    const fiche = findAnimalReproByEid(eid);
+    return { eid, sieol: (fiche && (fiche.numeroCourtTravailSieol || fiche.numeroLongTravailSieol)) || '' };
+  }));
+  const afficherSieol = lignes.some(l => l.sieol);
+  const estTrouvee = (eid) => trouvees.has(cleanEid(eid));
+  const nbTrouvees = () => lot.membres.filter(estTrouvee).length;
+
+  app.innerHTML = `
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+        ${iconCircle(ICON_SEARCH, 'green', 'sm')}
+        <div style="font-size:13px;color:var(--text-muted);display:flex;align-items:center;">Recherche en bergerie${infoBulleHtml('Recherche en bergerie', 'Scanne les brebis à la suite — en lecture continue ou brebis par brebis selon le réglage du bâton, chaque bip valide est pris en compte immédiatement. Tu peux aussi cocher ou décocher une ligne à la main. Cet état reste sur cet appareil (il n\'est pas synchronisé) et survit à la fermeture de l\'appli.')}</div>
       </div>
-      <div style="font-size:13px;color:var(--text-muted);margin:16px 0 8px;">Restantes (${restants.length})</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
-        ${restants.map(eid => `<span class="badge badge-muted pill-tag">n°${numeroVisuel(eid)}</span>`).join('') || '<span style="font-size:13px;color:var(--text-muted);">Toutes trouvées !</span>'}
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;">
+        <div id="lot-compteur" style="font-size:22px;font-weight:600;"></div>
+        <button type="button" class="btn btn-secondary" id="btn-reset-lot-trouvees" style="width:auto;padding:6px 12px;font-size:13px;">Remettre à zéro</button>
       </div>
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">Trouvées (${trouvees.size})</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;">
-        ${[...trouvees].map(eid => `<span class="badge badge-green pill-tag">n°${numeroVisuel(eid)}</span>`).join('')}
+      <label>Scanner une brebis</label>
+      <input type="text" id="scan-lot" placeholder="Scanner ou saisir l'EID" autofocus>
+      <div id="scan-feedback" style="margin-top:10px;font-size:14px;"></div>
+    </div>
+    <div class="card" style="padding:6px 0;">
+      <div style="overflow-x:auto;">
+        <table style="width:100%;font-size:14px;border-collapse:collapse;">
+          <tr style="color:var(--text-muted);text-align:left;">
+            <th style="padding:6px 12px;font-weight:500;width:64px;">Trouvée</th>
+            <th style="padding:6px 8px;font-weight:500;">N°</th>
+            ${afficherSieol ? '<th style="padding:6px 8px;font-weight:500;">N° SIEOL</th>' : ''}
+          </tr>
+          ${lignes.map(l => `
+            <tr class="lot-ligne" data-eid="${cleanEid(l.eid)}" style="border-top:1px solid var(--border);">
+              <td style="padding:0;"><label style="display:flex;align-items:center;justify-content:center;padding:10px 12px;"><input type="checkbox" class="lot-check" data-eid="${cleanEid(l.eid)}" style="width:20px;height:20px;margin:0;"></label></td>
+              <td style="padding:8px;font-weight:600;">n°${numeroVisuel(l.eid)}</td>
+              ${afficherSieol ? `<td style="padding:8px;color:var(--text-muted);">${xlsxEscape(l.sieol) || '—'}</td>` : ''}
+            </tr>`).join('') || '<tr><td colspan="3" style="padding:12px;color:var(--text-muted);">Ce lot est vide.</td></tr>'}
+        </table>
       </div>
-    `;
-    const scanInput = document.getElementById('scan-lot');
-    setActiveScanTarget(scanInput);
-    scanInput.focus();
-    const feedback = document.getElementById('scan-feedback');
-    wireEidLookupField(scanInput, {
-      pool: lot.membres,
-      getEid: m => m,
-      feedbackEl: feedback,
-      notFoundMessage: (val) => 'n°' + numeroVisuel(val) + " n'est pas dans ce lot.",
-      estDejaTrouve: (eid) => trouvees.has(cleanEid(eid)),
-      onFound: (eid) => {
-        const clean = cleanEid(eid);
-        if (trouvees.has(clean)) {
-          feedback.classList.remove('hidden');
-          feedback.textContent = 'n°' + numeroVisuel(clean) + ' déjà trouvée.';
-          feedback.style.color = 'var(--warning)';
-          return;
-        }
-        trouvees.add(clean);
-        render_();
-      }
-    });
+    </div>
+  `;
+
+  const scanInput = document.getElementById('scan-lot');
+  const feedback = document.getElementById('scan-feedback');
+  function majLigne(eid) {
+    const tr = app.querySelector('.lot-ligne[data-eid="' + cleanEid(eid) + '"]');
+    if (!tr) return null;
+    const ok = estTrouvee(eid);
+    tr.style.background = ok ? 'var(--green-bg)' : '';
+    tr.querySelector('.lot-check').checked = ok;
+    return tr;
   }
-  render_();
+  function majCompteur() {
+    document.getElementById('lot-compteur').textContent = nbTrouvees() + ' / ' + lot.membres.length + ' trouvée(s)';
+  }
+  lot.membres.forEach(majLigne);
+  majCompteur();
+
+  // Cocher / décocher à la main : réversible, sans bip, sans toucher au lot.
+  app.querySelectorAll('.lot-check').forEach(cb => {
+    cb.onchange = () => {
+      const clean = cleanEid(cb.dataset.eid);
+      if (cb.checked) trouvees.add(clean); else trouvees.delete(clean);
+      ecrireTrouveesLot(lot.id, trouvees);
+      majLigne(clean);
+      majCompteur();
+    };
+  });
+  document.getElementById('btn-reset-lot-trouvees').onclick = () => {
+    if (nbTrouvees() === 0) return;
+    if (!confirm('Remettre à zéro cette recherche ? Les ' + nbTrouvees() + ' brebis déjà trouvées seront décochées (le contenu du lot n\'est pas modifié).')) return;
+    trouvees.clear();
+    effacerTrouveesLot(lot.id);
+    lot.membres.forEach(majLigne);
+    majCompteur();
+    feedback.textContent = '';
+    scanInput.focus();
+  };
+
+  setActiveScanTarget(scanInput);
+  scanInput.focus();
+  wireEidLookupField(scanInput, {
+    pool: lot.membres,
+    getEid: m => m,
+    feedbackEl: feedback,
+    notFoundMessage: (val) => 'n°' + numeroVisuel(val) + " n'est pas dans ce lot.",
+    estDejaTrouve: (eid) => estTrouvee(eid),
+    onFound: (eid) => {
+      const clean = cleanEid(eid);
+      feedback.classList.remove('hidden');
+      if (estTrouvee(clean)) {
+        feedback.textContent = 'n°' + numeroVisuel(clean) + ' déjà trouvée.';
+        feedback.style.color = 'var(--warning)';
+        const tr = majLigne(clean);
+        if (tr) tr.scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      trouvees.add(clean);
+      ecrireTrouveesLot(lot.id, trouvees);
+      feedback.textContent = 'n°' + numeroVisuel(clean) + ' trouvée.';
+      feedback.style.color = 'var(--green-fg)';
+      const tr = majLigne(clean);
+      if (tr) tr.scrollIntoView({ block: 'nearest' });
+      majCompteur();
+    }
+  });
 }
 
 /* ---------- Configuration partagée par catégorie d'animal ----------
