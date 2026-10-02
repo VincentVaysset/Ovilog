@@ -85,6 +85,10 @@ async function installerFauxPlugins(page) {
 async function connecter(page, email, password, creer) {
   await page.evaluate(async ({ email, pw, creer }) => { if (creer) await window.OvilogSync.signup(email, pw); else await window.OvilogSync.login(email, pw); }, { email, pw: password, creer });
   await waitFor(() => page.evaluate(() => window.OvilogSync.getState().loggedIn), { label: 'connexion' });
+  // Laisse la synchro initiale (abonnements, migration du registre, premiers instantanés du faux backend) se stabiliser :
+  // un instantané « vide » reçu juste APRÈS une première écriture locale est traité comme une suppression distante
+  // (journal du faux backend : delete des documents du registre, réécrits ~1,7 s plus tard).
+  await page.waitForTimeout(3000);
 }
 const email = 'dedoublonnage-' + Date.now() + '@ovilog-audit-jetable.test';
 const password = 'AuditTest12345!';

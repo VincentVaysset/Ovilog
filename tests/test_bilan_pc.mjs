@@ -6,7 +6,8 @@
    tableau compact (HTML identique à bilanReproductionHtml). Aucune écriture (0 saveData).
    Aucune donnée réelle. */
 import { chromium } from 'playwright';
-import { LAUNCH, URL_APP } from './lib/config.mjs';
+import { LAUNCH, URL_APP, EXPORT_CORRIGE, exportPresent } from './lib/config.mjs';
+import { readFileSync } from 'fs';
 
 const browser = await chromium.launch(LAUNCH);
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
@@ -150,6 +151,23 @@ const delta = await texte(page, '.brd-kpis');
 check(/vs campagne 2025/.test(delta) && /\+358/.test(delta) && /−0,82/.test(delta), 'comparatif vs campagne précédente (mises bas +358, prolificité −0,82) : ' + delta);
 console.log('OK 3 sélecteur de campagne (2026 en cours / 2025 terminée), cartes de lots IA/Éponge dépliables, comparatif « vs campagne 2025 » sur les KPI.');
 
+// ================================================================ 3b. sélecteur toujours visible, campagne sans donnée
+await page.evaluate(() => { jeu(); bilanReproductionCampagneAffichee = null; ouvrirBilan(); });   // aucune donnée avant la campagne en cours
+await page.waitForSelector('#brd-campagne-select');
+const opts2 = await page.evaluate(() => [...document.querySelectorAll('#brd-campagne-select option')].map(o => o.textContent.trim()));
+check(opts2.join('|') === 'Campagne 2026 (en cours)|Campagne 2025', 'sélecteur toujours visible, au minimum la campagne en cours et la précédente, même sans donnée : ' + opts2);
+check(await page.evaluate(() => !/Aucune mise bas enregistrée/.test(document.querySelector('.brd').textContent)), 'campagne en cours avec données : pas de bandeau « aucune mise bas »');
+await page.selectOption('#brd-campagne-select', '2024');
+await page.waitForFunction(() => /Campagne 2025/.test(document.querySelector('.brd-sub').textContent));
+const vide = await page.evaluate(() => ({ bandeau: document.querySelector('.brd-alert.info').textContent.replace(/\s+/g, ' ').trim(), sel: document.getElementById('brd-campagne-select').value, kv: [...document.querySelectorAll('.brd-kpi-v')].map(e => e.textContent.trim()).join('|'), note: !!document.querySelector('.brd-vide') }));
+check(vide.bandeau === 'Aucune mise bas enregistrée pour la campagne 2025 — résumé de campagne non saisi.' && vide.sel === '2024' && vide.kv === '0|—|—|—' && vide.note, 'campagne précédente sans donnée : sélectionnable, bandeau « aucune mise bas enregistrée » + « résumé non saisi » : ' + JSON.stringify(vide));
+await page.evaluate(() => { DB.resumesCampagne = { 2024: { source: 'test' } }; ouvrirBilan(); });
+const saisi = await page.evaluate(() => document.querySelector('.brd-alert.info').textContent.replace(/\s+/g, ' ').trim());
+check(saisi === 'Aucune mise bas enregistrée pour la campagne 2025.', 'résumé saisi : la mention « résumé non saisi » disparaît : ' + saisi);
+await page.evaluate(() => { delete DB.resumesCampagne; DB.brebis = []; bilanReproductionCampagneAffichee = null; ouvrirBilan(); });
+check(await page.evaluate(() => document.querySelectorAll('#brd-campagne-select option').length) === 2 && await page.evaluate(() => /Aucune mise bas enregistrée pour la campagne 2026 — résumé de campagne non saisi\./.test(document.querySelector('.brd').textContent)), 'troupeau vide : sélecteur présent (2 campagnes) et bandeau pour la campagne en cours');
+console.log('OK 3b sélecteur toujours visible (campagne en cours + précédente même sans donnée), campagne vide sélectionnable avec « aucune mise bas enregistrée — résumé de campagne non saisi », mention retirée quand un résumé existe.');
+
 // ================================================================ 4. alertes
 await page.evaluate(() => {
   jeu();
@@ -180,6 +198,22 @@ await page.click('#btn-export-bilan-age-pdf');
 await page.waitForFunction(() => window.__pdf === 1);
 check(await page.evaluate(() => window.__saves) === 0, 'aucun saveData sur toute la session d\'affichage');
 console.log('OK 5 campagne sans mise bas (0 / — / — / —, pas d\'erreur), bouton « PDF bilan par âge » branché, 0 saveData.');
+
+// ================================================================ 6. export réel (lecture seule) : le sélecteur est visible
+if (!exportPresent(EXPORT_CORRIGE)) console.log('SKIP : export corrigé absent');
+else {
+  const reel = await ouvrir(true);
+  await reel.evaluate((d) => { DB = migrateData(JSON.parse(JSON.stringify(d))); window.__saves = 0; ouvrirBilan(); }, JSON.parse(readFileSync(EXPORT_CORRIGE, 'utf8')));
+  await reel.waitForSelector('#brd-campagne-select');
+  const o = await reel.evaluate(() => [...document.querySelectorAll('#brd-campagne-select option')].map(x => x.textContent.trim()));
+  check(o.join('|') === 'Campagne 2027 (en cours)|Campagne 2026', 'export du 29/09 : sélecteur visible, campagne 2027 (en cours) et 2026 : ' + o);
+  check(await reel.evaluate(() => /Aucune mise bas enregistrée pour la campagne 2027 — résumé de campagne non saisi\./.test(document.querySelector('.brd').textContent)), 'export du 29/09 : campagne 2027 sans mise bas -> bandeau');
+  await reel.selectOption('#brd-campagne-select', '2025');
+  await reel.waitForFunction(() => /Campagne 2026/.test(document.querySelector('.brd-sub').textContent));
+  check(await reel.evaluate(() => /Aucune mise bas enregistrée pour la campagne 2026 — résumé de campagne non saisi\./.test(document.querySelector('.brd-alert.info').textContent) && window.__saves === 0), 'export du 29/09 : campagne 2026 sélectionnable, « aucune mise bas enregistrée — résumé non saisi », 0 saveData');
+  console.log('OK 6 export du 29/09 : sélecteur visible (2027 en cours / 2026), campagne 2026 sans mise bas sélectionnable avec la mention « résumé de campagne non saisi ».');
+  await reel.context().close();
+}
 
 await page.screenshot({ path: process.env.OVILOG_CAPTURE || '/dev/null' }).catch(() => {});
 console.log('\nTOUS LES TESTS DE LA PAGE PC DU BILAN SONT PASSÉS (jeu synthétique, aucune donnée réelle)');
