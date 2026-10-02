@@ -122,6 +122,8 @@ await page.click('#cs-suivant');
 await page.waitForSelector('#cs-table');
 const lignes = () => page.evaluate(() => [...document.querySelectorAll('#cs-table tr.clic')].map(r => r.dataset.eid));
 let l = await lignes();
+const numerosOrdre = await page.evaluate(() => [...document.querySelectorAll('#cs-table tr.clic')].map(r => r.children[1].textContent.trim() + '/' + r.children[2].textContent.trim()));
+check(numerosOrdre.join() === 'n°00090/Bélier,n°00001/Brebis,n°00002/Brebis,n°00003/Brebis,n°00004/Antenaise,n°00005/Antenaise,n°00070/Agnelle', 'tri de l\'écran 2 : âge décroissant (bélier 4 ans, brebis 3 ans, antenaises 1 an, agnelle 0), puis n° croissant à âge égal : ' + numerosOrdre.join());
 check(l.length === 5 + 1 + 1, 'animaux actifs : 5 brebis (dont antenaises) + 1 bélier + 1 agnelle = 7, ni vendue, ni agneau : ' + l.length);
 check(!(await page.evaluate(() => /vendue|Vendue/.test(document.getElementById('cs-table').textContent))) && !l.includes(await page.evaluate(() => E(3, 6))) && !l.includes(await page.evaluate(() => E(6, 800))), 'animal inactif et agneau absents');
 const cats = await page.evaluate(() => [...document.querySelectorAll('.cs-cat')].map(b => b.textContent.replace(/\s+/g, ' ').trim()));

@@ -579,6 +579,7 @@
   .pc-gc { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); font-size: 13px; background: var(--card); cursor: pointer; }
   .pc-gc.on { background: var(--green-bg); border-color: var(--primary); color: var(--green-fg); font-weight: 600; }
   .pc-gc small { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+  .pc-gc.off { color: var(--text-muted); border-style: dashed; }
   .pc-cl { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
   .pc-cl small { display: block; color: var(--text-muted); font-size: 11px; }
   .pc-t tr.sel td { background: var(--green-bg); }
@@ -17527,7 +17528,7 @@ function animauxEligiblesCarnet() {
   DB.brebis.filter(s => (s.statut || 'active') === 'active').forEach(s => out.push(item(s, 'brebis', classement.groupe(s.eid) === 'antenaises' ? 'Antenaise' : 'Brebis', statutReproductionCampagne(s))));
   (DB.agnelles || []).filter(a => (a.statut || 'active') === 'active').forEach(a => out.push(item(a, 'agnelles', 'Agnelle', '—')));
   (DB.beliers || []).filter(b => (b.statut || 'actif') === 'actif').forEach(b => out.push(item(b, 'beliers', 'Bélier', '—')));
-  return out;
+  return out.sort(comparerAnimauxAgeNumero);   // règle habituelle des tableaux d'animaux : âge décroissant, puis n° croissant à âge égal
 }
 function animalFiltresCarnet(liste, f) {
   const q = (f.q || '').replace(/\s+/g, '').toLowerCase();
@@ -17555,7 +17556,7 @@ function soinsEnDelaiCarnet(aujourdhui) {
     const libere = [r.lait ? r.dates.repriseLait : null, r.viande ? r.dates.venteDes : null].filter(Boolean).sort().pop();
     rows.push({ animal: a, soin, dates: r.dates, lait: r.lait, viande: r.viande, libere });
   }));
-  return rows.sort((x, y) => x.libere.localeCompare(y.libere) || x.animal.numero.localeCompare(y.animal.numero));
+  return rows.sort((x, y) => comparerAnimauxAgeNumero(x.animal, y.animal) || x.libere.localeCompare(y.libere));   // âge décroissant, n° croissant, puis fin de délai
 }
 function derniersSoinsCarnet(n) {
   const groupes = new Map();
@@ -17746,11 +17747,11 @@ function tableauxCarnet() {
   bloc.innerHTML = `
     <div class="card" id="cs-en-delai" style="margin-top:16px;">
       <div class="pc-cardhead"><div><p class="brd-ttl" style="margin:0;">En délai d'attente aujourd'hui</p><p class="brd-note" style="margin:2px 0 0;">${delai.length ? libAnimaux(nAnimaux) + ' · ' + delai.length + ' soin' + (delai.length > 1 ? 's' : '') + ' dont la reprise du lait ou la vente n\'est pas encore possible' : 'Aucun animal en délai d\'attente.'}</p></div></div>
-      ${delai.length ? `<table class="pc-t"><tr><th class="l">Animal</th><th class="l">Produit</th><th class="l">Dernière administration</th><th class="l">Reprise du lait</th><th class="l">Vente / départ dès le</th><th class="l">Libre le</th></tr>${delai.map(r => `<tr><td class="l">${echappe(nom(r.animal))} <small style="color:var(--text-muted);">${r.animal.categorie}</small></td><td class="l">${echappe(r.soin.produit || r.soin.type)}${mentionsBioSoin(r.soin)}</td><td class="l">${fmt(r.dates.derniere)}</td><td class="l">${r.lait ? pcPill('warn', fmt(r.dates.repriseLait)) : (r.dates.aucuneAttenteLait ? 'aucune attente' : (r.dates.repriseLait ? fmt(r.dates.repriseLait) + ' <small style="color:var(--text-muted);">(passée)</small>' : '—'))}</td><td class="l">${r.viande ? pcPill('warn', fmt(r.dates.venteDes)) : (r.dates.aucuneAttenteViande ? 'aucune attente' : (r.dates.venteDes ? fmt(r.dates.venteDes) + ' <small style="color:var(--text-muted);">(passée)</small>' : '—'))}</td><td class="l"><b>${fmt(r.libere)}</b></td></tr>`).join('')}</table>` : ''}
+      ${delai.length ? `<table class="pc-t" id="cs-table-en-delai"><tr><th class="l">N°</th><th class="l">Produit</th><th class="l">Soin du</th><th class="l">Reprise du lait</th><th class="l">Vente possible dès le</th><th class="l">Reste</th></tr>${delai.map(r => `<tr><td class="l">${echappe(nom(r.animal))} <small style="color:var(--text-muted);">${r.animal.categorie}</small></td><td class="l">${echappe(r.soin.produit || r.soin.type)}${mentionsBioSoin(r.soin)}</td><td class="l">${fmt(r.soin.date)}</td><td class="l">${r.lait ? pcPill('warn', 'le ' + fmt(r.dates.repriseLait)) : (r.dates.aucuneAttenteLait ? 'aucune attente' : (r.dates.repriseLait ? fmt(r.dates.repriseLait) + ' <small style="color:var(--text-muted);">(passée)</small>' : '—'))}</td><td class="l">${r.viande ? fmt(r.dates.venteDes) : (r.dates.aucuneAttenteViande ? 'aucune attente' : (r.dates.venteDes ? fmt(r.dates.venteDes) + ' <small style="color:var(--text-muted);">(passée)</small>' : '—'))}</td><td class="l">${[r.lait ? 'lait ' + joursRestantsAvant(r.dates.repriseLait) + ' j' : null, r.viande ? 'viande ' + joursRestantsAvant(r.dates.venteDes) + ' j' : null].filter(Boolean).join(' · ')}</td></tr>`).join('')}</table>` : ''}
     </div>
     <div class="card" id="cs-derniers" style="margin-top:16px;">
-      <div class="pc-cardhead"><div><p class="brd-ttl" style="margin:0;">Derniers soins</p><p class="brd-note" style="margin:2px 0 0;">Un traitement collectif est regroupé sur une ligne. « — » : soin ancien, saisi sans durée ni délais.</p></div></div>
-      <table class="pc-t"><tr><th class="l">Date</th><th class="l">Animal(aux)</th><th class="l">Produit</th><th class="l">Dose · voie</th><th class="l">Durée</th><th class="l">Date de fin</th><th class="l">Fait par</th><th class="l">Reprise du lait</th><th class="l">Vente dès le</th></tr>${derniersSoinsCarnet(15).map(g => { const d = datesDuSoin(g.soin), x = g.soin; return `<tr><td class="l">${fmt(x.date)}</td><td class="l">${g.animaux.length > 1 ? libAnimaux(g.animaux.length) : echappe(nom(g.animaux[0]))}</td><td class="l">${echappe(x.produit || x.type || '—')}${mentionsBioSoin(x)}</td><td class="l">${(x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? x.quantiteCc + ' cc' : (x.dose || '—')) + (x.voie ? ' · ' + echappe(x.voie) : '')}</td><td class="l">${x.dureeJours ? x.dureeJours + ' j' : '—'}</td><td class="l">${fmt(d.derniere)}</td><td class="l">${echappe(x.intervenant || '—')}</td><td class="l">${d.repriseLait ? fmt(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—')}</td><td class="l">${d.venteDes ? fmt(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')}</td></tr>`; }).join('') || '<tr><td colspan="9" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun soin enregistré.</td></tr>'}</table>
+      <div class="pc-cardhead"><div><p class="brd-ttl" style="margin:0;">Derniers soins</p><p class="brd-note" style="margin:2px 0 0;">Un traitement collectif est regroupé sur une ligne. « — » : soin ancien, saisi sans durée ni délais. Voie, durée et date de fin figurent à la suite (mentions du registre).</p></div></div>
+      <div style="overflow-x:auto;"><table class="pc-t" id="cs-table-derniers"><tr><th class="l">N°</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">Ordonnance</th><th class="l">Fait par</th><th class="l">Reprise lait</th><th class="l">Viande dès le</th><th class="l">Voie</th><th class="l">Durée</th><th class="l">Date de fin</th></tr>${derniersSoinsCarnet(15).map(g => { const d = datesDuSoin(g.soin), x = g.soin; return `<tr><td class="l">${g.animaux.length > 1 ? libAnimaux(g.animaux.length) : echappe(nom(g.animaux[0]))}</td><td class="l">${echappe((x.type || '') + (x.sousType ? ' · ' + x.sousType : ''))}</td><td class="l">${echappe(x.produit || x.type || '—')}${mentionsBioSoin(x)}</td><td class="l">${fmt(x.date)}</td><td class="l">${x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? x.quantiteCc + ' cc' : echappe(x.dose || '—')}</td><td class="l">${echappe(x.numeroOrdonnance || '—')}</td><td class="l">${echappe(x.intervenant || '—')}</td><td class="l">${d.repriseLait ? fmt(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—')}</td><td class="l">${d.venteDes ? fmt(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')}</td><td class="l">${echappe(x.voie || '—')}</td><td class="l">${x.dureeJours ? x.dureeJours + ' j' : '—'}</td><td class="l">${fmt(d.derniere)}</td></tr>`; }).join('') || '<tr><td colspan="12" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun soin enregistré.</td></tr>'}</table></div>
     </div>`;
   cont.appendChild(bloc);
 }
@@ -17772,7 +17773,7 @@ function ecranCarnetAnimaux() {
     <div class="card">
       <p class="brd-ttl">Filtrer les animaux</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px;">
-        ${[['brebis', 'Brebis'], ['antenaises', 'Antenaises'], ['agnelles', 'Agnelles'], ['beliers', 'Béliers']].map(([k, l]) => `<button type="button" class="pc-gc cs-cat${F.cats[k] ? ' on' : ''}" data-cat="${k}">${F.cats[k] ? '✓ ' : ''}${l} <small>${comptes[k]}</small></button>`).join('')}
+        ${[['brebis', 'Brebis'], ['antenaises', 'Antenaises'], ['agnelles', 'Agnelles'], ['beliers', 'Béliers']].map(([k, l]) => `<button type="button" class="pc-gc cs-cat${F.cats[k] ? ' on' : ''}${comptes[k] === 0 ? ' off' : ''}" data-cat="${k}">${F.cats[k] ? '✓ ' : ''}${l} <small>${comptes[k]}</small></button>`).join('')}
       </div>
       <div class="pc-filtres-ligne">
         <div class="pc-grand"><label for="cs-q">Rechercher un n°</label><input type="text" id="cs-q" value="${F.q}" placeholder="Saisir un n°" autocomplete="off"></div>
@@ -17783,7 +17784,7 @@ function ecranCarnetAnimaux() {
       </div>
     </div>
     <div class="card">
-      <div class="pc-cardhead" style="margin-bottom:10px;flex-wrap:wrap;"><div><p class="brd-ttl" style="margin:0;" id="cs-compte"></p><p class="brd-note" style="margin:2px 0 0;">Clique sur une ligne pour la cocher. Seuls les animaux actifs sont proposés ; les agneaux gardent leur écran actuel.</p></div>
+      <div class="pc-cardhead" style="margin-bottom:10px;flex-wrap:wrap;"><div><p class="brd-ttl" style="margin:0;" id="cs-compte"></p><p class="brd-note" style="margin:2px 0 0;">Clique sur une ligne pour la cocher. Seuls les animaux actifs sont proposés ; les agneaux gardent leur écran actuel. Tri : âge décroissant, puis n° croissant.</p></div>
         <div style="display:flex;gap:8px;"><button type="button" class="btn btn-secondary" id="cs-tout" style="width:auto;padding:6px 14px;font-size:13px;">Tout cocher</button><button type="button" class="btn btn-secondary" id="cs-rien" style="width:auto;padding:6px 14px;font-size:13px;">Tout décocher</button></div></div>
       <table class="pc-t" id="cs-table"></table>
     </div>
@@ -17865,7 +17866,7 @@ function soinsSansIndicateurBio() {
       const avant = datesDuSoin(soin);
       const apres = calculerDatesSoin({ date: soin.date, dureeJours: soin.dureeJours, delaiLaitJours: ap.lait, delaiViandeJours: ap.viande });
       const memeQueFiche = fiche.complete && soin.delaiLaitJours === fiche.delaiLait && soin.delaiViandeJours === fiche.delaiViande;
-      rows.push({ soin, label: lab, archive, ap, avant, apres, min48h: fiche.min48h, memeQueFiche });
+      rows.push({ soin, label: lab, archive, ap, avant, apres, min48h: fiche.min48h, memeQueFiche, tri: { age: lab.startsWith('Agneau') ? null : age(animal.eid), court: animal.numeroCourtTravailSieol || '', numero: numeroVisuel(animal.eid) } });
     });
     scan(animal.sanitaire, label);
     (animal.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => scan(l.sanitaire, 'Agneau n°' + (l.eid ? numeroVisuel(l.eid) : '?'))));
@@ -17873,8 +17874,8 @@ function soinsSansIndicateurBio() {
   DB.brebis.forEach(a => parcourir(a, 'n°' + numeroVisuel(a.eid), false));
   (DB.beliers || []).forEach(a => parcourir(a, 'n°' + numeroVisuel(a.eid) + ' (bélier)', false));
   (DB.agnelles || []).forEach(a => parcourir(a, 'n°' + numeroVisuel(a.eid) + ' (agnelle)', false));
-  ['brebis', 'beliers', 'agnelles'].forEach(cat => Object.entries((DB.registre && DB.registre[cat]) || {}).forEach(([eid, entry]) => parcourir(entry, 'n°' + numeroVisuel(eid) + ' (registre)', true)));
-  return rows;
+  ['brebis', 'beliers', 'agnelles'].forEach(cat => Object.entries((DB.registre && DB.registre[cat]) || {}).forEach(([eid, entry]) => parcourir(Object.assign({ eid }, entry), 'n°' + numeroVisuel(eid) + ' (registre)', true)));
+  return rows.sort((x, y) => comparerAnimauxAgeNumero(x.tri, y.tri) || String(x.soin.date).localeCompare(String(y.soin.date)));   // âge décroissant, n° croissant
 }
 // Soins déjà passés en mode bio par cet écran (annulables)
 function soinsModeBioAppliques() {
