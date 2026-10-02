@@ -2558,6 +2558,80 @@ function brebisPasseesTraiteCampagne(campagne) {
   return registreEntriesFor('brebis').filter(entry => (entry.controleLaitier || []).some(c => c.campagne === campagne)).length;
 }
 
+/* ---------- Règle « mise bas sans contrôle laitier » ----------
+   Brebis ACTIVES ayant au moins une mise bas dans la campagne N ET aucun contrôle laitier enregistré
+   cette campagne (même prédicat que « Brebis passées à la traite » du Bilan de lactation : au moins un
+   élément de controleLaitier de campagne N, actives et registre, voir brebisPasseesTraiteCampagne).
+   But : repérer des brebis sorties mais jamais enregistrées comme sorties.
+   N'a de sens qu'APRÈS l'import du 1er contrôle laitier de la campagne (controleImporte) : avant, toutes
+   les brebis ayant mis bas seraient signalées à tort -> liste vide et controleImporte = false.
+   Fonction PURE : ne modifie rien, jamais de correction automatique (affichage + « Ouvrir la fiche »).
+   Pour chaque brebis : numéro, date de mise bas, nombre d'agneaux, et l'état « attendue à la traite »
+   au sens de l'appli (isAttendueTraite : la brebis a des agneaux et ils sont TOUS réglés -- elle devrait
+   traire maintenant). signalFort = attendue à la traite ET aucun contrôle : elle devrait être à la traite
+   et n'y est pas. Sinon (agneaux non réglés, ou aucun agneau enregistré) : signal faible. */
+function controleLaitierCampagneImporte(campagne) {
+  return registreEntriesFor('brebis').some(entry => (entry.controleLaitier || []).some(c => c && c.campagne === campagne));
+}
+function brebisMiseBasSansControleLaitier(campagne) {
+  const res = { campagne, libelle: campagne === null || campagne === undefined ? null : campagneLabel(campagne), controleImporte: false, misesBasActives: 0, controlees: 0, sansControle: 0, signauxForts: 0, liste: [] };
+  if (campagne === null || campagne === undefined) return res;
+  const entrees = new Map(registreEntriesFor('brebis').map(e => [e.eid, e]));
+  res.controleImporte = controleLaitierCampagneImporte(campagne);
+  const actives = DB.brebis.filter(b => (b.statut || 'active') === 'active');
+  actives.forEach(b => {
+    const entree = entrees.get(b.eid);
+    const mb = ((entree && entree.agnelages) || b.agnelages || []).find(a => a && a.campagne === campagne);
+    if (!mb) return;
+    res.misesBasActives++;
+    if ((entree ? entree.controleLaitier : b.controleLaitier || []).some(c => c && c.campagne === campagne)) { res.controlees++; return; }
+    const lambs = getLambsUnderSheep(b, DB.brebis);
+    const nonRegles = lambs.filter(l => !isLambResolved(l)).length;
+    const attendue = isAttendueTraite(b, DB.brebis);
+    const nes = (mb.lambs || []).length;
+    res.liste.push({
+      id: b.id, eid: b.eid, numero: numeroVisuel(b.eid), dateMiseBas: mb.date || null,
+      nes, mortNes: (mb.lambs || []).filter(l => l.sexe === 'Mort-né').length,
+      agneauxSousElle: lambs.length, agneauxNonRegles: nonRegles,
+      attendueTraite: attendue, signalFort: attendue
+    });
+  });
+  res.sansControle = res.liste.length;
+  if (!res.controleImporte) { res.liste = []; res.sansControle = 0; return res; }
+  res.liste.sort((a, b) => (b.signalFort ? 1 : 0) - (a.signalFort ? 1 : 0) || String(a.dateMiseBas || '').localeCompare(String(b.dateMiseBas || '')) || a.numero.localeCompare(b.numero));
+  res.signauxForts = res.liste.filter(l => l.signalFort).length;
+  return res;
+}
+/* Carte « Ont mis bas, sans contrôle laitier » (mobile ET PC : même rendu partagé). Chaîne vide tant que
+   le 1er contrôle laitier de la campagne n'est pas importé, ou quand la liste est vide. */
+function carteSansControleLaitierHtml(res) {
+  if (!res || !res.controleImporte || res.liste.length === 0) return '';
+  const jjmm = d => d ? d.slice(8, 10) + '/' + d.slice(5, 7) : 'date inconnue';
+  const ligne = l => {
+    const etat = l.attendueTraite
+      ? { txt: 'attendue à la traite', style: 'background:var(--coral-bg, #fbe3df);color:var(--coral-fg);' }
+      : { txt: l.agneauxSousElle === 0 ? 'pas encore attendue à la traite (aucun agneau enregistré)' : 'pas encore attendue à la traite (' + l.agneauxNonRegles + ' agneau' + (l.agneauxNonRegles > 1 ? 'x' : '') + ' non réglé' + (l.agneauxNonRegles > 1 ? 's' : '') + ')', style: 'background:var(--surface-2, #f4f4f4);color:var(--text-muted);' };
+    return `<div class="bilan-eid-link sans-controle-ligne" data-id="${l.id}" style="padding:8px 0;border-top:1px solid var(--border);cursor:pointer;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span style="font-size:14px;">n°${l.numero}</span>
+        <span style="font-size:12px;color:var(--text-muted);">mise bas le ${jjmm(l.dateMiseBas)} · ${l.nes} agneau${l.nes > 1 ? 'x' : ''}${l.mortNes ? ' (dont ' + l.mortNes + ' mort-né' + (l.mortNes > 1 ? 's' : '') + ')' : ''}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px;">
+        <span style="font-size:11px;padding:2px 8px;border-radius:8px;${etat.style}">${etat.txt}</span>
+        <span style="font-size:12px;color:var(--green-fg);">Ouvrir la fiche</span>
+      </div>
+    </div>`;
+  };
+  return `<div class="card" id="carte-sans-controle-laitier" style="border-color:var(--amber-fg, #e8c88a);margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <span class="badge badge-amber">Ont mis bas, sans contrôle laitier</span>
+      <span style="font-size:13px;color:var(--text-muted);">${res.liste.length} brebis</span>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Brebis actives ayant mis bas cette campagne et absentes de tous les contrôles laitiers : elles peuvent être sorties sans avoir été enregistrées. Rien n'est modifié seul — ouvre la fiche pour décider.${res.signauxForts > 0 ? ' <b>' + res.signauxForts + ' attendue' + (res.signauxForts > 1 ? 's' : '') + ' à la traite : signal fort.</b>' : ''}</div>
+    <div>${res.liste.map(ligne).join('')}</div>
+  </div>`;
+}
+
 function bilanCampagneQualite(campagne) {
   const listCampagne = DB.prelevementsQualite.filter(p => campagneAnneeDebutPourDate(p.date) === campagne);
   const moy = moyennesQualitePonderees(listCampagne);
@@ -6328,7 +6402,7 @@ function bilanIncoherencesHtml(actives) {
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Mise bas ET vide définitive enregistrées pour ces brebis cette campagne — à corriger toi-même sur leur fiche (bouton "Annuler" du statut reproduction).</div>
       <div>${bilanBrebisRowsHtml(incoherentes)}</div>
     </div>
-    ` : ''}
+    ` : ''}${carteSansControleLaitierHtml(brebisMiseBasSansControleLaitier(DB.campagneDebut))}
 
     ${config.map(c => {
       const list = groupes[c.key] || [];
