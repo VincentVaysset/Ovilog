@@ -552,8 +552,29 @@
   .pc-filtres-ligne > div.pc-grand { flex: 2 1 260px; }
   .pc-filtres-ligne label { display: block; font-size: 12px; color: var(--text-muted); margin: 0 0 4px; }
   .pc-filtres-ligne input, .pc-filtres-ligne select { margin: 0; }
+  .pc-wrap { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .pc-main { flex: 2 1 520px; min-width: 0; }
+  .pc-side { flex: 1 1 300px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .pc-fg { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .pc-fg label, .pc-main > label { display: block; font-size: 12px; color: var(--text-muted); margin: 0 0 4px; }
+  .pc-fg input, .pc-fg select { margin: 0; }
+  .pc-req { color: var(--coral-fg); font-style: normal; }
+  .pc-opt { color: var(--text-muted); font-style: normal; }
+  .pc-sec { margin: 18px 0 8px; font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .pc-sec.first { margin-top: 0; }
+  .pc-etapes { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; font-size: 13px; flex-wrap: wrap; }
+  .pc-etapes .s { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 16px; border: 1px solid var(--border); color: var(--text-muted); background: var(--card); }
+  .pc-etapes .s.on { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 600; }
+  .pc-etapes .s.fait { background: var(--green-bg); color: var(--green-fg); border-color: var(--primary); }
+  .pc-gc { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); font-size: 13px; background: var(--card); cursor: pointer; }
+  .pc-gc.on { background: var(--green-bg); border-color: var(--primary); color: var(--green-fg); font-weight: 600; }
+  .pc-gc small { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+  .pc-cl { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+  .pc-cl small { display: block; color: var(--text-muted); font-size: 11px; }
+  .pc-t tr.sel td { background: var(--green-bg); }
+  .pc-t tr.clic { cursor: pointer; }
   .pc-seg2 { display: flex; gap: 6px; }
-  .pc-seg2 .opt-btn { flex: 1; padding: 8px 6px; font-size: 13px; }
+  .pc-seg2 .opt-btn { flex: 1; min-width: 0; padding: 8px 2px; font-size: 12.5px; white-space: nowrap; }
   .pc-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
   @media (max-width: 1100px) { .pc-cols { grid-template-columns: minmax(0, 1fr); } }
   .pc-t { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -4641,7 +4662,7 @@ const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 
 // Écrans redessinés en grille/tableau grand écran sur desktop (voir
 // render()) -- sortent du plafond main{max-width:700px}. Complété au fil
 // des chantiers desktop successifs, jamais un élargissement global.
-const DESKTOP_WIDE_VIEWS = new Set(['detail', 'home', 'list', 'beliers', 'controle-laitier', 'registre', 'produits-delais', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'agneau-detail', 'parametres', 'bilan-campagne', 'saisie-resume-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
+const DESKTOP_WIDE_VIEWS = new Set(['detail', 'home', 'list', 'beliers', 'controle-laitier', 'registre', 'produits-delais', 'sanitaire', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'agneau-detail', 'parametres', 'bilan-campagne', 'saisie-resume-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -17205,7 +17226,388 @@ function renderMouvementsCollectifsHistorique() {
 }
 
 /* ---------- Sanitaire (accueil des actions sanitaires collectives) ---------- */
+/* ---------- Calculs de dates d'un soin (calendrier, jours entiers, sans heure) ----------
+   Dernière administration = début + durée − 1 jour. Reprise du lait / vente possible = dernière administration + délai + 1 jour
+   (ex. : appliqué le 20/09, durée 1, délai 3 j -> reprise le 24/09). Délai 0 = aucune attente, pas de date de reprise.
+   Calculées à l'affichage à partir des valeurs du soin (durée et délais COPIÉS sur le soin à l'enregistrement), jamais
+   stockées ni éditées. Un soin sans ces valeurs (soin ancien) donne null partout : affiché « — ». Fonctions pures. */
+function ajouterJoursISO(iso, n) {
+  const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+function calculerDatesSoin(p) {
+  const ent = x => typeof x === 'number' && Number.isInteger(x);
+  const vide = { derniere: null, repriseLait: null, venteDes: null, laitConnu: false, viandeConnue: false, aucuneAttenteLait: false, aucuneAttenteViande: false };
+  if (!p || !p.date || !/^\d{4}-\d{2}-\d{2}/.test(p.date) || !ent(p.dureeJours) || p.dureeJours < 1) return vide;
+  const derniere = ajouterJoursISO(p.date, p.dureeJours - 1);
+  const lait = ent(p.delaiLaitJours) && p.delaiLaitJours >= 0, viande = ent(p.delaiViandeJours) && p.delaiViandeJours >= 0;
+  return {
+    derniere,
+    repriseLait: lait && p.delaiLaitJours > 0 ? ajouterJoursISO(derniere, p.delaiLaitJours + 1) : null,
+    venteDes: viande && p.delaiViandeJours > 0 ? ajouterJoursISO(derniere, p.delaiViandeJours + 1) : null,
+    laitConnu: lait, viandeConnue: viande,
+    aucuneAttenteLait: lait && p.delaiLaitJours === 0, aucuneAttenteViande: viande && p.delaiViandeJours === 0
+  };
+}
+function datesDuSoin(soin) {
+  return calculerDatesSoin({ date: soin && soin.date, dureeJours: soin && soin.dureeJours, delaiLaitJours: soin && soin.delaiLaitJours, delaiViandeJours: soin && soin.delaiViandeJours });
+}
+function jourAujourdhuiISO() { return new Date().toISOString().slice(0, 10); }
+// Un soin est « en délai » tant que la date de reprise (lait) ou de vente (viande) n'est pas atteinte (strictement future)
+function soinSousDelai(soin, aujourdhui) {
+  const d = datesDuSoin(soin), t = aujourdhui || jourAujourdhuiISO();
+  return { lait: !!(d.repriseLait && t < d.repriseLait), viande: !!(d.venteDes && t < d.venteDes), dates: d };
+}
+// Délai en cours d'un animal : dates de reprise / vente les plus tardives parmi ses soins encore en délai
+function delaiEnCoursAnimal(animal, aujourdhui) {
+  let lait = null, viande = null; const soins = [];
+  ((animal && animal.sanitaire) || []).forEach(soin => {
+    const r = soinSousDelai(soin, aujourdhui);
+    if (!r.lait && !r.viande) return;
+    soins.push(soin);
+    if (r.lait && (!lait || r.dates.repriseLait > lait)) lait = r.dates.repriseLait;
+    if (r.viande && (!viande || r.dates.venteDes > viande)) viande = r.dates.venteDes;
+  });
+  return { lait, viande, soins };
+}
+
+/* ---------- Page PC « Carnet sanitaire » : parcours en 2 écrans ----------
+   Écran 1 = le soin (toute la saisie, dates calculées en direct, fiche produit, alertes), écran 2 = les animaux (filtres,
+   lignes cochables, « Tout cocher » sur le résultat filtré). L'enregistrement se fait depuis l'écran 2 : UN soin PAR animal
+   (le registre est tenu par animal), annulable pour tout le lot en un geste. Les agneaux restent hors de ce parcours (flux
+   actuel conservé). Rien n'est écrit avant « Enregistrer le soin ». */
+const CARNET_CATEGORIES_TRAITEMENT = ['Antibiotique', 'Antiparasitaire', 'Anti-inflammatoire'];
+function carnetCleProduits(type, categorie) {
+  if (type === 'Vaccin') return 'vaccins';
+  if (type === 'Autre') return 'autres';
+  return { 'Antibiotique': 'antibiotiques', 'Antiparasitaire': 'antiparasitaires', 'Anti-inflammatoire': 'antiinflammatoires' }[categorie] || null;
+}
+const libAnimaux = n => n + (n > 1 ? ' animaux' : ' animal');
+let carnetSanitairePcEtat = null;
+let carnetDernierLot = null;   // { soins: [{ animal, soin }], collectifId, produit, n } : pour « Annuler ce lot » juste après un enregistrement
+function carnetEtatInitial() {
+  return {
+    ecran: 1, type: 'Traitement', categorie: 'Antibiotique', produit: '', dateDebut: jourAujourdhuiISO(), dureeJours: '1',
+    dose: '', voie: '', motif: '', lot: '', peremption: '', ordonnance: '', prescripteur: '', faitPar: 'Éleveur', veterinaireResponsable: '',
+    delaiViande: '', delaiLait: '', selection: new Set(), erreurs: [],
+    filtres: { cats: { brebis: true, antenaises: true, agnelles: true, beliers: true }, q: '', millesime: '', statut: '', lot: '' }
+  };
+}
+const entierTexteOuNull = t => /^\d+$/.test(String(t).trim()) ? parseInt(t, 10) : null;
+// Validation (règle de l'éleveur) : retourne la liste des erreurs, vide si le soin est complet. Fonction pure.
+function erreursSoinCarnet(e) {
+  const err = [];
+  const fiche = e.produit ? ficheProduit(e.produit) : null;
+  const autre = e.type === 'Autre';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(e.dateDebut || '')) err.push('La date de début est obligatoire.');
+  const duree = entierTexteOuNull(e.dureeJours);
+  if (duree === null || duree < 1) err.push('La durée (en jours) est obligatoire : un nombre entier d\'au moins 1.');
+  if (!e.type) err.push('Choisis le type de soin.');
+  if (e.type === 'Traitement' && !e.categorie) err.push('Choisis la catégorie du traitement.');
+  if (!autre && !e.produit) err.push('Choisis le produit (nom commercial).');
+  if (!autre) {
+    const dose = parseFloat(String(e.dose).replace(',', '.'));
+    if (String(e.dose).trim() === '' || isNaN(dose) || dose <= 0) err.push('La dose par animal (cc) est obligatoire.');
+    if (!e.voie) err.push('La voie d\'administration est obligatoire.');
+    if (entierTexteOuNull(e.delaiViande) === null) err.push('Le délai viande (jours, 0 autorisé) est obligatoire.');
+    if (entierTexteOuNull(e.delaiLait) === null) err.push('Le délai lait (jours, 0 autorisé) est obligatoire.');
+  } else {
+    if (String(e.dose).trim() !== '' && (isNaN(parseFloat(String(e.dose).replace(',', '.'))) || parseFloat(String(e.dose).replace(',', '.')) <= 0)) err.push('La dose doit être un nombre positif.');
+    ['delaiViande', 'delaiLait'].forEach(k => { if (String(e[k]).trim() !== '' && entierTexteOuNull(e[k]) === null) err.push('Le délai ' + (k === 'delaiViande' ? 'viande' : 'lait') + ' doit être un nombre de jours entier.'); });
+  }
+  if (fiche && fiche.surOrdonnance && !e.ordonnance) err.push('Le n° d\'ordonnance est obligatoire : ce produit est sur ordonnance.');
+  if (fiche && fiche.reserveVeterinaire) {
+    if (!e.faitPar.trim() || /^éleveur$/i.test(e.faitPar.trim())) err.push('Produit réservé au vétérinaire : indique le nom de la personne qui administre.');
+    if (!e.veterinaireResponsable.trim()) err.push('Produit réservé au vétérinaire : le nom du vétérinaire responsable est obligatoire.');
+  } else if (!e.faitPar.trim()) err.push('Indique qui a fait le soin.');
+  return err;
+}
+// Soin « modèle » à enregistrer (une copie par animal) ; champs facultatifs absents plutôt que vides ; délais et durée copiés sur le soin.
+function construireSoinCarnet(e) {
+  const autre = e.type === 'Autre', fiche = e.produit ? ficheProduit(e.produit) : null;
+  const soin = {
+    type: e.type, sousType: e.type === 'Traitement' ? e.categorie : (autre ? 'Soin de plaie' : null),
+    produit: autre && !e.produit ? 'Soin de plaie' : e.produit, date: e.dateDebut,
+    dureeJours: entierTexteOuNull(e.dureeJours), intervenant: e.faitPar.trim(), commentaire: ''
+  };
+  const dose = parseFloat(String(e.dose).replace(',', '.'));
+  if (!isNaN(dose)) soin.quantiteCc = dose;
+  if (e.voie) soin.voie = e.voie;
+  if (e.ordonnance) soin.numeroOrdonnance = e.ordonnance;
+  const opt = (k, v) => { if (v && String(v).trim()) soin[k] = String(v).trim(); };
+  opt('veterinairePrescripteur', e.prescripteur); opt('motif', e.motif); opt('lot', e.lot); opt('peremption', e.peremption);
+  if (fiche && fiche.reserveVeterinaire) opt('veterinaireResponsable', e.veterinaireResponsable);
+  const lait = entierTexteOuNull(e.delaiLait), viande = entierTexteOuNull(e.delaiViande);
+  if (lait !== null) soin.delaiLaitJours = lait;
+  if (viande !== null) soin.delaiViandeJours = viande;
+  return soin;
+}
+// Animaux proposés à l'écran 2 : ACTIFS seulement (brebis scindées en Brebis / Antenaises par le millésime le plus jeune,
+// agnelles du roster, béliers). Les agneaux sont exclus (flux actuel conservé).
+function animauxEligiblesCarnet() {
+  const classement = classementAntenaisesCampagne(campagneCohortPresente());
+  const lotsDe = eid => (DB.lots || []).filter(l => (l.membres || []).includes(eid)).map(l => l.id);
+  const item = (a, cle, categorie, statutRepro) => {
+    const soins = (a.sanitaire || []).filter(x => x && x.date).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
+    return { id: a.id, eid: a.eid, cle, categorie, obj: a, numero: numeroVisuel(a.eid), court: a.numeroCourtTravailSieol || '', age: age(a.eid), annee: anneeNaissance(a.eid), statutRepro, dernierSoin: soins[0] || null, lots: lotsDe(a.eid), delai: delaiEnCoursAnimal(a) };
+  };
+  const out = [];
+  DB.brebis.filter(s => (s.statut || 'active') === 'active').forEach(s => out.push(item(s, 'brebis', classement.groupe(s.eid) === 'antenaises' ? 'Antenaise' : 'Brebis', statutReproductionCampagne(s))));
+  (DB.agnelles || []).filter(a => (a.statut || 'active') === 'active').forEach(a => out.push(item(a, 'agnelles', 'Agnelle', '—')));
+  (DB.beliers || []).filter(b => (b.statut || 'actif') === 'actif').forEach(b => out.push(item(b, 'beliers', 'Bélier', '—')));
+  return out;
+}
+function animalFiltresCarnet(liste, f) {
+  const q = (f.q || '').replace(/\s+/g, '').toLowerCase();
+  const catCle = { 'Brebis': 'brebis', 'Antenaise': 'antenaises', 'Agnelle': 'agnelles', 'Bélier': 'beliers' };
+  return liste.filter(a => f.cats[catCle[a.categorie]]
+    && (!q || a.numero.toLowerCase().includes(q) || a.court.toLowerCase().includes(q) || cleanEid(a.eid).toLowerCase().includes(q))
+    && (!f.millesime || String(a.annee) === f.millesime)
+    && (!f.statut || a.statutRepro === f.statut)
+    && (!f.lot || a.lots.includes(f.lot)));
+}
+// Retire un lot de soins (confirmation demandée par l'appelant) : supprime ces soins précis, et l'entrée de l'historique collectif
+function annulerLotSoinsCarnet(lot) {
+  lot.soins.forEach(({ animal, soin }) => { animal.sanitaire = (animal.sanitaire || []).filter(x => x !== soin); });
+  if (lot.collectifId) DB.traitementsCollectifs = (DB.traitementsCollectifs || []).filter(t => t.id !== lot.collectifId);
+}
+
+function renderCarnetSanitairePc() {
+  pageTitle.textContent = 'Carnet sanitaire';
+  if (!carnetSanitairePcEtat) carnetSanitairePcEtat = carnetEtatInitial();
+  const E = carnetSanitairePcEtat;
+  const fmt = iso => iso ? formatDateFr(iso) : '—';
+  const cat = c => (PRODUIT_CATEGORIES.find(x => x.key === c) || {}).label;
+  const bandeauLot = carnetDernierLot ? `<div class="brd-alert info" id="cs-dernier-lot" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><span><b>Soin enregistré</b> : ${carnetDernierLot.produit} pour ${libAnimaux(carnetDernierLot.n)} (un soin par animal).</span><button type="button" class="btn btn-secondary" id="cs-annuler-lot" style="width:auto;padding:6px 14px;font-size:12.5px;color:var(--danger);border-color:var(--danger);">Annuler ce lot</button></div>` : '';
+  const entete = `<div class="brd-head">
+      <div><h2 class="brd-title">Carnet sanitaire</h2><div class="brd-sub">Le soin, puis les animaux · <span class="pc-req">*</span> = obligatoire</div></div>
+      <div class="brd-actions">
+        <button type="button" class="btn btn-secondary" id="cs-produits">Produits et délais</button>
+        <button type="button" class="btn btn-secondary" id="cs-ordonnances">Ordonnances</button>
+        <button type="button" class="btn btn-secondary" id="cs-sous-delai">Sous délai d'attente</button>
+        <button type="button" class="btn btn-secondary" id="cs-historique">Traitements collectifs</button>
+        <button type="button" class="btn btn-secondary" id="cs-agneaux" title="Les agneaux gardent leur écran actuel de traitement collectif">Traitement collectif agneaux</button>
+      </div>
+    </div>`;
+  const etapes = `<div class="pc-etapes"><span class="s ${E.ecran === 1 ? 'on' : 'fait'}">${E.ecran === 1 ? '1' : '✓ 1'} · Le soin</span><span>→</span><span class="s ${E.ecran === 2 ? 'on' : ''}">2 · Les animaux</span></div>`;
+  app.innerHTML = `<div class="brd" id="pc-carnet">${entete}${bandeauLot}${etapes}<div id="cs-ecran"></div></div>`;
+  const nav = (id, vue) => { document.getElementById(id).onclick = () => render(vue); };
+  nav('cs-produits', 'produits-delais'); nav('cs-ordonnances', 'ordonnances'); nav('cs-sous-delai', 'sous-delai'); nav('cs-historique', 'traitements-collectifs'); nav('cs-agneaux', 'traitement-collectif');
+  const btnLot = document.getElementById('cs-annuler-lot');
+  if (btnLot) btnLot.onclick = () => {
+    if (!confirm('Annuler ce lot : retirer le soin « ' + carnetDernierLot.produit + ' » des ' + carnetDernierLot.n + ' animaux ? Cette action est irréversible.')) return;
+    annulerLotSoinsCarnet(carnetDernierLot);
+    saveData(DB);
+    carnetDernierLot = null;
+    render('sanitaire');
+  };
+  if (E.ecran === 1) ecranCarnetSoin(); else ecranCarnetAnimaux();
+}
+
+function ecranCarnetSoin() {
+  const E = carnetSanitairePcEtat, cont = document.getElementById('cs-ecran');
+  const opt = (v, lib, sel) => `<option value="${v}"${sel === v ? ' selected' : ''}>${lib === undefined ? v : lib}</option>`;
+  const ordonnances = (DB.ordonnances || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const cleProd = carnetCleProduits(E.type, E.categorie);
+  const produits = cleProd ? (DB.produits[cleProd] || []) : [];
+  const intervenants = Array.from(new Set(['Éleveur'].concat(DB.intervenants || [])));
+  cont.innerHTML = `<div class="pc-wrap">
+    <div class="card pc-main">
+      <p class="brd-ttl">Nouveau soin</p>
+      ${E.erreurs.length ? `<div class="brd-alert err" id="cs-erreurs" style="margin-bottom:12px;"><b>À compléter avant de continuer :</b><ul>${E.erreurs.map(m => `<li>${m}</li>`).join('')}</ul></div>` : '<div id="cs-erreurs"></div>'}
+      <p class="pc-sec first">Soin</p>
+      <div class="pc-fg" style="margin-bottom:12px;">
+        <div><label>Date de début <span class="pc-req">*</span></label><input type="date" id="cs-date" value="${E.dateDebut}"></div>
+        <div><label>Durée (jours) <span class="pc-req">*</span></label><input type="number" id="cs-duree" min="1" step="1" value="${E.dureeJours}"></div>
+        <div><label>Type <span class="pc-req">*</span></label><div class="pc-seg2">${['Vaccin', 'Traitement', 'Autre'].map(t => `<button type="button" class="opt-btn cs-type coral${E.type === t ? ' selected' : ''}" data-val="${t}">${t}</button>`).join('')}</div></div>
+        <div><label>Catégorie <span class="pc-req">*</span></label><select id="cs-categorie" ${E.type === 'Traitement' ? '' : 'disabled'}>${E.type === 'Traitement' ? CARNET_CATEGORIES_TRAITEMENT.map(c => opt(c, c, E.categorie)).join('') : `<option>${E.type === 'Vaccin' ? 'Vaccin' : 'Soin de plaie'}</option>`}</select></div>
+      </div>
+      <div class="pc-fg">
+        <div><label>Produit ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><select id="cs-produit"><option value="">${E.type === 'Autre' ? 'Aucun (soin de plaie)' : 'Choisir…'}</option>${produits.map(n => opt(n, n + (ficheProduit(n).complete ? '' : ' (fiche incomplète)'), E.produit)).join('')}<option value="__nouveau__">+ Nouveau produit…</option></select></div>
+        <div><label>Dose par animal (cc) ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><input type="number" id="cs-dose" min="0" step="0.1" value="${E.dose}" placeholder="ex. 8"></div>
+        <div><label>Voie d'administration ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><select id="cs-voie"><option value="">Choisir…</option>${VOIES_ADMINISTRATION.map(v => opt(v, v, E.voie)).join('')}</select></div>
+        <div><label>Motif <span class="pc-opt">(facultatif)</span></label><input type="text" id="cs-motif" value="${E.motif}" placeholder="Pathologie traitée"></div>
+        <div><label>N° de lot <span class="pc-opt">(facultatif)</span></label><input type="text" id="cs-lot" value="${E.lot}" placeholder="Lot du flacon"></div>
+        <div><label>Péremption <span class="pc-opt">(facultatif)</span></label><input type="date" id="cs-peremption" value="${E.peremption}"></div>
+      </div>
+      <p class="pc-sec">Prescription</p>
+      <div class="pc-fg">
+        <div><label>N° ordonnance <span class="pc-req" id="cs-ord-etoile"></span><span class="pc-opt" id="cs-ord-fac"> (facultatif)</span></label><select id="cs-ordonnance"><option value="">—</option>${ordonnances.map(o => opt(o.numero, o.numero + (o.date ? ' · ' + formatDateFr(o.date) : ''), E.ordonnance)).join('')}</select></div>
+        <div><label>Vétérinaire prescripteur <span class="pc-opt">(facultatif)</span></label><input type="text" id="cs-prescripteur" value="${E.prescripteur}" placeholder="Nom du vétérinaire"></div>
+        <div><label>Fait par <span class="pc-req">*</span></label><input type="text" id="cs-faitpar" list="cs-faitpar-liste" value="${E.faitPar}" autocomplete="off"><datalist id="cs-faitpar-liste">${intervenants.map(n => `<option value="${n}">`).join('')}</datalist></div>
+        <div id="cs-veto-resp" style="display:none;"><label>Vétérinaire responsable <span class="pc-req">*</span></label><input type="text" id="cs-vetoresp" value="${E.veterinaireResponsable}" placeholder="Nom du vétérinaire"></div>
+      </div>
+      <p class="brd-note" style="margin:8px 0 0;">Si le produit est réservé au vétérinaire, le nom de la personne qui administre et celui du vétérinaire responsable deviennent obligatoires.</p>
+      <p class="pc-sec">Délais d'attente <span style="text-transform:none;font-weight:400;">(repris de la fiche produit, modifiables pour ce soin)</span></p>
+      <div class="pc-fg" style="max-width:440px;">
+        <div><label>Viande (jours) ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><input type="number" id="cs-viande" min="0" step="1" value="${E.delaiViande}" placeholder="0 = aucune attente"></div>
+        <div><label>Lait (jours) ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><input type="number" id="cs-lait" min="0" step="1" value="${E.delaiLait}" placeholder="0 = aucune attente"></div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary" id="cs-annuler" style="width:auto;padding:8px 16px;">Annuler</button>
+        <button type="button" class="btn btn-primary" id="cs-suivant" style="width:auto;padding:8px 16px;">Suivant : choisir les animaux →</button>
+      </div>
+    </div>
+    <div class="pc-side">
+      <div class="card" id="cs-dates"></div>
+      <div class="card" id="cs-fiche"></div>
+      <div class="card" id="cs-alertes"></div>
+    </div>
+  </div>`;
+  const $ = id => document.getElementById(id);
+  const colonneDroite = () => {
+    const fiche = E.produit ? ficheProduit(E.produit) : null;
+    const d = calculerDatesSoin({ date: E.dateDebut, dureeJours: entierTexteOuNull(E.dureeJours), delaiLaitJours: entierTexteOuNull(E.delaiLait), delaiViandeJours: entierTexteOuNull(E.delaiViande) });
+    const ligneDate = (titre, formule, valeur, aucune, connu, couleur) => `<div class="pc-cl"><span>${titre}<small>${formule}</small></span><b style="color:${couleur || 'inherit'};">${valeur ? formatDateFr(valeur) : (aucune ? 'aucune attente' : '—')}</b></div>`;
+    $('cs-dates').innerHTML = `<p class="brd-ttl">Dates calculées</p>
+      ${ligneDate('Dernière administration', 'début + durée − 1 jour', d.derniere)}
+      ${ligneDate('Reprise du lait', 'dernière administration + délai lait + 1 jour', d.repriseLait, d.aucuneAttenteLait, d.laitConnu, 'var(--green-fg)')}
+      ${ligneDate('Vente / départ possible dès le', 'dernière administration + délai viande + 1 jour', d.venteDes, d.aucuneAttenteViande, d.viandeConnue, 'var(--amber-fg)')}`;
+    $('cs-fiche').innerHTML = `<p class="brd-ttl">Fiche produit</p>` + (!fiche ? '<p class="brd-note" style="margin:0;">Choisis un produit pour voir sa fiche.</p>' : `
+      <div class="pc-cl" style="border-top:none;"><span>${fiche.nom}</span>${fiche.complete ? pcPill('info', 'saisi par l\'éleveur') : fiche.aConfirmer ? pcPill('warn', 'ancienne valeur à confirmer') : pcPill('danger', 'fiche incomplète')}</div>
+      <div class="pc-cl"><span>Délai viande</span><b>${fiche.delaiViande === null ? '—' : fiche.delaiViande + ' j'}</b></div>
+      <div class="pc-cl"><span>Délai lait</span><b>${fiche.delaiLait === null ? '—' : fiche.delaiLait + ' j'}</b></div>
+      <div class="pc-cl"><span>Posologie habituelle</span><b>${fiche.posologie || '—'}</b></div>
+      <div class="pc-cl"><span>Sur ordonnance</span><b>${fiche.complete || !fiche.aConfirmer ? (fiche.surOrdonnance ? 'Oui' : 'Non') : '—'}</b></div>
+      <div class="pc-cl"><span>Réservé au vétérinaire</span><b>${fiche.complete || !fiche.aConfirmer ? (fiche.reserveVeterinaire ? 'Oui' : 'Non') : '—'}</b></div>
+      <p class="brd-note" style="margin:8px 0 0;">Délais saisis une fois, repris à chaque soin. Les modifier dans la fiche ne change pas les soins déjà enregistrés.</p>`);
+    const al = [];
+    if (fiche && !fiche.complete) al.push(['warn', fiche.aConfirmer ? 'Ancienne valeur à confirmer : ouvre « Produits et délais » pour confirmer ou corriger cette fiche. Les délais de ce soin sont à saisir ici.' : 'Fiche produit incomplète : les délais de ce soin sont à saisir ici ; complète la fiche dans « Produits et délais ».']);
+    if (fiche && fiche.complete && ((entierTexteOuNull(E.delaiLait) !== null && entierTexteOuNull(E.delaiLait) !== fiche.delaiLait) || (entierTexteOuNull(E.delaiViande) !== null && entierTexteOuNull(E.delaiViande) !== fiche.delaiViande))) al.push(['info', 'Délais différents de la fiche produit : seul ce soin est concerné, la fiche n\'est pas modifiée.']);
+    if (fiche && fiche.surOrdonnance && !E.ordonnance) al.push(['warn', 'Produit sur ordonnance : le n° d\'ordonnance est obligatoire.']);
+    if (fiche && E.ordonnance) { const o = (DB.ordonnances || []).find(x => x.numero === E.ordonnance); if (o && !(o.produits || []).some(p => p.nom === E.produit)) al.push(['warn', 'Ce produit n\'est pas listé sur l\'ordonnance ' + E.ordonnance + ' (information, rien n\'est bloqué).']); }
+    if (fiche && fiche.reserveVeterinaire) al.push(['info', 'Réservé au vétérinaire : nom de la personne qui administre et vétérinaire responsable obligatoires.']);
+    $('cs-alertes').innerHTML = `<p class="brd-ttl">Alertes liées</p>` + (al.length ? al.map(([t, m]) => `<div class="brd-alert ${t === 'warn' ? 'warn' : 'info'}" style="margin-top:8px;">${m}</div>`).join('') : '<p class="brd-note" style="margin:0;">Aucune alerte pour ce soin.</p>');
+    $('cs-veto-resp').style.display = fiche && fiche.reserveVeterinaire ? '' : 'none';
+    $('cs-ord-etoile').textContent = fiche && fiche.surOrdonnance ? ' *' : '';
+    $('cs-ord-fac').style.display = fiche && fiche.surOrdonnance ? 'none' : '';
+  };
+  const lier = (id, cle, ev) => { $(id).addEventListener(ev || 'input', e => { E[cle] = e.target.value; colonneDroite(); }); };
+  lier('cs-date', 'dateDebut'); lier('cs-duree', 'dureeJours'); lier('cs-dose', 'dose'); lier('cs-motif', 'motif'); lier('cs-lot', 'lot'); lier('cs-peremption', 'peremption');
+  lier('cs-prescripteur', 'prescripteur'); lier('cs-faitpar', 'faitPar'); lier('cs-vetoresp', 'veterinaireResponsable'); lier('cs-viande', 'delaiViande'); lier('cs-lait', 'delaiLait');
+  lier('cs-voie', 'voie', 'change');
+  $('cs-ordonnance').addEventListener('change', e => {
+    E.ordonnance = e.target.value;
+    const o = (DB.ordonnances || []).find(x => x.numero === E.ordonnance);
+    if (o && o.veterinaire && !E.prescripteur) { E.prescripteur = o.veterinaire; $('cs-prescripteur').value = o.veterinaire; }
+    colonneDroite();
+  });
+  document.querySelectorAll('.cs-type').forEach(b => { b.onclick = () => { E.type = b.dataset.val; E.categorie = E.type === 'Traitement' ? 'Antibiotique' : ''; E.produit = ''; E.delaiViande = ''; E.delaiLait = ''; E.erreurs = []; ecranCarnetSoin(); }; });
+  $('cs-categorie').addEventListener('change', e => { E.categorie = e.target.value; E.produit = ''; E.delaiViande = ''; E.delaiLait = ''; ecranCarnetSoin(); });
+  $('cs-produit').addEventListener('change', e => {
+    if (e.target.value === '__nouveau__') {
+      ouvrirFicheProduitModal({ categorieKey: cleProd || 'autres', onSaved: nom => { E.produit = nom; const f = ficheProduit(nom); E.delaiViande = String(f.delaiViande); E.delaiLait = String(f.delaiLait); ecranCarnetSoin(); } });
+      e.target.value = E.produit; return;
+    }
+    E.produit = e.target.value;
+    const f = E.produit ? ficheProduit(E.produit) : null;
+    E.delaiViande = f && f.delaiViande !== null ? String(f.delaiViande) : '';
+    E.delaiLait = f && f.delaiLait !== null ? String(f.delaiLait) : '';
+    ecranCarnetSoin();
+  });
+  $('cs-annuler').onclick = () => { carnetSanitairePcEtat = carnetEtatInitial(); render('sanitaire'); };
+  $('cs-suivant').onclick = () => {
+    E.erreurs = erreursSoinCarnet(E);
+    if (E.erreurs.length) { ecranCarnetSoin(); const z = document.getElementById('cs-erreurs'); if (z) z.scrollIntoView({ block: 'nearest' }); return; }
+    E.ecran = 2; render('sanitaire');
+  };
+  colonneDroite();
+}
+
+function ecranCarnetAnimaux() {
+  const E = carnetSanitairePcEtat, cont = document.getElementById('cs-ecran'), F = E.filtres;
+  const tous = animauxEligiblesCarnet();
+  const fiche = E.produit ? ficheProduit(E.produit) : null;
+  const d = calculerDatesSoin({ date: E.dateDebut, dureeJours: entierTexteOuNull(E.dureeJours), delaiLaitJours: entierTexteOuNull(E.delaiLait), delaiViandeJours: entierTexteOuNull(E.delaiViande) });
+  const recap = `<b>${E.produit || 'Soin de plaie'}</b> · ${E.dose ? E.dose + ' cc' : '—'}${E.voie ? ' en ' + E.voie.toLowerCase() : ''} · ${formatDateFr(E.dateDebut)} · ${E.dureeJours} j · reprise du lait ${d.repriseLait ? formatDateFr(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—')} · vente dès le ${d.venteDes ? formatDateFr(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')}`;
+  const comptes = { brebis: 0, antenaises: 0, agnelles: 0, beliers: 0 };
+  const cleDe = { 'Brebis': 'brebis', 'Antenaise': 'antenaises', 'Agnelle': 'agnelles', 'Bélier': 'beliers' };
+  tous.forEach(a => comptes[cleDe[a.categorie]]++);
+  const millesimes = Array.from(new Set(tous.map(a => a.annee).filter(a => a !== null))).sort((a, b) => b - a);
+  const statuts = Array.from(new Set(tous.map(a => a.statutRepro).filter(x => x && x !== '—'))).sort();
+  cont.innerHTML = `
+    <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><span style="font-size:13px;flex:1;min-width:260px;" id="cs-recap">${recap}</span><button type="button" class="btn btn-secondary" id="cs-modifier" style="width:auto;padding:8px 14px;">Modifier le soin</button></div>
+    <div class="card">
+      <p class="brd-ttl">Filtrer les animaux</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px;">
+        ${[['brebis', 'Brebis'], ['antenaises', 'Antenaises'], ['agnelles', 'Agnelles'], ['beliers', 'Béliers']].map(([k, l]) => `<button type="button" class="pc-gc cs-cat${F.cats[k] ? ' on' : ''}" data-cat="${k}">${F.cats[k] ? '✓ ' : ''}${l} <small>${comptes[k]}</small></button>`).join('')}
+      </div>
+      <div class="pc-filtres-ligne">
+        <div class="pc-grand"><label for="cs-q">Rechercher un n°</label><input type="text" id="cs-q" value="${F.q}" placeholder="Saisir un n°" autocomplete="off"></div>
+        <div><label for="cs-millesime">Millésime</label><select id="cs-millesime"><option value="">Tous</option>${millesimes.map(m => `<option value="${m}"${F.millesime === String(m) ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
+        <div><label for="cs-statut">Statut de reproduction</label><select id="cs-statut"><option value="">Tous</option>${statuts.map(m => `<option value="${m}"${F.statut === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
+        <div><label for="cs-flot">Lot</label><select id="cs-flot"><option value="">Tous</option>${(DB.lots || []).map(l => `<option value="${l.id}"${F.lot === l.id ? ' selected' : ''}>${l.nom || ('Lot ' + (l.dateCreation || ''))}</option>`).join('')}</select></div>
+        <div><button type="button" class="btn btn-secondary" id="cs-reset" style="width:100%;">Réinitialiser</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="pc-cardhead" style="margin-bottom:10px;flex-wrap:wrap;"><div><p class="brd-ttl" style="margin:0;" id="cs-compte"></p><p class="brd-note" style="margin:2px 0 0;">Clique sur une ligne pour la cocher. Seuls les animaux actifs sont proposés ; les agneaux gardent leur écran actuel.</p></div>
+        <div style="display:flex;gap:8px;"><button type="button" class="btn btn-secondary" id="cs-tout" style="width:auto;padding:6px 14px;font-size:13px;">Tout cocher</button><button type="button" class="btn btn-secondary" id="cs-rien" style="width:auto;padding:6px 14px;font-size:13px;">Tout décocher</button></div></div>
+      <table class="pc-t" id="cs-table"></table>
+    </div>
+    <div class="pc-selbar" id="cs-barre"><span class="pc-selcount" id="cs-nsel"></span><button type="button" class="btn btn-secondary" id="cs-retour">← Retour au soin</button><button type="button" class="btn btn-primary" id="cs-enregistrer">Enregistrer le soin</button></div>
+    <div id="cs-msg"></div>`;
+  const $ = id => document.getElementById(id);
+  const jj = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '';
+  const dessiner = () => {
+    const filtres = animalFiltresCarnet(tous, F);
+    $('cs-compte').textContent = libAnimaux(filtres.length) + ' correspondant' + (filtres.length > 1 ? 's' : '') + ' · ' + E.selection.size + ' sélectionné' + (E.selection.size > 1 ? 's' : '');
+    $('cs-table').innerHTML = `<tr><th class="cb"></th><th class="l">N° court</th><th class="l">Catégorie</th><th class="l">Âge</th><th class="l">Statut de reproduction</th><th class="l">Dernier soin</th><th class="l">Délai en cours</th></tr>` +
+      (filtres.map((a, i) => {
+        const pil = [];
+        if (a.delai.lait) pil.push('lait dès le ' + jj(a.delai.lait));
+        if (a.delai.viande) pil.push('viande dès le ' + jj(a.delai.viande));
+        return `<tr class="clic${E.selection.has(a.eid) ? ' sel' : ''}${i % 2 && !E.selection.has(a.eid) ? ' alt' : ''}" data-eid="${a.eid}"><td class="cb"><input type="checkbox" class="cs-chk" ${E.selection.has(a.eid) ? 'checked' : ''} style="width:16px;height:16px;margin:0;"></td><td class="l">${a.court || 'n°' + a.numero}</td><td class="l">${a.categorie}</td><td class="l">${a.age === null ? '—' : a.age + (a.age > 1 ? ' ans' : ' an')}</td><td class="l">${a.statutRepro}</td><td class="l">${a.dernierSoin ? (a.dernierSoin.produit || a.dernierSoin.type) + ' · ' + jj(a.dernierSoin.date) : '—'}</td><td class="l">${pil.length ? pcPill('warn', pil.join(' · ')) : '—'}</td></tr>`;
+      }).join('') || '<tr><td colspan="7" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun animal ne correspond aux filtres.</td></tr>');
+    document.querySelectorAll('#cs-table tr.clic').forEach(tr => {
+      tr.onclick = ev => { const eid = tr.dataset.eid; if (E.selection.has(eid)) E.selection.delete(eid); else E.selection.add(eid); dessiner(); };
+    });
+    const nSous = tous.filter(a => E.selection.has(a.eid) && (a.delai.lait || a.delai.viande)).length;
+    $('cs-nsel').textContent = libAnimaux(E.selection.size) + ' sélectionné' + (E.selection.size > 1 ? 's' : '') + (nSous ? ' · ' + nSous + ' déjà sous délai d\'attente (information, rien n\'est bloqué)' : '');
+    $('cs-enregistrer').textContent = 'Enregistrer le soin pour ' + libAnimaux(E.selection.size);
+  };
+  document.querySelectorAll('.cs-cat').forEach(b => { b.onclick = () => { F.cats[b.dataset.cat] = !F.cats[b.dataset.cat]; ecranCarnetAnimaux(); }; });
+  $('cs-q').addEventListener('input', e => { F.q = e.target.value; dessiner(); });
+  $('cs-millesime').addEventListener('change', e => { F.millesime = e.target.value; dessiner(); });
+  $('cs-statut').addEventListener('change', e => { F.statut = e.target.value; dessiner(); });
+  $('cs-flot').addEventListener('change', e => { F.lot = e.target.value; dessiner(); });
+  $('cs-reset').onclick = () => { E.filtres = { cats: { brebis: true, antenaises: true, agnelles: true, beliers: true }, q: '', millesime: '', statut: '', lot: '' }; ecranCarnetAnimaux(); };
+  $('cs-tout').onclick = () => { animalFiltresCarnet(tous, F).forEach(a => E.selection.add(a.eid)); dessiner(); };
+  $('cs-rien').onclick = () => { animalFiltresCarnet(tous, F).forEach(a => E.selection.delete(a.eid)); dessiner(); };
+  $('cs-modifier').onclick = () => { E.ecran = 1; render('sanitaire'); };
+  $('cs-retour').onclick = () => { E.ecran = 1; render('sanitaire'); };
+  $('cs-enregistrer').onclick = () => {
+    const msg = $('cs-msg'), montrer = (t, m) => { msg.innerHTML = `<div class="brd-alert ${t}" style="margin-top:12px;">${m}</div>`; };
+    const erreurs = erreursSoinCarnet(E);
+    if (erreurs.length) { E.erreurs = erreurs; E.ecran = 1; render('sanitaire'); return; }
+    const animaux = tous.filter(a => E.selection.has(a.eid));
+    if (animaux.length === 0) { montrer('err', 'Sélectionne au moins un animal.'); return; }
+    if (!confirm('Enregistrer « ' + (E.produit || 'Soin de plaie') + ' » pour ' + libAnimaux(animaux.length) + ' ? Un soin sera enregistré par animal ; tu pourras annuler tout le lot juste après.')) return;
+    const modele = construireSoinCarnet(E);
+    const collectifId = animaux.length >= 2 ? 'TC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7) : null;
+    const saisis = animaux.map(a => {
+      const soin = Object.assign({}, modele);                // une copie distincte par animal
+      if (collectifId) { soin.collectif = true; soin.collectifId = collectifId; }
+      a.obj.sanitaire = a.obj.sanitaire || [];
+      a.obj.sanitaire.push(soin);
+      return { animal: a.obj, soin };
+    });
+    if (collectifId) {
+      const cles = Array.from(new Set(animaux.map(a => a.cle)));
+      DB.traitementsCollectifs = DB.traitementsCollectifs || [];
+      DB.traitementsCollectifs.push({ id: collectifId, categorie: cles.length === 1 ? cles[0] : 'multi', type: modele.type, sousType: modele.sousType, produit: modele.produit, date: modele.date, quantiteCc: modele.quantiteCc, intervenant: modele.intervenant, commentaire: '', membres: animaux.map(a => a.eid), numeroOrdonnance: modele.numeroOrdonnance || null, createdAt: Date.now(), source: 'carnet-pc' });
+    }
+    if (modele.intervenant && modele.intervenant !== 'Éleveur') { DB.intervenants = DB.intervenants || []; if (!DB.intervenants.includes(modele.intervenant)) DB.intervenants.push(modele.intervenant); }
+    saveData(DB);
+    carnetDernierLot = { soins: saisis, collectifId, produit: modele.produit, n: animaux.length };
+    carnetSanitairePcEtat = carnetEtatInitial();
+    render('sanitaire');
+  };
+  dessiner();
+}
+
 function renderSanitaire() {
+  if (isDesktopMode()) { renderCarnetSanitairePc(); return; }
   pageTitle.textContent = 'Sanitaire';
   app.innerHTML = `
     <div style="display:flex;justify-content:flex-end;margin:2px 2px 10px;">${infoBulleHtml('Sanitaire', "Applique un soin à plusieurs brebis en une fois, et retrouve l'historique des traitements déjà appliqués en masse.")}</div>
@@ -18441,7 +18843,7 @@ function renderTraitementsCollectifsHistorique() {
     if (dates.length === 1) return formatDateFr(dates[0]);
     return formatDateFr(dates[0]) + ' → ' + formatDateFr(dates[dates.length - 1]) + ' (' + dates.length + ' dates)';
   }
-  function catLabel(cat) { return CATEGORIE_ANIMAL_CONFIG[cat || 'brebis'].label; }
+  function catLabel(cat) { return cat === 'multi' ? 'Animaux' : CATEGORIE_ANIMAL_CONFIG[cat || 'brebis'].label; }
 
   const recentItemHtml = (t) => `
     <div class="card">
@@ -18492,7 +18894,7 @@ function renderTraitementsCollectifsHistorique() {
         const t = DB.traitementsCollectifs.find(x => x.id === id);
         if (!t) return;
         if (!confirm('Supprimer ce traitement collectif de ' + t.membres.length + ' ' + catLabel(t.categorie).toLowerCase() + ' ? Cette action est irréversible.')) return;
-        const pool = CATEGORIE_ANIMAL_CONFIG[t.categorie || 'brebis'].pool();
+        const pool = t.categorie === 'multi' ? [].concat(DB.brebis, DB.beliers || [], DB.agnelles || []) : CATEGORIE_ANIMAL_CONFIG[t.categorie || 'brebis'].pool();
         pool.forEach(a => {
           if (!a.sanitaire) return;
           a.sanitaire = a.sanitaire.filter(soin => soin.collectifId !== id);
