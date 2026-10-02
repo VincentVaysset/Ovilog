@@ -5963,7 +5963,7 @@ function renderBilanCampagne() {
 
   const bodyHtml = bilanCampagneTab === 'incoherences' ? (isDesktopMode() ? bilanARegulariserDesktopHtml() : bilanIncoherencesHtml(actives))
     : bilanCampagneTab === 'reproduction' ? (isDesktopMode() ? bilanReproductionDesktopHtml() : bilanReproductionHtml())
-    : bilanCampagneTab === 'economique' ? bilanEconomiqueHtml()
+    : bilanCampagneTab === 'economique' ? (isDesktopMode() ? bilanEconomiqueDesktopHtml() : bilanEconomiqueHtml())
     : (isDesktopMode() ? bilanLactationDesktopHtml() : bilanLactationHtml());
 
   // Chantier "Refonte desktop" (étape Bilan de campagne) : même technique
@@ -5973,7 +5973,7 @@ function renderBilanCampagne() {
   // assemblé génériquement ci-dessus). La tab-bar reste hors de la grille,
   // inchangée. Mobile strictement inchangé.
   // La page PC du Bilan de reproduction (bilanReproductionDesktopHtml) a sa propre mise en page pleine largeur : pas de grille de cartes.
-  app.innerHTML = tabBarHtml + (isDesktopMode() && bilanCampagneTab !== 'reproduction' && bilanCampagneTab !== 'incoherences' && bilanCampagneTab !== 'lactation' ? `<div class="fiche-desktop-grid">${bodyHtml}</div>` : bodyHtml);
+  app.innerHTML = tabBarHtml + (isDesktopMode() && bilanCampagneTab !== 'reproduction' && bilanCampagneTab !== 'incoherences' && bilanCampagneTab !== 'lactation' && bilanCampagneTab !== 'economique' ? `<div class="fiche-desktop-grid">${bodyHtml}</div>` : bodyHtml);
 
   document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
     btn.onclick = () => { bilanCampagneTab = btn.dataset.tab; render('bilan-campagne'); };
@@ -6393,6 +6393,175 @@ function bilanLactationDesktopHtml() {
           </table>
           <p class="brd-note" style="margin:10px 0 0;">${d.comparatif.every(l => l.n1 === null || l.n1 === undefined) ? 'Les écarts s\'afficheront dès qu\'une campagne précédente est saisie. ' : ''}${ind.misesBasSource === 'resume' ? 'Le ratio utilise les ' + ind.misesBas + ' mises bas du résumé de campagne ' + d.libelle + '.' : ''}</p>
         </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------- Page PC « Bilan économique » ----------
+   Même calcul que bilanCampagneQualite (mêmes 12 mois, mêmes conditions : un mois sans MSU n'entre ni dans les
+   prix moyens ni dans les montants), décomposé mois par mois pour la page : montant hors qualité, grades bactério,
+   Super A, pénalités, total. Cohérences testées : montant avec qualité − montant hors qualité = grades + Super A
+   − pénalités = gain ; prix moyen = montant / volume ; litrage = somme mensuelle du tank (= Bilan de lactation).
+   Les mois hors gain (sans MSU) sont signalés avec leur Super A / pénalités éventuels, jamais ajoutés d'office.
+   Fonction PURE (aucune écriture). Donnée absente = null. */
+function bilanEconomiquePcData(campagne) {
+  const coef = coefficientMsuPourCampagne(campagne);
+  const listCampagne = DB.prelevementsQualite.filter(p => campagneAnneeDebutPourDate(p.date) === campagne);
+  const penalitesCampagne = (DB.penalitesBacterio || []).filter(p => campagneAnneeDebutPourDate(p.dateDebut) === campagne);
+  const mois = [];
+  const S = { volume: 0, hors: 0, grades: 0, superA: 0, penalites: 0, avec: 0 };
+  const horsGain = { superA: 0, penalites: 0, mois: [] };
+  for (let i = 0; i < 12; i++) {
+    const info = moisInfoPourIndex(campagne, i);
+    const volume = volumeTankMois(info.key);
+    const listMois = listCampagne.filter(p => p.date.slice(0, 7) === info.key);
+    const penalitesMois = penalitesCampagne.filter(p => (p.dateDebut || '').slice(0, 7) === info.key);
+    const res = calculerPrixLaitMois(listMois, volume, coef, penalitesMois);
+    const g = res.grades;
+    const incidenceGrades = g.cellules.incidence + g.coliformes.incidence + g.floreTotale.incidence + g.butyriques.incidence;
+    const compte = res.prixHorsQualite !== null;
+    const m = {
+      cle: info.key, label: MOIS_LABELS_CAMPAGNE[i], libelle: info.label, hasData: DB.prelevementsQualite.some(p => p.date.slice(0, 7) === info.key),
+      volume, compte, res, coef,
+      prixHors: res.prixHorsQualite, prixAvec: res.prixAvecQualite,
+      montantHors: compte ? res.prixHorsQualite * volume / 1000 : null,
+      montantGrades: compte ? incidenceGrades * volume / 1000 : null,
+      montantSuperA: compte && res.superA.eligible ? 70 * volume / 1000 : (compte ? 0 : null),
+      montantPenalites: res.montantPenalites,
+      total: res.totalMois
+    };
+    mois.push(m);
+    S.volume += volume;
+    if (compte) {
+      S.hors += m.montantHors; S.grades += m.montantGrades; S.superA += m.montantSuperA; S.penalites += m.montantPenalites; S.avec += res.totalMois;
+      S.volumeCompte = (S.volumeCompte || 0) + volume;
+    } else if ((res.superA.eligible && volume > 0) || res.montantPenalites > 0) {
+      horsGain.mois.push(m.libelle);
+      if (res.superA.eligible) horsGain.superA += 70 * volume / 1000;
+      horsGain.penalites += res.montantPenalites;
+    }
+  }
+  const vc = S.volumeCompte || 0;
+  return {
+    campagne, libelle: campagneLabel(campagne), coef, mois,
+    litrageTank: S.volume, volumeCompte: vc,
+    prixMoyenHors: vc > 0 ? S.hors * 1000 / vc : null,
+    prixMoyenAvec: vc > 0 ? S.avec * 1000 / vc : null,
+    montantHors: vc > 0 ? S.hors : null, montantAvec: vc > 0 ? S.avec : null,
+    gain: vc > 0 ? S.avec - S.hors : null, gainParMille: vc > 0 ? (S.avec - S.hors) * 1000 / vc : null,
+    composition: vc > 0 ? { grades: S.grades, superA: S.superA, penalites: S.penalites } : null,
+    horsGain
+  };
+}
+function pcEuro(v, dec, signe) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const a = Math.abs(v).toFixed(dec === undefined ? 0 : dec).replace('.', ',');
+  const [ent, frac] = a.split(',');
+  const g = ent.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (frac !== undefined ? ',' + frac : '');
+  return (v < 0 ? '−' : (signe && v > 0 ? '+' : '')) + g + ' €';
+}
+function bilanEconomiqueDesktopHtml() {
+  const campagnes = campagnesDisponiblesSieol();
+  if (bilanEconomiqueCampagneAffichee === null || !campagnes.includes(bilanEconomiqueCampagneAffichee)) bilanEconomiqueCampagneAffichee = campagnes.includes(DB.campagneDebut) ? DB.campagneDebut : campagnes[0];
+  const campagne = bilanEconomiqueCampagneAffichee;
+  const d = bilanEconomiquePcData(campagne);
+  const premier = d.mois.find(m => m.hasData);
+  if (bilanEconomiqueMoisAffiche === null || !d.mois.some(m => m.cle === bilanEconomiqueMoisAffiche && m.hasData)) bilanEconomiqueMoisAffiche = premier ? premier.cle : null;
+  const moisSel = d.mois.find(m => m.cle === bilanEconomiqueMoisAffiche) || null;
+  const litres = v => v === null || v === undefined ? '—' : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' L';
+  const gainTxt = d.gain === null ? '—' : pcEuro(d.gain, 0, true);
+  const kpi = (label, val, sous, couleur) => pcKpi(label, val, sous, couleur);
+
+  // ---- graphique : montant du lait par mois (hors qualité + gain qualité), en milliers d'euros
+  const barres = pcBarres(d.mois.map(m => {
+    const tot = m.total !== null && m.total !== undefined ? m.total : 0;
+    const hors = m.montantHors !== null ? m.montantHors : 0;
+    const gain = Math.max(tot - hors, 0);
+    return { label: m.label, valeur: tot, texte: m.total !== null && m.total !== undefined && m.volume > 0 ? fmtDecimal(m.total / 1000, 1) : '0', parts: [{ v: gain, couleur: 'var(--primary)' }, { v: Math.min(hors, tot > 0 ? hors : 0), couleur: '#a9cdb8' }] };   // gain qualité (foncé) au-dessus du prix hors qualité (clair)
+  }), { hauteur: 160 });
+  const chips = d.mois.map(m => `<button type="button" class="chip${m.hasData ? '' : ' chip-empty'}${m.cle === bilanEconomiqueMoisAffiche ? ' selected' : ''}" data-mois="${m.cle}">${m.libelle}</button>`).join('');
+
+  // ---- détail du mois
+  const ligneGradePc = (nom, g) => {
+    const detail = g.grade === null ? (g.n > 0 ? g.n + ' prélèvement(s), hors barème' : 'pas de résultat ce mois') : (g.n !== undefined ? g.n + ' prélèvement(s), somme ' + g.sum : 'moyenne du mois');
+    const ton = g.grade === 'A' ? 'ok' : g.grade === 'B' ? 'neutral' : g.grade === 'C' ? 'warn' : g.grade === 'D' ? 'danger' : 'neutral';
+    return `<div class="pc-li" style="cursor:default;"><span class="a">${nom} ${pcPill(ton, g.grade || '—')}<br><span class="b">${detail}</span></span><span>${fmtEuro(g.incidence, true)} /1000 L</span></div>`;
+  };
+  let detailMois = '<p class="brd-note" style="margin:0;">Aucun prélèvement qualité sur cette campagne : le détail d\'un mois apparaît dès la première saisie.</p>';
+  if (moisSel) {
+    const r = moisSel.res, g = r.grades;
+    detailMois = `
+      <div class="pc-li" style="cursor:default;border-top:none;"><span class="a">Prix hors qualité<br><span class="b">MSU ${g.moyennes.msu !== null && g.moyennes.msu !== undefined ? fmtDecimal(g.moyennes.msu, 1) : '—'} × ${fmtDecimal(moisSel.coef, 4)}</span></span><b>${r.prixHorsQualite !== null ? fmtDecimal(r.prixHorsQualite, 1) + ' €/1000 L' : '—'}</b></div>
+      ${ligneGradePc('Cellules', g.cellules)}${ligneGradePc('Coliformes', g.coliformes)}${ligneGradePc('Flore totale', g.floreTotale)}${ligneGradePc('Butyriques', g.butyriques)}
+      <div class="pc-li" style="cursor:default;"><span class="a">Bonus Super A ${pcPill(r.superA.eligible ? 'ok' : 'danger', r.superA.eligible ? 'Obtenu' : 'Non obtenu')}<br><span class="b">${r.superA.eligible ? 'Bonus +70,00 €/1000 L appliqué' : (r.superA.raison || 'pas de résultat ce mois')}</span></span><span>${r.superA.eligible ? '+70,00' : '0,00'} €/1000 L</span></div>
+      <div class="pc-li" style="cursor:default;"><span class="a">Pénalités bactério<br><span class="b">${r.montantPenalites > 0 ? 'déduites du total du mois' : 'aucune ce mois'}</span></span><span>${r.montantPenalites > 0 ? pcEuro(-r.montantPenalites, 0) : '0 €'}</span></div>
+      <div class="pc-li" style="cursor:default;border-top:1px solid var(--text-muted);font-weight:700;"><span class="a">Prix avec qualité</span><span>${r.prixAvecQualite !== null ? fmtDecimal(r.prixAvecQualite, 1) + ' €/1000 L' : '—'}</span></div>
+      <div class="pc-li" style="cursor:default;"><span class="a">Volume livré (tank)</span><span>${litres(moisSel.volume)}</span></div>
+      <div class="pc-li" style="cursor:default;font-weight:700;"><span class="a">Total du mois</span><span style="color:var(--primary);">${r.totalMois !== null ? pcEuro(r.totalMois, 0) : '—'}</span></div>`;
+  }
+
+  // ---- composition du gain
+  const C = d.composition;
+  let composition = '<p class="brd-note" style="margin:0;">La composition du gain apparaît dès qu\'au moins un mois a un prix calculable (MSU renseignée).</p>';
+  if (C) {
+    const maxAbs = Math.max(Math.abs(C.grades), Math.abs(C.superA), Math.abs(C.penalites), 1);
+    const lig = (nom, v, couleur, sensNegatif) => `<div style="display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:10px;"><span style="width:120px;">${nom}</span><div style="flex:1;height:14px;background:#f0efe9;border-radius:4px;"><div style="width:${Math.round(Math.abs(v) / maxAbs * 100)}%;height:100%;background:${couleur};border-radius:4px;"></div></div><span style="width:90px;text-align:right;${sensNegatif ? 'color:var(--coral-fg);' : ''}">${pcEuro(sensNegatif ? -v : v, 0, true)}</span></div>`;
+    composition = lig('Grades bactério', C.grades, 'var(--primary)', false) + lig('Super A', C.superA, 'var(--primary)', false) + lig('Pénalités', C.penalites, 'var(--coral-fg)', true)
+      + `<div style="display:flex;align-items:center;gap:10px;font-size:13px;padding-top:10px;border-top:1px solid var(--border);font-weight:700;"><span style="width:120px;">Gain net</span><div style="flex:1;"></div><span style="width:90px;text-align:right;color:${d.gain >= 0 ? 'var(--green-fg)' : 'var(--coral-fg)'};">${pcEuro(d.gain, 0, true)}</span></div>`;
+    if (d.horsGain.mois.length) composition += `<p class="brd-note" style="margin:10px 0 0;">${d.horsGain.mois.join(', ')} : mois sans prix calculable (MSU absente), non inclus dans le gain${d.horsGain.superA > 0 ? ' — Super A ' + pcEuro(d.horsGain.superA, 0) : ''}${d.horsGain.penalites > 0 ? ' — pénalités ' + pcEuro(d.horsGain.penalites, 0) : ''}.</p>`;
+  }
+  return `<div class="brd" id="pc-economique">
+    <div class="brd-head">
+      <div><h2 class="brd-title">Bilan économique</h2><div class="brd-sub">Campagne ${d.libelle} · prix du lait et gain lié à la qualité</div></div>
+      <div class="brd-actions">
+        <select id="bilan-eco-campagne-select" aria-label="Campagne consultée">${campagnes.map(c => `<option value="${c}" ${c === campagne ? 'selected' : ''}>Campagne ${c + 1}</option>`).join('')}</select>
+        <button type="button" class="btn btn-secondary" id="btn-prix-coef">Coefficient MSU : <span id="prix-coef-value">${fmtDecimal(d.coef, 4)}</span> ✎</button>
+        <button type="button" class="btn btn-primary" id="btn-export-rapport-campagne-pdf">Rapport de campagne (PDF)</button>
+      </div>
+    </div>
+
+    <div class="card hidden" id="qualite-prix-coef-edit">
+      <div>
+        <div id="prix-coef-heritage" class="brd-note"></div>
+        <div class="brd-grid2" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+          <div><label>Prix référence (€/1000L) — optionnel</label><input type="number" step="0.01" id="prix-ref-input" placeholder="ex. 1580"></div>
+          <div><label>MSU référence (g/L) — optionnel</label><input type="number" step="0.01" id="msu-ref-input" placeholder="ex. 130"></div>
+          <div><label>Coefficient MSU (€/1000L par point)</label><div style="display:flex;gap:8px;"><input type="number" step="0.0001" id="prix-coef-input"><button type="button" class="btn btn-primary" id="btn-prix-coef-save" style="width:auto;padding:8px 16px;">OK</button></div></div>
+        </div>
+        <p class="brd-note" style="margin:8px 0 0;">Calculé si prix et MSU de référence sont remplis, sinon à saisir directement. L'enregistrer crée une entrée propre à cette campagne, sans toucher aux précédentes.</p>
+      </div>
+    </div>
+
+    <div class="pc-kpis">
+      ${kpi('Lait total produit', litres(d.litrageTank > 0 ? d.litrageTank : null), 'tank, toute la campagne')}
+      ${kpi('Prix moyen hors qualité', d.prixMoyenHors !== null ? pcEuro(d.prixMoyenHors, 1) : '—', '/1000 L, pondéré volume')}
+      ${kpi('Prix moyen avec qualité', d.prixMoyenAvec !== null ? pcEuro(d.prixMoyenAvec, 1) : '—', '/1000 L, pondéré volume', 'var(--primary)')}
+      ${kpi('Montant hors qualité', d.montantHors !== null ? pcEuro(d.montantHors, 0) : '—', 'au prix MSU seul')}
+      ${kpi('Montant avec qualité', d.montantAvec !== null ? pcEuro(d.montantAvec, 0) : '—', 'grades + Super A + pénalités', 'var(--primary)')}
+      ${kpi('Gain lié à la qualité', gainTxt, d.gainParMille !== null ? pcEuro(d.gainParMille, 1, true) + ' /1000 L' : '—', d.gain !== null ? (d.gain >= 0 ? 'var(--primary)' : 'var(--coral-fg)') : undefined)}
+    </div>
+
+    <div class="brd-grid2">
+      <div class="card">
+        <p class="brd-ttl">Montant du lait par mois</p>
+        <p class="brd-note">Prix hors qualité (vert clair) et gain qualité (vert foncé), en milliers d'euros</p>
+        ${d.litrageTank > 0 ? barres : '<div class="brd-vide">Aucune saisie tank sur cette campagne.</div>'}
+        <div class="chip-list" id="bilan-eco-mois" style="margin-top:12px;">${chips}</div>
+        <p class="brd-note" style="margin:0;">Les mois en pointillé n'ont pas de prélèvement qualité. Cliquer sur un mois affiche son détail.</p>
+      </div>
+      <div class="card" id="bilan-eco-prix-mois-card">
+        <p class="brd-ttl">Détail du mois${moisSel ? ' : ' + moisSel.libelle : ''}</p>
+        ${detailMois}
+      </div>
+    </div>
+
+    <div class="brd-grid2">
+      <div class="card"><p class="brd-ttl">Composition du gain qualité</p><p class="brd-note">Sur toute la campagne</p>${composition}</div>
+      <div class="card pc-card-warn" style="background:var(--amber-bg);">
+        <p class="brd-ttl" style="color:var(--amber-fg);">À vérifier hors Ovilog</p>
+        <p style="margin:0;font-size:13px;color:var(--amber-fg);">Le statut Super A est calculé sur les critères suivis par Ovilog (4 grades + Listéria / Salmonelles). La grille laitière exige aussi l'absence d'antibiotiques, de virage résazurine et de déclassement pour conditions d'hygiène insuffisantes. À contrôler avant application.</p>
+        <p style="margin:10px 0 0;font-size:12px;color:var(--amber-fg);">Pour le tank, les prélèvements bruts ou le détail mensuel TB / TP / cellules / MSU : module Production laitière.</p>
       </div>
     </div>
   </div>`;
