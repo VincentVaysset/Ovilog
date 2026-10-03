@@ -1,7 +1,11 @@
-/* Référence « mobile identique » du Carnet sanitaire (écrans mobiles : Sanitaire, Gérer les produits, Sous délai d'attente,
-   Traitement collectif, historique des traitements collectifs, Ordonnances, saisie d'un soin brebis, fiche brebis avec son
-   carnet) : HTML comparé octet pour octet à tests/ref/carnet_mobile.json, pris AVANT le chantier « Carnet sanitaire PC »
-   (jeu SYNTHÉTIQUE, horloge figée). Régénérer volontairement : OVILOG_MAJ_REF=1 node test_carnet_mobile_reference.mjs */
+/* Référence « mobile identique » du Carnet sanitaire (écrans mobiles : Sanitaire -- devenu le même parcours unifié que le
+   PC, chantier « Carnet sanitaire mobile/PC unifié » --, Gérer les produits, Sous délai d'attente, historique des
+   traitements collectifs, Ordonnances, carnet ouvert depuis la fiche d'une brebis avec cet animal présélectionné, fiche
+   brebis) : HTML comparé octet pour octet à tests/ref/carnet_mobile.json (jeu SYNTHÉTIQUE, horloge figée). Les anciens
+   écrans « Traitement collectif (nouveau) » et « Ajout carnet sanitaire » individuel (routes 'traitement-collectif' /
+   'add-sanitaire') ont été retirés de cette référence : supprimés par ce même chantier, remplacés par le parcours unifié
+   capturé ci-dessous sous 'sanitaire' et 'carnet_depuis_fiche'. Régénérer volontairement :
+   OVILOG_MAJ_REF=1 node test_carnet_mobile_reference.mjs */
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
@@ -36,10 +40,10 @@ const res = await page.evaluate(() => {
   render('sanitaire'); R.sanitaire = app();
   render('gerer-produits'); R.gerer_produits = app();
   render('sous-delai'); R.sous_delai = app();
-  render('traitement-collectif'); R.traitement_collectif = app();
   render('traitements-collectifs'); R.traitements_collectifs = app();
   render('ordonnances'); R.ordonnances = app();
-  currentSheepId = DB.brebis[0].id; editContext = null; render('add-sanitaire'); R.add_sanitaire = app();
+  carnetSanitaireEtat = Object.assign(carnetEtatInitial({ preselectEid: DB.brebis[0].eid }), { produit: 'Intramicine', dose: '8', voie: 'Intramusculaire', delaiViande: '28', delaiLait: '7', ecran: 2 });
+  render('sanitaire'); R.carnet_depuis_fiche = app();
   render('detail', DB.brebis[0].id); R.fiche_brebis = app();
   return R;
 });

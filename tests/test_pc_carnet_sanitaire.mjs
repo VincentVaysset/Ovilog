@@ -49,7 +49,7 @@ await page.evaluate(() => {
 });
 const $t = sel => page.evaluate(s => document.querySelector(s) ? document.querySelector(s).textContent.replace(/\s+/g, ' ').trim() : null, sel);
 const nbSoins = () => page.evaluate(() => DB.brebis.concat(DB.beliers, DB.agnelles).reduce((s, a) => s + (a.sanitaire || []).length, 0));
-const ouvrir = async () => { await page.evaluate(() => { carnetSanitairePcEtat = null; carnetDernierLot = null; render('sanitaire'); }); await page.waitForSelector('#pc-carnet'); };
+const ouvrir = async () => { await page.evaluate(() => { carnetSanitaireEtat = null; carnetDernierLot = null; render('sanitaire'); }); await page.waitForSelector('#pc-carnet'); };
 
 // ================================================================ 1. écran 1 : le soin
 await ouvrir();
@@ -123,16 +123,16 @@ await page.waitForSelector('#cs-table');
 const lignes = () => page.evaluate(() => [...document.querySelectorAll('#cs-table tr.clic')].map(r => r.dataset.eid));
 let l = await lignes();
 const numerosOrdre = await page.evaluate(() => [...document.querySelectorAll('#cs-table tr.clic')].map(r => r.children[1].textContent.trim() + '/' + r.children[2].textContent.trim()));
-check(numerosOrdre.join() === 'n°00090/Bélier,n°00001/Brebis,n°00002/Brebis,n°00003/Brebis,n°00004/Antenaise,n°00005/Antenaise,n°00070/Agnelle', 'tri de l\'écran 2 : âge décroissant (bélier 4 ans, brebis 3 ans, antenaises 1 an, agnelle 0), puis n° croissant à âge égal : ' + numerosOrdre.join());
-check(l.length === 5 + 1 + 1, 'animaux actifs : 5 brebis (dont antenaises) + 1 bélier + 1 agnelle = 7, ni vendue, ni agneau : ' + l.length);
-check(!(await page.evaluate(() => /vendue|Vendue/.test(document.getElementById('cs-table').textContent))) && !l.includes(await page.evaluate(() => E(3, 6))) && !l.includes(await page.evaluate(() => E(6, 800))), 'animal inactif et agneau absents');
+check(numerosOrdre.join() === 'n°00090/Bélier,n°00001/Brebis,n°00002/Brebis,n°00003/Brebis,n°00004/Antenaise,n°00005/Antenaise,n°00070/Agnelle,n°00800/Agneau', 'tri de l\'écran 2 : âge décroissant (bélier 4 ans, brebis 3 ans, antenaises 1 an, agnelle et agneau 0), puis n° croissant à âge égal : ' + numerosOrdre.join());
+check(l.length === 5 + 1 + 1 + 1, 'animaux actifs : 5 brebis (dont antenaises) + 1 bélier + 1 agnelle + 1 agneau = 8, ni vendue : ' + l.length);
+check(!(await page.evaluate(() => /vendue|Vendue/.test(document.getElementById('cs-table').textContent))) && !l.includes(await page.evaluate(() => E(3, 6))) && l.includes(await page.evaluate(() => E(6, 800))), 'animal inactif absent, agneau présent (chantier "Agneaux dans le carnet unifié")');
 const cats = await page.evaluate(() => [...document.querySelectorAll('.cs-cat')].map(b => b.textContent.replace(/\s+/g, ' ').trim()));
-check(cats.join('|') === '✓ Brebis 3|✓ Antenaises 2|✓ Agnelles 1|✓ Béliers 1', 'catégories avec comptes : ' + cats.join('|'));
+check(cats.join('|') === '✓ Brebis 3|✓ Antenaises 2|✓ Agnelles 1|✓ Béliers 1|✓ Agneaux 1', 'catégories avec comptes : ' + cats.join('|'));
 check(/déjà sous délai/.test(await $t('#cs-nsel')) === false, 'rien de sélectionné : pas de mention de délai');
 const ligne0 = await page.evaluate(() => { const e = E(3, 1); return document.querySelector('tr[data-eid="' + e + '"]').textContent.replace(/\s+/g, ' ').trim(); });
 check(/lait dès le 08\/10/.test(ligne0) && /viande dès le 29\/10/.test(ligne0), 'brebis déjà sous délai : pastille informative (lait dès le 08/10, viande dès le 29/10) : ' + ligne0);
 // multi-choix : décocher Antenaises, Agnelles, Béliers
-await page.click('.cs-cat[data-cat="antenaises"]'); await page.click('.cs-cat[data-cat="agnelles"]'); await page.click('.cs-cat[data-cat="beliers"]');
+await page.click('.cs-cat[data-cat="antenaises"]'); await page.click('.cs-cat[data-cat="agnelles"]'); await page.click('.cs-cat[data-cat="beliers"]'); await page.click('.cs-cat[data-cat="agneaux"]');
 check((await lignes()).length === 3, 'seulement Brebis : 3 lignes');
 await page.click('.cs-cat[data-cat="antenaises"]');
 check((await lignes()).length === 5, 'Brebis + Antenaises (multi-choix) : 5 lignes');
@@ -145,9 +145,9 @@ await page.selectOption('#cs-millesime', '');
 await page.selectOption('#cs-flot', 'L1');
 check((await lignes()).length === 2, 'lot A : 2 lignes');
 await page.click('#cs-reset');
-check((await lignes()).length === 7 && await page.evaluate(() => document.getElementById('cs-q').value === ''), 'réinitialiser : 7 lignes');
+check((await lignes()).length === 8 && await page.evaluate(() => document.getElementById('cs-q').value === ''), 'réinitialiser : 8 lignes');
 // clic sur une ligne coche ; Tout cocher sur le résultat filtré uniquement
-await page.click('.cs-cat[data-cat="agnelles"]'); await page.click('.cs-cat[data-cat="beliers"]'); await page.click('.cs-cat[data-cat="antenaises"]');
+await page.click('.cs-cat[data-cat="agnelles"]'); await page.click('.cs-cat[data-cat="beliers"]'); await page.click('.cs-cat[data-cat="antenaises"]'); await page.click('.cs-cat[data-cat="agneaux"]');
 await page.click('#cs-tout');
 check(/3 sélectionnés/.test(await $t('#cs-compte')) && /3 animaux sélectionnés/.test(await $t('#cs-nsel')) && /1 déjà sous délai/.test(await $t('#cs-nsel')), 'Tout cocher : 3 brebis, 1 déjà sous délai (information) : ' + await $t('#cs-nsel'));
 await page.click('.cs-cat[data-cat="antenaises"]'); await page.click('.cs-cat[data-cat="beliers"]');
@@ -159,12 +159,13 @@ check(/1 sélectionné/.test(await $t('#cs-compte')) && await page.evaluate(() =
 await page.click('tr[data-eid="' + await page.evaluate(() => E(5, 4)) + '"]');
 check(/0 sélectionné/.test(await $t('#cs-compte')), 'second clic : décochée');
 check(await nbSoins() === 1 && await page.evaluate(() => window.__saves) === 0, 'rien d\'écrit pendant la sélection');
-console.log('OK 3 écran 2 : 7 actifs (ni vendue ni agneau), filtres multi-choix, recherche, millésime, lot, réinitialiser, Tout cocher / décocher sur le filtré, pastille sans blocage, rien d\'écrit.');
+console.log('OK 3 écran 2 : 8 actifs (brebis/antenaises/agnelles/béliers/agneaux, ni vendue), filtres multi-choix, recherche, millésime, lot, réinitialiser, Tout cocher / décocher sur le filtré, pastille sans blocage, rien d\'écrit.');
 
 // ================================================================ 4. enregistrement : un soin par animal, annulation du lot
 await page.click('#cs-enregistrer');
 check(/Sélectionne au moins un animal/.test(await $t('#cs-msg')) && await nbSoins() === 1, 'aucun animal : refusé');
 await page.click('#cs-reset');
+await page.click('.cs-cat[data-cat="agneaux"]');   // agneaux exclus de ce lot : scénario inchangé (test séparé pour leur inclusion)
 await page.click('#cs-tout');          // 5 brebis + 1 agnelle + 1 bélier
 reponse = false;
 await page.click('#cs-enregistrer');
@@ -210,8 +211,15 @@ await page.waitForFunction(() => !document.getElementById('cs-dernier-lot'));
 check(await page.evaluate(() => DB.brebis[4].sanitaire.length === 0), 'annulable aussi');
 console.log('OK 5 un seul animal : soin individuel annulable.');
 
-// ================================================================ 6. mobile non touché : redirection PC uniquement
-const mob = await page.evaluate(() => { const o = isDesktopMode; window.electronAPI.isDesktop = false; render('sanitaire'); const t = document.getElementById('app').textContent; window.electronAPI.isDesktop = true; return { carnet: !!document.getElementById('pc-carnet'), t }; });
-check(!mob.carnet && /Traitement collectif \(nouveau\)/.test(mob.t), 'hors PC : l\'écran Sanitaire mobile reste celui d\'origine');
-console.log('OK 6 mobile : écran Sanitaire d\'origine hors PC.');
+// ================================================================ 6. mobile : même parcours unifié, écran 2 en cartes + scan (pas le tableau PC)
+const mobile1 = await page.evaluate(() => { window.electronAPI.isDesktop = false; carnetSanitaireEtat = null; render('sanitaire'); return { carnet: !!document.getElementById('pc-carnet'), ancienEcran: /Traitement collectif \(nouveau\)/.test(document.getElementById('app').textContent) }; });
+check(mobile1.carnet && !mobile1.ancienEcran, 'mobile : même carnet unifié (le soin, puis les animaux) -- l\'ancien écran « Traitement collectif (nouveau) » a disparu');
+await page.selectOption('#cs-produit', 'Intramicine');
+await page.fill('#cs-dose', '8');
+await page.selectOption('#cs-voie', { index: 1 });
+await page.click('#cs-suivant');
+await page.waitForSelector('#cs-cards');
+check(await page.evaluate(() => !document.getElementById('cs-table') && !!document.getElementById('cs-cards') && !!document.getElementById('cs-scan-feedback')), 'mobile écran 2 : cartes + champ scan EID, pas le tableau PC');
+await page.evaluate(() => { window.electronAPI.isDesktop = true; });
+console.log('OK 6 mobile : même parcours unifié que PC, écran 2 en cartes avec scan.');
 await browser.close();
