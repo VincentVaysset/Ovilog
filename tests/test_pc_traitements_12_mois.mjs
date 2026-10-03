@@ -181,8 +181,8 @@ console.log('OK 8 seuil réglable (entier ≥ 1) ; bio non activé : suivi inact
 // ================================================================ 9. mobile : même fonction, liste compacte
 await jeu(true, 35);
 await page.evaluate(() => { window.electronAPI.isDesktop = false; render('sanitaire'); });
-check(await page.evaluate(() => !!document.getElementById('btn-12-mois')), 'mobile : bouton « Traitements sur 12 mois » sur l\'écran Sanitaire (bio activé)');
-await page.click('#btn-12-mois'); await page.waitForSelector('#m12');
+check(await page.evaluate(() => !!document.getElementById('cs-12-mois')), 'mobile : bouton « Traitements sur 12 mois » sur le carnet (bio activé)');
+await page.click('#cs-12-mois'); await page.waitForSelector('#m12');
 const mk = await page.evaluate(() => [...document.querySelectorAll('#m12 .card')].slice(0, 3).map(c => c.textContent.replace(/\s+/g, ' ').trim()));
 check(/2 traitements\s*3/.test(mk[0]) && /3 : limite\s*1/.test(mk[1]) && /4 et plus\s*1/.test(mk[2]), 'mobile : cartes 2 / 3 limite / 4 et plus : ' + mk.join(' | '));
 check(await page.evaluate(() => document.querySelectorAll('.m12-an').length) === 41, 'mobile : 41 animaux (même fonction que le PC)');
@@ -196,7 +196,7 @@ await page.click('#m12-vue-interv');
 check(/35 animaux/.test(await $t('#m12-interventions')), 'mobile : vue par intervention');
 check(await page.evaluate(() => window.__saves === 0 && JSON.stringify(DB) === window.__avant), 'mobile : lecture seule');
 await page.evaluate(() => { DB.exploitation.elevageBio = false; render('sanitaire'); });
-check(await page.evaluate(() => !document.getElementById('btn-12-mois')), 'mobile, bio non activé : pas de bouton');
+check(await page.evaluate(() => !document.getElementById('cs-12-mois')), 'mobile, bio non activé : pas de bouton');
 await page.evaluate(() => { window.electronAPI.isDesktop = true; });
 console.log('OK 9 mobile : cartes, filtres rapides, ligne dépliable, vue par intervention, lecture seule ; bouton seulement si bio.');
 await browser.close();

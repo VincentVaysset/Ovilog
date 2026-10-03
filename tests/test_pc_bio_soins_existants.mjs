@@ -44,7 +44,7 @@ const $t = sel => page.evaluate(s => document.querySelector(s) ? document.queryS
 
 // ================================================================ 1. liste : seulement les soins de la 1.0.198 sans indicateur bio ; rien écrit
 await jeu(true);
-await page.evaluate(() => { carnetSanitairePcEtat = null; render('sanitaire'); });
+await page.evaluate(() => { carnetSanitaireEtat = null; render('sanitaire'); });
 await page.waitForSelector('#cs-bandeau-bio');
 check(/4 soins enregistrés avec la 1.0.198 sans indicateur bio/.test(await $t('#cs-bandeau-bio')) && /Rien n'est modifié sans ton clic/.test(await $t('#cs-bandeau-bio')), 'bandeau sur le carnet : 4 soins (2 de la brebis, 1 Séléphérol d\'agneau, 1 archivé) : ' + await $t('#cs-bandeau-bio'));
 await page.click('#cs-voir-bio'); await page.waitForSelector('#sb-table');
@@ -81,7 +81,7 @@ console.log('OK 2 sécurité : confirmation refusée, sauvegarde en échec ou an
 
 // ================================================================ 3. application : sauvegarde AVANT, soins cochés seulement, figés
 await jeu(true);
-await page.evaluate(() => { carnetSanitairePcEtat = null; render('soins-sans-bio'); });
+await page.evaluate(() => { carnetSanitaireEtat = null; render('soins-sans-bio'); });
 await page.waitForSelector('#sb-table');
 const copieAvant = await page.evaluate(() => JSON.parse(window.__avant));
 await page.click('#sb-appliquer');
@@ -109,7 +109,7 @@ console.log('OK 4 annulation : retour exact aux délais d\'origine.');
 
 // ================================================================ 5. bio non activé : rien à faire
 await jeu(false);
-await page.evaluate(() => { carnetSanitairePcEtat = null; render('sanitaire'); });
+await page.evaluate(() => { carnetSanitaireEtat = null; render('sanitaire'); });
 check(await page.evaluate(() => !document.getElementById('cs-bandeau-bio')), 'bio non activé : pas de bandeau');
 await page.evaluate(() => render('soins-sans-bio'));
 await page.waitForSelector('#sb-pas-bio');
