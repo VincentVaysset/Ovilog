@@ -7920,6 +7920,7 @@ function wireInventaireAgneaux() {
 const MV_CATEGORIES_PC = [['brebis', 'Brebis'], ['beliers', 'Béliers'], ['agnelles', 'Agnelles'], ['agneaux', 'Agneaux']];
 let mvPcEtat = null;
 function mvPcEtatInitial() {
+  mvPassesEtat = { cats: { brebis: true, beliers: true, agnelles: true, agneaux: true }, type: '', periode: 'courante', acheteur: '', q: '', toutVoir: false };   // filtres des mouvements passés : remis à zéro à chaque entrée sur la page
   return { categorie: 'brebis', type: null, cause: '', acheteur: '', date: jourAujourdhuiISO(), q: '', erreurs: [], message: '',
     selections: { brebis: new Set(), beliers: new Set(), agnelles: new Set(), agneaux: new Set() } };
 }
@@ -8082,6 +8083,189 @@ function renderMouvementsPc() {
   };
   dessiner();
   if (typeof mouvementsPassesPcHtml === 'function') mouvementsPassesPcHtml($('mv-passes'));
+}
+
+/* ---------- Mouvements passés (page PC « Mouvements d'animaux », sous la saisie) ----------
+   Un tableau UNIQUE (remplace les 4 onglets et l'écran « Gérer / annuler un mouvement collectif ») : une ligne par mouvement de SORTIE, toutes
+   catégories (brebis, béliers, agnelles archivées, agneaux), vivants ET archivés (registre), sans doublon. Période par défaut : campagne en
+   cours (depuis la date de bascule, comme l'ancien affichage) ; autres campagnes et « Toutes » au choix. Annuler (mouvement ou lot) : TOUJOURS avec
+   confirmation, l'animal retrouve son statut précédent ; agnelles (archivées) et animaux archivés : pas de bouton (non annulable
+   automatiquement). Lecture seule tant qu'on n'a pas confirmé une annulation. */
+const TYPES_SORTIE_MV = ['Morte', 'Mort', 'Vente', 'Vendu', 'Vente reproduction', 'Perte', 'Autoconsommation'];
+const CLE_CATEGORIE_MV = { 'Brebis': 'brebis', 'Bélier': 'beliers', 'Agnelle': 'agnelles', 'Agneau': 'agneaux' };
+let mvPassesEtat = { cats: { brebis: true, beliers: true, agnelles: true, agneaux: true }, type: '', periode: 'courante', acheteur: '', q: '', toutVoir: false };
+function mouvementsPassesPc() {
+  const rows = [], vus = new Map();
+  const lots = new Map((DB.mouvementsCollectifs || []).map(l => [l.id, l]));
+  const ajouter = (animalVivant, entryEid, categorie, m, archive, lamb) => {
+    if (!m || !TYPES_SORTIE_MV.includes(m.type)) return;
+    const vivant = !archive && !!animalVivant && (lamb ? (lamb.mouvements || []) : (animalVivant.mouvements || [])).includes(m);
+    const cle = [entryEid, m.type, m.date, m.cause || '', m.acheteur || '', m.collectifId || ''].join('|');
+    const row = { date: m.date || '', eid: entryEid, categorie, cle: CLE_CATEGORIE_MV[categorie], type: m.type, cause: m.cause || '', acheteur: m.acheteur || '', detail: m.cause || m.acheteur || '',
+      collectifId: m.collectifId || null, lot: m.collectifId ? (lots.get(m.collectifId) || null) : null, mvt: m, animal: lamb || animalVivant || null, vivant, numero: numeroVisuel(entryEid || ''),
+      court: (lamb || animalVivant || {}).numeroCourtTravailSieol || (lamb || animalVivant || {}).numeroTravailSieol || '' };
+    const deja = vus.get(cle);
+    if (deja) { if (!deja.vivant && vivant) rows[rows.indexOf(deja)] = row, vus.set(cle, row); return; }   // un mouvement présent dans l'actif ET dans l'archive : on garde la version vivante
+    vus.set(cle, row); rows.push(row);
+  };
+  [['brebis', 'Brebis', DB.brebis], ['beliers', 'Bélier', DB.beliers || []], ['agnelles', 'Agnelle', DB.agnelles || []]].forEach(([k, lab, vivants]) => {
+    registreEntriesFor(k).forEach(entry => {
+      const vivantObj = vivants.find(a => a.eid === entry.eid) || null;
+      (entry.mouvements || []).forEach(m => ajouter(vivantObj, entry.eid, lab, m, false));
+      if (k === 'brebis') (entry.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => {
+        if (!l.eid || (l.sexe === 'Femelle' && l.triStatut === 'gardée')) return;           // même garde que le registre : pas de doublon avec « Agnelle »
+        (l.mouvements || []).forEach(m => ajouter(vivantObj, l.eid, 'Agneau', m, !vivantObj, l));
+      }));
+    });
+  });
+  const num = r => r.court || r.numero;
+  return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)) || comparerAnimauxAgeNumero({ age: null, court: num(a), numero: a.numero }, { age: null, court: num(b), numero: b.numero }));
+}
+function periodeMvDe(row) {
+  const debut = debutAffichageMouvements();
+  if (debut) { if (row.date >= debut) return 'courante'; }
+  else if (campagneDeDateRegistre(row.date) === DB.campagneDebut) return 'courante';
+  const c = campagneDeDateRegistre(row.date);
+  return c === null ? 'inconnue' : 'c' + c;
+}
+function libelleLotMv(lot) {
+  const jj = lot.date ? lot.date.slice(8, 10) + '/' + lot.date.slice(5, 7) : '??/??';
+  const qui = lot.acheteur || lot.cause || '';
+  return 'Lot du ' + jj + ' · ' + libAnimauxCat((lot.membres || []).length, lot.categorie || 'brebis') + (qui ? ' · ' + qui : '');
+}
+// Membres du lot déjà archivés au registre (donc non restaurables) : même règle que l'ancien écran « Gérer / annuler »
+function membresArchivesLot(lot) {
+  if (!lot.annulable) return [];
+  const cfg = CATEGORIE_ANIMAL_CONFIG[lot.categorie || 'brebis'];
+  const poolEids = new Set(poolLectureMv(lot.categorie || 'brebis').map(a => a.eid));
+  return (lot.membres || []).filter(eid => !poolEids.has(eid));
+}
+const estLotSystemeMv = lot => !!lot && lot.cause === MOTIF_MAJ_INVENTAIRE;
+function recalculerApresAnnulationMv(cle, animal) {
+  if (cle === 'beliers') recalculerStatutBelier(animal); else if (cle === 'agneaux') recalculerStatutFinalAgneau(animal); else recalculerStatutBrebis(animal);
+}
+// Statut qu'aurait l'animal une fois ce mouvement retiré (pour le dire dans la confirmation)
+function statutApresRetraitMv(row) {
+  const copie = { mouvements: (row.animal.mouvements || []).filter(x => x !== row.mvt), statut: row.animal.statut, statutFinal: row.animal.statutFinal };
+  recalculerApresAnnulationMv(row.cle, copie);
+  return row.cle === 'agneaux' ? (copie.statutFinal ? copie.statutFinal : 'active') : copie.statut;
+}
+function annulerMouvementMv(row) {
+  row.animal.mouvements.splice(row.animal.mouvements.indexOf(row.mvt), 1);
+  recalculerApresAnnulationMv(row.cle, row.animal);
+  saveData(DB);
+}
+// Annule un lot : retire, pour chaque membre encore vivant, le mouvement marqué de ce lot et recalcule son statut ; retourne { restaures, archives }
+function annulerLotMv(lot) {
+  const cle = lot.categorie || 'brebis', archives = membresArchivesLot(lot);
+  let restaures = 0;
+  poolLectureMv(cle).forEach(animal => {
+    if (!animal.mouvements) return;
+    const idx = animal.mouvements.findIndex(mv => mv.collectifId === lot.id);
+    if (idx === -1) return;
+    animal.mouvements.splice(idx, 1);
+    recalculerApresAnnulationMv(cle, animal);
+    restaures++;
+  });
+  if (archives.length) lot.membres = archives;      // jamais supprimé en silence : les archivés restent listés comme « déjà archivés »
+  else DB.mouvementsCollectifs = (DB.mouvementsCollectifs || []).filter(x => x.id !== lot.id);
+  saveData(DB);
+  return { restaures, archives: archives.length };
+}
+const PILL_TYPE_MV = t => ({ 'Morte': 'danger', 'Mort': 'danger', 'Vente': 'info', 'Vendu': 'info', 'Vente reproduction': 'ok', 'Perte': 'neutral', 'Autoconsommation': 'warn' }[t] || 'neutral');
+function filtrerMouvementsPassesMv(rows, f) {
+  const q = (f.q || '').replace(/\s+/g, '').toLowerCase();
+  return rows.filter(r => f.cats[r.cle]
+    && (!f.type || r.type === f.type)
+    && (f.periode === 'toutes' || periodeMvDe(r) === f.periode)
+    && (!f.acheteur || r.acheteur === f.acheteur)
+    && (!q || r.numero.toLowerCase().includes(q) || r.court.toLowerCase().includes(q) || cleanEid(r.eid || '').toLowerCase().includes(q)));
+}
+function mouvementsPassesPcHtml(conteneur) {
+  const F = mvPassesEtat;
+  const toutes = mouvementsPassesPc();
+  const periodes = Array.from(new Set(toutes.map(periodeMvDe))).filter(x => x !== 'courante' && x !== 'inconnue').sort().reverse();
+  const nomPeriode = k => k === 'courante' ? 'Campagne en cours' : k === 'toutes' ? 'Toutes' : k === 'inconnue' ? 'Date inconnue' : 'Campagne ' + (parseInt(k.slice(1), 10) + 1);
+  if (F.periode !== 'courante' && F.periode !== 'toutes' && !periodes.includes(F.periode) && F.periode !== 'inconnue') F.periode = 'courante';
+  // effectifs des catégories dans la période choisie (autres filtres ignorés), comme la maquette
+  const dansPeriode = toutes.filter(r => F.periode === 'toutes' || periodeMvDe(r) === F.periode);
+  const cpt = k => dansPeriode.filter(r => r.cle === k).length;
+  const liste = filtrerMouvementsPassesMv(toutes, F);
+  const types = Array.from(new Set(toutes.map(r => r.type)));
+  const acheteurs = Array.from(new Set(toutes.map(r => r.acheteur).filter(Boolean))).sort();
+  const montres = F.toutVoir ? liste : liste.slice(0, 50);
+  const jjmmaaaa = formatDateFr;
+  const actions = r => {
+    if (!r.vivant) return `<span style="font-size:12px;color:var(--text-muted);">${r.cle === 'agnelles' ? 'agnelle archivée : ni modification ni annulation' : 'animal archivé au registre'}</span>`;
+    const modif = `<button type="button" class="btn btn-secondary mv-modifier" data-cle="${r.cle}" data-eid="${r.eid}" data-i="${r.animal.mouvements.indexOf(r.mvt)}" style="width:auto;padding:4px 10px;font-size:12px;">Modifier</button>`;
+    if (r.lot) {
+      if (!r.lot.annulable) return modif + ' <span style="font-size:12px;color:var(--text-muted);">lot non annulable automatiquement</span>';
+      return modif + ` <button type="button" class="btn btn-secondary mv-annuler-lot" data-id="${r.lot.id}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Annuler le lot</button>`;
+    }
+    return modif + ` <button type="button" class="btn btn-secondary mv-annuler" data-cle="${r.cle}" data-eid="${r.eid}" data-i="${r.animal.mouvements.indexOf(r.mvt)}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Annuler</button>`;
+  };
+  conteneur.innerHTML = `<p class="pc-sec">Mouvements passés</p>
+    <div class="card" style="margin-bottom:16px;"><div class="pc-filtres-ligne">
+      <div style="flex:0 0 auto;"><label>Catégories</label><div style="display:flex;gap:6px;flex-wrap:wrap;">${MV_CATEGORIES_PC.map(([k, l]) => `<button type="button" class="pc-gc mvp-cat${F.cats[k] ? ' on' : ''}" data-cat="${k}">${F.cats[k] ? '✓ ' : ''}${l} <small>${cpt(k)}</small></button>`).join('')}</div></div>
+      <div style="flex:0 0 170px;"><label for="mvp-type">Type</label><select id="mvp-type"><option value="">Tous</option>${types.map(t => `<option value="${t}"${F.type === t ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div style="flex:0 0 190px;"><label for="mvp-periode">Période</label><select id="mvp-periode"><option value="courante"${F.periode === 'courante' ? ' selected' : ''}>Campagne en cours</option>${periodes.map(k => `<option value="${k}"${F.periode === k ? ' selected' : ''}>${nomPeriode(k)}</option>`).join('')}<option value="toutes"${F.periode === 'toutes' ? ' selected' : ''}>Toutes</option></select></div>
+      <div style="flex:0 0 170px;"><label for="mvp-acheteur">Acheteur</label><select id="mvp-acheteur"><option value="">Tous</option>${acheteurs.map(a => `<option value="${a.replace(/"/g, '&quot;')}"${F.acheteur === a ? ' selected' : ''}>${a}</option>`).join('')}</select></div>
+      <div style="flex:1 1 200px;min-width:160px;"><label for="mvp-q">Rechercher un n°</label><input type="text" id="mvp-q" value="${F.q}" placeholder="Saisir un n°" autocomplete="off"></div>
+    </div></div>
+    <div class="card" id="mvp-carte">
+      <div class="pc-cardhead" style="margin-bottom:8px;"><p class="brd-ttl" style="margin:0;" id="mvp-compte">${liste.length} mouvement${liste.length > 1 ? 's' : ''}</p><button type="button" class="btn btn-secondary" id="mvp-export" style="width:auto;padding:6px 14px;">Export Excel</button></div>
+      <div style="overflow-x:auto;"><table class="pc-t" id="mvp-table"><tr><th class="l">Date</th><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type</th><th class="l">Cause / acheteur</th><th class="l">Lot</th><th style="text-align:right;">Actions</th></tr>
+      ${montres.map(r => `<tr data-eid="${r.eid}"><td class="l">${jjmmaaaa(r.date)}</td><td class="l"><b>${r.court || r.numero}</b></td><td class="l">${r.categorie}</td><td class="l">${pcPill(PILL_TYPE_MV(r.type), r.type)}</td><td class="l">${r.detail || '—'}</td><td class="l">${r.collectifId ? `<span class="pc-pill neutral" style="white-space:normal;">${r.lot ? libelleLotMv(r.lot) : 'Lot introuvable'}</span>` : '—'}</td><td style="text-align:right;white-space:nowrap;">${actions(r)}</td></tr>`).join('') || '<tr><td colspan="7" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun mouvement ne correspond aux filtres.</td></tr>'}</table></div>
+      ${liste.length > montres.length ? `<p style="margin:10px 0 0;text-align:center;"><button type="button" class="btn btn-secondary" id="mvp-voir-tout" style="width:auto;">Voir les ${liste.length - montres.length} autres</button></p>` : ''}
+      <p class="brd-note" style="margin:10px 0 0;">Annuler demande toujours une confirmation et remet l'animal à son statut précédent (« active » s'il n'a pas d'autre sortie). Annuler un lot annule tous ses mouvements d'un coup. Les agnelles sorties sont archivées : non annulables automatiquement.</p>
+    </div>`;
+  const $ = id => conteneur.querySelector('#' + id);
+  const redessiner = () => mouvementsPassesPcHtml(conteneur);
+  conteneur.querySelectorAll('.mvp-cat').forEach(b => { b.onclick = () => { F.cats[b.dataset.cat] = !F.cats[b.dataset.cat]; redessiner(); }; });
+  $('mvp-type').onchange = ev => { F.type = ev.target.value; redessiner(); };
+  $('mvp-periode').onchange = ev => { F.periode = ev.target.value; F.toutVoir = false; redessiner(); };
+  $('mvp-acheteur').onchange = ev => { F.acheteur = ev.target.value; redessiner(); };
+  $('mvp-q').addEventListener('input', ev => { F.q = ev.target.value; const pos = ev.target.selectionStart; redessiner(); const n = $('mvp-q'); n.focus(); n.setSelectionRange(pos, pos); });
+  if ($('mvp-voir-tout')) $('mvp-voir-tout').onclick = () => { F.toutVoir = true; redessiner(); };
+  $('mvp-export').onclick = () => exporterMouvementsPassesXlsx(liste);
+  const trouver = b => liste.find(r => r.cle === b.dataset.cle && r.eid === b.dataset.eid && r.vivant && r.animal.mouvements.indexOf(r.mvt) === parseInt(b.dataset.i, 10));
+  conteneur.querySelectorAll('.mv-modifier').forEach(b => { b.onclick = () => {
+    const r = trouver(b) || liste.find(x => x.eid === b.dataset.eid && x.vivant); if (!r) return;
+    const idx = r.animal.mouvements.indexOf(r.mvt);
+    if (r.cle === 'brebis') { detailOrigin = 'inventaire'; previousDetailId = null; currentSheepId = r.animal.id; editContext = { kind: 'mouvements', idx }; render('add-mouvement', r.animal.id); }
+    else if (r.cle === 'beliers') { belierDetailOrigin = 'inventaire'; currentBelierId = r.animal.id; editBelierContext = { kind: 'mouvements', idx }; render('add-mouvement-belier'); }
+    else if (r.cle === 'agneaux') { agneauDetailOrigin = 'inventaire'; currentAgneauEid = r.animal.eid; editAgneauContext = { kind: 'mouvements', idx }; render('add-mouvement-agneau'); }
+  }; });
+  conteneur.querySelectorAll('.mv-annuler').forEach(b => { b.onclick = () => {
+    const r = trouver(b); if (!r) return;
+    const apres = statutApresRetraitMv(r);
+    if (!confirm('Annuler ce mouvement ?\n\n' + r.categorie + ' n°' + (r.court || r.numero) + ' · ' + r.type + (r.detail ? ' · ' + r.detail : '') + ' · ' + formatDateFr(r.date) + '\n\nLe mouvement est retiré ; l\'animal repasse « ' + (apres === 'active' || apres === 'actif' ? 'active' : apres) + ' ».')) return;
+    annulerMouvementMv(r);
+    mvPcEtat = mvPcEtat || mvPcEtatInitial();
+    mvPcEtat.message = '<b>Annulé</b> : ' + r.type + ' · ' + r.categorie + ' n°' + (r.court || r.numero) + '.';
+    renderMouvementsPc();
+  }; });
+  conteneur.querySelectorAll('.mv-annuler-lot').forEach(b => { b.onclick = () => {
+    const lot = (DB.mouvementsCollectifs || []).find(x => x.id === b.dataset.id); if (!lot) return;
+    const archives = membresArchivesLot(lot), restaures = (lot.membres || []).length - archives.length;
+    if (restaures <= 0) { alert('Tous les animaux de ce lot sont déjà archivés au registre : annulation impossible.'); return; }
+    const cat = lot.categorie || 'brebis', e = (cat === 'brebis' || cat === 'agnelles') ? 'e' : '', pl = n => n > 1 ? 's' : '';   // accord : brebis/agnelles féminins, béliers/agneaux masculins
+    const lib = libAnimauxCat(restaures, cat);
+    const msg = (estLotSystemeMv(lot) ? 'Annuler cette « Mise à jour inventaire » ?\n\n' : 'Annuler ce lot ?\n\n') + libelleLotMv(lot) + '\n\n' + lib + ' restauré' + e + pl(restaures) + ' : ' + (restaures > 1 ? (e ? 'chacune' : 'chacun') + ' retrouve' : (e ? 'elle' : 'il') + ' retrouve') + ' son statut précédent (« active » sans autre sortie).'
+      + (archives.length ? '\n' + libAnimauxCat(archives.length, cat) + ' déjà archivé' + e + pl(archives.length) + ' au registre : non restaurable' + pl(archives.length) + ' (le lot est conservé pour ' + (archives.length > 1 ? (e ? 'elles' : 'eux') : (e ? 'elle' : 'lui')) + ').' : '');
+    if (!confirm(msg)) return;
+    const res = annulerLotMv(lot);
+    mvPcEtat = mvPcEtat || mvPcEtatInitial();
+    mvPcEtat.message = '<b>Lot annulé</b> : ' + libAnimauxCat(res.restaures, cat) + ' restauré' + e + pl(res.restaures) + (res.archives ? ' ; ' + res.archives + ' déjà archivé' + e + pl(res.archives) + ' non restaurable' + pl(res.archives) : '') + '.';
+    renderMouvementsPc();
+  }; });
+}
+async function exporterMouvementsPassesXlsx(liste) {
+  const bytes = await buildXlsxWorkbook([{ name: 'Mouvements', colWidths: [12, 14, 12, 20, 24, 40], rows: [
+    ['Date', 'N°', 'Catégorie', 'Type', 'Cause / acheteur', 'Lot'],
+    ...liste.map(r => [formatDateFr(r.date), r.court || r.numero, r.categorie, r.type, r.detail, r.lot ? libelleLotMv(r.lot) : (r.collectifId ? 'Lot introuvable' : '')])
+  ] }]);
+  await saveOrShareBinaryFile('mouvements-animaux_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
 function renderInventaire() {
