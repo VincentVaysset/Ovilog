@@ -48,5 +48,59 @@ const cp = await page.evaluate(() => ({ pc: compteurTriAgnellesHtml(triAgnellesD
 check(/<b[^>]*>1<\/b> triées sur <b[^>]*>4<\/b> femelles nées actives/.test(cp.pc) && /width:25%/.test(cp.pc) && /à trier 2|À trier 2 · écartées 1 · achetées 1 en plus \(hors total\)/.test(cp.pc) && /<b[^>]*>1<\/b> triées sur <b[^>]*>4<\/b>/.test(cp.mob) && /achetées 1 \(hors total\)/.test(cp.mob), 'compteur PC et mobile : même calcul, barre à 25 %');
 console.log('OK 1 logique commune : blocs, compteur N/M (achetées, vendues hors total), mère / classe / lactation / naissance (« - » sans donnée), incohérence remontée sans correction, recherche par n°.');
 
+
+// ================================================================ 2. page PC
+await jeu();
+await page.evaluate(() => { triPcEtat = null; render('agnelles'); });
+await page.waitForSelector('#pc-tri-agnelles');
+check(/Tri des agnelles/.test(await $t('#pc-tri-agnelles .pc-seg2')) && await page.evaluate(() => !!document.getElementById('ta-compteur') && !!document.getElementById('ta-table-atrier') && !!document.getElementById('ta-table-gardees') && !!document.getElementById('ta-table-ecartees')), 'page PC : onglets, compteur, 3 blocs');
+check(/1 triées sur 4 femelles nées actives/.test(await $t('#ta-compteur')) && /À trier 2 · écartées 1 · achetées 1 en plus \(hors total\)/.test(await $t('#ta-compteur')), 'compteur PC : ' + await $t('#ta-compteur'));
+const th1 = await page.evaluate(() => [...document.querySelectorAll('#ta-table-atrier th')].map(x => x.textContent).join('|'));
+check(th1 === 'N°|Née le|Mère|Naissance|Classe mère|Lactation mère N-1 (2026)|Tri', 'colonnes À trier : ' + th1);
+const r1 = await page.evaluate(() => [...document.querySelectorAll('#ta-table-atrier tr[data-eid]')].map(r => [...r.children].slice(0, 6).map(c => c.textContent.replace(/\s+/g, ' ').trim()).join('|')));
+check(r1[0] === '60001|14-01-2026|n°80133 · 8 ans|Triple|1|452,0 L' && r1[1] === '60004|19-01-2026|n°90059 · 7 ans|Simple|-|-', 'lignes À trier (classe et lactation de la mère, « - » sans donnée) : ' + JSON.stringify(r1));
+check(await page.evaluate(() => !document.querySelector('.ta-reconsiderer-g[data-id="ag3"]')), 'une achetée n\'a pas « Reconsidérer »');
+check(/Incohérences à trancher/.test(await $t('#ta-incoherences')) && /n°60007/.test(await $t('#ta-incoherences')), 'incohérence affichée, non corrigée');
+// sélection par n° : met en évidence, ne valide rien
+await page.fill('#ta-q', '60004');
+check(await page.evaluate(() => document.querySelectorAll('#pc-tri-agnelles tr.sel').length) === 1 && await page.evaluate(() => document.querySelector('#pc-tri-agnelles tr.sel').dataset.eid === E(6, 4)), 'saisie du n° : la ligne est mise en évidence');
+check(await page.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'rien n\'est validé par la sélection');
+await page.fill('#ta-q', '99999'); check(/Aucune agnelle correspondante/.test(await $t('#ta-q + div, #pc-tri-agnelles .card')) , 'n° inconnu : message');
+await page.fill('#ta-q', '');
+// Garder : sans confirmation, fiche d'agnelle créée, compteur à jour, Annuler
+confirms.length = 0;
+await page.click('.ta-garder[data-eid="' + await page.evaluate(() => E(6, 1)) + '"]');
+check(confirms.length === 0, 'Garder : aucune confirmation (action réversible)');
+const g = await page.evaluate(() => { const a = DB.agnelles.find(x => x.eid === E(6, 1)); const l = findLambByEid(E(6, 1)); return { fiche: !!a, mere: a && a.motherEid === E(8, 133), mv: a && a.mouvements.map(m => m.type).join(), tri: l.triStatut, saves: window.__saves }; });
+check(g.fiche && g.mere && g.mv === 'Naissance,Entrée' && g.tri === 'gardée' && g.saves === 1, 'Garder : fiche d\'agnelle (Naissance + Entrée), agneau marqué gardé, une écriture : ' + JSON.stringify(g));
+check(/2 triées sur 4 femelles nées actives/.test(await $t('#ta-compteur')) && /n°60001 gardée/.test(await $t('#ta-message')), 'compteur mis à jour (2 sur 4), message de confirmation : ' + await $t('#ta-compteur'));
+await page.click('#ta-annuler');
+check(await page.evaluate(() => !DB.agnelles.some(x => x.eid === E(6, 1)) && !findLambByEid(E(6, 1)).triStatut) && /1 triées sur 4/.test(await $t('#ta-compteur')), 'Annuler : retour à trier, fiche supprimée, compteur 1 sur 4');
+// Écarter : sans confirmation + Annuler
+await page.click('.ta-ecarter[data-eid="' + await page.evaluate(() => E(6, 4)) + '"]');
+check(confirms.length === 0 && await page.evaluate(() => findLambByEid(E(6, 4)).triStatut) === 'écartée' && /À trier 1 · écartées 2/.test(await $t('#ta-compteur')), 'Écarter : sans confirmation, compteur : ' + await $t('#ta-compteur'));
+await page.click('#ta-annuler'); check(await page.evaluate(() => findLambByEid(E(6, 4)).triStatut) === undefined, 'Annuler l\'écartement');
+// Reconsidérer une écartée / revenir sur le tri d'une gardée (confirmation)
+await page.click('.ta-reconsiderer-e[data-eid="' + await page.evaluate(() => E(6, 5)) + '"]');
+check(await page.evaluate(() => findLambByEid(E(6, 5)).triStatut) === undefined && /À trier 3/.test(await $t('#ta-compteur')), 'Reconsidérer une écartée : remise à trier');
+reponse = false; confirms.length = 0;
+await page.click('.ta-reconsiderer-g[data-id="ag2"]');
+check(confirms.length === 1 && await page.evaluate(() => DB.agnelles.some(a => a.id === 'ag2')), 'Reconsidérer une gardée : confirmation, refus = rien');
+reponse = true; await page.click('.ta-reconsiderer-g[data-id="ag2"]');
+check(await page.evaluate(() => !DB.agnelles.some(a => a.id === 'ag2') && !findLambByEid(E(6, 2)).triStatut), 'accord : fiche supprimée, agneau remis à trier');
+// mère, ajout manuel, onglet Lots, export, arrivée avec surbrillance
+await page.click('.ta-mere >> nth=0');
+check(await page.evaluate(() => currentView) === 'detail', 'le lien « mère » ouvre sa fiche');
+await page.evaluate(() => { render('agnelles'); });
+await page.click('#ta-ajout'); check(await page.evaluate(() => currentView) === 'add-agnelle', '« + Ajouter manuellement (achetée ou autre) » conservé');
+await page.evaluate(() => { render('agnelles'); });
+await page.evaluate(() => { window.__xl = []; buildXlsxWorkbook = async (f) => { window.__xl.push(f); return new Uint8Array([1]); }; saveOrShareBinaryFile = async (nom) => { window.__xlNom = nom; }; });
+await page.click('#ta-export'); await page.waitForTimeout(100);
+check(/^agnelles-triees_2026-10-03\.xlsx$/.test(await page.evaluate(() => window.__xlNom)) && await page.evaluate(() => window.__xl[0][0].rows[0].join()) === 'N°,Origine,Née / entrée le,Mère,Naissance,Classe mère,Lactation mère N-1 (L)' && await page.evaluate(() => window.__xl[0][0].rows.length) === 2, 'Export Excel de la liste des gardées (1 achetée restante) : en-têtes');
+await page.evaluate(() => { pendingHighlightLambEid = E(5, 42); render('agnelles'); });
+check(await page.evaluate(() => document.querySelector('#pc-tri-agnelles tr.sel') && document.querySelector('#pc-tri-agnelles tr.sel').dataset.eid === E(5, 42)), 'arrivée depuis « Agneaux adoptés » : la ligne est surlignée');
+await page.click('#ta-tab-lots'); check(await page.evaluate(() => !!document.getElementById('pc-lots')), 'onglet « Lots »');
+console.log('OK 2 page PC : compteur, colonnes, sélection par n° sans validation, Garder / Écarter sans confirmation avec Annuler, Reconsidérer (confirmation pour une gardée), mère, ajout manuel, export, surbrillance.');
+
 await browser.close();
 console.log('\nTOUS LES TESTS DU TRI DES AGNELLES SONT PASSÉS');

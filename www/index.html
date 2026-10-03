@@ -4951,7 +4951,7 @@ const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 
 // Écrans redessinés en grille/tableau grand écran sur desktop (voir
 // render()) -- sortent du plafond main{max-width:700px}. Complété au fil
 // des chantiers desktop successifs, jamais un élargissement global.
-const DESKTOP_WIDE_VIEWS = new Set(['lots', 'detail', 'home', 'list', 'beliers', 'controle-laitier', 'registre', 'inventaire', 'produits-delais', 'soins-sans-bio', 'traitements-12-mois', 'sanitaire', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'agneau-detail', 'parametres', 'bilan-campagne', 'saisie-resume-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
+const DESKTOP_WIDE_VIEWS = new Set(['lots', 'agnelles', 'detail', 'home', 'list', 'beliers', 'controle-laitier', 'registre', 'inventaire', 'produits-delais', 'soins-sans-bio', 'traitements-12-mois', 'sanitaire', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'agneau-detail', 'parametres', 'bilan-campagne', 'saisie-resume-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -13167,7 +13167,126 @@ function compteurTriAgnellesHtml(c, variante) {
   return `<div class="card" id="ta-compteur" style="padding:10px 12px;margin-bottom:12px;"><div style="font-size:13px;"><b style="font-size:18px;">${c.N}</b> triées sur <b style="font-size:18px;">${c.M}</b> femelles nées actives</div><div style="height:8px;border-radius:4px;background:#f0efe9;margin:8px 0 6px;overflow:hidden;"><i style="display:block;height:100%;width:${c.pct}%;background:var(--primary);"></i></div><div style="font-size:11px;color:var(--text-muted);">${detail}</div></div>`;
 }
 
+/* Actions de tri partagées PC / mobile (chantier de tri, partie e) -- Garder, Écarter, Reconsidérer, Revenir sur le tri : mêmes écritures que l'écran d'origine. */
+function garderAgnelleTri(c) {
+  c.lamb.triStatut = 'gardée';
+  const dateEntree = jourAujourdhuiISO();
+  // Deux mouvements posés dès la création (naissance + entrée par tri) : sert au Registre PAC et reste exploitable même après suppression de la fiche.
+  const ag = {
+    id: Date.now().toString() + Math.random().toString(36).slice(2, 6), eid: c.lamb.eid, origine: 'née', motherEid: c.motherEid,
+    dateEntree, sanitaire: (c.lamb.sanitaire || []).slice(), notes: (c.lamb.notes || []).slice(),
+    mouvements: [{ type: 'Naissance', cause: null, date: c.date }, { type: 'Entrée', cause: 'Tri (renouvellement)', date: dateEntree }]
+  };
+  DB.agnelles = DB.agnelles || [];
+  DB.agnelles.push(ag);
+  saveData(DB);
+  return ag;
+}
+function revenirSurTriAgnelle(ag) {
+  const lamb = findLambByEid(ag.eid);
+  if (lamb) delete lamb.triStatut;
+  DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
+  saveData(DB);
+}
+function ecarterAgnelleTri(c) { c.lamb.triStatut = 'écartée'; saveData(DB); }
+function reconsidererEcarteeTri(c) { delete c.lamb.triStatut; saveData(DB); }
+
+/* ---------- Tri des agnelles, version PC (chantier de tri, partie e) ---------- */
+let triPcEtat = null;
+function voirFicheMereTri(eid) {
+  const mother = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eid));
+  if (!mother) { alert("Fiche de la mère introuvable (peut-être supprimée)."); return; }
+  detailOrigin = 'agnelles'; previousDetailId = null; render('detail', mother.id);
+}
+async function exporterAgnellesGardeesXlsx(items) {
+  const bytes = await buildXlsxWorkbook([{ name: 'Agnelles triées', colWidths: [12, 10, 14, 12, 12, 12, 16], rows: [
+    ['N°', 'Origine', 'Née / entrée le', 'Mère', 'Naissance', 'Classe mère', 'Lactation mère N-1 (L)'],
+    ...items.map(x => [x.court || x.numero, x.origine, x.date ? formatDateFr(x.date) : '-', x.mereNumero || '-', x.naissance || '-', x.classeMere === null ? '-' : x.classeMere, x.lactMere === null ? '-' : x.lactMere])
+  ] }]);
+  await saveOrShareBinaryFile('agnelles-triees_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+function renderTriAgnellesPc() {
+  DB.agnelles = DB.agnelles || [];
+  if (!triPcEtat) triPcEtat = { q: '', surligne: null, voirTout: { aTrier: false, gardees: false, ecartees: false }, blocs: { aTrier: true, gardees: true, ecartees: true }, message: '', annuler: null, introuvable: false };
+  const E = triPcEtat;
+  pageTitle.textContent = 'Chantier de tri';
+  if (pendingHighlightLambEid) { E.surligne = cleanEid(pendingHighlightLambEid); pendingHighlightLambEid = null; }     // arrivée depuis « Agneaux adoptés » sur une fiche de mère adoptive
+  const D = triAgnellesDonnees(), c = D.compteur, LIM = 25;
+  // la ligne mise en évidence doit être visible : on déplie son bloc
+  [['aTrier', D.aTrier], ['gardees', D.gardees], ['ecartees', D.ecartees]].forEach(([b, l]) => { const i = l.findIndex(x => cleanEid(x.eid) === E.surligne); if (i >= LIM) E.voirTout[b] = true; });
+  const dash = v => v === null || v === undefined || v === '' ? '<span style="color:var(--text-muted);">-</span>' : v;
+  const mere = x => x.mereEid ? `<a href="#" class="ta-mere" data-eid="${x.mereEid}" style="color:var(--blue-fg);">n°${x.mereNumero}</a>${x.mereAge !== null ? ' · ' + x.mereAge + ' ans' : ''}` : '<span style="color:var(--text-muted);">—</span>';
+  const classeLact = x => `<td>${dash(x.classeMere)}</td><td>${dash(x.lactMere === null ? null : fmtDecimal(x.lactMere, 1) + ' L')}</td>`;
+  const ligneCls = x => cleanEid(x.eid) === E.surligne ? ' class="sel"' : '';
+  const bloc = (cle, liste, trs, vide) => `${liste.length > LIM && !E.voirTout[cle] ? trs.slice(0, LIM).join('') : trs.join('')}${liste.length === 0 ? `<tr><td colspan="8" class="l" style="color:var(--text-muted);padding:12px 10px;text-align:left;">${vide}</td></tr>` : ''}`;
+  const plus = (cle, liste) => liste.length > LIM && !E.voirTout[cle] ? `<p style="margin:10px 0 0;text-align:center;"><button type="button" class="btn btn-secondary ta-plus" data-b="${cle}" style="width:auto;">Voir les ${liste.length - LIM} autres</button></p>` : '';
+  const trATrier = D.aTrier.map(x => `<tr data-eid="${x.eid}"${ligneCls(x)}><td style="text-align:left;"><b>${x.court || x.numero}</b></td><td>${x.date ? formatDateFr(x.date) : '-'}</td><td style="text-align:left;">${mere(x)}</td><td>${dash(x.naissance)}</td>${classeLact(x)}<td style="text-align:right;white-space:nowrap;"><button type="button" class="btn btn-secondary ta-garder" data-eid="${x.eid}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--green-fg);border-color:var(--primary);">Garder</button> <button type="button" class="btn btn-secondary ta-ecarter" data-eid="${x.eid}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Écarter</button></td></tr>`);
+  const trGardees = D.gardees.map(x => `<tr data-eid="${x.eid}"${ligneCls(x)}><td style="text-align:left;"><b>${x.court || x.numero}</b></td><td style="text-align:left;">${pcPill(x.origine === 'Née' ? 'ok' : 'warn', x.origine)}</td><td>${x.date ? formatDateFr(x.date) : '-'}</td><td style="text-align:left;">${mere(x)}</td><td>${dash(x.naissance)}</td>${classeLact(x)}<td style="text-align:right;white-space:nowrap;"><button type="button" class="btn btn-secondary ta-fiche" data-id="${x.ag.id}" style="width:auto;padding:4px 10px;font-size:12px;">Fiche</button>${x.origine === 'Née' ? ` <button type="button" class="btn btn-secondary ta-reconsiderer-g" data-id="${x.ag.id}" style="width:auto;padding:4px 10px;font-size:12px;">Reconsidérer</button>` : ''}</td></tr>`);
+  const trEcartees = D.ecartees.map(x => `<tr data-eid="${x.eid}"${ligneCls(x)}><td style="text-align:left;"><b>${x.court || x.numero}</b></td><td style="text-align:left;">${mere(x)}</td><td style="text-align:right;"><button type="button" class="btn btn-secondary ta-reconsiderer-e" data-eid="${x.eid}" style="width:auto;padding:4px 10px;font-size:12px;">Reconsidérer</button></td></tr>`);
+  const inc = incoherencesTriAgnelles();
+  const chip = (cle, lib, n, extra) => `<button type="button" class="pc-gc ta-chip${E.blocs[cle] ? ' on' : ''}" data-b="${cle}">${E.blocs[cle] ? '✓ ' : ''}${lib} <small>${n}${extra || ''}</small></button>`;
+  app.innerHTML = `<div id="pc-tri-agnelles">
+    <div class="pc-seg2" style="max-width:420px;margin-bottom:16px;"><button type="button" class="opt-btn" id="ta-tab-lots">Lots</button><button type="button" class="opt-btn selected">Tri des agnelles</button></div>
+    <div style="margin-bottom:12px;"><p style="margin:0;font-size:22px;font-weight:700;">Chantier de tri</p><p style="margin:2px 0 0;font-size:13px;color:var(--text-muted);">Campagne ${libCampagneAffichee(DB.campagneDebut)} · renouvellement : garder ou écarter les femelles nées sur l'exploitation</p></div>
+    ${E.message ? `<div class="card" id="ta-message" style="margin-bottom:12px;background:var(--green-bg);color:var(--green-fg);display:flex;gap:12px;align-items:center;justify-content:space-between;"><span>${E.message}</span>${E.annuler ? '<button type="button" class="btn btn-secondary" id="ta-annuler" style="width:auto;padding:4px 12px;">Annuler</button>' : ''}</div>` : ''}
+    ${inc.length ? `<div class="error-box" id="ta-incoherences" style="margin-bottom:12px;"><b>Incohérences à trancher</b> (rien n'est corrigé automatiquement) :<br>${inc.map(x => 'n°' + x.numero + ' (mère n°' + x.mere + ') : ' + x.type).join('<br>')}</div>` : ''}
+    <div class="card" style="margin-bottom:16px;">
+      ${compteurTriAgnellesHtml(c, 'pc')}
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;">
+        <div style="flex:1;min-width:280px;max-width:520px;"><label for="ta-q">Sélectionner une agnelle par n°</label><input type="text" id="ta-q" value="${E.q.replace(/"/g, '&quot;')}" placeholder="Saisir un n° (la ligne est mise en évidence, rien n'est validé)" autocomplete="off">${E.introuvable ? '<div style="font-size:12px;color:var(--danger);margin-top:4px;">Aucune agnelle correspondante.</div>' : ''}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">${chip('aTrier', 'À trier', c.aTrier)}${chip('gardees', 'Gardées', c.N + c.achetees, ' · dont ' + c.achetees + ' achetée' + (c.achetees > 1 ? 's' : ''))}${chip('ecartees', 'Écartées', c.ecartees)}</div>
+      </div>
+    </div>
+    ${E.blocs.aTrier ? `<div class="card" style="margin-bottom:16px;" id="ta-bloc-atrier"><div style="margin-bottom:10px;"><p class="brd-ttl" style="margin:0;">À trier · ${c.aTrier} femelle${c.aTrier > 1 ? 's' : ''} née${c.aTrier > 1 ? 's' : ''} sur l'exploitation</p><p class="brd-note" style="margin:2px 0 0;">Plus âgées d'abord, puis n° croissant. Une agnelle vendue ou morte disparaît de cette liste.</p></div>
+      <div style="overflow-x:auto;"><table class="pc-t" id="ta-table-atrier"><tr><th style="text-align:left;">N°</th><th>Née le</th><th style="text-align:left;">Mère</th><th>Naissance</th><th>Classe mère</th><th>Lactation mère N-1 (${libCampagneAffichee(DB.campagneDebut - 1)})</th><th style="text-align:right;">Tri</th></tr>${bloc('aTrier', D.aTrier, trATrier, 'Aucune femelle en attente de tri pour le moment.')}</table></div>${plus('aTrier', D.aTrier)}</div>` : ''}
+    <div class="mv-cols" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr);">
+      ${E.blocs.gardees ? `<div class="card" id="ta-bloc-gardees"><div class="pc-cardhead" style="margin-bottom:10px;"><div><p class="brd-ttl" style="margin:0;">Agnelles triées / achetées · ${D.gardees.length}</p><p class="brd-note" style="margin:2px 0 0;">Futures brebis de la campagne suivante.</p></div><div style="display:flex;gap:8px;"><button type="button" class="btn btn-secondary" id="ta-export" style="width:auto;"${D.gardees.length ? '' : ' disabled'}>Exporter en Excel (.xlsx)</button><button type="button" class="btn btn-primary" id="ta-ajout" style="width:auto;">+ Ajouter manuellement (achetée ou autre)</button></div></div>
+        <div style="overflow-x:auto;"><table class="pc-t" id="ta-table-gardees"><tr><th style="text-align:left;">N°</th><th style="text-align:left;">Origine</th><th>Née / entrée le</th><th style="text-align:left;">Mère</th><th>Naissance</th><th>Classe mère</th><th>Lactation mère N-1</th><th style="text-align:right;">Tri</th></tr>${bloc('gardees', D.gardees, trGardees, 'Aucune agnelle triée ou achetée pour l\'instant.')}</table></div>${plus('gardees', D.gardees)}</div>` : '<div></div>'}
+      ${E.blocs.ecartees ? `<div class="card" id="ta-bloc-ecartees"><p class="brd-ttl">Écartées · ${c.ecartees}</p><div style="overflow-x:auto;"><table class="pc-t" id="ta-table-ecartees"><tr><th style="text-align:left;">N°</th><th style="text-align:left;">Mère</th><th style="text-align:right;">Tri</th></tr>${bloc('ecartees', D.ecartees, trEcartees, 'Aucune agnelle écartée.')}</table></div>${plus('ecartees', D.ecartees)}</div>` : '<div></div>'}
+    </div></div>`;
+  const $ = id => document.getElementById(id);
+  const redessiner = () => renderTriAgnellesPc();
+  $('ta-tab-lots').onclick = () => render('lots');
+  document.querySelectorAll('.ta-chip').forEach(b => { b.onclick = () => { E.blocs[b.dataset.b] = !E.blocs[b.dataset.b]; redessiner(); }; });
+  document.querySelectorAll('.ta-plus').forEach(b => { b.onclick = () => { E.voirTout[b.dataset.b] = true; redessiner(); }; });
+  document.querySelectorAll('.ta-mere').forEach(a => { a.onclick = ev => { ev.preventDefault(); voirFicheMereTri(a.dataset.eid); }; });
+  $('ta-q').addEventListener('input', ev => {
+    E.q = ev.target.value; const r = trouverAgnelleTriParNumero(E.q);
+    E.surligne = r ? cleanEid(r.item.eid) : null; E.introuvable = !!E.q.trim() && !r;
+    const pos = ev.target.selectionStart; redessiner(); const n = $('ta-q'); n.focus(); n.setSelectionRange(pos, pos);
+  });
+  const ligneSel = document.querySelector('#pc-tri-agnelles tr.sel');
+  if (ligneSel && ligneSel.scrollIntoView) ligneSel.scrollIntoView({ block: 'center' });
+  const trouverAT = eid => D.aTrier.find(x => cleanEid(x.eid) === cleanEid(eid));
+  document.querySelectorAll('.ta-garder').forEach(b => { b.onclick = () => {
+    const it = trouverAT(b.dataset.eid); if (!it) return;
+    const ag = garderAgnelleTri(it);
+    E.message = 'n°' + (it.court || it.numero) + ' gardée.'; E.annuler = () => { revenirSurTriAgnelle(ag); E.message = 'Tri de n°' + (it.court || it.numero) + ' annulé : elle est de nouveau à trier.'; E.annuler = null; }; E.surligne = null;
+    redessiner();
+  }; });
+  document.querySelectorAll('.ta-ecarter').forEach(b => { b.onclick = () => {
+    const it = trouverAT(b.dataset.eid); if (!it) return;
+    ecarterAgnelleTri(it);
+    E.message = 'n°' + (it.court || it.numero) + ' écartée.'; E.annuler = () => { reconsidererEcarteeTri(it); E.message = 'Tri de n°' + (it.court || it.numero) + ' annulé : elle est de nouveau à trier.'; E.annuler = null; }; E.surligne = null;
+    redessiner();
+  }; });
+  if ($('ta-annuler')) $('ta-annuler').onclick = () => { const f = E.annuler; if (f) { f(); saveData(DB); } redessiner(); };
+  document.querySelectorAll('.ta-reconsiderer-e').forEach(b => { b.onclick = () => {
+    const it = D.ecartees.find(x => cleanEid(x.eid) === cleanEid(b.dataset.eid)); if (!it) return;
+    reconsidererEcarteeTri(it); E.message = 'n°' + (it.court || it.numero) + ' remise à trier.'; E.annuler = null; redessiner();
+  }; });
+  document.querySelectorAll('.ta-reconsiderer-g').forEach(b => { b.onclick = () => {
+    const ag = DB.agnelles.find(a => a.id === b.dataset.id); if (!ag) return;
+    if (!confirm('Revenir sur le tri de la n°' + numeroVisuel(ag.eid) + ' ? Elle repassera dans la liste "à trier" (sa fiche d\'agnelle sera supprimée).')) return;
+    revenirSurTriAgnelle(ag); E.message = 'n°' + numeroVisuel(ag.eid) + ' remise à trier.'; E.annuler = null; redessiner();
+  }; });
+  document.querySelectorAll('.ta-fiche').forEach(b => { b.onclick = () => { currentAgnelleId = b.dataset.id; agnelleDetailOrigin = 'agnelles'; render('agnelle-detail'); }; });
+  if ($('ta-ajout')) $('ta-ajout').onclick = () => { editingAgnelleId = null; addAgnelleOrigin = 'agnelles'; render('add-agnelle'); };
+  if ($('ta-export')) $('ta-export').onclick = () => exporterAgnellesGardeesXlsx(D.gardees);
+}
+
 function renderAgnelles() {
+  if (isDesktopMode()) { renderTriAgnellesPc(); return; }
   DB.agnelles = DB.agnelles || [];
   const candidates = getCandidatesATrier();
   pageTitle.textContent = 'Chantier de tri';
