@@ -3622,10 +3622,18 @@ function materialiserMembresLot(lot, base) {
   if (!lotJournalise(lot)) return 'ok';
   const evs = evenementsDuLot(lot.id, base);
   if (evs.length < (lot.journalN || 0)) return 'attente';       // le cache vient d'un appareil qui a vu plus d'événements que nous : on attend qu'ils arrivent
-  if (lot.membresEmpreinte !== undefined && empreinteMembresLot(lot.membres || []) !== lot.membresEmpreinte) return 'ecart';
+  if (ecartReelLot(lot, base)) return 'ecart';
   const attendus = rejouerMembresLot(lot.id, base);
   lot.membres = attendus; lot.membresEmpreinte = empreinteMembresLot(attendus); lot.journalN = evs.length;
   return 'ok';
+}
+// Écart réel : le cache lot.membres a été modifié HORS journal (empreinte qui ne correspond plus) ET ne correspond pas non plus au journal rejoué. Un écart que le
+// journal a depuis rattrapé (ex. intégré sur un autre appareil) disparaît donc de lui-même.
+function ecartReelLot(lot, base) {
+  if (!lotJournalise(lot) || lot.membresEmpreinte === undefined) return false;
+  if (empreinteMembresLot(lot.membres || []) === lot.membresEmpreinte) return false;
+  const a = new Set(rejouerMembresLot(lot.id, base).map(cleanEid)), t = new Set((lot.membres || []).map(cleanEid));
+  return a.size !== t.size || [...t].some(e => !a.has(e));
 }
 function recalculerMembresLotsRepro(base) {
   base = base || DB;
@@ -3641,8 +3649,7 @@ function ecartsMembresLots(base) {
   base = base || DB;
   const res = [];
   (base.lots || []).forEach(l => {
-    if (!lotJournalise(l) || l.membresEmpreinte === undefined) return;
-    if (empreinteMembresLot(l.membres || []) === l.membresEmpreinte) return;
+    if (!ecartReelLot(l, base)) return;
     const attendus = rejouerMembresLot(l.id, base).map(cleanEid), trouves = (l.membres || []).map(cleanEid);
     res.push({ lotId: l.id, nom: l.nom, ajoutees: trouves.filter(e => !attendus.includes(e)), retirees: attendus.filter(e => !trouves.includes(e)) });
   });
@@ -13414,7 +13421,7 @@ function renderAgnelles() {
       render('agnelles');
     }
   });
-  if (!scan) setTimeout(() => { const n = document.getElementById('scan-tri'); if (n) n.focus(); }, 0);
+  if (!scan) { scanInput.focus(); setTimeout(() => { const n = document.getElementById('scan-tri'); if (n) n.focus(); }, 0); }
   const retourScan = (texte, annuler) => { triMobileScan = null; triMobileToast = texte ? { texte, annuler: annuler || null, t: Date.now() } : null; render('agnelles'); if (texte) setTimeout(() => { const t = document.getElementById('tri-toast'); if (t) t.remove(); triMobileToast = null; }, 6000); };
   if (document.getElementById('tri-toast-annuler')) document.getElementById('tri-toast-annuler').onclick = () => { const f = triMobileToast && triMobileToast.annuler; triMobileToast = null; if (f) f(); render('agnelles'); };
   if (document.getElementById('btn-fermer-scan')) document.getElementById('btn-fermer-scan').onclick = () => { triMobileScan = null; render('agnelles'); };
@@ -16754,7 +16761,7 @@ function renderAddLotReforme() {
    ce lot). Chaque ajout / retrait est tracé dans le journal du lot (collection evenementsLots : aucune perte même si le PC ajuste le même lot en même temps) et
    apparaît à l'identique sur PC. Mode, cible et campagne des mises bas : lecture seule ici. Aucun statut brouillon / définitif. Une brebis vendue ou morte reste
    dans le lot (elle est exclue des taux, jamais retirée automatiquement). Lots de recherche et de réforme : écrans mobiles inchangés. */
-let lotReproToast = null;
+let lotReproToast = null, lotReproSaisie = '';       // saisie en cours conservée si la synchro redessine l'écran pendant la frappe
 function ouvrirModalRetraitLot(lot, eid, onDone) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -16799,7 +16806,7 @@ function renderLotReproDetail(lotId) {
       <p style="font-size:12px;color:var(--text-muted);margin:0;">${infoDate} · mises bas campagne ${cm !== null ? libCampagneAffichee(cm) : '-'}</p>
       <p style="font-size:26px;font-weight:700;margin:8px 0 0;" id="lr-compteur">${libN(membres.length)}</p></div>
     <label>Ajouter ${agn ? 'une antenaise' : 'une brebis'} (remplacement)</label>
-    <input type="text" id="lr-scan" placeholder="Scanner ou saisir le n°" autofocus>
+    <input type="text" id="lr-scan" placeholder="Scanner ou saisir le n°" value="${lotReproSaisie.replace(/"/g, '&quot;')}" autofocus>
     <div id="lr-err" class="error-box hidden"></div>
     ${toastActif ? `<div id="lr-toast" style="background:${toastActif.ton === 'warn' ? 'var(--amber-bg)' : 'var(--green-bg)'};color:${toastActif.ton === 'warn' ? 'var(--amber-fg)' : 'var(--green-fg)'};border-radius:14px;padding:10px 12px;font-size:13px;font-weight:600;margin:0 0 12px;">${toastActif.texte}</div>` : ''}
     <div style="font-size:15px;font-weight:700;margin:16px 0 4px;">${agn ? 'Antenaises' : 'Brebis'} du lot</div>
@@ -16810,6 +16817,8 @@ function renderLotReproDetail(lotId) {
   const scanInput = document.getElementById('lr-scan');
   setActiveScanTarget(scanInput);
   attachEidBeep(scanInput);
+  scanInput.addEventListener('input', () => { lotReproSaisie = scanInput.value; });
+  scanInput.addEventListener('keydown', e => { if (e.key === 'Enter') lotReproSaisie = ''; });
   wireEidLookupField(scanInput, {
     pool: pool(),
     getEid: a => a.eid,
@@ -27988,7 +27997,7 @@ function buildAnimalCollectionOps(colName, records, ops) {
 
 function buildMetaOp(data, ops) {
   const metaRecord = {};
-  META_FIELDS.forEach(k => { metaRecord[k] = deepClean(data[k]); });
+  META_FIELDS.forEach(k => { metaRecord[k] = deepClean(k === 'lots' ? lotsPourCloud(data[k]) : data[k]); });
   const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
   if (sync.lastSynced.meta === undefined) {
     ops.push({ type: 'set', ref: metaRef, data: metaRecord, colName: 'meta', id: 'main', newValue: metaRecord });
@@ -28321,6 +28330,39 @@ function fusionnerEnregistrementDistant(local, remote, refConnue) {
   return fusionne;
 }
 
+/* Fusion de la liste des LOTS (meta.lots) PAR LOT, au lieu de garder en bloc la version locale dès qu'un lot a changé localement (chantier de tri). Sans elle,
+   un recalcul du cache lot.membres fait localement après réception d'événements (voir recalculerMembresLotsRepro) suffisait à rendre tout le champ « modifié
+   localement » : une suppression ou un renommage fait par l'autre appareil était alors ignoré, puis ressuscité au prochain envoi. Règles : un lot présent des deux
+   côtés est fusionné champ par champ (fusionnerEnregistrementDistant) ; son CACHE dérivé (membres, membresEmpreinte, journalN) est toujours celui du distant, recalculé
+   ensuite depuis le journal local (jamais mélangé : un trio incohérent est un vrai écart d'appareil non à jour) ; un lot supprimé à distance (connu avant, absent
+   maintenant) est supprimé ; un lot supprimé ici (non confirmé) reste supprimé ; un lot créé ici et pas encore confirmé est conservé. */
+const CHAMPS_CACHE_LOT = ['membres', 'membresEmpreinte', 'journalN'];
+// Un lot journalisé part vers le cloud SANS son cache dérivé (membres, empreinte, journalN) : le cache est recalculé sur chaque appareil depuis le journal, il ne
+// doit jamais déclencher un envoi de meta.lots (sinon deux appareils qui ajustent des brebis écraseraient mutuellement renommages, créations et suppressions de lots).
+function lotsPourCloud(lots) {
+  return (lots || []).map(l => { if (!l || l.journal !== 1) return l; const c = Object.assign({}, l); CHAMPS_CACHE_LOT.forEach(k => { delete c[k]; }); return c; });
+}
+function fusionnerListeLots(locaux, distants, refs) {
+  const loc = new Map(locaux.map(l => [l.id, l])), ref = new Map(refs.map(l => [l.id, l])), dist = new Set(distants.map(l => l.id));
+  const out = distants.map(rl => {
+    const ll = loc.get(rl.id), fl = ref.get(rl.id);
+    if (!ll) return fl ? null : rl;
+    if (!fl) return rl;
+    const m = fusionnerEnregistrementDistant(ll, rl, fl);
+    if (rl.journal === 1) {
+      // cache : celui de CET appareil ; un `membres` présent côté distant sur un lot journalisé vient d'un appareil non à jour (les appareils à jour n'en envoient pas) :
+      // on le garde tel quel avec l'empreinte locale, ce qui fait apparaître l'écart (ecartsMembresLots) au lieu de l'écraser en silence.
+      m.membres = 'membres' in rl ? rl.membres : ll.membres;
+      if (ll.membresEmpreinte !== undefined) m.membresEmpreinte = ll.membresEmpreinte; else delete m.membresEmpreinte;
+      if (ll.journalN !== undefined) m.journalN = ll.journalN; else delete m.journalN;
+      if (m.membres === undefined) delete m.membres;
+    }
+    return m;
+  }).filter(Boolean);
+  locaux.forEach(ll => { if (!dist.has(ll.id) && !ref.has(ll.id)) out.push(ll); });
+  return out;
+}
+
 /* `ancienneRef` est passée explicitement (jamais relue depuis
    sync.lastSynced[colName] ici) -- correctif repéré par un test de ce
    chantier : pendant une opération groupée (operationGroupeeEnCours), cette
@@ -28494,7 +28536,10 @@ async function startListeners(dejaAppairePrecedemment) {
       applyOrQueueRemoteUpdate('meta', () => {
         const localMetaSubset = {};
         META_FIELDS.forEach(k => { localMetaSubset[k] = DB[k]; });
-        Object.assign(DB, fusionnerEnregistrementDistant(localMetaSubset, meta, refConnueMeta));
+        const fus = fusionnerEnregistrementDistant(localMetaSubset, meta, refConnueMeta);
+        const lotsFusionnes = refConnueMeta !== undefined && Array.isArray(meta.lots) && Array.isArray(localMetaSubset.lots)
+          ? { lots: fusionnerListeLots(localMetaSubset.lots, meta.lots, Array.isArray(refConnueMeta.lots) ? refConnueMeta.lots : []) } : {};
+        Object.assign(DB, fus, lotsFusionnes);
         recalculerMembresLotsRepro();      // lots reçus (cache membres d'un autre appareil) : à confronter au journal local, sans jamais écraser un écart
       });
       persisterSyncLastSynced();

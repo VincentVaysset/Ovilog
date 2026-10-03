@@ -109,10 +109,18 @@ check(await nEvenements(d2.page) === 9, '100 brebis affectées d\'un coup = 1 se
 console.log('OK 3 affectation groupée : 100 brebis, 1 document, reçue sur mobile.');
 
 // ---------- 4. appareil « non à jour » : modification hors journal détectée, jamais écrasée ----------
-await d2.page.evaluate(() => { const l = DB.lots.find(x => x.id === 'LC'); l.membres.push('25001629919' + '09999'); saveData(DB); });     // ancienne version : écrit lot.membres directement
+// Un appareil d'avant ce chantier écrit lot.membres directement dans meta.lots (les appareils à jour n'y envoient plus de cache) : on le simule en écrivant
+// directement dans le faux backend, comme le ferait son ancien code.
+const uid = await d1.page.evaluate(() => localStorage.getItem('ovilog_sync_bootstrapped_uid'));
+const snap = await (await fetch('http://localhost:' + fakePort + '/snapshot?uid=' + uid + '&col=meta')).json();
+const membresActuels = await d1.page.evaluate(() => DB.lots.find(l => l.id === 'LC').membres.slice());
+const lotsCloud = snap.data.lots.map(l => l.id === 'LC' ? Object.assign({}, l, { membres: [...membresActuels, '25001629919' + '09999'] }) : l);       // l'ancien code envoie la liste complète des membres, plus la brebis qu'il a ajoutée
+check(snap.data.lots.find(l => l.id === 'LC').membres === undefined, 'les appareils à jour n\'envoient PAS le cache des membres dans meta.lots');
+await fetch('http://localhost:' + fakePort + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops: [{ type: 'update', path: 'users/' + uid + '/meta/main', data: { lots: lotsCloud } }] }) });
 await waitFor(d1.page, () => ecartsMembresLots().length === 1, { label: 'le PC détecte l\'écart' });
 const ref = await d1.page.evaluate(() => [ajouterEvenementLot(DB.lots.find(x => x.id === 'LC'), 'retrait', ['25001629919' + '00003']), DB.lots.find(x => x.id === 'LC').membres.includes('25001629919' + '09999')]);
 check(ref[0] && ref[0].refuse === 'ecart' && ref[1] === true, 'écart non tranché : le PC refuse d\'écrire et ne touche pas au cache');
+check(await d1.page.evaluate(() => ecartsMembresLots()[0].ajoutees.length === 1 && ecartsMembresLots()[0].retirees.length === 0), 'l\'écart se limite à la brebis ajoutée par l\'ancien appareil (1 ajoutée, 0 retirée)');
 await d1.page.evaluate(() => { integrerEcartLot('LC'); saveData(DB); });
 await waitFor(d2.page, () => ecartsMembresLots().length === 0 && DB.lots.find(l => l.id === 'LC').membres.includes('25001629919' + '09999'), { label: 'le mobile converge après intégration de l\'écart' });
 check(await d1.page.evaluate(() => ecartsMembresLots().length) === 0, 'plus aucun écart côté PC');
@@ -130,6 +138,16 @@ await waitFor(d1.page, () => DB.lots.find(l => l.id === 'LC').membres.map(cleanE
 await waitFor(d2.page, () => DB.lots.find(l => l.id === 'LC').membres.map(cleanEid).includes('25001629919' + '07070') && !DB.lots.find(l => l.id === 'LC').membres.map(cleanEid).includes('25001629919' + '00005'), { label: 'le mobile voit son ajout ET le retrait du PC' });
 check(await membresTries(d1.page) === await membresTries(d2.page), 'PC et mobile identiques après ajustements simultanés (ajout par bip sur mobile, retrait sur PC)');
 console.log('OK 4b écran mobile (bip) et PC (Retirer) en même temps sur le même lot : les deux ajustements sont conservés.');
+
+// ---------- 4c. renommage du lot sur PC pendant qu'un ajout est fait sur mobile : les deux sont conservés ----------
+await Promise.all([
+  d1.page.evaluate(() => { DB.lots.find(x => x.id === 'LC').nom = 'IA renommée sur PC'; saveData(DB); }),
+  d2.page.evaluate(() => { ajouterEvenementLot(DB.lots.find(x => x.id === 'LC'), 'affectation', ['25001629919' + '08080']); saveData(DB); })
+]);
+await waitFor(d1.page, () => DB.lots.find(l => l.id === 'LC').nom === 'IA renommée sur PC' && DB.lots.find(l => l.id === 'LC').membres.map(cleanEid).includes('25001629919' + '08080'), { label: 'le PC garde son renommage ET reçoit l\'ajout mobile' });
+await waitFor(d2.page, () => DB.lots.find(l => l.id === 'LC').nom === 'IA renommée sur PC' && DB.lots.find(l => l.id === 'LC').membres.map(cleanEid).includes('25001629919' + '08080'), { label: 'le mobile reçoit le renommage ET garde son ajout' });
+check(await membresTries(d1.page) === await membresTries(d2.page) && await d1.page.evaluate(() => ecartsMembresLots().length) === 0 && await d2.page.evaluate(() => ecartsMembresLots().length) === 0, 'renommage (PC) et ajout (mobile) simultanés : les deux conservés, aucun écart, états identiques');
+console.log('OK 4c renommage du lot sur PC + ajout sur mobile en même temps : aucun des deux n\'est perdu.');
 
 // ---------- 5. suppression d'un lot : son journal disparaît partout ----------
 await d1.page.evaluate(() => { DB.lots = DB.lots.filter(l => l.id !== 'LC'); DB.evenementsLots = DB.evenementsLots.filter(e => e.lotId !== 'LC'); saveData(DB); });
