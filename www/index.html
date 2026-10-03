@@ -13285,16 +13285,18 @@ function renderTriAgnellesPc() {
   if ($('ta-export')) $('ta-export').onclick = () => exporterAgnellesGardeesXlsx(D.gardees);
 }
 
+let triMobileScan = null, triMobileToast = null;
 function renderAgnelles() {
   if (isDesktopMode()) { renderTriAgnellesPc(); return; }
   DB.agnelles = DB.agnelles || [];
-  const candidates = getCandidatesATrier();
+  const D = triAgnellesDonnees();
+  const candidates = D.aTrier;
   pageTitle.textContent = 'Chantier de tri';
 
-  const candidatesHtml = candidates.length === 0
-    ? '<div style="font-size:13px;color:var(--text-muted);padding:8px 0 16px;">Aucune femelle en attente de tri pour le moment.</div>'
-    : candidates.map((c, i) => `
-      <div class="card" id="candidate-${i}">
+  // Classe (1 à 4) et lactation de la campagne précédente de la MÈRE : « - » si absentes (jamais inventées)
+  const tuilesMere = x => `<div style="display:flex;gap:8px;margin:0 0 10px;"><div style="flex:1;background:${x.classeMere === null ? '#f0eee6' : 'var(--green-bg)'};border-radius:12px;padding:8px 10px;"><small style="display:block;font-size:11px;color:${x.classeMere === null ? 'var(--text-muted)' : 'var(--green-fg)'};">Classe de la mère</small><b style="font-size:16px;color:${x.classeMere === null ? 'var(--text-muted)' : 'var(--text)'};">${x.classeMere === null ? '-' : x.classeMere}</b></div><div style="flex:1;background:${x.lactMere === null ? '#f0eee6' : 'var(--green-bg)'};border-radius:12px;padding:8px 10px;"><small style="display:block;font-size:11px;color:${x.lactMere === null ? 'var(--text-muted)' : 'var(--green-fg)'};">Lactation ${libCampagneAffichee(x.lactCampagne)}</small><b style="font-size:16px;color:${x.lactMere === null ? 'var(--text-muted)' : 'var(--text)'};">${x.lactMere === null ? '-' : fmtDecimal(x.lactMere, 1) + ' L'}</b></div></div>`;
+  const carteATrier = (c, i, classeExtra) => `
+      <div class="card${classeExtra || ''}" id="candidate-${i}">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
           ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
           <div>
@@ -13302,6 +13304,7 @@ function renderAgnelles() {
             <div style="font-size:12px;color:var(--text-muted);">Née le ${formatDateFr(c.date)} de la brebis n°${numeroVisuel(c.motherEid)}</div>
           </div>
         </div>
+        ${tuilesMere(c)}
         <div class="row">
           <button type="button" class="btn btn-primary btn-garder" data-i="${i}" style="background:var(--accent);">Garder (trier)</button>
           <button type="button" class="btn btn-secondary btn-ecarter" data-i="${i}" style="width:auto;padding:0 14px;">Écarter</button>
@@ -13309,7 +13312,26 @@ function renderAgnelles() {
         <button type="button" class="btn btn-secondary btn-voir-mere" data-eid="${c.motherEid}" style="margin-top:8px;">Voir la fiche de la mère</button>
         ${htmlLienMereAdoptive(c.lamb, 'btn-voir-mere-adoptive')}
       </div>
-    `).join('');
+    `;
+  // Bip / saisie d'un EID : la carte de l'agnelle scannée s'ouvre SEULE, en haut, mise en évidence, SANS rien valider (voir triMobileScan)
+  const scan = triMobileScan && (triMobileScan.bloc === 'aTrier' ? D.aTrier : triMobileScan.bloc === 'gardees' ? D.gardees : D.ecartees).find(x => cleanEid(x.eid) === cleanEid(triMobileScan.eid)) ? triMobileScan : null;
+  if (!scan) triMobileScan = null;
+  let carteScan = '';
+  if (scan && scan.bloc === 'aTrier') carteScan = carteATrier(D.aTrier.find(x => cleanEid(x.eid) === cleanEid(scan.eid)), D.aTrier.findIndex(x => cleanEid(x.eid) === cleanEid(scan.eid)), ' scan-highlight');
+  else if (scan) {
+    const x = (scan.bloc === 'gardees' ? D.gardees : D.ecartees).find(y => cleanEid(y.eid) === cleanEid(scan.eid));
+    const etat = scan.bloc === 'ecartees' ? 'Écartée' : x.origine === 'Née' ? 'Gardée le ' + formatDateFr(x.dateTri) : 'Achetée · entrée le ' + formatDateFr(x.date);
+    carteScan = `<div class="card scan-highlight" id="scan-carte">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">${iconCircle(ICON_SHEEP, 'amber', 'sm')}<div><div style="font-weight:600;">n°${numeroVisuel(x.eid)}</div>${x.date && !(scan.bloc === 'gardees' && x.origine !== 'Née') ? `<div style="font-size:12px;color:var(--text-muted);">Née le ${formatDateFr(x.date)}${x.motherEid ? ' de la brebis n°' + numeroVisuel(x.motherEid) : ''}</div>` : ''}<span style="display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--green-bg);color:var(--green-fg);margin-top:4px;">${etat}</span></div></div>
+        ${scan.bloc === 'gardees' && x.origine !== 'Née' ? '' : tuilesMere(x)}
+        ${scan.bloc === 'ecartees' ? `<button type="button" class="btn btn-secondary btn-reconsiderer-scan" data-eid="${x.eid}">Reconsidérer (remettre à trier)</button>` : x.origine === 'Née' ? `<button type="button" class="btn btn-secondary btn-annuler-tri" data-id="${x.ag.id}">Reconsidérer</button>` : `<button type="button" class="btn btn-secondary btn-voir-fiche-agnelle-tri" data-id="${x.ag.id}">Voir la fiche</button>`}
+        ${x.motherEid ? `<button type="button" class="btn btn-secondary btn-voir-mere" data-eid="${x.motherEid}" style="margin-top:8px;">Voir la fiche de la mère</button>` : ''}
+        <button type="button" class="btn btn-secondary" id="btn-fermer-scan" style="margin-top:8px;">Retour au scan</button>
+      </div>`;
+  }
+  const candidatesHtml = scan ? carteScan : candidates.length === 0
+    ? '<div style="font-size:13px;color:var(--text-muted);padding:8px 0 16px;">Aucune femelle en attente de tri pour le moment.</div>'
+    : candidates.map((c, i) => carteATrier(c, i)).join('');
 
   const listHtml = DB.agnelles.length === 0
     ? '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucune agnelle triée ou achetée pour l\'instant.</div>'
@@ -13339,7 +13361,7 @@ function renderAgnelles() {
       </div>
     `).join('');
 
-  const ecartees = getEcartees();
+  const ecartees = D.ecartees;
   const ecarteesHtml = ecartees.length === 0
     ? '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucune agnelle écartée.</div>'
     : ecartees.map((c, i) => `
@@ -13355,8 +13377,13 @@ function renderAgnelles() {
       </div>
     `).join('');
 
+  const toastActif = triMobileToast && Date.now() - triMobileToast.t < 6000 ? triMobileToast : null;
+  if (!toastActif) triMobileToast = null;
+  const toastHtml = toastActif ? `<div id="tri-toast" style="background:var(--green-bg);color:var(--green-fg);border-radius:14px;padding:10px 12px;font-size:13px;font-weight:600;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;"><span>${toastActif.texte}</span>${toastActif.annuler ? '<button type="button" class="btn btn-secondary" id="tri-toast-annuler" style="width:auto;padding:4px 12px;">Annuler</button>' : ''}</div>` : '';
   app.innerHTML = chantierTriTabBarHtml() + `
     <div style="display:flex;align-items:center;margin-bottom:10px;"><span style="font-size:14px;font-weight:600;">À trier (femelles nées sur l'exploitation)</span>${infoBulleHtml('À trier', "Scanner une agnelle ci-dessous fait défiler jusqu'à sa fiche pour la repérer — la décision (Garder/Écarter) reste un geste volontaire.")}</div>
+    ${compteurTriAgnellesHtml(D.compteur, 'mobile')}
+    ${toastHtml}
     <label>Scanner l'agnelle à trier</label>
     <input type="text" id="scan-tri" placeholder="Scanner ou saisir l'EID" autofocus>
     <div id="scan-err" class="error-box hidden"></div>
@@ -13374,44 +13401,27 @@ function renderAgnelles() {
   const scanInput = document.getElementById('scan-tri');
   setActiveScanTarget(scanInput);
   attachEidBeep(scanInput);
+  const poolScan = [...D.aTrier.map(item => ({ bloc: 'aTrier', item })), ...D.gardees.map(item => ({ bloc: 'gardees', item })), ...D.ecartees.map(item => ({ bloc: 'ecartees', item }))];
   wireEidLookupField(scanInput, {
-    pool: candidates,
-    getEid: c => c.lamb.eid,
+    pool: poolScan,
+    getEid: w => w.item.eid,
     feedbackEl: document.getElementById('scan-err'),
-    notFoundMessage: "Aucune agnelle correspondante en attente de tri.",
-    onFound: (c) => {
-      // On amène l'utilisateur sur la fiche correspondante pour qu'il voie
-      // de quel animal il s'agit, sans valider quoi que ce soit à sa place
-      // — c'est lui qui choisit ensuite Garder ou Écarter.
-      const idx = candidates.indexOf(c);
-      const card = document.getElementById('candidate-' + idx);
-      if (card) {
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        card.classList.add('scan-highlight');
-        setTimeout(() => card.classList.remove('scan-highlight'), 2500);
-      }
+    notFoundMessage: "Aucune agnelle correspondante dans le tri (à trier, triées, écartées).",
+    onFound: (w) => {
+      // La carte de l'agnelle scannée s'ouvre seule, mise en évidence, sans rien valider : c'est l'éleveur qui choisit ensuite Garder ou Écarter.
+      triMobileScan = { eid: w.item.eid, bloc: w.bloc };
+      render('agnelles');
     }
   });
+  if (!scan) setTimeout(() => { const n = document.getElementById('scan-tri'); if (n) n.focus(); }, 0);
+  const retourScan = (texte, annuler) => { triMobileScan = null; triMobileToast = texte ? { texte, annuler: annuler || null, t: Date.now() } : null; render('agnelles'); if (texte) setTimeout(() => { const t = document.getElementById('tri-toast'); if (t) t.remove(); triMobileToast = null; }, 6000); };
+  if (document.getElementById('tri-toast-annuler')) document.getElementById('tri-toast-annuler').onclick = () => { const f = triMobileToast && triMobileToast.annuler; triMobileToast = null; if (f) f(); render('agnelles'); };
+  if (document.getElementById('btn-fermer-scan')) document.getElementById('btn-fermer-scan').onclick = () => { triMobileScan = null; render('agnelles'); };
+  document.querySelectorAll('.btn-reconsiderer-scan').forEach(btn => { btn.onclick = () => { const it = D.ecartees.find(x => cleanEid(x.eid) === cleanEid(btn.dataset.eid)); if (!it) return; reconsidererEcarteeTri(it); retourScan('n°' + numeroVisuel(it.eid) + ' remise à trier.'); }; });
 
   function garderAgnelle(c) {
-    c.lamb.triStatut = 'gardée';
-    const dateEntree = jourAujourdhuiISO();
-    // Deux mouvements posés dès la création, comme une agnelle achetée en a
-    // déjà un ("Entrée"/"Achat") — sans ça, une agnelle née sur
-    // l'exploitation n'avait ni date de naissance distincte de sa date de
-    // tri, ni aucun mouvement archivé si elle est vendue plus tard. Sert au
-    // Registre PAC (effectifADate/agnelleDateReference) pour le seuil ">6
-    // mois" et pour rester exploitable même après suppression de la fiche.
-    DB.agnelles.push({
-      id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: c.lamb.eid, origine: 'née', motherEid: c.motherEid,
-      dateEntree, sanitaire: (c.lamb.sanitaire || []).slice(), notes: (c.lamb.notes || []).slice(),
-      mouvements: [
-        { type: 'Naissance', cause: null, date: c.date },
-        { type: 'Entrée', cause: 'Tri (renouvellement)', date: dateEntree }
-      ]
-    });
-    saveData(DB);
-    render('agnelles');
+    const ag = garderAgnelleTri(c);
+    retourScan('n°' + numeroVisuel(c.lamb.eid) + ' gardée', () => { revenirSurTriAgnelle(ag); });
   }
 
   document.querySelectorAll('.btn-garder').forEach(btn => {
@@ -13419,11 +13429,10 @@ function renderAgnelles() {
   });
   document.querySelectorAll('.btn-ecarter').forEach(btn => {
     btn.onclick = () => {
+      // Pas de confirmation (action réversible : toast « Annuler » quelques secondes, ou « Reconsidérer » dans la liste des écartées)
       const c = candidates[parseInt(btn.dataset.i, 10)];
-      if (!confirm('Écarter cette agnelle (non gardée pour le renouvellement) ?')) return;
-      c.lamb.triStatut = 'écartée';
-      saveData(DB);
-      render('agnelles');
+      ecarterAgnelleTri(c);
+      retourScan('n°' + numeroVisuel(c.lamb.eid) + ' écartée', () => { reconsidererEcarteeTri(c); });
     };
   });
   document.querySelectorAll('.btn-reconsiderer').forEach(btn => {
