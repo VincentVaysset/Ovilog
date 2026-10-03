@@ -1149,6 +1149,12 @@ function migrateData(d) {
   // statsLotIA/statsLotIAParAgeExact.
   if (d.reproRetourMin === undefined) d.reproRetourMin = 160;
   if (d.reproRetourMax === undefined) d.reproRetourMax = 171;
+  // Chantier de tri (partie a) : seuil « délai depuis la dernière mise bas » du filtre « Critères IA » (mois), journal d'affectations des lots de
+  // reproduction (collection evenementsLots, voir migrerLotsVersJournal) et marqueur de version du format des lots (jamais abaissé).
+  if (d.reproSeuilMiseBasMois === undefined) d.reproSeuilMiseBasMois = 3;
+  if (!d.evenementsLots) d.evenementsLots = [];
+  migrerLotsVersJournal(d);
+  if (!d.schemaLots || d.schemaLots < schemaLotsVersionCourante()) d.schemaLots = schemaLotsVersionCourante();
   // Correctif orthographe (04/09/2026) : le produit injecté automatiquement
   // à la naissance de chaque agneau s'appelle "Séléphérol", jamais saisi tel
   // quel jusqu'ici (fautes "Selepherol"/"Sélépérol" dans le code d'origine).
@@ -1292,6 +1298,9 @@ function loadData() {
       { campagne: 2025, coefficientMsu: 12.1538, prixReference: 1580, msuReference: 130 }
     ],
     lots: [],
+    evenementsLots: [],
+    schemaLots: 2,
+    reproSeuilMiseBasMois: 3,
     reproGestationMin: 144,
     reproGestationMax: 152,
     reproRetourMin: 160,
@@ -3453,8 +3462,12 @@ const EPONGE_DELAI_LUTTE_JOURS = 16;
 // à MN, comme si l'animal n'avait jamais été mis en lot cette campagne.
 // N'affecte jamais un évènement déjà concrétisé par une mise bas
 // (agnelage.codeRepro, lu séparément dans codeReproActuel).
-function dernierModeReproValide(animal) {
-  const modes = (animal.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut);
+function dernierModeReproValide(animal, usage) {
+  // Chantier de tri : la « campagne » d'un évènement Repro est celle des MISES BAS (lot IA fait en juin = mises bas de la campagne suivante).
+  // Affichage « attente » : mises bas de la campagne en cours OU à venir (S, S+1) -- sinon la brebis d'une IA d'été afficherait « MN » jusqu'à la
+  // bascule. Code « échec » d'une vide définitive (usage 'echec') : SEULEMENT la campagne en cours (S) -- un lot de S+1 n'est pas son échec.
+  const S = DB.campagneDebut;
+  const modes = (animal.modesRepro || []).filter(m => { if (!m) return false; const c = campagneMisesBasEvenementRepro(m); return c === S || (usage !== 'echec' && c === S + 1); });
   for (let i = modes.length - 1; i >= 0; i--) {
     const m = modes[i];
     if (!m.lotId || (DB.lots || []).some(l => l.id === m.lotId)) return m;
@@ -3469,7 +3482,7 @@ function codeReproActuel(animal, agnelageCampagne, videDefinitive) {
   if (agnelageCampagne) {
     return { code: agnelageCampagne.codeRepro || 'MN', style: 'ok' };
   }
-  const dernier = dernierModeReproValide(animal);
+  const dernier = dernierModeReproValide(animal, videDefinitive ? 'echec' : 'attente');
   const code = dernier ? dernier.mode : 'MN';
   return { code, style: videDefinitive ? 'echec' : 'attente' };
 }
@@ -3550,6 +3563,238 @@ function findAnimalReproByEid(eid) {
   return DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eid)) || (DB.agnelles || []).find(a => cleanEid(a.eid) === cleanEid(eid)) || null;
 }
 
+/* ---------- Lots de reproduction : journal d'affectations (collection evenementsLots) ----------
+   Chantier de tri, partie a. Problème traité : DB.lots est un champ du document unique meta/main, écrit en bloc ; deux appareils (PC et
+   mobile) qui retirent/ajoutent des brebis EN MÊME TEMPS s'écraseraient sans message (dernier écrit gagne sur tout le tableau).
+   Solution : pour un lot de REPRODUCTION, la liste des membres n'est plus la donnée de référence, c'est le JOURNAL des affectations/retraits :
+   un document Firestore par événement (collection evenementsLots, voir DOC_COLLECTIONS), IMMUABLE, avec un id unique -- deux appareils qui
+   écrivent en même temps créent deux documents distincts, donc aucun conflit possible (la fusion par id existante garde les ajouts locaux non
+   confirmés). Un événement groupé porte une LISTE d'EID (eids[]) : un lot de 100 brebis = 1 document.
+   Événement : { id, lotId, type 'initial'|'affectation'|'retrait', eids[], date (horodatage ISO ms), motif, source 'PC'|'mobile'|'migration' }.
+   Rejeu déterministe (rejouerMembresLot) : tri par date puis id ; le DERNIER événement qui touche un EID décide (retrait puis ré-ajout géré).
+   lot.membres reste un CACHE recalculé (les ~30 lecteurs existants -- stats, PDF, bilan -- ne changent pas) ; il porte son empreinte
+   (membresEmpreinte) et le nombre d'événements rejoués (journalN) : un appareil non à jour qui modifierait lot.membres directement est
+   DÉTECTÉ (empreinte qui ne correspond plus) et remonté (ecartsMembresLots), jamais écrasé ni corrigé en silence.
+   Les lots de recherche et de réforme ne sont pas concernés (mobile inchangé : ils s'écrivent comme avant, sans journal).
+   ATTENTION : migrateData() tourne pendant `let DB = loadData()` -- ces fonctions prennent donc `base` en paramètre (jamais le global DB
+   par défaut dans le chemin de migration) et la version courante est une fonction, pas une const (zone morte temporelle). */
+function schemaLotsVersionCourante() { return 2; }
+// Garde-fou version : un appareil plus ANCIEN que le format écrit dans meta.schemaLots ne doit pas modifier les lots (il écraserait le
+// journal sans le savoir) -- il affiche « Mettre à jour l'application ». Ne protège que les versions qui connaissent ce marqueur.
+function lotsVerrouilles() { return ((DB && DB.schemaLots) || 0) > schemaLotsVersionCourante(); }
+function garderLotsModifiables() {
+  if (!lotsVerrouilles()) return true;
+  alert("Mettre à jour l'application : les lots ont été modifiés par une version plus récente d'Ovilog. Installe la dernière version avant de modifier un lot (rien n'a été changé).");
+  return false;
+}
+function bandeauLotsVerrouillesHtml() {
+  return lotsVerrouilles() ? '<div class="error-box" style="margin-bottom:10px;">Mettre à jour l\'application : les lots sont en lecture seule tant que cette version n\'est pas mise à jour.</div>' : '';
+}
+function lotJournalise(lot) { return !!lot && lot.type === 'reproduction' && lot.journal === 1; }
+function sourceEvenementLot() { return isDesktopMode() ? 'PC' : 'mobile'; }
+function comparerEvenementsLot(a, b) {
+  return String(a.date || '').localeCompare(String(b.date || '')) || String(a.id).localeCompare(String(b.id));
+}
+function evenementsDuLot(lotId, base) {
+  return ((base || DB).evenementsLots || []).filter(e => e && e.lotId === lotId).sort(comparerEvenementsLot);
+}
+function rejouerMembresLot(lotId, base) {
+  const etat = new Map();       // clé = EID nettoyé ; l'ordre d'insertion = ordre de première apparition (déterministe)
+  evenementsDuLot(lotId, base).forEach(e => (e.eids || []).forEach(raw => {
+    const k = cleanEid(raw), prev = etat.get(k);
+    etat.set(k, { raw: prev ? prev.raw : raw, present: e.type !== 'retrait' });
+  }));
+  return [...etat.values()].filter(v => v.present).map(v => v.raw);
+}
+function empreinteMembresLot(eids) {
+  const t = (eids || []).map(cleanEid).sort().join(',');
+  let h = 5381;
+  for (let i = 0; i < t.length; i++) h = (((h << 5) + h) ^ t.charCodeAt(i)) >>> 0;
+  return h.toString(36) + '/' + (eids || []).length;
+}
+// Recalcule le cache lot.membres depuis le journal. Retourne 'ok' | 'attente' | 'ecart' (voir le commentaire de tête). Ne touche JAMAIS un
+// lot dont le cache a été modifié hors journal ('ecart') : c'est à l'éleveur de trancher (integrerEcartLot / rejeterEcartLot).
+function materialiserMembresLot(lot, base) {
+  if (!lotJournalise(lot)) return 'ok';
+  const evs = evenementsDuLot(lot.id, base);
+  if (evs.length < (lot.journalN || 0)) return 'attente';       // le cache vient d'un appareil qui a vu plus d'événements que nous : on attend qu'ils arrivent
+  if (lot.membresEmpreinte !== undefined && empreinteMembresLot(lot.membres || []) !== lot.membresEmpreinte) return 'ecart';
+  const attendus = rejouerMembresLot(lot.id, base);
+  lot.membres = attendus; lot.membresEmpreinte = empreinteMembresLot(attendus); lot.journalN = evs.length;
+  return 'ok';
+}
+function recalculerMembresLotsRepro(base) {
+  base = base || DB;
+  const bilan = { ecarts: [], attente: [] };
+  (base.lots || []).forEach(l => {
+    const r = materialiserMembresLot(l, base);
+    if (r === 'ecart') bilan.ecarts.push(l.id); else if (r === 'attente') bilan.attente.push(l.id);
+  });
+  return bilan;
+}
+// Lots dont le cache a été modifié hors journal (appareil non à jour) : { lotId, nom, ajoutees[], retirees[] } -- à remonter, jamais à corriger seul
+function ecartsMembresLots(base) {
+  base = base || DB;
+  const res = [];
+  (base.lots || []).forEach(l => {
+    if (!lotJournalise(l) || l.membresEmpreinte === undefined) return;
+    if (empreinteMembresLot(l.membres || []) === l.membresEmpreinte) return;
+    const attendus = rejouerMembresLot(l.id, base).map(cleanEid), trouves = (l.membres || []).map(cleanEid);
+    res.push({ lotId: l.id, nom: l.nom, ajoutees: trouves.filter(e => !attendus.includes(e)), retirees: attendus.filter(e => !trouves.includes(e)) });
+  });
+  return res;
+}
+// Statistiques de lot (chantier de tri, D5) : une brebis vendue/morte/archivée qui n'a PAS mis bas est une « sortie avant mise bas » -- exclue
+// du numérateur ET du dénominateur, comptée à part, jamais retirée du lot. Si elle a mis bas avant de sortir, elle compte normalement.
+// Retrouve aussi les animaux archivés au registre (l'ancienne recherche, DB.brebis seul, les faisait disparaître des stats à la bascule).
+function trouverAnimalReproOuArchive(eid) {
+  const v = findAnimalReproByEid(eid);
+  if (v) return v;
+  const c = cleanEid(eid);
+  for (const cat of ['brebis', 'agnelles']) {
+    const reg = (DB.registre && DB.registre[cat]) || {};
+    const k = Object.keys(reg).find(x => cleanEid(x) === c);
+    if (k) return Object.assign({ eid: k, archive: true }, reg[k]);
+  }
+  return null;
+}
+function estSortieDuTroupeau(animal) { return !!animal.archive || (animal.statut || 'active') !== 'active'; }
+function idEvenementLot() { return 'EL-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
+// Ajoute UN événement au journal (affectation groupée = eids[]), puis recalcule le cache. Horodatage strictement croissant pour ce lot
+// (une horloge en retard ne doit jamais faire passer un retrait avant l'affectation qu'il annule). Retourne l'événement, ou
+// { refuse: 'ecart' } si le lot porte un écart non tranché, ou null si rien à écrire. N'appelle PAS saveData : c'est à l'appelant.
+function ajouterEvenementLot(lot, type, eids, opts) {
+  opts = opts || {};
+  if (!lotJournalise(lot)) throw new Error('ajouterEvenementLot : lot non journalisé');
+  const vus = new Set(), propres = [];
+  (eids || []).forEach(e => { const k = cleanEid(e); if (k && !vus.has(k)) { vus.add(k); propres.push(e); } });
+  if (!propres.length) return null;
+  if (ecartsMembresLots().some(x => x.lotId === lot.id)) return { refuse: 'ecart' };
+  DB.evenementsLots = DB.evenementsLots || [];
+  const derniers = evenementsDuLot(lot.id);
+  let date = new Date().toISOString();
+  if (derniers.length && date <= derniers[derniers.length - 1].date) date = new Date(Date.parse(derniers[derniers.length - 1].date) + 1).toISOString();
+  const ev = { id: opts.id || idEvenementLot(), lotId: lot.id, type, eids: propres, date, motif: opts.motif || null, source: opts.source || sourceEvenementLot() };
+  DB.evenementsLots.push(ev);
+  materialiserMembresLot(lot);
+  return ev;
+}
+// Aligne le journal sur une liste finale de membres (écrans qui travaillent en « liste complète ») : un événement par sens de variation.
+function appliquerMembresLot(lot, eidsFinaux, opts) {
+  if (!lotJournalise(lot)) { lot.membres = eidsFinaux.slice(); return true; }
+  const actuels = new Set((lot.membres || []).map(cleanEid)), finaux = new Set(eidsFinaux.map(cleanEid));
+  const ajouts = eidsFinaux.filter(e => !actuels.has(cleanEid(e))), retraits = (lot.membres || []).filter(e => !finaux.has(cleanEid(e)));
+  if (retraits.length) { const r = ajouterEvenementLot(lot, 'retrait', retraits, opts); if (r && r.refuse) return false; }
+  if (ajouts.length) { const r = ajouterEvenementLot(lot, 'affectation', ajouts, opts); if (r && r.refuse) return false; }
+  return true;
+}
+// Création d'un lot de reproduction journalisé (vide si eids est vide)
+function creerLotReproductionJournalise(champs, eids, opts) {
+  const lot = Object.assign({}, champs, { type: 'reproduction', journal: 1, membres: [] });
+  DB.lots = DB.lots || [];
+  DB.lots.push(lot);
+  if (eids && eids.length) ajouterEvenementLot(lot, 'affectation', eids, opts);
+  else { lot.membresEmpreinte = empreinteMembresLot([]); lot.journalN = 0; }
+  return lot;
+}
+// Résolution d'un écart (appareil non à jour) -- toujours un choix de l'éleveur
+function integrerEcartLot(lotId) {
+  const lot = (DB.lots || []).find(l => l.id === lotId), ecart = ecartsMembresLots().find(x => x.lotId === lotId);
+  if (!lot || !ecart) return false;
+  lot.membresEmpreinte = empreinteMembresLot(lot.membres);      // le cache fait foi pour CET instant : on le consigne tel quel dans le journal
+  if (ecart.retirees.length) ajouterEvenementLot(lot, 'retrait', ecart.retirees, { source: 'appareil non à jour', motif: 'Écart intégré' });
+  if (ecart.ajoutees.length) ajouterEvenementLot(lot, 'affectation', ecart.ajoutees, { source: 'appareil non à jour', motif: 'Écart intégré' });
+  return true;
+}
+function rejeterEcartLot(lotId) {
+  const lot = (DB.lots || []).find(l => l.id === lotId);
+  if (!lot || !lotJournalise(lot)) return false;
+  lot.membresEmpreinte = empreinteMembresLot(lot.membres || []);
+  materialiserMembresLot(lot);
+  lot.membresEmpreinte = empreinteMembresLot(lot.membres);
+  return true;
+}
+// Migration (appelée par migrateData, sans accès à DB) : chaque lot de reproduction existant reçoit UN événement initial portant ses membres
+// actuels (rien n'est perdu) ; id déterministe (EL-init-<lotId>) pour que deux appareils qui migrent chacun de leur côté ne créent jamais
+// deux doublons. Idempotent. Ajoute aussi campagneMisesBas (déduite, jamais écrasée) aux lots qui n'en ont pas.
+function migrerLotsVersJournal(d) {
+  d.evenementsLots = d.evenementsLots || [];
+  (d.lots || []).forEach(lot => {
+    if (!lot || lot.type !== 'reproduction') return;
+    if (lot.journal !== 1) {
+      const init = 'EL-init-' + lot.id;
+      const membres = Array.isArray(lot.membres) ? lot.membres : [];
+      if (membres.length && !d.evenementsLots.some(e => e && e.id === init)) {
+        const ms = parseInt(lot.id, 10);
+        d.evenementsLots.push({ id: init, lotId: lot.id, type: 'initial', eids: membres.slice(), date: new Date(Number.isFinite(ms) && ms > 0 ? ms : 0).toISOString(), motif: null, source: 'migration' });
+      }
+      lot.journal = 1;
+      delete lot.membresEmpreinte; delete lot.journalN;       // le cache sera recalculé depuis le journal
+      materialiserMembresLot(lot, d);
+    }
+    if (lot.campagneMisesBas === undefined || lot.campagneMisesBas === null) {
+      const c = campagneMisesBasDepuisDate(lot.dateEvenement || lot.dateCreation, d);
+      if (c !== null) { lot.campagneMisesBas = c; lot.campagneMisesBasDeduite = true; }
+    }
+  });
+}
+// Campagne (année de début, comme DB.campagneDebut) dans laquelle tombent les mises bas d'une IA/éponge faite à `dateStr` : date + milieu de
+// la fenêtre de gestation. Pour une éponge, passer la date de LUTTE (pose + 16 j), celle que le lot enregistre.
+function campagneMisesBasDepuisDate(dateStr, base) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return null;
+  base = base || DB;
+  const min = base.reproGestationMin !== undefined ? base.reproGestationMin : 144, max = base.reproGestationMax !== undefined ? base.reproGestationMax : 152;
+  return campagneAnneeDebutPourDate(addDaysToDateStr(dateStr.slice(0, 10), Math.round((min + max) / 2)), base.exploitation);
+}
+function campagneMisesBasDuLot(lot) {
+  return lot && lot.campagneMisesBas !== undefined && lot.campagneMisesBas !== null ? lot.campagneMisesBas : campagneMisesBasDepuisDate(lot && (lot.dateEvenement || lot.dateCreation));
+}
+// Campagne des mises bas visée par un évènement modesRepro : celle de son lot ; à défaut (lot supprimé, évènement saisi depuis la fiche), déduite de sa date.
+function campagneMisesBasEvenementRepro(m) {
+  const lot = m && m.lotId ? (DB.lots || []).find(l => l.id === m.lotId) : null;
+  return lot ? campagneMisesBasDuLot(lot) : campagneMisesBasDepuisDate(m && m.date);
+}
+// Seuil « délai depuis la dernière mise bas » du filtre « Critères IA » (Paramètres), en mois, 3 par défaut
+function seuilMiseBasMois() { return DB.reproSeuilMiseBasMois !== undefined && DB.reproSeuilMiseBasMois !== null ? DB.reproSeuilMiseBasMois : 3; }
+
+/* ---------- Résultat IA d'une brebis par campagne (filtres « Réussite à l'IA », chantier de tri) ----------
+   Se base sur le code Repro DÉJÀ INSCRIT sur la mise bas (agnelage.codeRepro : celui de la fiche, valeur retenue par l'éleveur après
+   correction éventuelle -- le même que celui qui alimente statsReproductionParCode), PAS sur une re-déduction lot + fenêtre :
+   - 'prise'     : mise bas de la campagne C de code IA (même sans aucun lot connu : historique d'avant l'appli, lots supprimés) ;
+   - 'non_prise' : membre d'un lot IA dont la campagne des mises bas est C, sans mise bas de code IA en C (pas de mise bas -- une fois la
+                   date IA + reproRetourMax dépassée --, vide définitive, mise bas de code retour/MN/EP) ;
+   - 'attente'   : membre d'un lot IA de C, sans mise bas, tant que date de l'IA + reproRetourMax (171 j) n'est pas dépassée ;
+   - 'pas_en_ia' : ni mise bas IA en C, ni membre d'un lot IA de C. Sans lot connu pour C on ne peut pas affirmer un échec.
+   `animal` = brebis vivante OU entrée archivée (agnelages, videesDefinitives, eid). */
+function lotsIADeCampagne(eid, campagne) {
+  const k = cleanEid(eid);
+  return (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'IA' && l.cible !== 'Agnelles' && campagneMisesBasDuLot(l) === campagne && (l.membres || []).some(e => cleanEid(e) === k));
+}
+function resultatIAPourCampagne(animal, campagne, aujourdhui) {
+  const ags = (animal.agnelages || []).filter(a => a && a.campagne === campagne);
+  if (ags.some(a => a.codeRepro === 'IA')) return 'prise';
+  const lots = lotsIADeCampagne(animal.eid, campagne);
+  if (!lots.length) return 'pas_en_ia';
+  if (ags.length) return 'non_prise';
+  if ((animal.videesDefinitives || []).some(v => v && v.campagne === campagne)) return 'non_prise';
+  const dateIA = lots.map(l => l.dateEvenement || l.dateCreation).filter(Boolean).sort().pop();
+  const retourMax = DB.reproRetourMax !== undefined ? DB.reproRetourMax : 171;
+  if (dateIA && (aujourdhui || jourAujourdhuiISO()) <= addDaysToDateStr(dateIA.slice(0, 10), retourMax)) return 'attente';
+  return 'non_prise';
+}
+// Campagnes (des mises bas) où la brebis est membre d'un lot IA connu, de la plus récente à la plus ancienne
+function campagnesIAEnLot(eid) {
+  const k = cleanEid(eid), set = new Set();
+  (DB.lots || []).forEach(l => { if (l.type === 'reproduction' && l.mode === 'IA' && l.cible !== 'Agnelles' && (l.membres || []).some(e => cleanEid(e) === k)) { const c = campagneMisesBasDuLot(l); if (c !== null) set.add(c); } });
+  return [...set].sort((a, b) => b - a);
+}
+// « Pas 2 échecs de suite » : vrai si les 2 dernières campagnes où la brebis était dans un lot IA, tranchées (prise / non prise), sont toutes
+// deux « non prise ». Les campagnes sans lot connu, « pas en IA » et « en attente » sont sautées.
+function deuxEchecsIADeSuite(animal, aujourdhui) {
+  const tranchees = campagnesIAEnLot(animal.eid).map(c => resultatIAPourCampagne(animal, c, aujourdhui)).filter(r => r === 'prise' || r === 'non_prise');
+  return tranchees.length >= 2 && tranchees[0] === 'non_prise' && tranchees[1] === 'non_prise';
+}
+
 /* Statistiques de reproduction par code, sur la cohorte `cohort` (voir
    campagneCohortPresente) — alimente à la fois la tuile "Répartition des
    mises bas par code" et le tableau "Taux de réussite par mode" du Bilan de
@@ -3613,12 +3858,13 @@ function statsLotIA(lot) {
   const retMin = DB.reproRetourMin !== undefined ? DB.reproRetourMin : 160;
   const retMax = DB.reproRetourMax !== undefined ? DB.reproRetourMax : 171;
   const lotDate = new Date(lot.dateEvenement || lot.dateCreation);
-  let effectif = 0, misesBasIA = 0, misesBasRetour = 0, agneauxIA = 0, agneauxRetour = 0;
+  let effectif = 0, misesBasIA = 0, misesBasRetour = 0, agneauxIA = 0, agneauxRetour = 0, sorties = 0;
   (lot.membres || []).forEach(eid => {
-    const animal = findAnimalReproByEid(eid);
+    const animal = trouverAnimalReproOuArchive(eid);
     if (!animal) return;
-    effectif++;
     const ag = agnelageCampagneActuelle(animal);
+    if (estSortieDuTroupeau(animal) && !(ag && ag.date)) { sorties++; return; }      // sortie avant mise bas : hors taux, comptée à part
+    effectif++;
     if (!ag || !ag.date || isNaN(lotDate.getTime())) return;
     const mb = new Date(ag.date);
     if (isNaN(mb.getTime())) return;
@@ -3627,7 +3873,7 @@ function statsLotIA(lot) {
     if (diff >= min && diff <= max) { misesBasIA++; agneauxIA += nesTotal; }
     else if (diff >= retMin && diff <= retMax) { misesBasRetour++; agneauxRetour += nesTotal; }
   });
-  return statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour);
+  return Object.assign(statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour), { sorties });
 }
 // Fabrique le triplet {ia, retour, global} à partir des compteurs bruts --
 // partagé par statsLotIA (lot entier) et statsLotIAParAgeExact (par âge)
@@ -3718,14 +3964,15 @@ function statsLotIAParAgeExact(lot) {
   const lotDate = new Date(lot.dateEvenement || lot.dateCreation);
   const groupes = {};
   (lot.membres || []).forEach(eid => {
-    const animal = findAnimalReproByEid(eid);
+    const animal = trouverAnimalReproOuArchive(eid);
     if (!animal) return;
     const millesime = anneeNaissance(eid);
     if (millesime === null) return;
+    const ag = agnelageCampagneActuelle(animal);
+    if (estSortieDuTroupeau(animal) && !(ag && ag.date)) return;      // sortie avant mise bas : hors taux (voir statsLotIA)
     if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBasIA: 0, misesBasRetour: 0, agneauxIA: 0, agneauxRetour: 0 };
     const g = groupes[millesime];
     g.effectif++;
-    const ag = agnelageCampagneActuelle(animal);
     if (!ag || !ag.date || isNaN(lotDate.getTime())) return;
     const mb = new Date(ag.date);
     if (isNaN(mb.getTime())) return;
@@ -3752,14 +3999,15 @@ function statsLotIAParAgeExact(lot) {
 function statsLotEpongeParAgeExact(lot) {
   const groupes = {};
   (lot.membres || []).forEach(eid => {
-    const animal = findAnimalReproByEid(eid);
+    const animal = trouverAnimalReproOuArchive(eid);
     if (!animal) return;
     const millesime = anneeNaissance(eid);
     if (millesime === null) return;
+    const ag = agnelageCampagneActuelle(animal);
+    if (estSortieDuTroupeau(animal) && !ag) return;      // sortie avant mise bas : hors taux (voir statsLotIA)
     if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBas: 0, agneaux: 0 };
     const g = groupes[millesime];
     g.effectif++;
-    const ag = agnelageCampagneActuelle(animal);
     if (!ag) return;
     g.misesBas++;
     g.agneaux += (ag.lambs || []).length;
@@ -3780,19 +4028,20 @@ function statsLotEpongeParAgeExact(lot) {
    la fois par la carte à l'écran (bilanReproductionHtml) et l'export PDF
    (buildLotEpongePdfBytes). */
 function statsLotEponge(lot) {
-  let effectif = 0, misesBas = 0, agneaux = 0;
+  let effectif = 0, misesBas = 0, agneaux = 0, sorties = 0;
   (lot.membres || []).forEach(eid => {
-    const animal = findAnimalReproByEid(eid);
+    const animal = trouverAnimalReproOuArchive(eid);
     if (!animal) return;
-    effectif++;
     const ag = agnelageCampagneActuelle(animal);
+    if (estSortieDuTroupeau(animal) && !ag) { sorties++; return; }      // sortie avant mise bas : hors taux, comptée à part
+    effectif++;
     if (!ag) return;
     misesBas++;
     agneaux += (ag.lambs || []).length;
   });
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
   const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
-  return { effectif, misesBas, fertilite: pct(misesBas, effectif), prolificite: rat(agneaux, misesBas) };
+  return { effectif, misesBas, fertilite: pct(misesBas, effectif), prolificite: rat(agneaux, misesBas), sorties };
 }
 
 /* Résumé PAR GROUPE (antenaises / brebis, même règle que
@@ -7098,8 +7347,9 @@ function bilanLotsReproductionHtml(classement) {
   // lot.campagne, informatif seulement depuis la correction du décalage de
   // campagne). Chaque encart n'apparaît que s'il y a au moins un lot
   // concerné -- la MN n'a pas de carte dédiée (pas de notion de lot).
-  const lotsIA = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'IA' && lotIAConcerneCampagneEnCours(l));
-  const lotsEponge = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'EP' && lotEpongeConcerneCampagneEnCours(l));
+  // Un lot créé vide (chantier de tri : on crée le lot d'abord, on affecte ensuite) n'apparaît pas dans le Bilan tant qu'il n'a aucun membre.
+  const lotsIA = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'IA' && (l.membres || []).length > 0 && lotIAConcerneCampagneEnCours(l));
+  const lotsEponge = (DB.lots || []).filter(l => l.type === 'reproduction' && l.mode === 'EP' && (l.membres || []).length > 0 && lotEpongeConcerneCampagneEnCours(l));
   // Rendu commun aux cartes de lot IA/Éponge (tête pliable + tableau de
   // résultats + détail par groupe d'âge) : `tableRows` porte les lignes
   // déjà formatées (2 colonnes IA pour un lot IA, 1 colonne Global pour un
@@ -7114,7 +7364,7 @@ function bilanLotsReproductionHtml(classement) {
       <div class="${headClass}-head" data-lot-id="${lot.id}" style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;">
         <div style="min-width:0;">
           <div style="font-size:14px;font-weight:700;">${lot.nom || (lot.mode === 'IA' ? 'Lot IA' : 'Éponge') + ' — ' + formatDateFr(lot.dateEvenement || lot.dateCreation)}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.effectif} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.effectif} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}${s.sorties ? ' · ' + s.sorties + ' sortie' + (s.sorties > 1 ? 's' : '') + ' avant mise bas' : ''}</div>
         </div>
         <div style="display:flex;gap:14px;flex-shrink:0;text-align:right;">
           <div><div style="font-size:16px;font-weight:700;">${p(s.fertilite)}</div><div style="font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;">Fertilité</div></div>
@@ -12673,6 +12923,7 @@ function showCreerLotControleLaitierModal(eids) {
       return;
     }
     DB.lots = DB.lots || [];
+    if (!garderLotsModifiables()) return;
     const lot = { id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO(), membres: eids };
     DB.lots.push(lot);
     saveData(DB);
@@ -15317,6 +15568,7 @@ function wireChantierTriTabBar() {
    automatiquement un lot de recherche en bergerie sur un critère donné,
    sans passer par l'écran "Nouveau lot". */
 function openAutoLot(id, nom, membres) {
+  if (!garderLotsModifiables()) return;
   DB.lots = DB.lots || [];
   let lot = DB.lots.find(l => l.id === id);
   if (lot) {
@@ -15352,12 +15604,12 @@ function renderLots() {
         </div>
         <div class="row" style="gap:8px;margin-bottom:0;">
           <button type="button" class="btn btn-secondary btn-edit-lot" data-id="${lot.id}" style="flex:1;">Modifier</button>
-          <button type="button" class="btn btn-primary btn-search-lot" data-id="${lot.id}" style="flex:2;">Chercher en bergerie</button>
+          ${lot.type === 'reproduction' && (lot.membres || []).length === 0 ? '' : `<button type="button" class="btn btn-primary btn-search-lot" data-id="${lot.id}" style="flex:2;">Chercher en bergerie</button>`}
         </div>
       </div>
     `).join('');
 
-  app.innerHTML = chantierTriTabBarHtml() + listHtml + `
+  app.innerHTML = chantierTriTabBarHtml() + bandeauLotsVerrouillesHtml() + listHtml + `
     <button class="btn btn-primary" id="btn-new-lot" style="margin-top:10px;margin-bottom:10px;">+ Nouveau lot</button>
     <button class="btn btn-secondary" id="btn-new-lot-reforme" style="border-color:var(--coral-fg);color:var(--coral-fg);margin-bottom:10px;">+ Nouveau lot de réforme</button>
     <button class="btn btn-secondary" id="btn-new-lot-repro" style="border-color:var(--indigo-fg);color:var(--indigo-fg);">+ Nouveau lot de reproduction</button>
@@ -15411,10 +15663,12 @@ function renderLots() {
         }
       }
       if (!confirm(message)) return;
+      if (!garderLotsModifiables()) return;
       membresSansMiseBas.forEach(a => {
         a.modesRepro = (a.modesRepro || []).filter(m => m.lotId !== lot.id);
       });
       DB.lots = DB.lots.filter(l => l.id !== btn.dataset.id);
+      DB.evenementsLots = (DB.evenementsLots || []).filter(e => e.lotId !== btn.dataset.id);      // le journal d'un lot supprimé disparaît avec lui
       effacerTrouveesLot(btn.dataset.id);
       saveData(DB);
       render('lots');
@@ -15669,6 +15923,7 @@ function renderAddLot() {
   });
 
   document.getElementById('btn-save-lot').onclick = () => {
+    if (!garderLotsModifiables()) return;
     const err = document.getElementById('err');
     const nom = document.getElementById('f-lot-nom').value.trim();
     if (!nom) {
@@ -15718,6 +15973,7 @@ function renderAddLotReforme() {
   renderSelectionPicker(document.getElementById('reforme-picker'), actives, selected);
 
   document.getElementById('btn-save-lot-reforme').onclick = () => {
+    if (!garderLotsModifiables()) return;
     const err = document.getElementById('err');
     const nom = document.getElementById('f-lot-nom').value.trim();
     if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
@@ -15839,21 +16095,19 @@ function renderAddLotRepro() {
       if (mode === 'EP' && !dateEvenement) { err.textContent = "Renseigne la date de lutte."; err.classList.remove('hidden'); return; }
       if (selected.size === 0) { err.textContent = "Sélectionne au moins un animal (à la main ou au bip)."; err.classList.remove('hidden'); return; }
       err.classList.add('hidden');
+      if (!garderLotsModifiables()) return;
       const animaux = pool().filter(a => selected.has(a.id));
       const lotId = Date.now().toString();
-      // Campagne = celle en cours au moment de la création, à titre
-      // INFORMATIF seulement (jamais relue pour rattacher une mise bas,
-      // voir deduireCodeRepro/fenetreReproMatch -- fenêtre de dates
-      // uniquement, peu importe cette valeur).
+      // Campagne du lot = celle des MISES BAS (chantier de tri) : déduite de la date de l'évènement (date de lutte pour une éponge). Les mises
+      // bas se rattachent toujours par fenêtre de dates (voir fenetreReproMatch/deduireCodeRepro), jamais par égalité de campagne.
+      const campagneMisesBas = campagneMisesBasDepuisDate(dateEvenement);
       animaux.forEach(a => {
         a.modesRepro = a.modesRepro || [];
-        a.modesRepro.push({ date: dateEvenement, mode, campagne: DB.campagneDebut, codeSieol: REPRO_CODE_SIEOL[mode], lotId });
+        a.modesRepro.push({ date: dateEvenement, mode, campagne: campagneMisesBas !== null ? campagneMisesBas : DB.campagneDebut, codeSieol: REPRO_CODE_SIEOL[mode], lotId });
       });
-      DB.lots = DB.lots || [];
-      DB.lots.push({
-        id: lotId, nom, dateCreation: today, membres: animaux.map(a => a.eid),
-        type: 'reproduction', mode, cible, dateEvenement, campagne: DB.campagneDebut
-      });
+      const champsLot = { id: lotId, nom, dateCreation: today, cible, mode, dateEvenement, campagne: DB.campagneDebut, campagneMisesBas };
+      if (mode === 'EP') champsLot.datePose = datePose;
+      creerLotReproductionJournalise(champsLot, animaux.map(a => a.eid));
       saveData(DB);
       render('lots');
     };
@@ -15915,6 +16169,7 @@ function renderEditLot(lotId) {
     renderSelectionPicker(document.getElementById('edit-lot-picker'), pool(), membresIds);
 
     document.getElementById('btn-save-edit-lot').onclick = () => {
+      if (!garderLotsModifiables()) return;
       const err = document.getElementById('err');
       const nom = document.getElementById('f-edit-lot-nom').value.trim();
       const dateVal = document.getElementById('f-edit-lot-date').value;
@@ -15970,14 +16225,14 @@ function renderEditLot(lotId) {
         nouveauxMembres.forEach(animal => {
           if (ancienEids.has(cleanEid(animal.eid))) return;
           animal.modesRepro = animal.modesRepro || [];
-          animal.modesRepro.push({ date: dateVal, mode: lot.mode, campagne: DB.campagneDebut, codeSieol: REPRO_CODE_SIEOL[lot.mode], lotId: lot.id });
+          animal.modesRepro.push({ date: dateVal, mode: lot.mode, campagne: campagneMisesBasDuLot(lot) !== null ? campagneMisesBasDuLot(lot) : DB.campagneDebut, codeSieol: REPRO_CODE_SIEOL[lot.mode], lotId: lot.id });
         });
       }
 
       lot.nom = nom;
       if (isRepro) { lot.dateEvenement = dateVal; }
       else { lot.dateCreation = dateVal; }
-      lot.membres = nouveauxMembres.map(a => a.eid);
+      if (!appliquerMembresLot(lot, nouveauxMembres.map(a => a.eid))) { err.textContent = "Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n'a été enregistré."; err.classList.remove('hidden'); return; }
       saveData(DB);
 
       if (bloquesSet.size > 0) {
@@ -16003,7 +16258,7 @@ function renderEditRepro() {
   const target = editReproTarget;
   const animal = target && target.kind === 'agnelle' ? (DB.agnelles || []).find(a => a.id === target.id) : (target ? findSheep(target.id) : null);
   if (!target || !animal) { render('home'); return; }
-  const modesCampagne = (animal.modesRepro || []).filter(m => m && m.campagne === DB.campagneDebut);
+  const modesCampagne = (animal.modesRepro || []).filter(m => m && [DB.campagneDebut, DB.campagneDebut + 1].includes(campagneMisesBasEvenementRepro(m)));
   const entry = modesCampagne.length ? modesCampagne[modesCampagne.length - 1] : null;
   const retour = () => {
     if (target.kind === 'agnelle') { currentAgnelleId = target.id; render('agnelle-detail'); }
@@ -16035,10 +16290,13 @@ function renderEditRepro() {
   };
   document.getElementById('btn-del-edit-repro').onclick = () => {
     if (!confirm('Supprimer cet évènement Repro (' + libelleModeRepro(entry.mode) + ') ? ' + (animal.eid ? 'n°' + numeroVisuel(animal.eid) + ' ' : '') + 'repassera par défaut en Monte naturelle tant qu\'elle n\'est pas remise dans un lot.')) return;
+    if (!garderLotsModifiables()) return;
+    const lotOrigine = entry.lotId ? (DB.lots || []).find(l => l.id === entry.lotId) : null;
+    if (lotOrigine && lotJournalise(lotOrigine) && ecartsMembresLots().some(x => x.lotId === lotOrigine.id)) { alert("Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n'a été supprimé."); return; }
     animal.modesRepro = (animal.modesRepro || []).filter(m => m !== entry);
-    if (entry.lotId) {
-      const lot = (DB.lots || []).find(l => l.id === entry.lotId);
-      if (lot) lot.membres = lot.membres.filter(eid => cleanEid(eid) !== cleanEid(animal.eid));
+    if (lotOrigine) {
+      if (lotJournalise(lotOrigine)) ajouterEvenementLot(lotOrigine, 'retrait', [animal.eid], { motif: 'Évènement Repro supprimé depuis la fiche' });
+      else lotOrigine.membres = lotOrigine.membres.filter(eid => cleanEid(eid) !== cleanEid(animal.eid));
     }
     saveData(DB);
     retour();
@@ -18198,6 +18456,7 @@ function ouvrirModalNouveauLot(options) {
     const nom = overlay.querySelector('#nouveau-lot-nom-input').value.trim();
     if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
     DB.lots = DB.lots || [];
+    if (!garderLotsModifiables()) return;
     DB.lots.push({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO(), membres: options.membres.slice() });
     saveData(DB);
     document.body.removeChild(overlay);
@@ -25283,6 +25542,13 @@ function renderParametresCampagne(content) {
       </div>
       <button class="btn btn-secondary" id="btn-save-repro-fenetres" style="margin-top:10px;" disabled>Enregistrer</button>
     </div>
+    ${isDesktopMode() ? `<div class="card">
+      ${sectionHeaderHtml(ICON_JOURNAL, 'indigo', 'Tri des lots de reproduction')}
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Délai minimal entre la dernière mise bas et l'IA, utilisé par le raccourci « 3 mois avant l'IA » et le filtre rapide « Critères IA » du Chantier de tri. Ne modifie aucune donnée enregistrée.</div>
+      <label for="f-repro-seuil-mb">Délai depuis la dernière mise bas (mois)</label>
+      <input type="number" id="f-repro-seuil-mb" min="0" max="24" step="1" value="${seuilMiseBasMois()}">
+      <button class="btn btn-secondary" id="btn-save-repro-seuil" style="margin-top:10px;">Enregistrer</button>
+    </div>` : ''}
 
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Campagne actuelle</div>
@@ -25352,6 +25618,13 @@ function renderParametresCampagne(content) {
     DB.reproGestationMax = gMax;
     DB.reproRetourMin = rMin;
     DB.reproRetourMax = rMax;
+    saveData(DB);
+    render('parametres');
+  };
+  if (document.getElementById('btn-save-repro-seuil')) document.getElementById('btn-save-repro-seuil').onclick = () => {
+    const v = parseInt(document.getElementById('f-repro-seuil-mb').value, 10);
+    if (isNaN(v) || v < 0 || v > 24) { alert("Saisis un nombre de mois entre 0 et 24."); return; }
+    DB.reproSeuilMiseBasMois = v;
     saveData(DB);
     render('parametres');
   };
@@ -26800,6 +27073,8 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
   'registre', 'traitementsCollectifs', 'mouvementsCollectifs', 'penalitesBacterio',
   'listeSerie', 'resumeControleLaitier', 'cahierControleLaitier', 'lactationModele',
   'reproGestationMin', 'reproGestationMax', 'reproRetourMin', 'reproRetourMax',
+  // Chantier de tri : seuil du filtre « Critères IA » + marqueur de version du format des lots (garde-fou « Mettre à jour l'application »)
+  'reproSeuilMiseBasMois', 'schemaLots',
   // Drapeau de migration CÔTÉ CLOUD (jamais localStorage seul) -- voir
   // migrerRegistreVersCollection : doit être visible de tous les appareils
   // du compte, sinon un appareil qui vient de se réinstaller relancerait la
@@ -26820,7 +27095,7 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage',
 // pour tout le code existant (registreEntriesFor, effectifEntriesFor,
 // archiverDansRegistre...) -- voir registreVersRecords/appliquerRecordsRegistre
 // plus bas, qui font seules la traduction vers/depuis la collection.
-const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite', 'ordonnances', 'registre']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
+const DOC_COLLECTIONS = ['brebis', 'beliers', 'agnelles', 'prelevementsQualite', 'ordonnances', 'registre', 'evenementsLots']; // collections Firestore par document (un doc par enregistrement, chacun avec un .id) — pas seulement les animaux, malgré le nom historique
 const BOOTSTRAP_FLAG_KEY = 'ovilog_sync_bootstrapped_uid';
 
 const sync = {
@@ -26831,7 +27106,7 @@ const sync = {
   // Dernier état connu de chaque collection/document tel qu'envoyé vers ou
   // reçu depuis Firestore, pour calculer un diff minimal à chaque sauvegarde
   // plutôt que de tout réécrire.
-  lastSynced: { brebis: {}, beliers: {}, agnelles: {}, prelevementsQualite: {}, ordonnances: {}, registre: {}, meta: undefined }
+  lastSynced: { brebis: {}, beliers: {}, agnelles: {}, prelevementsQualite: {}, ordonnances: {}, registre: {}, evenementsLots: {}, meta: undefined }
 };
 
 /* Copie profonde + remplace toute valeur undefined par null (Firestore
@@ -26942,6 +27217,7 @@ function getRecordsArrayForSync(colName, data) {
 function setRecordsArrayForSync(colName, arr) {
   if (colName === 'registre') appliquerRecordsRegistre(arr);
   else DB[colName] = arr;
+  if (colName === 'evenementsLots') recalculerMembresLotsRepro();      // nouveaux événements reçus : le cache lot.membres suit le journal
 }
 
 /* Construit la liste des opérations Firestore pour une collection, SANS
@@ -27495,6 +27771,7 @@ async function startListeners(dejaAppairePrecedemment) {
         const localMetaSubset = {};
         META_FIELDS.forEach(k => { localMetaSubset[k] = DB[k]; });
         Object.assign(DB, fusionnerEnregistrementDistant(localMetaSubset, meta, refConnueMeta));
+        recalculerMembresLotsRepro();      // lots reçus (cache membres d'un autre appareil) : à confronter au journal local, sans jamais écraser un écart
       });
       persisterSyncLastSynced();
     }
