@@ -525,6 +525,10 @@
   .mv-tp button.wide { grid-column: 1 / -1; }
   .mv-scroll { max-height: 460px; overflow: auto; }
   .mv-scroll th { position: sticky; top: 0; z-index: 1; }
+  .lt-cols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 1100px) { .lt-cols { grid-template-columns: minmax(0, 1fr); } }
+  .lt-scroll { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .lt-scroll th { position: sticky; top: 0; z-index: 1; }
   .mv-barre { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--coral-bg); border-radius: 12px; padding: 12px 16px; margin-top: 16px; }
   .mv-barre .res { font-size: 13px; color: var(--coral-fg); font-weight: 600; flex: 1; min-width: 200px; }
   .s12-an { border-top: 1px solid var(--border); padding: 12px 0; }
@@ -4947,7 +4951,7 @@ const ROOT_VIEWS = new Set(['home', 'list', 'beliers', 'agneaux', 'inventaire', 
 // Écrans redessinés en grille/tableau grand écran sur desktop (voir
 // render()) -- sortent du plafond main{max-width:700px}. Complété au fil
 // des chantiers desktop successifs, jamais un élargissement global.
-const DESKTOP_WIDE_VIEWS = new Set(['detail', 'home', 'list', 'beliers', 'controle-laitier', 'registre', 'inventaire', 'produits-delais', 'soins-sans-bio', 'traitements-12-mois', 'sanitaire', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'agneau-detail', 'parametres', 'bilan-campagne', 'saisie-resume-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
+const DESKTOP_WIDE_VIEWS = new Set(['lots', 'detail', 'home', 'list', 'beliers', 'controle-laitier', 'registre', 'inventaire', 'produits-delais', 'soins-sans-bio', 'traitements-12-mois', 'sanitaire', 'misebas-rapide', 'inventaire-actifs', 'belier-detail', 'agnelle-detail', 'agneau-detail', 'parametres', 'bilan-campagne', 'saisie-resume-campagne', 'qualite', 'sous-delai', 'controle-lot-delai', 'ordonnances', 'add-ordonnance']);
 
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -5273,6 +5277,9 @@ const scrollPositions = {};
 function render(view, sheepId) {
   // PC : la page « Mouvements d'animaux » remplace l'écran de choix de catégorie, la saisie collective et l'écran Gérer / annuler
   if (isDesktopMode() && (view === 'mouvement-groupe' || view === 'mouvements-collectifs')) view = 'inventaire';
+  // PC : le Chantier de tri a UNE page « Lots » (créer, affecter, lots existants) ; les anciens écrans de création / modification y renvoient
+  if (isDesktopMode() && (view === 'add-lot' || view === 'add-lot-reforme' || view === 'add-lot-repro')) view = 'lots';
+  if (isDesktopMode() && view === 'edit-lot') { if (!lotsPcEtat) lotsPcEtat = lotsPcEtatInitial(); lotsPcEtat.lotId = currentLotId; lotsPcEtat.selection = new Set(); lotsPcEtat.F = filtresLotsVides(); view = 'lots'; }
   if (ROOT_VIEWS.has(currentView)) scrollPositions[currentView] = window.scrollY;
   currentView = view;
   if (sheepId !== undefined) currentSheepId = sheepId;
@@ -15584,7 +15591,452 @@ function openAutoLot(id, nom, membres) {
   render('lot-search');
 }
 
+/* ---------- Chantier de tri, version PC : onglet « Lots » (chantier de tri, partie b) ----------
+   Fonctionnement « à la Unotec » : on CRÉE LE LOT D'ABORD (étape 1, une ligne, le lot est créé VIDE), puis on AFFECTE les brebis (étape 2) à l'aide de
+   4 onglets de critères (Contrôles, Lactations et classes, Réussite à l'IA, Mises bas). Chaque onglet = les brebis ACTIVES avec SES filtres et SES
+   colonnes ; la sélection (cases cochées) est CONSERVÉE d'un onglet à l'autre ; « Affecter » AJOUTE au lot et n'en retire jamais ; les filtres rapides
+   règlent des filtres, ne cochent JAMAIS aucune brebis. Aucune donnée inventée : champ absent = « - ». Pas de bip en série sur PC.
+   Lot de reproduction : membres écrits dans le journal (voir ajouterEvenementLot) + évènement modesRepro sur chaque animal, comme l'écran mobile. */
+const LOTS_ONGLETS = [['controles', 'Contrôles'], ['lactations', 'Lactations et classes'], ['ia', 'Réussite à l\'IA'], ['misesbas', 'Mises bas']];
+let lotsPcEtat = null, lotsPcRedessin = false;
+function filtresLotsVides() {
+  return { q: '', millesime: '', statut: '', dansLot: '',
+    ctrlCampagne: '', anomalieAny: false, anomalie: { 1: '', 2: '', 3: '' }, lait: { 1: ['', ''], 2: ['', ''], 3: ['', ''] },
+    lactMin: '', lactMax: '', classes: [], age: '',
+    ia: {}, sansDeuxEchecs: false,
+    mbMode: '', mbDu: '', mbAu: '' };
+}
+function lotsPcEtatInitial() {
+  return { lotId: null, form: { type: 'reproduction', cible: 'Brebis', mode: 'IA', campagne: 'avenir', nom: '', nomTouche: false, date: jourAujourdhuiISO() },
+    onglet: 'misesbas', F: filtresLotsVides(), tri: { col: null, dir: 1 }, selection: new Set(), erreurs: [], message: '', messagePanneau: '' };
+}
+const libCampagneAffichee = c => String(c + 1);          // DB.campagneDebut = année de DÉBUT (2026) ; on affiche l'année de FIN (campagne 2027)
+function ajouterMoisISO(dateStr, mois) {
+  const [y, m, j] = dateStr.split('-').map(Number), d = new Date(Date.UTC(y, m - 1 + mois, 1));
+  const dernier = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(Math.min(j, dernier)).padStart(2, '0');
+}
+function nomLotParDefaut(F) {
+  const d = formatDateFr(F.date).replace(/\//g, '-');
+  if (F.type === 'reforme') return 'Réforme du ' + d;
+  if (F.type === 'reproduction') return (F.mode === 'EP' ? 'Éponge' : 'IA') + ' du ' + d;
+  return '';
+}
+function dateEvenementDuFormulaire(F) { return F.type === 'reproduction' && F.mode === 'EP' && F.date ? addDaysToDateStr(F.date, EPONGE_DELAI_LUTTE_JOURS) : F.date; }
+function campagneMisesBasDuFormulaire(F) { return F.campagne === 'encours' ? DB.campagneDebut : DB.campagneDebut + 1; }
+
+/* Classe (1 à 4 UNIQUEMENT) et lactation totale (L) de la campagne PRÉCÉDENTE d'une brebis -- source : DB.lactationModele, comme la fiche Carrière
+   (jamais recalculées). Classe hors 1-4 (« 0 », vide), suivi « clo » (index de production, pas une classe) ou pas de ligne : null -> « - ». */
+function lactationPrecedenteBrebis(eid) {
+  const k = cleanEid(eid), c = DB.campagneDebut - 1;
+  const l = (DB.lactationModele || []).find(x => x && cleanEid(x.eid) === k && x.campagne === c);
+  if (!l) return { lactation: null, classe: null, campagne: c };
+  const lact = typeof l.lactationTotale === 'number' && l.lactationTotale > 0 ? l.lactationTotale : null;
+  const brut = DB.exploitation && DB.exploitation.typeSuivi === 'clo' ? null : parseInt(l.classeParQuart, 10);
+  return { lactation: lact, classe: [1, 2, 3, 4].includes(brut) ? brut : null, campagne: c };
+}
+/* Écarts entre les 3 sources de classe / lactation (DB.lactationModele = source retenue ; DB.bilanLactation = import SIEOL ; DB.cahierControleLaitier)
+   pour la campagne précédente : à comparer au papier SIEOL, jamais corrigés. */
+function ecartsSourcesLactation() {
+  const c = DB.campagneDebut - 1, res = [];
+  const pick = (arr, k) => (arr || []).find(x => x && cleanEid(x.eid) === k && x.campagne === c) || null;
+  const classeOk = v => { const n = parseInt(v, 10); return [1, 2, 3, 4].includes(n) ? n : null; };
+  DB.brebis.forEach(s => {
+    const k = cleanEid(s.eid), A = pick(DB.lactationModele, k), B = pick(DB.bilanLactation, k), C = pick(DB.cahierControleLaitier, k);
+    if (!A && !B && !C) return;
+    const vals = { lactationModele: A ? { classe: A.classeParQuart, lactation: A.lactationTotale } : null, bilanLactation: B ? { classe: B.classeParQuart, lactation: B.lactTotale } : null, cahier: C ? { classe: C.classeParQuart, lactation: C.lactMoyen } : null };
+    const push = type => res.push({ type, eid: s.eid, numero: numeroVisuel(s.eid), court: s.numeroCourtTravailSieol || s.numeroTravailSieol || '', statut: s.statut || 'active', valeurs: vals });
+    if (!A && (B || C)) push('absente de lactationModele (présente dans une autre source)');
+    if (A && classeOk(A.classeParQuart) === null) push('classe hors 1 à 4 dans lactationModele');
+    if (A && B && classeOk(A.classeParQuart) !== null && classeOk(B.classeParQuart) !== null && classeOk(A.classeParQuart) !== classeOk(B.classeParQuart)) push('classe différente : lactationModele / bilanLactation');
+    if (A && C && classeOk(A.classeParQuart) !== null && classeOk(C.classeParQuart) !== null && classeOk(A.classeParQuart) !== classeOk(C.classeParQuart)) push('classe différente : lactationModele / cahier de contrôle');
+    if (A && B && typeof A.lactationTotale === 'number' && typeof B.lactTotale === 'number' && Math.abs(A.lactationTotale - B.lactTotale) > 0.05) push('lactation totale différente : lactationModele / bilanLactation');
+  });
+  return res;
+}
+function derniereMiseBasBrebis(s) {
+  const d = (s.agnelages || []).filter(a => a && a.date).map(a => a.date).sort().pop();
+  return d || '';
+}
+function lotsParEidMap() {
+  const m = new Map();
+  (DB.lots || []).forEach(l => (l.membres || []).forEach(e => { const k = cleanEid(e); if (!m.has(k)) m.set(k, []); m.get(k).push(l); }));
+  return m;
+}
+function campagnesControlesDisponibles() {
+  const set = new Set();
+  DB.brebis.forEach(s => (s.controleLaitier || []).forEach(c => { if (c && c.campagne != null) set.add(c.campagne); }));
+  return [...set].sort((a, b) => b - a);
+}
+function campagnesIAColonnes() {
+  const S = DB.campagneDebut, set = new Set([S - 1, S, S + 1]);
+  (DB.lots || []).forEach(l => { if (l.type === 'reproduction' && l.mode === 'IA') { const c = campagneMisesBasDuLot(l); if (c !== null) set.add(c); } });
+  DB.brebis.forEach(s => (s.agnelages || []).forEach(a => { if (a && a.codeRepro === 'IA' && a.campagne != null) set.add(a.campagne); }));
+  return [...set].sort((a, b) => a - b).slice(-4);
+}
+function moisEntre(dateDebut, dateFin) {
+  if (!dateDebut || !dateFin) return null;
+  const a = new Date(dateDebut + 'T00:00:00Z'), b = new Date(dateFin + 'T00:00:00Z');
+  return Math.round(((b - a) / 86400000) / 30.4375);
+}
+const LIB_RESULTAT_IA = { prise: 'Prise', non_prise: 'Non prise', attente: 'En attente', pas_en_ia: 'Pas en IA' };
+const COURT_RESULTAT_IA = { prise: '✓', non_prise: '✗', attente: '…', pas_en_ia: '–' };
+
+// Lignes (une par brebis ACTIVE, ou par agnelle pour un lot cible Agnelles) avec toutes les valeurs des 4 onglets ; « - » = null
+function lignesLotsPc(lot) {
+  const F = lotsPcEtat.F, S = DB.campagneDebut, lots = lotsParEidMap(), colsIA = campagnesIAColonnes();
+  const ctrlC = F.ctrlCampagne !== '' ? parseInt(F.ctrlCampagne, 10) : (campagnesControlesDisponibles()[0] != null ? campagnesControlesDisponibles()[0] : S);
+  const membres = new Set((lot.membres || []).map(cleanEid));
+  const dateRef = lot.type === 'reproduction' ? (lot.dateEvenement || lot.dateCreation) : null;
+  if (lot.cible === 'Agnelles') {
+    return (DB.agnelles || []).map(a => {
+      const m = a.motherEid ? lactationPrecedenteBrebis(a.motherEid) : { lactation: null, classe: null };
+      return { eid: a.eid, id: a.id, obj: a, numero: numeroVisuel(a.eid), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: age(a.eid), millesime: anneeNaissance(a.eid), statut: '—',
+        origine: a.origine === 'née' ? 'Née' : 'Achetée', classeMere: m.classe, lactMere: m.lactation, lots: (lots.get(cleanEid(a.eid)) || []).map(l => l.nom), dansCeLot: membres.has(cleanEid(a.eid)), dansUnAutreLot: (lots.get(cleanEid(a.eid)) || []).some(l => l.id !== lot.id) };
+    }).sort(comparerAnimauxAgeNumero);
+  }
+  return DB.brebis.filter(s => (s.statut || 'active') === 'active').map(s => {
+    const k = cleanEid(s.eid), cl = lactationPrecedenteBrebis(s.eid), dmb = derniereMiseBasBrebis(s);
+    const ctr = n => (s.controleLaitier || []).find(c => c && c.campagne === ctrlC && c.controle === n) || null;
+    const ia = {}; colsIA.forEach(c => { ia[c] = resultatIAPourCampagne(s, c); });
+    return { eid: s.eid, id: s.id, obj: s, numero: numeroVisuel(s.eid), court: s.numeroCourtTravailSieol || s.numeroTravailSieol || '', age: age(s.eid), millesime: anneeNaissance(s.eid), statut: statutReproductionCampagne(s),
+      lait: [1, 2, 3].map(n => ctr(n) ? ctr(n).quantite : null), anomalie: [1, 2, 3].map(n => ctr(n) ? (ctr(n).anomalie || null) : null), ctrlPresent: [1, 2, 3].map(n => !!ctr(n)),
+      lactN1: cl.lactation, classe: cl.classe, ia, deuxEchecs: deuxEchecsIADeSuite(s), derniereMB: dmb, delaiMB: dateRef ? moisEntre(dmb, dateRef) : null,
+      lots: (lots.get(k) || []).map(l => l.nom), dansCeLot: membres.has(k), dansUnAutreLot: (lots.get(k) || []).some(l => l.id !== lot.id) };
+  }).sort(comparerAnimauxAgeNumero);
+}
+function filtrerLignesLotsPc(lignes, onglet, lot) {
+  const F = lotsPcEtat.F, q = F.q.replace(/\s+/g, '').toLowerCase(), nb = v => v !== '' && v !== null && v !== undefined && !isNaN(parseFloat(v));
+  const tags = [];
+  let out = lignes.filter(r => (!q || r.numero.toLowerCase().includes(q) || r.court.toLowerCase().includes(q) || cleanEid(r.eid).toLowerCase().includes(q))
+    && (F.millesime === '' || String(r.millesime) === F.millesime)
+    && (F.statut === '' || r.statut === F.statut)
+    && (F.dansLot === '' || (F.dansLot === 'aucun' && r.lots.length === 0) || (F.dansLot === 'autre' && r.dansUnAutreLot) || (F.dansLot === 'ce' && r.dansCeLot)));
+  if (F.q) tags.push(['N° : ' + F.q, f => { f.q = ''; }]);
+  if (F.millesime) tags.push(['Millésime : ' + F.millesime, f => { f.millesime = ''; }]);
+  if (F.statut) tags.push(['Statut : ' + F.statut, f => { f.statut = ''; }]);
+  if (F.dansLot) tags.push(['Lot : ' + ({ aucun: 'aucun', autre: 'dans un autre lot', ce: 'dans ce lot' }[F.dansLot]), f => { f.dansLot = ''; }]);
+  if (lot.cible === 'Agnelles') {
+    if (F.age !== '') { out = out.filter(r => String(r.age) === F.age); tags.push(['Âge : ' + F.age + ' ans', f => { f.age = ''; }]); }
+    return { lignes: out, tags };
+  }
+  if (onglet === 'controles') {
+    if (F.anomalieAny) { out = out.filter(r => r.anomalie.some(a => !!a)); tags.push(['Une anomalie sur au moins un contrôle', f => { f.anomalieAny = false; }]); }
+    [1, 2, 3].forEach(n => {
+      const a = F.anomalie[n];
+      if (a !== '') {
+        out = out.filter(r => a === 'aucune' ? (r.ctrlPresent[n - 1] && !r.anomalie[n - 1]) : a === 'toutes' ? !!r.anomalie[n - 1] : String(r.anomalie[n - 1]) === a);
+        tags.push(['Anomalie C' + n + ' : ' + ({ aucune: 'aucune', toutes: 'une anomalie' }[a] || a), f => { f.anomalie[n] = ''; }]);
+      }
+      const [mn, mx] = F.lait[n];
+      if (nb(mn) || nb(mx)) {
+        out = out.filter(r => r.lait[n - 1] !== null && (!nb(mn) || r.lait[n - 1] >= parseFloat(mn)) && (!nb(mx) || r.lait[n - 1] <= parseFloat(mx)));
+        tags.push(['Lait C' + n + ' : ' + (nb(mn) ? mn : '…') + ' – ' + (nb(mx) ? mx : '…') + ' mL', f => { f.lait[n] = ['', '']; }]);
+      }
+    });
+  } else if (onglet === 'lactations') {
+    if (nb(F.lactMin) || nb(F.lactMax)) {
+      out = out.filter(r => r.lactN1 !== null && (!nb(F.lactMin) || r.lactN1 >= parseFloat(F.lactMin)) && (!nb(F.lactMax) || r.lactN1 <= parseFloat(F.lactMax)));
+      tags.push(['Lactation N-1 : ' + (nb(F.lactMin) ? F.lactMin : '…') + ' – ' + (nb(F.lactMax) ? F.lactMax : '…') + ' L', f => { f.lactMin = ''; f.lactMax = ''; }]);
+    }
+    if (F.classes.length) { out = out.filter(r => r.classe !== null && F.classes.includes(String(r.classe))); tags.push(['Classe : ' + F.classes.join(', '), f => { f.classes = []; }]); }
+    if (F.age !== '') { out = out.filter(r => String(r.age) === F.age); tags.push(['Âge : ' + F.age + ' ans', f => { f.age = ''; }]); }
+  } else if (onglet === 'ia') {
+    Object.keys(F.ia).forEach(c => {
+      const v = F.ia[c];
+      if (v) { out = out.filter(r => r.ia[c] === v); tags.push(['IA ' + libCampagneAffichee(parseInt(c, 10)) + ' : ' + LIB_RESULTAT_IA[v], f => { delete f.ia[c]; }]); }
+    });
+    if (F.sansDeuxEchecs) { out = out.filter(r => !r.deuxEchecs); tags.push(['Sans 2 échecs de suite', f => { f.sansDeuxEchecs = false; }]); }
+  } else if (onglet === 'misesbas') {
+    if (F.mbMode === 'avant' && F.mbDu) { out = out.filter(r => r.derniereMB && r.derniereMB < F.mbDu); tags.push(['Dernière mise bas avant le ' + formatDateFr(F.mbDu), f => { f.mbDu = ''; }]); }
+    if (F.mbMode === 'entre' && (F.mbDu || F.mbAu)) { out = out.filter(r => r.derniereMB && (!F.mbDu || r.derniereMB >= F.mbDu) && (!F.mbAu || r.derniereMB <= F.mbAu)); tags.push(['Dernière mise bas : du ' + (F.mbDu ? formatDateFr(F.mbDu) : '…') + ' au ' + (F.mbAu ? formatDateFr(F.mbAu) : '…'), f => { f.mbDu = ''; f.mbAu = ''; }]); }
+    if (F.mbMode === 'aucune') { out = out.filter(r => !r.derniereMB); tags.push(['Aucune mise bas', f => { f.mbMode = ''; }]); }
+  }
+  return { lignes: out, tags };
+}
+function cleTriLotsPc(r, col) {
+  const m = { numero: r.court || r.numero, age: r.age, statut: r.statut, derniereMB: r.derniereMB, delaiMB: r.delaiMB, lactN1: r.lactN1, classe: r.classe, lait1: r.lait && r.lait[0], lait2: r.lait && r.lait[1], lait3: r.lait && r.lait[2], an1: r.anomalie && r.anomalie[0], an2: r.anomalie && r.anomalie[1], an3: r.anomalie && r.anomalie[2], lactMere: r.lactMere, classeMere: r.classeMere, origine: r.origine };
+  if (col.startsWith('ia')) return r.ia ? r.ia[col.slice(2)] : null;
+  return m[col];
+}
+function trierLignesLotsPc(lignes) {
+  const { col, dir } = lotsPcEtat.tri;
+  if (!col) return lignes;
+  return lignes.slice().sort((a, b) => {
+    const x = cleTriLotsPc(a, col), y = cleTriLotsPc(b, col);
+    const vx = x === null || x === undefined || x === '', vy = y === null || y === undefined || y === '';
+    if (vx && vy) return comparerAnimauxAgeNumero(a, b);
+    if (vx) return 1; if (vy) return -1;                                            // les « - » toujours en bas
+    const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'fr', { numeric: true });
+    return c !== 0 ? c * dir : comparerAnimauxAgeNumero(a, b);
+  });
+}
+// Évènement modesRepro écrit pour chaque animal affecté (même contenu que l'écran mobile, campagne = celle des mises bas du lot)
+function affecterAuLotPc(lot, lignes) {
+  const eids = [];
+  lignes.forEach(r => {
+    if ((lot.membres || []).some(e => cleanEid(e) === cleanEid(r.eid))) return;
+    if (lot.type === 'reproduction') {
+      r.obj.modesRepro = r.obj.modesRepro || [];
+      if (!r.obj.modesRepro.some(m => m.lotId === lot.id)) r.obj.modesRepro.push({ date: lot.dateEvenement, mode: lot.mode, campagne: campagneMisesBasDuLot(lot) !== null ? campagneMisesBasDuLot(lot) : DB.campagneDebut, codeSieol: REPRO_CODE_SIEOL[lot.mode], lotId: lot.id });
+    }
+    eids.push(r.eid);
+  });
+  if (!eids.length) return 0;
+  if (lotJournalise(lot)) { const ev = ajouterEvenementLot(lot, 'affectation', eids); if (ev && ev.refuse) return -1; }
+  else lot.membres = (lot.membres || []).concat(eids);
+  return eids.length;
+}
+// Retrait d'un membre : refusé AVEC MESSAGE si une mise bas est déjà rattachée à cette brebis dans ce lot (jamais de correction silencieuse)
+function miseBasRattacheeAuLot(animal, lot) {
+  return lot.type === 'reproduction' && Array.isArray(animal.agnelages) && animal.agnelages.some(ag => ag && ag.date && fenetreReproMatch(lot.dateEvenement || lot.dateCreation, ag.date) !== null);
+}
+function retirerDuLotPc(lot, eid) {
+  const animal = trouverAnimalReproOuArchive(eid) || DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eid));
+  if (animal && miseBasRattacheeAuLot(animal, lot)) return { refuse: 'misebas', numero: numeroVisuel(eid) };
+  if (lotJournalise(lot)) { const ev = ajouterEvenementLot(lot, 'retrait', [eid], { motif: null }); if (ev && ev.refuse) return { refuse: 'ecart' }; }
+  else lot.membres = (lot.membres || []).filter(e => cleanEid(e) !== cleanEid(eid));
+  if (animal && lot.type === 'reproduction') animal.modesRepro = (animal.modesRepro || []).filter(m => m.lotId !== lot.id);
+  return { ok: true };
+}
+async function exporterListeLotsXlsx(nomFichier, lignes, titreFeuille) {
+  const bytes = await buildXlsxWorkbook([{ name: titreFeuille || 'Lot', colWidths: [14, 12, 8, 24, 40], rows: [
+    ['N°', 'Millésime', 'Âge', 'Statut de reproduction', 'Lots'],
+    ...lignes.map(r => [r.court || r.numero, r.millesime === null ? '-' : r.millesime, r.age === null ? '-' : r.age, r.statut || '-', (r.lots || []).join(', ') || '-'])
+  ] }]);
+  await saveOrShareBinaryFile(nomFichier, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+async function exporterEcartsLactationXlsx() {
+  const e = ecartsSourcesLactation(), f = v => v === null || v === undefined || v === '' ? '-' : v;
+  const bytes = await buildXlsxWorkbook([{ name: 'Écarts de classe', colWidths: [12, 52, 14, 14, 14, 14, 14], rows: [
+    ['N°', 'Écart', 'Classe lactationModele', 'Classe bilanLactation', 'Classe cahier', 'Lactation lactationModele (L)', 'Lactation bilanLactation (L)'],
+    ...e.map(x => [x.court || x.numero, x.type, f(x.valeurs.lactationModele && x.valeurs.lactationModele.classe), f(x.valeurs.bilanLactation && x.valeurs.bilanLactation.classe), f(x.valeurs.cahier && x.valeurs.cahier.classe), f(x.valeurs.lactationModele && x.valeurs.lactationModele.lactation), f(x.valeurs.bilanLactation && x.valeurs.bilanLactation.lactation)])
+  ] }]);
+  await saveOrShareBinaryFile('ecarts-classe-lactation_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+function renderLotsPc() {
+  if (!lotsPcEtat) lotsPcEtat = lotsPcEtatInitial();
+  const E = lotsPcEtat, F = E.F;
+  pageTitle.textContent = 'Chantier de tri';
+  const lot = E.lotId ? (DB.lots || []).find(l => l.id === E.lotId) : null;
+  if (E.lotId && !lot) { E.lotId = null; }
+  const redessiner = () => { if (lotsPcRedessin) return; lotsPcRedessin = true; try { renderLotsPc(); } finally { lotsPcRedessin = false; } };      // pas de redessin imbriqué (blur / change pendant le remplacement du DOM)
+  const barre = `<div class="pc-seg2" style="max-width:420px;margin-bottom:16px;"><button type="button" class="opt-btn selected" id="lt-tab-lots">Lots</button><button type="button" class="opt-btn" id="lt-tab-agnelles">Tri des agnelles</button></div>`;
+  const seg = (id, opts, val) => `<div class="pc-seg2" id="${id}">${opts.map(([v, l]) => `<button type="button" class="opt-btn${val === v ? ' selected' : ''}" data-val="${v}">${l}</button>`).join('')}</div>`;
+  const entete = `<div style="margin-bottom:12px;"><p style="margin:0;font-size:22px;font-weight:700;">Chantier de tri</p><p style="margin:2px 0 0;font-size:13px;color:var(--text-muted);">Campagne ${libCampagneAffichee(DB.campagneDebut)} · préparer les lots ici, les utiliser en bergerie sur mobile</p></div>`;
+  const bandeau = bandeauLotsVerrouillesHtml() + ecartsMembresLots().map(x => `<div class="error-box" style="margin-bottom:10px;">Le lot « ${x.nom} » a été modifié par un appareil non à jour (${x.ajoutees.length} ajoutée(s), ${x.retirees.length} retirée(s) hors journal). <button type="button" class="btn btn-secondary lt-ecart-int" data-id="${x.lotId}" style="width:auto;padding:4px 10px;font-size:12px;">Intégrer au journal</button> <button type="button" class="btn btn-secondary lt-ecart-rej" data-id="${x.lotId}" style="width:auto;padding:4px 10px;font-size:12px;">Revenir au journal</button></div>`).join('');
+  let corps = '', ctx = null;
+  if (!lot) {
+    // ---------- ÉTAPE 1 : créer le lot (une ligne ; le lot est créé VIDE) ----------
+    const f = E.form;
+    if (!f.nomTouche) f.nom = nomLotParDefaut(f);
+    const repro = f.type === 'reproduction', recherche = f.type === 'recherche', reforme = f.type === 'reforme';
+    corps = `<p class="pc-sec first">Étape 1 — Créer le lot</p>
+      <div class="card" style="margin-bottom:16px;">
+        <label>Type de lot</label>
+        ${seg('lt-type', [['recherche', 'Lot de recherche'], ['reforme', 'Lot de réforme'], ['reproduction', 'Lot de reproduction']], f.type)}
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-top:14px;">
+          ${repro ? `<div style="min-width:200px;"><label>Cible</label>${seg('lt-cible', [['Brebis', 'Brebis'], ['Agnelles', 'Agnelles']], f.cible)}</div>
+          <div style="min-width:180px;"><label>Mode</label>${seg('lt-mode', [['IA', 'IA'], ['EP', 'Éponge']], f.mode)}</div>
+          <div style="min-width:300px;"><label>Campagne des mises bas</label>${seg('lt-campagne', [['encours', libCampagneAffichee(DB.campagneDebut) + ' · en cours'], ['avenir', libCampagneAffichee(DB.campagneDebut + 1) + ' · à venir']], f.campagne)}</div>` : ''}
+          <div style="flex:1;min-width:200px;"><label for="lt-nom">Nom du lot</label><input type="text" id="lt-nom" value="${f.nom.replace(/"/g, '&quot;')}"></div>
+          ${reforme ? '' : `<div><label for="lt-date">${repro ? (f.mode === 'EP' ? 'Date de pose' : 'Date de l\'IA') : 'Date'}</label><input type="date" id="lt-date" value="${f.date}"></div>`}
+          <button type="button" class="btn ${reforme ? 'btn-danger' : 'btn-primary'}" id="lt-creer" style="width:auto;${reforme ? 'background:var(--danger);color:#fff;' : ''}">${reforme ? 'Créer le lot de réforme' : 'Créer le lot'}</button>
+        </div>
+        <div id="lt-erreurs" class="error-box${E.erreurs.length ? '' : ' hidden'}" style="margin-top:10px;">${E.erreurs.join('<br>')}</div>
+        <p class="brd-note" style="margin:10px 0 0;">${repro ? 'Un lot d\'IA se fait pendant la campagne en cours et prépare les mises bas de la campagne choisie (« à venir » par défaut). Le lot est créé vide : les brebis s\'affectent à l\'étape 2. Éponge : la date de pose sert de base (lutte = pose + ' + EPONGE_DELAI_LUTTE_JOURS + ' j). Mode et cible sont verrouillés après création.' : 'Le lot est créé vide : les brebis s\'affectent à l\'étape 2.'}</p>
+      </div>
+      ${E.message ? `<div class="card" style="margin-bottom:16px;background:var(--green-bg);color:var(--green-fg);">${E.message}</div>` : ''}
+      <div id="lt-existants"></div>`;
+  } else {
+    // ---------- ÉTAPE 2 : affecter ----------
+    const agn = lot.cible === 'Agnelles';
+    const toutes = lignesLotsPc(lot);
+    const { lignes: filtrees, tags } = filtrerLignesLotsPc(toutes, E.onglet, lot);
+    const lignes = trierLignesLotsPc(filtrees);
+    ctx = { tags, lignes: filtrees };
+    const sel = E.selection, valides = new Set(toutes.filter(r => !r.dansCeLot).map(r => cleanEid(r.eid)));
+    [...sel].forEach(k => { if (!valides.has(k)) sel.delete(k); });                 // une brebis sortie des actives ou déjà dans le lot ne reste pas cochée
+    const selFiltre = lignes.filter(r => sel.has(cleanEid(r.eid))).length;
+    const millesimes = [...new Set(toutes.map(r => r.millesime).filter(m => m !== null))].sort((a, b) => b - a);
+    const statuts = [...new Set(toutes.map(r => r.statut))].sort();
+    const colsIA = campagnesIAColonnes(), ctrlCamps = campagnesControlesDisponibles();
+    const ctrlC = F.ctrlCampagne !== '' ? parseInt(F.ctrlCampagne, 10) : (ctrlCamps[0] != null ? ctrlCamps[0] : DB.campagneDebut);
+    const tri = col => E.tri.col === col ? (E.tri.dir === 1 ? ' ▲' : ' ▼') : '';
+    const th = (col, l, left) => `<th class="lt-th" data-col="${col}" style="cursor:pointer;${left ? 'text-align:left;' : ''}">${l}${tri(col)}</th>`;
+    const dash = v => v === null || v === undefined || v === '' ? '<span style="color:var(--text-muted);">-</span>' : v;
+    const lotsPills = r => r.lots.length ? r.lots.map(n => pcPill('info', n)).join(' ') : '—';
+    let cols, cellules;
+    if (agn) {
+      cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + th('origine', 'Origine', true) + th('classeMere', 'Classe mère') + th('lactMere', 'Lactation mère N-1');
+      cellules = r => `<td class="l"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td><td class="l">${r.origine}</td><td>${dash(r.classeMere)}</td><td>${dash(r.lactMere === null ? null : fmtDecimal(r.lactMere, 1) + ' L')}</td>`;
+    } else if (E.onglet === 'controles') {
+      cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + [1, 2, 3].map(n => th('lait' + n, 'Lait C' + n + ' (mL)') + th('an' + n, 'Anomalie C' + n)).join('');
+      cellules = r => `<td class="l"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td>` + [0, 1, 2].map(i => `<td>${dash(r.lait[i])}</td><td>${r.anomalie[i] ? pcPill('warn', r.anomalie[i]) : (r.ctrlPresent[i] ? '—' : dash(null))}</td>`).join('');
+    } else if (E.onglet === 'lactations') {
+      cols = th('numero', 'N°', true) + th('lactN1', 'Lactation N-1 (' + libCampagneAffichee(DB.campagneDebut - 1) + ')') + th('classe', 'Classe') + th('age', 'Millésime · âge');
+      cellules = r => `<td class="l"><b>${r.court || r.numero}</b></td><td>${dash(r.lactN1 === null ? null : fmtDecimal(r.lactN1, 1) + ' L')}</td><td>${dash(r.classe)}</td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td>`;
+    } else if (E.onglet === 'ia') {
+      cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + colsIA.map(c => th('ia' + c, 'IA ' + libCampagneAffichee(c))).join('') + `<th>2 échecs de suite</th>`;
+      cellules = r => `<td class="l"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td>` + colsIA.map(c => `<td title="${LIB_RESULTAT_IA[r.ia[c]]}"><span class="${r.ia[c] === 'prise' ? 'ok' : r.ia[c] === 'non_prise' ? 'ko' : ''}" style="${r.ia[c] === 'prise' ? 'color:var(--green-fg);font-weight:700;' : r.ia[c] === 'non_prise' ? 'color:var(--danger);font-weight:700;' : 'color:var(--text-muted);'}">${COURT_RESULTAT_IA[r.ia[c]]}</span></td>`).join('') + `<td>${r.deuxEchecs ? pcPill('danger', 'oui') : '—'}</td>`;
+    } else {
+      cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + th('statut', 'Statut de reproduction', true) + th('derniereMB', 'Dernière mise bas') + th('delaiMB', 'Délai mise bas → IA');
+      cellules = r => `<td class="l"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td><td class="l">${r.statut}</td><td>${dash(r.derniereMB ? formatDateFr(r.derniereMB) : null)}</td><td>${dash(r.delaiMB === null ? null : r.delaiMB + ' mois')}</td>`;
+    }
+    const onglets = agn ? '' : `<div class="pc-seg2" id="lt-onglets" style="margin-bottom:12px;">${LOTS_ONGLETS.map(([k, l]) => `<button type="button" class="opt-btn${E.onglet === k ? ' selected' : ''}" data-val="${k}">${l}</button>`).join('')}</div>`;
+    const rapides = agn ? '' : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"><span style="font-size:12px;color:var(--text-muted);">Filtres rapides</span><button type="button" class="pc-gc" id="lt-rapide-reforme">Critères réforme</button><button type="button" class="pc-gc" id="lt-rapide-ia">Critères IA</button><span style="font-size:12px;color:var(--text-muted);">Règlent les filtres, ne cochent aucune brebis, restent modifiables.</span></div>`;
+    const selectHtml = (id, val, opts) => `<select id="${id}">${opts.map(([v, l]) => `<option value="${v}"${String(val) === String(v) ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+    const champ = (label, html, extra) => `<div${extra ? ' style="' + extra + '"' : ''}><label>${label}</label>${html}</div>`;
+    const transverses = [
+      champ('Rechercher un n°', `<input type="text" id="lt-q" value="${F.q.replace(/"/g, '&quot;')}" placeholder="Saisir un n°" autocomplete="off">`),
+      champ('Millésime', selectHtml('lt-millesime', F.millesime, [['', 'Tous'], ...millesimes.map(m => [String(m), String(m)])])),
+      agn ? '' : champ('Statut de reproduction', selectHtml('lt-statut', F.statut, [['', 'Tous'], ...statuts.map(s => [s, s])])),
+      champ('Déjà dans un lot', selectHtml('lt-dans-lot', F.dansLot, [['', 'Tous'], ['aucun', 'Dans aucun lot'], ['autre', 'Dans un autre lot'], ['ce', 'Dans ce lot']])),
+      `<div style="flex:0 0 auto;"><button type="button" class="btn btn-secondary" id="lt-reinit" style="width:auto;">Réinitialiser</button></div>`
+    ].join('');
+    let specifiques = '';
+    if (agn) specifiques = champ('Âge (ans)', selectHtml('lt-age', F.age, [['', 'Tous'], ...[...new Set(toutes.map(r => r.age).filter(a => a !== null))].sort((a, b) => a - b).map(a => [String(a), String(a)])]));
+    else if (E.onglet === 'controles') specifiques = `<div style="flex:1 1 230px;"><label style="display:flex;gap:8px;align-items:center;margin-top:20px;"><input type="checkbox" id="lt-anomalie-any" style="width:auto;"${F.anomalieAny ? ' checked' : ''}> Au moins une anomalie</label></div>` + champ('Campagne des contrôles', selectHtml('lt-ctrl-campagne', F.ctrlCampagne, [['', 'Dernière avec contrôles (' + libCampagneAffichee(ctrlC) + ')'], ...ctrlCamps.map(c => [String(c), 'Campagne ' + libCampagneAffichee(c)])]))
+      + [1, 2, 3].map(n => champ('Anomalie C' + n, selectHtml('lt-an' + n, F.anomalie[n], [['', 'Toutes'], ['toutes', 'Une anomalie'], ['aucune', 'Aucune'], ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(x => [String(x), 'Code ' + x])])) + champ('Lait C' + n + ' (mL) min – max', `<div style="display:flex;gap:4px;"><input type="number" id="lt-lait${n}-min" value="${F.lait[n][0]}" placeholder="min" style="min-width:70px;"><input type="number" id="lt-lait${n}-max" value="${F.lait[n][1]}" placeholder="max" style="min-width:70px;"></div>`)).join('');
+    else if (E.onglet === 'lactations') specifiques = champ('Lactation N-1 (L) min – max', `<div style="display:flex;gap:4px;"><input type="number" id="lt-lact-min" value="${F.lactMin}" placeholder="min"><input type="number" id="lt-lact-max" value="${F.lactMax}" placeholder="max"></div>`)
+      + champ('Classe', `<div style="display:flex;gap:6px;">${[1, 2, 3, 4].map(c => `<button type="button" class="pc-gc lt-classe${F.classes.includes(String(c)) ? ' on' : ''}" data-c="${c}">${c}</button>`).join('')}</div>`)
+      + champ('Âge (ans)', selectHtml('lt-age', F.age, [['', 'Tous'], ...[...new Set(toutes.map(r => r.age).filter(a => a !== null))].sort((a, b) => a - b).map(a => [String(a), String(a)])]));
+    else if (E.onglet === 'ia') specifiques = colsIA.map(c => champ('IA ' + libCampagneAffichee(c), selectHtml('lt-ia-' + c, F.ia[c] || '', [['', 'Tous'], ['prise', 'Prise'], ['non_prise', 'Non prise'], ['attente', 'En attente'], ['pas_en_ia', 'Pas en IA']]))).join('')
+      + `<div style="flex:1 1 220px;"><label style="display:flex;gap:8px;align-items:center;margin-top:20px;"><input type="checkbox" id="lt-sans2" style="width:auto;"${F.sansDeuxEchecs ? ' checked' : ''}> Pas 2 échecs de suite</label></div>`;
+    else specifiques = champ('Dernière mise bas', seg('lt-mb-mode', [['avant', 'Avant le …'], ['entre', 'Entre le … et le …'], ['aucune', 'Aucune']], F.mbMode), 'min-width:380px;')
+      + (F.mbMode === 'aucune' ? '' : champ(F.mbMode === 'entre' ? 'Du' : 'Avant le', `<input type="date" id="lt-mb-du" value="${F.mbDu}">`) + (F.mbMode === 'entre' ? champ('Au', `<input type="date" id="lt-mb-au" value="${F.mbAu}">`) : ''))
+      + `<div style="flex:0 0 auto;"><button type="button" class="btn btn-secondary" id="lt-mb-raccourci" style="width:auto;" title="Dernière mise bas avant (date de l'IA − seuil réglé dans Paramètres)">Raccourci : ${seuilMiseBasMois()} mois avant l'IA</button></div>`;
+    const nbTot = sel.size;
+    const tableau = `<div class="lt-scroll"><table class="pc-t" id="lt-table"><tr><th style="width:34px;"></th>${cols}<th style="text-align:left;">Lots</th></tr>
+      ${lignes.map(r => `<tr class="${r.dansCeLot ? '' : 'clic'}${sel.has(cleanEid(r.eid)) ? ' sel' : ''}" data-eid="${r.eid}"${r.dansCeLot ? ' style="opacity:.6;"' : ''}><td style="text-align:left;"><input type="checkbox" ${sel.has(cleanEid(r.eid)) ? 'checked' : ''}${r.dansCeLot ? ' disabled checked' : ''} style="width:auto;"></td>${cellules(r)}<td class="l">${r.dansCeLot ? pcPill('ok', 'dans ce lot') + ' ' : ''}${lotsPills({ lots: r.lots.filter(n => n !== lot.nom) })}</td></tr>`).join('') || `<tr><td colspan="9" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucune ${agn ? 'agnelle' : 'brebis'} ne correspond aux filtres.</td></tr>`}</table></div>`;
+    const membresLot = (lot.membres || []).map(e => { const a = findAnimalReproByEid(e) || { eid: e }; return { eid: e, numero: numeroVisuel(e), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: age(e), millesime: anneeNaissance(e), statut: '—', lots: [] }; }).sort(comparerAnimauxAgeNumero);
+    corps = `<p class="pc-sec first">Étape 2 — Affecter ${agn ? 'des agnelles' : 'des brebis'} au lot « ${lot.nom} »</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px;"><span class="pc-pill ok">✓ 1 · Le lot</span><span>→</span><span class="pc-pill" style="background:var(--primary);color:#fff;">2 · ${agn ? 'Les agnelles' : 'Les brebis'}</span></div>
+      <div class="lt-cols">
+        <div class="card">
+          ${onglets}${rapides}
+          <div class="pc-filtres-ligne" style="margin-bottom:10px;">${specifiques}</div>
+          <div class="pc-filtres-ligne" style="margin-bottom:10px;">${transverses}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;" id="lt-tags">${tags.map((t, i) => `<span class="pc-pill info" style="padding:3px 10px;">${t[0]} <a href="#" class="lt-tag" data-i="${i}" style="text-decoration:none;color:inherit;" title="Supprimer ce filtre">✕</a></span>`).join('')}</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;margin-bottom:10px;">
+            <div><p class="brd-ttl" style="margin:0;" id="lt-compte">${lignes.length} ${agn ? 'agnelle' : 'brebis'}${lignes.length > 1 && !agn ? '' : ''}${lignes.length > 1 && agn ? 's' : ''} correspondent · ${selFiltre} sélectionnée${selFiltre > 1 ? 's' : ''} sur cet onglet</p><p class="brd-note" style="margin:2px 0 0;">Clique sur une ligne pour la cocher. En-têtes triables. La sélection est conservée quand tu changes d'onglet ou de critères.</p></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn btn-secondary" id="lt-tout" style="width:auto;">Tout cocher (${lignes.filter(r => !r.dansCeLot).length})</button><button type="button" class="btn btn-secondary" id="lt-rien" style="width:auto;">Tout décocher</button><button type="button" class="btn btn-secondary" id="lt-export-sel" style="width:auto;"${nbTot ? '' : ' disabled'}>Exporter la sélection (.xlsx)</button><button type="button" class="btn btn-primary" id="lt-affecter" style="width:auto;"${nbTot ? '' : ' disabled'}>Affecter ${nbTot} ${agn ? 'agnelle' : 'brebis'}${nbTot > 1 && agn ? 's' : ''} au lot</button></div>
+          </div>
+          ${tableau}
+          ${E.onglet === 'lactations' && !agn ? `<p class="brd-note" style="margin:8px 0 0;">Classe et lactation : source DB.lactationModele (comme la fiche Carrière), classe 1 à 4 seulement, « - » sinon. <button type="button" class="btn btn-secondary" id="lt-ecarts" style="width:auto;padding:3px 10px;font-size:12px;">Écarts de classe entre sources (${ecartsSourcesLactation().length}) → Excel</button></p>` : ''}
+        </div>
+        <div class="card" id="lt-panneau">
+          <p class="brd-ttl" style="margin-bottom:2px;">Lot « ${lot.nom} »</p>
+          <p style="margin:0;font-size:24px;font-weight:700;" id="lt-nb-membres">${membresLot.length} ${agn ? 'agnelle' : 'brebis'}${membresLot.length > 1 && agn ? 's' : ''}</p>
+          <p class="brd-note">${lot.type === 'reproduction' ? (lot.mode === 'EP' ? 'Pose le ' + (lot.datePose ? formatDateFr(lot.datePose) : '—') + ' · lutte le ' + formatDateFr(lot.dateEvenement) : 'IA le ' + formatDateFr(lot.dateEvenement)) + ' · mises bas campagne ' + (campagneMisesBasDuLot(lot) !== null ? libCampagneAffichee(campagneMisesBasDuLot(lot)) : '-') : lot.type === 'reforme' ? 'Lot de réforme' : 'Lot de recherche'}</p>
+          ${E.messagePanneau ? `<div class="error-box" style="margin-bottom:8px;" id="lt-msg-panneau">${E.messagePanneau}</div>` : ''}
+          <div class="lt-scroll" style="max-height:340px;"><table class="pc-t"><tr><th style="text-align:left;">N°</th><th></th></tr>
+            ${membresLot.map(r => `<tr data-eid="${r.eid}"><td class="l">${r.court || r.numero}</td><td><button type="button" class="btn btn-secondary lt-retirer" data-eid="${r.eid}" style="width:auto;padding:3px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Retirer</button></td></tr>`).join('') || '<tr><td colspan="2" class="l" style="color:var(--text-muted);padding:12px 8px;">Lot vide : coche des animaux puis « Affecter ».</td></tr>'}</table></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;"><button type="button" class="btn btn-secondary" id="lt-export-lot" style="width:auto;"${membresLot.length ? '' : ' disabled'}>Exporter (.xlsx)</button><button type="button" class="btn btn-primary" id="lt-terminer" style="width:auto;">Terminer</button></div>
+          <p class="brd-note" style="margin-top:10px;">Synchronisé : le lot apparaît sur mobile, où l'on ajuste les brebis par bip. Pas d'étape de validation : le lot sert de référence dès que l'IA est passée.</p>
+        </div>
+      </div>`;
+  }
+  app.innerHTML = `<div id="pc-lots">${barre}${entete}${bandeau}${corps}</div>`;
+  // ---------------- branchements ----------------
+  const $ = id => document.getElementById(id);
+  $('lt-tab-agnelles').onclick = () => { if (typeof renderAgnelles === 'function') render('agnelles'); };
+  document.querySelectorAll('.lt-ecart-int').forEach(b => { b.onclick = () => { if (!confirm('Intégrer au journal les modifications faites par l\'appareil non à jour ? Les brebis ajoutées ou retirées hors journal seront consignées telles quelles.')) return; integrerEcartLot(b.dataset.id); saveData(DB); redessiner(); }; });
+  document.querySelectorAll('.lt-ecart-rej').forEach(b => { b.onclick = () => { if (!confirm('Revenir au journal ? Les modifications faites hors journal par l\'appareil non à jour seront annulées.')) return; rejeterEcartLot(b.dataset.id); saveData(DB); redessiner(); }; });
+  if (!lot) {
+    const f = E.form;
+    const segClick = (id, fn) => { document.querySelectorAll('#' + id + ' .opt-btn').forEach(b => { b.onclick = () => { fn(b.dataset.val); redessiner(); }; }); };
+    segClick('lt-type', v => { f.type = v; f.nomTouche = false; E.erreurs = []; });
+    segClick('lt-cible', v => { f.cible = v; });
+    segClick('lt-mode', v => { f.mode = v; f.nomTouche = f.nomTouche; });
+    segClick('lt-campagne', v => { f.campagne = v; });
+    $('lt-nom').oninput = ev => { f.nom = ev.target.value; f.nomTouche = ev.target.value !== nomLotParDefaut(f); };
+    if ($('lt-date')) $('lt-date').onchange = ev => { f.date = ev.target.value; if (!f.nomTouche) { redessiner(); } };
+    $('lt-creer').onclick = () => {
+      if (!garderLotsModifiables()) return;
+      f.nom = $('lt-nom').value.trim(); if ($('lt-date')) f.date = $('lt-date').value;
+      const err = [];
+      if (!f.nom) err.push('Donne un nom au lot.');
+      if (f.type !== 'reforme' && !f.date) err.push('Renseigne la date.');
+      if (err.length) { E.erreurs = err; redessiner(); return; }
+      E.erreurs = [];
+      const id = Date.now().toString(), today = jourAujourdhuiISO();
+      let nouveau;
+      if (f.type === 'reproduction') {
+        const champs = { id, nom: f.nom, dateCreation: today, cible: f.cible, mode: f.mode, dateEvenement: dateEvenementDuFormulaire(f), campagne: DB.campagneDebut, campagneMisesBas: campagneMisesBasDuFormulaire(f) };
+        if (f.mode === 'EP') champs.datePose = f.date;
+        nouveau = creerLotReproductionJournalise(champs, []);
+      } else {
+        nouveau = { id, nom: f.nom, dateCreation: f.type === 'reforme' ? today : f.date, membres: [] };
+        if (f.type === 'reforme') nouveau.type = 'reforme';
+        DB.lots = DB.lots || []; DB.lots.push(nouveau);
+      }
+      saveData(DB);
+      E.lotId = id; E.selection = new Set(); E.F = filtresLotsVides(); E.onglet = 'misesbas'; E.messagePanneau = '';
+      redessiner();
+    };
+    if (typeof lotsExistantsPcHtml === 'function') lotsExistantsPcHtml($('lt-existants'));
+    return;
+  }
+  // ----- étape 2 -----
+  const agn = lot.cible === 'Agnelles';
+  document.querySelectorAll('#lt-onglets .opt-btn').forEach(b => { b.onclick = () => { E.onglet = b.dataset.val; redessiner(); }; });
+  const lie = (id, fn, evt) => { const n = $(id); if (n) n.addEventListener(evt || 'change', ev => { fn(ev.target); redessiner(); }); };
+  const lieTexte = (id, fn) => { const n = $(id); if (!n) return; n.addEventListener('input', ev => { fn(ev.target); const pos = ev.target.selectionStart; redessiner(); const m = $(id); m.focus(); try { m.setSelectionRange(pos, pos); } catch (e) { /* champ numérique */ } }); };
+  lieTexte('lt-q', t => { F.q = t.value; });
+  lie('lt-millesime', t => { F.millesime = t.value; }); lie('lt-statut', t => { F.statut = t.value; }); lie('lt-dans-lot', t => { F.dansLot = t.value; }); lie('lt-age', t => { F.age = t.value; });
+  lie('lt-ctrl-campagne', t => { F.ctrlCampagne = t.value; }); lie('lt-anomalie-any', t => { F.anomalieAny = t.checked; });
+  [1, 2, 3].forEach(n => { lie('lt-an' + n, t => { F.anomalie[n] = t.value; }); lie('lt-lait' + n + '-min', t => { F.lait[n][0] = t.value; }); lie('lt-lait' + n + '-max', t => { F.lait[n][1] = t.value; }); });
+  lie('lt-lact-min', t => { F.lactMin = t.value; }); lie('lt-lact-max', t => { F.lactMax = t.value; });
+  document.querySelectorAll('.lt-classe').forEach(b => { b.onclick = () => { const c = b.dataset.c; F.classes = F.classes.includes(c) ? F.classes.filter(x => x !== c) : F.classes.concat(c); redessiner(); }; });
+  campagnesIAColonnes().forEach(c => lie('lt-ia-' + c, t => { if (t.value) F.ia[c] = t.value; else delete F.ia[c]; }));
+  lie('lt-sans2', t => { F.sansDeuxEchecs = t.checked; });
+  document.querySelectorAll('#lt-mb-mode .opt-btn').forEach(b => { b.onclick = () => { F.mbMode = F.mbMode === b.dataset.val ? '' : b.dataset.val; redessiner(); }; });
+  lie('lt-mb-du', t => { F.mbDu = t.value; }); lie('lt-mb-au', t => { F.mbAu = t.value; });
+  if ($('lt-mb-raccourci')) $('lt-mb-raccourci').onclick = () => { F.mbMode = 'avant'; F.mbDu = ajouterMoisISO(lot.dateEvenement || lot.dateCreation || jourAujourdhuiISO(), -seuilMiseBasMois()); redessiner(); };
+  $('lt-reinit').onclick = () => { E.F = filtresLotsVides(); E.tri = { col: null, dir: 1 }; redessiner(); };
+  // filtres rapides : règlent des filtres, JAMAIS de case cochée
+  if ($('lt-rapide-reforme')) $('lt-rapide-reforme').onclick = () => { E.F = filtresLotsVides(); E.F.anomalieAny = true; E.onglet = 'controles'; E.tri = { col: null, dir: 1 }; redessiner(); };
+  if ($('lt-rapide-ia')) $('lt-rapide-ia').onclick = () => { E.F = filtresLotsVides(); E.F.sansDeuxEchecs = true; E.F.mbMode = 'avant'; E.F.mbDu = ajouterMoisISO(lot.dateEvenement || lot.dateCreation || jourAujourdhuiISO(), -seuilMiseBasMois()); E.onglet = 'misesbas'; E.tri = { col: null, dir: 1 }; redessiner(); };
+  document.querySelectorAll('#lt-tags .lt-tag').forEach(a => { a.onclick = ev => { ev.preventDefault(); const t = ctx.tags[parseInt(a.dataset.i, 10)]; if (t) { t[1](F); redessiner(); } }; });
+  const lignesFiltrees = ctx.lignes;
+  document.querySelectorAll('.lt-th').forEach(h => { h.onclick = () => { const col = h.dataset.col; E.tri = E.tri.col === col ? { col, dir: -E.tri.dir } : { col, dir: 1 }; redessiner(); }; });
+  document.querySelectorAll('#lt-table tr.clic').forEach(tr => { tr.onclick = ev => { const k = cleanEid(tr.dataset.eid); if (E.selection.has(k)) E.selection.delete(k); else E.selection.add(k); redessiner(); }; });
+  $('lt-tout').onclick = () => { lignesFiltrees.filter(r => !r.dansCeLot).forEach(r => E.selection.add(cleanEid(r.eid))); redessiner(); };
+  $('lt-rien').onclick = () => { E.selection.clear(); redessiner(); };
+  const lignesSelection = () => lignesLotsPc(lot).filter(r => E.selection.has(cleanEid(r.eid)) && !r.dansCeLot);
+  $('lt-export-sel').onclick = () => exporterListeLotsXlsx('selection-lot_' + jourAujourdhuiISO() + '.xlsx', lignesSelection(), 'Sélection');
+  $('lt-affecter').onclick = () => {
+    if (!garderLotsModifiables()) return;
+    const items = lignesSelection(); if (!items.length) return;
+    if (!confirm('Affecter ' + items.length + ' ' + (agn ? 'agnelle' : 'brebis') + (items.length > 1 && agn ? 's' : '') + ' au lot « ' + lot.nom + ' » ?\n\nL\'affectation AJOUTE au lot, elle n\'en retire jamais.')) return;
+    const n = affecterAuLotPc(lot, items);
+    if (n < 0) { E.messagePanneau = 'Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n\'a été affecté.'; redessiner(); return; }
+    saveData(DB);
+    E.selection.clear(); E.messagePanneau = ''; redessiner();
+  };
+  if ($('lt-ecarts')) $('lt-ecarts').onclick = () => exporterEcartsLactationXlsx();
+  document.querySelectorAll('.lt-retirer').forEach(b => { b.onclick = () => {
+    if (!garderLotsModifiables()) return;
+    const eid = b.dataset.eid;
+    if (!confirm('Retirer n°' + numeroVisuel(eid) + ' du lot « ' + lot.nom + ' » ?')) return;
+    const r = retirerDuLotPc(lot, eid);
+    if (r.refuse === 'misebas') E.messagePanneau = 'Retrait impossible : une mise bas est déjà rattachée à n°' + r.numero + ' dans ce lot. Rien n\'est corrigé automatiquement.';
+    else if (r.refuse === 'ecart') E.messagePanneau = 'Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n\'a été retiré.';
+    else { E.messagePanneau = ''; saveData(DB); }
+    redessiner();
+  }; });
+  $('lt-export-lot').onclick = () => exporterListeLotsXlsx('lot-' + lot.nom.replace(/[^\w\-]+/g, '_') + '_' + jourAujourdhuiISO() + '.xlsx', membresDuLotPourExport(lot), 'Lot');
+  $('lt-terminer').onclick = () => { E.lotId = null; E.selection = new Set(); E.F = filtresLotsVides(); E.messagePanneau = ''; E.message = 'Lot « ' + lot.nom + ' » : ' + (lot.membres || []).length + ' ' + (lot.cible === 'Agnelles' ? 'agnelle(s)' : 'brebis') + '.'; redessiner(); };
+}
+function membresDuLotPourExport(lot) {
+  const lots = lotsParEidMap();
+  return (lot.membres || []).map(e => { const a = findAnimalReproByEid(e) || { eid: e }; return { eid: e, numero: numeroVisuel(e), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: age(e), millesime: anneeNaissance(e), statut: lot.cible === 'Agnelles' ? '—' : (a.agnelages ? statutReproductionCampagne(a) : '—'), lots: (lots.get(cleanEid(e)) || []).map(l => l.nom) }; }).sort(comparerAnimauxAgeNumero);
+}
+
 function renderLots() {
+  if (isDesktopMode()) { renderLotsPc(); return; }
   DB.lots = DB.lots || [];
   pageTitle.textContent = 'Chantier de tri';
 
@@ -15604,7 +16056,7 @@ function renderLots() {
         </div>
         <div class="row" style="gap:8px;margin-bottom:0;">
           <button type="button" class="btn btn-secondary btn-edit-lot" data-id="${lot.id}" style="flex:1;">Modifier</button>
-          ${lot.type === 'reproduction' && (lot.membres || []).length === 0 ? '' : `<button type="button" class="btn btn-primary btn-search-lot" data-id="${lot.id}" style="flex:2;">Chercher en bergerie</button>`}
+          ${(lot.membres || []).length === 0 ? '' : `<button type="button" class="btn btn-primary btn-search-lot" data-id="${lot.id}" style="flex:2;">Chercher en bergerie</button>`}
         </div>
       </div>
     `).join('');
