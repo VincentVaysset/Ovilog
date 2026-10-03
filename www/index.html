@@ -15608,7 +15608,8 @@ function filtresLotsVides() {
 }
 function lotsPcEtatInitial() {
   return { lotId: null, form: { type: 'reproduction', cible: 'Brebis', mode: 'IA', campagne: 'avenir', nom: '', nomTouche: false, date: jourAujourdhuiISO() },
-    onglet: 'misesbas', F: filtresLotsVides(), tri: { col: null, dir: 1 }, selection: new Set(), erreurs: [], message: '', messagePanneau: '' };
+    onglet: 'misesbas', F: filtresLotsVides(), tri: { col: null, dir: 1 }, selection: new Set(), erreurs: [], message: '', messagePanneau: '', messageEdition: '',
+    T: { types: { recherche: true, reforme: true, IA: true, EP: true }, campagne: '', q: '' } };
 }
 const libCampagneAffichee = c => String(c + 1);          // DB.campagneDebut = année de DÉBUT (2026) ; on affiche l'année de FIN (campagne 2027)
 function ajouterMoisISO(dateStr, mois) {
@@ -15815,6 +15816,99 @@ async function exporterEcartsLactationXlsx() {
   await saveOrShareBinaryFile('ecarts-classe-lactation_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
+/* ---------- Lots existants (PC) : un tableau unique, filtres, Modifier / Excel / Suppr. ---------- */
+function typeLotPc(lot) { return lot.type === 'reproduction' ? (lot.mode === 'EP' ? 'EP' : 'IA') : lot.type === 'reforme' ? 'reforme' : 'recherche'; }
+const LIB_TYPE_LOT = { recherche: 'Recherche', reforme: 'Réforme', IA: 'IA', EP: 'Éponge' };
+const TON_TYPE_LOT = { recherche: 'ok', reforme: 'danger', IA: 'info', EP: 'info' };
+function dateAfficheeLot(lot) {
+  if (lot.type !== 'reproduction') return { texte: formatDateFr(lot.dateCreation), lutte: false };
+  if (lot.mode === 'EP') return lot.datePose ? { texte: formatDateFr(lot.datePose), lutte: false } : { texte: formatDateFr(lot.dateEvenement), lutte: true };   // anciens lots : seule la date de lutte est connue (jamais une pose inventée)
+  return { texte: formatDateFr(lot.dateEvenement || lot.dateCreation), lutte: false };
+}
+function lotsFiltresPc() {
+  const T = lotsPcEtat.T, q = T.q.trim().toLowerCase(), qNum = T.q.replace(/\s+/g, '').toLowerCase();
+  return (DB.lots || []).filter(l => T.types[typeLotPc(l)]
+    && (T.campagne === '' || (l.type === 'reproduction' && String(campagneMisesBasDuLot(l)) === T.campagne))
+    && (!q || String(l.nom || '').toLowerCase().includes(q) || (l.membres || []).some(e => numeroVisuel(e).toLowerCase().includes(qNum) || cleanEid(e).toLowerCase().includes(qNum) || (() => { const a = findAnimalReproByEid(e); const c = a ? String(a.numeroCourtTravailSieol || a.numeroTravailSieol || '').toLowerCase() : ''; return c && c.includes(qNum); })()))
+  ).slice().reverse();
+}
+function lotsExistantsPcHtml(conteneur) {
+  if (!conteneur) return;
+  const T = lotsPcEtat.T, tous = DB.lots || [], liste = lotsFiltresPc();
+  const cpt = k => tous.filter(l => typeLotPc(l) === k).length;
+  const campagnes = [...new Set(tous.filter(l => l.type === 'reproduction').map(l => campagneMisesBasDuLot(l)).filter(c => c !== null))].sort((a, b) => b - a);
+  conteneur.innerHTML = `<p class="pc-sec">Lots existants</p>
+    <div class="card" style="margin-bottom:16px;"><div class="pc-filtres-ligne">
+      <div style="flex:0 0 auto;"><label>Type</label><div style="display:flex;gap:6px;flex-wrap:wrap;">${['recherche', 'reforme', 'IA', 'EP'].map(k => `<button type="button" class="pc-gc le-type${T.types[k] ? ' on' : ''}" data-k="${k}">${T.types[k] ? '✓ ' : ''}${LIB_TYPE_LOT[k]} <small>${cpt(k)}</small></button>`).join('')}</div></div>
+      <div style="flex:0 0 190px;"><label for="le-campagne">Campagne des mises bas</label><select id="le-campagne"><option value="">Toutes</option>${campagnes.map(c => `<option value="${c}"${T.campagne === String(c) ? ' selected' : ''}>${libCampagneAffichee(c)}</option>`).join('')}</select></div>
+      <div class="pc-grand"><label for="le-q">Rechercher un lot ou un n°</label><input type="text" id="le-q" value="${T.q.replace(/"/g, '&quot;')}" placeholder="Nom du lot ou n° d'animal" autocomplete="off"></div>
+    </div></div>
+    <div class="card"><div class="pc-cardhead" style="margin-bottom:8px;"><p class="brd-ttl" style="margin:0;" id="le-compte">${liste.length} lot${liste.length > 1 ? 's' : ''}</p><button type="button" class="btn btn-secondary" id="le-export" style="width:auto;padding:6px 14px;"${liste.length ? '' : ' disabled'}>Exporter les lots (.xlsx)</button></div>
+      <div style="overflow-x:auto;"><table class="pc-t" id="le-table"><tr><th class="l" style="text-align:left;">Nom</th><th style="text-align:left;">Type</th><th style="text-align:left;">Cible</th><th>Animaux</th><th>Date</th><th>Mises bas (campagne)</th><th style="text-align:right;">Actions</th></tr>
+      ${liste.map(l => { const d = dateAfficheeLot(l), c = l.type === 'reproduction' ? campagneMisesBasDuLot(l) : null; return `<tr data-id="${l.id}"><td style="text-align:left;"><b>${l.nom}</b></td><td style="text-align:left;">${pcPill(TON_TYPE_LOT[typeLotPc(l)], LIB_TYPE_LOT[typeLotPc(l)])}</td><td style="text-align:left;">${l.type === 'reproduction' ? l.cible : 'Brebis'}</td><td>${(l.membres || []).length}</td><td>${d.texte}${d.lutte ? ' <small style="color:var(--text-muted);">(lutte)</small>' : ''}</td><td>${c === null ? '<span style="color:var(--text-muted);">—</span>' : libCampagneAffichee(c) + (l.campagneMisesBasDeduite ? ' <small style="color:var(--text-muted);" title="Déduite de la date du lot">(déduite)</small>' : '')}</td><td style="text-align:right;white-space:nowrap;"><button type="button" class="btn btn-secondary le-modifier" data-id="${l.id}" style="width:auto;padding:4px 10px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary le-excel" data-id="${l.id}" style="width:auto;padding:4px 10px;font-size:12px;">Excel</button> <button type="button" class="btn btn-secondary le-suppr" data-id="${l.id}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`; }).join('') || '<tr><td colspan="7" class="l" style="color:var(--text-muted);padding:14px 10px;text-align:left;">Aucun lot ne correspond aux filtres.</td></tr>'}</table></div>
+      <p class="brd-note" style="margin:10px 0 0;">Supprimer demande toujours une confirmation. « Chercher en bergerie » (bip) reste sur mobile ; le lot y est visible dès la synchronisation.</p></div>`;
+  const redessiner = () => { if (lotsPcRedessin) return; lotsPcRedessin = true; try { renderLotsPc(); } finally { lotsPcRedessin = false; } };
+  conteneur.querySelectorAll('.le-type').forEach(b => { b.onclick = () => { T.types[b.dataset.k] = !T.types[b.dataset.k]; redessiner(); }; });
+  conteneur.querySelector('#le-campagne').onchange = ev => { T.campagne = ev.target.value; redessiner(); };
+  conteneur.querySelector('#le-q').addEventListener('input', ev => { T.q = ev.target.value; const pos = ev.target.selectionStart; redessiner(); const n = document.getElementById('le-q'); n.focus(); n.setSelectionRange(pos, pos); });
+  conteneur.querySelector('#le-export').onclick = () => exporterLotsExistantsXlsx(liste);
+  conteneur.querySelectorAll('.le-modifier').forEach(b => { b.onclick = () => { lotsPcEtat.lotId = b.dataset.id; lotsPcEtat.selection = new Set(); lotsPcEtat.F = filtresLotsVides(); lotsPcEtat.onglet = 'misesbas'; lotsPcEtat.messagePanneau = ''; lotsPcEtat.messageEdition = ''; redessiner(); }; });
+  conteneur.querySelectorAll('.le-excel').forEach(b => { b.onclick = () => { const l = tous.find(x => x.id === b.dataset.id); if (l) exporterListeLotsXlsx('lot-' + String(l.nom).replace(/[^\w\-]+/g, '_') + '_' + jourAujourdhuiISO() + '.xlsx', membresDuLotPourExport(l), 'Lot'); }; });
+  conteneur.querySelectorAll('.le-suppr').forEach(b => { b.onclick = () => { const l = tous.find(x => x.id === b.dataset.id); if (l) supprimerLotPc(l); }; });
+}
+async function exporterLotsExistantsXlsx(liste) {
+  const bytes = await buildXlsxWorkbook([{ name: 'Lots', colWidths: [30, 12, 10, 10, 12, 22], rows: [
+    ['Nom', 'Type', 'Cible', 'Animaux', 'Date', 'Mises bas (campagne)'],
+    ...liste.map(l => { const d = dateAfficheeLot(l), c = l.type === 'reproduction' ? campagneMisesBasDuLot(l) : null; return [l.nom, LIB_TYPE_LOT[typeLotPc(l)], l.type === 'reproduction' ? l.cible : 'Brebis', (l.membres || []).length, d.texte + (d.lutte ? ' (lutte)' : ''), c === null ? '-' : libCampagneAffichee(c)]; })
+  ] }]);
+  await saveOrShareBinaryFile('lots_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+// Suppression d'un lot, TOUJOURS avec confirmation : même règle que l'écran mobile (le suivi Repro des membres sans mise bas rattachée est retiré avec le lot ;
+// celui d'un membre ayant déjà une mise bas rattachée reste sur sa fiche). Le journal du lot disparaît avec lui.
+function supprimerLotPc(lot) {
+  if (!garderLotsModifiables()) return;
+  let message = 'Supprimer le lot « ' + lot.nom + ' » (' + (lot.membres || []).length + ' animal(aux)) ?';
+  const membresSansMiseBas = [], avecMiseBas = [];
+  if (lot.type === 'reproduction') {
+    (lot.membres || []).forEach(eid => { const a = findAnimalReproByEid(eid); if (!a) return; if (miseBasRattacheeAuLot(a, lot)) avecMiseBas.push(numeroVisuel(eid)); else membresSansMiseBas.push(a); });
+    if (avecMiseBas.length) message += '\n\nn°' + avecMiseBas.join(', n°') + ' ont déjà une mise bas rattachée à ce lot : leur suivi Repro reste sur leur fiche.';
+    if (membresSansMiseBas.length) message += '\n\nLe suivi Repro (' + libelleModeRepro(lot.mode) + ') de ' + membresSansMiseBas.length + ' membre(s) sans mise bas sera aussi supprimé (retour à Monte naturelle par défaut).';
+  }
+  if (!confirm(message)) return;
+  membresSansMiseBas.forEach(a => { a.modesRepro = (a.modesRepro || []).filter(m => m.lotId !== lot.id); });
+  DB.lots = DB.lots.filter(l => l.id !== lot.id);
+  DB.evenementsLots = (DB.evenementsLots || []).filter(e => e.lotId !== lot.id);
+  effacerTrouveesLot(lot.id);
+  saveData(DB);
+  if (lotsPcEtat) { if (lotsPcEtat.lotId === lot.id) lotsPcEtat.lotId = null; lotsPcEtat.message = 'Lot « ' + lot.nom + ' » supprimé.'; }
+  renderLotsPc();
+}
+// Modification d'un lot (nom, date, campagne des mises bas ; mode et cible verrouillés) : répercute la date et la campagne sur l'évènement modesRepro des
+// membres, SAUF ceux qui ont déjà une mise bas rattachée à ce lot (bloqués, l'évènement reste inchangé, l'éleveur est prévenu).
+function enregistrerEditionLotPc(lot, { nom, date, campagne }) {
+  const repro = lot.type === 'reproduction';
+  const nouvelleDateEvt = repro ? (lot.mode === 'EP' && lot.datePose !== undefined ? addDaysToDateStr(date, EPONGE_DELAI_LUTTE_JOURS) : date) : null;
+  const dateChangee = repro && nouvelleDateEvt !== lot.dateEvenement;
+  const campagneChangee = repro && campagne !== null && campagne !== campagneMisesBasDuLot(lot);
+  const bloques = [];
+  if (repro && (dateChangee || campagneChangee)) {
+    (lot.membres || []).forEach(eid => {
+      const a = findAnimalReproByEid(eid); if (!a) return;
+      const entry = (a.modesRepro || []).find(m => m.lotId === lot.id); if (!entry) return;
+      if (miseBasRattacheeAuLot(a, lot)) { bloques.push(numeroVisuel(eid)); return; }
+      if (dateChangee) entry.date = nouvelleDateEvt;
+      if (campagneChangee) entry.campagne = campagne;
+    });
+  }
+  lot.nom = nom;
+  if (repro) {
+    lot.dateEvenement = nouvelleDateEvt; if (lot.mode === 'EP' && lot.datePose !== undefined) lot.datePose = date;
+    if (campagneChangee) { lot.campagneMisesBas = campagne; delete lot.campagneMisesBasDeduite; }
+  } else lot.dateCreation = date;
+  saveData(DB);
+  return bloques;
+}
+
 function renderLotsPc() {
   if (!lotsPcEtat) lotsPcEtat = lotsPcEtatInitial();
   const E = lotsPcEtat, F = E.F;
@@ -15911,7 +16005,20 @@ function renderLotsPc() {
     const tableau = `<div class="lt-scroll"><table class="pc-t" id="lt-table"><tr><th style="width:34px;"></th>${cols}<th style="text-align:left;">Lots</th></tr>
       ${lignes.map(r => `<tr class="${r.dansCeLot ? '' : 'clic'}${sel.has(cleanEid(r.eid)) ? ' sel' : ''}" data-eid="${r.eid}"${r.dansCeLot ? ' style="opacity:.6;"' : ''}><td style="text-align:left;"><input type="checkbox" ${sel.has(cleanEid(r.eid)) ? 'checked' : ''}${r.dansCeLot ? ' disabled checked' : ''} style="width:auto;"></td>${cellules(r)}<td class="l">${r.dansCeLot ? pcPill('ok', 'dans ce lot') + ' ' : ''}${lotsPills({ lots: r.lots.filter(n => n !== lot.nom) })}</td></tr>`).join('') || `<tr><td colspan="9" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucune ${agn ? 'agnelle' : 'brebis'} ne correspond aux filtres.</td></tr>`}</table></div>`;
     const membresLot = (lot.membres || []).map(e => { const a = findAnimalReproByEid(e) || { eid: e }; return { eid: e, numero: numeroVisuel(e), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: age(e), millesime: anneeNaissance(e), statut: '—', lots: [] }; }).sort(comparerAnimauxAgeNumero);
-    corps = `<p class="pc-sec first">Étape 2 — Affecter ${agn ? 'des agnelles' : 'des brebis'} au lot « ${lot.nom} »</p>
+    const repro = lot.type === 'reproduction', cm = campagneMisesBasDuLot(lot);
+    const dEd = lot.type !== 'reproduction' ? lot.dateCreation : (lot.mode === 'EP' ? (lot.datePose || lot.dateEvenement) : lot.dateEvenement);
+    const libDate = !repro ? 'Date' : lot.mode === 'EP' ? (lot.datePose ? 'Date de pose' : 'Date de lutte') : 'Date de l\'IA';
+    const edition = `<p class="pc-sec first">Étape 1 — Le lot</p>
+      <div class="card" style="margin-bottom:16px;" id="lt-edition"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+        ${repro ? `<div style="min-width:150px;"><label>Cible <small style="color:var(--text-muted);">· verrouillée</small></label><input type="text" value="${lot.cible}" disabled></div>
+        <div style="min-width:130px;"><label>Mode <small style="color:var(--text-muted);">· verrouillé</small></label><input type="text" value="${lot.mode === 'EP' ? 'Éponge' : 'IA'}" disabled></div>
+        <div style="min-width:200px;"><label for="lt-ed-campagne">Campagne des mises bas</label><select id="lt-ed-campagne">${[...new Set([DB.campagneDebut - 1, DB.campagneDebut, DB.campagneDebut + 1, cm].filter(c => c !== null && c !== undefined))].sort((a, b) => a - b).map(c => `<option value="${c}"${c === cm ? ' selected' : ''}>${libCampagneAffichee(c)}${c === DB.campagneDebut ? ' · en cours' : c === DB.campagneDebut + 1 ? ' · à venir' : ''}</option>`).join('')}</select></div>` : ''}
+        <div style="flex:1;min-width:200px;"><label for="lt-ed-nom">Nom du lot</label><input type="text" id="lt-ed-nom" value="${lot.nom.replace(/"/g, '&quot;')}"></div>
+        <div><label for="lt-ed-date">${libDate}</label><input type="date" id="lt-ed-date" value="${dEd}"></div>
+        <button type="button" class="btn btn-secondary" id="lt-ed-save" style="width:auto;">Enregistrer</button>
+      </div>
+      ${E.messageEdition ? `<div class="error-box" style="margin-top:10px;" id="lt-ed-msg">${E.messageEdition}</div>` : ''}</div>`;
+    corps = edition + `<p class="pc-sec">Étape 2 — Affecter ${agn ? 'des agnelles' : 'des brebis'} au lot « ${lot.nom} »</p>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px;"><span class="pc-pill ok">✓ 1 · Le lot</span><span>→</span><span class="pc-pill" style="background:var(--primary);color:#fff;">2 · ${agn ? 'Les agnelles' : 'Les brebis'}</span></div>
       <div class="lt-cols">
         <div class="card">
@@ -16015,6 +16122,14 @@ function renderLotsPc() {
     if (n < 0) { E.messagePanneau = 'Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n\'a été affecté.'; redessiner(); return; }
     saveData(DB);
     E.selection.clear(); E.messagePanneau = ''; redessiner();
+  };
+  $('lt-ed-save').onclick = () => {
+    if (!garderLotsModifiables()) return;
+    const nom = $('lt-ed-nom').value.trim(), date = $('lt-ed-date').value;
+    if (!nom || !date) { E.messageEdition = 'Le nom et la date sont obligatoires.'; redessiner(); return; }
+    const bloques = enregistrerEditionLotPc(lot, { nom, date, campagne: $('lt-ed-campagne') ? parseInt($('lt-ed-campagne').value, 10) : null });
+    E.messageEdition = bloques.length ? 'Lot enregistré, mais pas pour n°' + bloques.join(', n°') + ' : une mise bas est déjà rattachée à ce lot, leur évènement Repro reste inchangé. Corrige-les depuis leur fiche si besoin.' : '';
+    redessiner();
   };
   if ($('lt-ecarts')) $('lt-ecarts').onclick = () => exporterEcartsLactationXlsx();
   document.querySelectorAll('.lt-retirer').forEach(b => { b.onclick = () => {
