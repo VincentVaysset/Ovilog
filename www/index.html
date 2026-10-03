@@ -5062,7 +5062,7 @@ btnBack.onclick = () => {
   else if (currentView === 'add-note-agnelle' || currentView === 'add-mouvement-agnelle') { editAgnelleContext = null; render('agnelle-detail', currentAgnelleId); }
   else if (currentView === 'agneau-detail') render(agneauDetailOrigin);
   else if (currentView === 'add-note-agneau' || currentView === 'add-mouvement-agneau') { editAgneauContext = null; render('agneau-detail', currentAgneauEid); }
-  else if (currentView === 'add-lot' || currentView === 'add-lot-reforme' || currentView === 'add-lot-repro' || currentView === 'edit-lot') render('lots');
+  else if (currentView === 'add-lot' || currentView === 'add-lot-reforme' || currentView === 'add-lot-repro' || currentView === 'edit-lot' || currentView === 'lot-repro-detail') render('lots');
   else if (currentView === 'edit-repro') {
     if (editReproTarget && editReproTarget.kind === 'agnelle') { currentAgnelleId = editReproTarget.id; render('agnelle-detail'); }
     else render('detail', editReproTarget ? editReproTarget.id : currentSheepId);
@@ -5354,7 +5354,8 @@ function render(view, sheepId) {
     else if (view === 'lots') renderLots();
     else if (view === 'add-lot') renderAddLot();
     else if (view === 'add-lot-reforme') renderAddLotReforme();
-    else if (view === 'add-lot-repro') renderAddLotRepro();
+    else if (view === 'add-lot-repro') render('lots');
+    else if (view === 'lot-repro-detail') renderLotReproDetail(currentLotId);
     else if (view === 'edit-lot') renderEditLot(currentLotId);
     else if (view === 'edit-repro') renderEditRepro();
     else if (view === 'lot-search') renderLotSearch(currentLotId);
@@ -16357,10 +16358,10 @@ function renderLots() {
               <div style="font-size:12px;color:var(--text-muted);">${lot.membres.length} ${lot.type === 'reproduction' && lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'} · créé le ${formatDateFr(lot.dateCreation)}</div>
             </div>
           </div>
-          <button type="button" class="btn btn-secondary btn-del-lot" data-id="${lot.id}" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
+          ${lot.type === 'reproduction' ? '' : `<button type="button" class="btn btn-secondary btn-del-lot" data-id="${lot.id}" style="width:auto;padding:6px 12px;font-size:13px;color:var(--danger);border-color:var(--danger);">Suppr.</button>`}
         </div>
         <div class="row" style="gap:8px;margin-bottom:0;">
-          <button type="button" class="btn btn-secondary btn-edit-lot" data-id="${lot.id}" style="flex:1;">Modifier</button>
+          ${lot.type === 'reproduction' ? `<button type="button" class="btn btn-secondary btn-open-lot-repro" data-id="${lot.id}" style="flex:1;">Ouvrir</button>` : `<button type="button" class="btn btn-secondary btn-edit-lot" data-id="${lot.id}" style="flex:1;">Modifier</button>`}
           ${(lot.membres || []).length === 0 ? '' : `<button type="button" class="btn btn-primary btn-search-lot" data-id="${lot.id}" style="flex:2;">Chercher en bergerie</button>`}
         </div>
       </div>
@@ -16369,13 +16370,14 @@ function renderLots() {
   app.innerHTML = chantierTriTabBarHtml() + bandeauLotsVerrouillesHtml() + listHtml + `
     <button class="btn btn-primary" id="btn-new-lot" style="margin-top:10px;margin-bottom:10px;">+ Nouveau lot</button>
     <button class="btn btn-secondary" id="btn-new-lot-reforme" style="border-color:var(--coral-fg);color:var(--coral-fg);margin-bottom:10px;">+ Nouveau lot de réforme</button>
-    <button class="btn btn-secondary" id="btn-new-lot-repro" style="border-color:var(--indigo-fg);color:var(--indigo-fg);">+ Nouveau lot de reproduction</button>
   `;
 
   wireChantierTriTabBar();
   document.getElementById('btn-new-lot').onclick = () => render('add-lot');
   document.getElementById('btn-new-lot-reforme').onclick = () => render('add-lot-reforme');
-  document.getElementById('btn-new-lot-repro').onclick = () => render('add-lot-repro');
+  document.querySelectorAll('.btn-open-lot-repro').forEach(btn => {
+    btn.onclick = () => { currentLotId = btn.dataset.id; render('lot-repro-detail'); };
+  });
   document.querySelectorAll('.btn-search-lot').forEach(btn => {
     btn.onclick = () => { currentLotId = btn.dataset.id; render('lot-search'); };
   });
@@ -16744,133 +16746,97 @@ function renderAddLotReforme() {
   };
 }
 
-/* ---------- Lot de reproduction (module Reproduction, remplace "Lutte") ----------
-   Même principe qu'un lot classique/de réforme (sélection puis recherche en
-   bergerie via renderLotSearch, listé dans Chantier de tri), mais taggé
-   type:'reproduction' + mode ('IA' ou 'EP' -- seuls modes saisis en lot,
-   Retour IA et Monte naturelle sont toujours déduits, voir deduireCodeRepro)
-   et cible ('Brebis' ou 'Agnelles', une antenaise pouvant déjà être mise en
-   lot avant sa bascule en brebis). À la création, écrit un évènement
-   modesRepro sur chaque animal du lot -- c'est cette écriture, pas le lot
-   lui-même (qui peut être supprimé une fois la recherche en bergerie
-   terminée), qui alimente durablement la fiche et le Bilan de reproduction. */
-function renderAddLotRepro() {
-  pageTitle.textContent = 'Nouveau lot de reproduction';
-  let cible = 'Brebis';
-  let mode = 'IA';
-  const today = jourAujourdhuiISO();
-  const selected = new Set();
-  // Pour un lot Éponge : la date de lutte effective n'est pas la date de
-  // pose saisie, mais pose + 16 jours (retrait à J+14, introduction des
-  // béliers à J+16 -- voir EPONGE_DELAI_LUTTE_JOURS). Recalculée à chaque
-  // changement de la date de pose tant que l'éleveur n'a jamais corrigé la
-  // date de lutte à la main (cas d'un retrait/introduction décalés).
-  let dateLutteTouchee = false;
-
-  function pool() {
-    return cible === 'Agnelles' ? (DB.agnelles || []) : DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  }
-
-  function nomParDefaut() {
-    return libelleModeRepro(mode) + ' du ' + formatDateFr(today);
-  }
-
-  function draw() {
-    app.innerHTML = `
-      <div class="card">
-        <label>Cible</label>
-        <div class="grid2">
-          <button type="button" class="opt-btn cible-repro-opt${cible === 'Brebis' ? ' selected' : ''}" data-val="Brebis">Brebis</button>
-          <button type="button" class="opt-btn cible-repro-opt${cible === 'Agnelles' ? ' selected' : ''}" data-val="Agnelles">Agnelles</button>
-        </div>
-      </div>
-      <div class="card">
-        <label style="display:flex;align-items:center;">Mode de ce lot${infoBulleHtml('Mode de ce lot', 'Seuls IA et Éponge se créent en lot — Retour IA et Monte naturelle sont toujours déduits, jamais saisis ici.')}</label>
-        <div class="grid2">
-          <button type="button" class="opt-btn mode-repro-opt${mode === 'IA' ? ' selected' : ''}" data-val="IA">IA</button>
-          <button type="button" class="opt-btn mode-repro-opt${mode === 'EP' ? ' selected' : ''}" data-val="EP">Éponge</button>
-        </div>
-      </div>
-      <div class="card">
-        <label>Nom du lot</label>
-        <input type="text" id="f-lot-repro-nom" value="${nomParDefaut()}">
-        <label id="lbl-lot-repro-date">${mode === 'EP' ? "Date de pose de l'éponge" : "Date de l'évènement"}</label>
-        <input type="date" id="f-lot-repro-date" value="${today}">
-        <div id="bloc-lot-repro-lutte" class="${mode === 'EP' ? '' : 'hidden'}" style="margin-top:10px;">
-          <label style="display:flex;align-items:center;">Date de lutte (pose + ${EPONGE_DELAI_LUTTE_JOURS} jours)${infoBulleHtml('Date de lutte', "Calculée automatiquement à partir de la date de pose — modifiable si le retrait/l'introduction des béliers a été décalé.")}</label>
-          <input type="date" id="f-lot-repro-date-lutte" value="${addDaysToDateStr(today, EPONGE_DELAI_LUTTE_JOURS)}">
-        </div>
-      </div>
-      <div class="card">
-        <label>${cible === 'Agnelles' ? 'Antenaises' : 'Brebis'} du lot</label>
-        <div id="repro-lot-picker"></div>
-      </div>
-      <div id="err" class="error-box hidden"></div>
-      <button class="btn btn-primary" id="btn-save-lot-repro">Créer le lot</button>
-    `;
-
-    renderSelectionPicker(document.getElementById('repro-lot-picker'), pool(), selected);
-
-    document.querySelectorAll('.cible-repro-opt').forEach(btn => {
-      btn.onclick = () => {
-        if (btn.dataset.val === cible) return;
-        cible = btn.dataset.val;
-        selected.clear(); // pool différente (brebis actives vs agnelles) : une sélection faite sur l'autre cible n'a plus de sens
-        draw();
-      };
-    });
-    document.getElementById('f-lot-repro-date').oninput = (e) => {
-      if (mode === 'EP' && !dateLutteTouchee) {
-        document.getElementById('f-lot-repro-date-lutte').value = addDaysToDateStr(e.target.value, EPONGE_DELAI_LUTTE_JOURS);
-      }
-    };
-    document.getElementById('f-lot-repro-date-lutte').oninput = () => { dateLutteTouchee = true; };
-    document.querySelectorAll('.mode-repro-opt').forEach(btn => {
-      btn.onclick = () => {
-        if (btn.dataset.val === mode) return;
-        const nomInput = document.getElementById('f-lot-repro-nom');
-        const nomEtaitParDefaut = nomInput.value === nomParDefaut();
-        mode = btn.dataset.val;
-        document.querySelectorAll('.mode-repro-opt').forEach(b => b.classList.toggle('selected', b.dataset.val === mode));
-        if (nomEtaitParDefaut) nomInput.value = nomParDefaut(); // ne touche jamais à un nom déjà personnalisé par l'éleveur
-        document.getElementById('lbl-lot-repro-date').textContent = mode === 'EP' ? "Date de pose de l'éponge" : "Date de l'évènement";
-        const bloc = document.getElementById('bloc-lot-repro-lutte');
-        bloc.classList.toggle('hidden', mode !== 'EP');
-        if (mode === 'EP' && !dateLutteTouchee) {
-          document.getElementById('f-lot-repro-date-lutte').value = addDaysToDateStr(document.getElementById('f-lot-repro-date').value, EPONGE_DELAI_LUTTE_JOURS);
-        }
-      };
-    });
-
-    document.getElementById('btn-save-lot-repro').onclick = () => {
-      const err = document.getElementById('err');
-      const nom = document.getElementById('f-lot-repro-nom').value.trim();
-      const datePose = document.getElementById('f-lot-repro-date').value;
-      const dateEvenement = mode === 'EP' ? document.getElementById('f-lot-repro-date-lutte').value : datePose;
-      if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
-      if (!datePose) { err.textContent = "Renseigne la date de l'évènement."; err.classList.remove('hidden'); return; }
-      if (mode === 'EP' && !dateEvenement) { err.textContent = "Renseigne la date de lutte."; err.classList.remove('hidden'); return; }
-      if (selected.size === 0) { err.textContent = "Sélectionne au moins un animal (à la main ou au bip)."; err.classList.remove('hidden'); return; }
-      err.classList.add('hidden');
+/* ---------- Lot de reproduction : détail et AJUSTEMENT sur mobile (chantier de tri, partie g) ----------
+   Le lot de reproduction est CRÉÉ et AFFECTÉ sur PC (page « Lots » du Chantier de tri) : sur mobile on ne crée plus de lot de reproduction, on le consulte et on
+   l'AJUSTE sur le terrain -- ajouter une brebis par bip ou saisie du n° (ex. remplacer une malade ; brebis ACTIVE seulement ; bip différencié « déjà dans le lot »,
+   rien d'ajouté), retirer une brebis (TOUJOURS avec confirmation, motif facultatif Malade / Autre ; refusé avec message si une mise bas lui est déjà rattachée dans
+   ce lot). Chaque ajout / retrait est tracé dans le journal du lot (collection evenementsLots : aucune perte même si le PC ajuste le même lot en même temps) et
+   apparaît à l'identique sur PC. Mode, cible et campagne des mises bas : lecture seule ici. Aucun statut brouillon / définitif. Une brebis vendue ou morte reste
+   dans le lot (elle est exclue des taux, jamais retirée automatiquement). Lots de recherche et de réforme : écrans mobiles inchangés. */
+let lotReproToast = null;
+function ouvrirModalRetraitLot(lot, eid, onDone) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  let motif = null;
+  overlay.innerHTML = `<div class="modal-card">
+      <div style="font-weight:700;font-size:15px;margin-bottom:6px;">Retirer n°${numeroVisuel(eid)} du lot ?</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Motif (facultatif)</div>
+      <div class="grid2" style="margin-bottom:14px;"><button type="button" class="opt-btn motif-retrait" data-val="Malade">Malade</button><button type="button" class="opt-btn motif-retrait" data-val="Autre">Autre</button></div>
+      <button type="button" class="btn btn-primary" id="retrait-confirm" style="background:var(--danger);margin-bottom:8px;">Retirer</button>
+      <button type="button" class="btn btn-secondary" id="retrait-annuler">Annuler</button></div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('.motif-retrait').forEach(b => { b.onclick = () => { motif = motif === b.dataset.val ? null : b.dataset.val; overlay.querySelectorAll('.motif-retrait').forEach(x => x.classList.toggle('selected', x.dataset.val === motif)); }; });
+  overlay.querySelector('#retrait-annuler').onclick = () => document.body.removeChild(overlay);
+  overlay.querySelector('#retrait-confirm').onclick = () => { document.body.removeChild(overlay); onDone(motif); };
+}
+function renderLotReproDetail(lotId) {
+  const lot = (DB.lots || []).find(l => l.id === lotId);
+  if (!lot || lot.type !== 'reproduction') { render('lots'); return; }
+  const agn = lot.cible === 'Agnelles', jour = jourAujourdhuiISO();
+  pageTitle.textContent = 'Lot ' + lot.nom;
+  const pool = () => agn ? (DB.agnelles || []) : DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const enLot = eid => (lot.membres || []).some(e => cleanEid(e) === cleanEid(eid));
+  const libN = n => n + ' ' + (agn ? 'antenaise' : 'brebis') + (agn && n > 1 ? 's' : '');
+  const toastActif = lotReproToast && Date.now() - lotReproToast.t < 6000 ? lotReproToast : null;
+  if (!toastActif) lotReproToast = null;
+  const evs = evenementsDuLot(lot.id);
+  const jourDe = iso => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const ajoutesAujourdhui = new Set();
+  evs.forEach(e => { if (e.type === 'affectation' && jourDe(e.date) === jour && (e.eids || []).length <= 5) e.eids.forEach(x => ajoutesAujourdhui.add(cleanEid(x))); });
+  const membres = (lot.membres || []).map(e => { const a = trouverAnimalReproOuArchive(e) || { eid: e }; return { eid: e, numero: numeroVisuel(e), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: age(e), sortie: a.archive || (a.statut && a.statut !== 'active') ? (a.archive ? 'archivée' : a.statut) : null }; }).sort(comparerAnimauxAgeNumero);
+  const lignesHisto = [];
+  evs.slice().reverse().forEach(e => {
+    const d = jourDe(e.date) ? formatDateFr(jourDe(e.date)) : '';
+    if (e.type === 'initial') lignesHisto.push(d + ' · lot existant repris au journal · ' + libN((e.eids || []).length));
+    else if ((e.eids || []).length > 5) lignesHisto.push(d + ' · ' + libN(e.eids.length) + (e.type === 'retrait' ? ' retirées' : ' affectées') + ' (' + (e.source || '?') + ')' + (e.motif ? ' · ' + e.motif.toLowerCase() : ''));
+    else (e.eids || []).slice().reverse().forEach(x => lignesHisto.push(d + ' · n°' + numeroVisuel(x) + (e.type === 'retrait' ? ' retirée' : ' ajoutée') + (e.motif ? ' · ' + e.motif.toLowerCase() : '') + (e.source === 'PC' ? ' (PC)' : '')));
+  });
+  const infoDate = lot.mode === 'EP' ? 'Pose le ' + (lot.datePose ? formatDateFr(lot.datePose) : '—') + ' · lutte le ' + formatDateFr(lot.dateEvenement) : 'IA le ' + formatDateFr(lot.dateEvenement || lot.dateCreation);
+  const cm = campagneMisesBasDuLot(lot);
+  app.innerHTML = `${bandeauLotsVerrouillesHtml()}
+    <div class="card"><p style="font-size:16px;font-weight:700;margin:0 0 2px;">${lot.mode === 'EP' ? 'Éponge' : 'IA'} · ${agn ? 'Agnelles' : 'Brebis'}</p>
+      <p style="font-size:12px;color:var(--text-muted);margin:0;">${infoDate} · mises bas campagne ${cm !== null ? libCampagneAffichee(cm) : '-'}</p>
+      <p style="font-size:26px;font-weight:700;margin:8px 0 0;" id="lr-compteur">${libN(membres.length)}</p></div>
+    <label>Ajouter ${agn ? 'une antenaise' : 'une brebis'} (remplacement)</label>
+    <input type="text" id="lr-scan" placeholder="Scanner ou saisir le n°" autofocus>
+    <div id="lr-err" class="error-box hidden"></div>
+    ${toastActif ? `<div id="lr-toast" style="background:${toastActif.ton === 'warn' ? 'var(--amber-bg)' : 'var(--green-bg)'};color:${toastActif.ton === 'warn' ? 'var(--amber-fg)' : 'var(--green-fg)'};border-radius:14px;padding:10px 12px;font-size:13px;font-weight:600;margin:0 0 12px;">${toastActif.texte}</div>` : ''}
+    <div style="font-size:15px;font-weight:700;margin:16px 0 4px;">${agn ? 'Antenaises' : 'Brebis'} du lot</div>
+    ${membres.length ? membres.map(m => `<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-top:8px;" data-eid="${m.eid}"><div style="font-size:14px;">n°${m.court || m.numero}${ajoutesAujourdhui.has(cleanEid(m.eid)) ? '<div style="font-size:11px;color:var(--text-muted);">ajoutée aujourd\'hui</div>' : ''}${m.sortie ? `<div style="font-size:11px;color:var(--text-muted);">${m.sortie} — reste dans le lot (hors taux)</div>` : ''}</div><button type="button" class="btn btn-secondary btn-retirer-lot" data-eid="${m.eid}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Retirer</button></div>`).join('') : '<div class="empty">Lot vide : les ' + (agn ? 'antenaises' : 'brebis') + ' s\'affectent depuis le PC, ou par bip ci-dessus.</div>'}
+    <div style="font-size:15px;font-weight:700;margin:18px 0 4px;">Historique du lot</div>
+    <div class="card" style="padding:8px 12px;" id="lr-histo">${lignesHisto.length ? lignesHisto.slice(0, 30).map(l => `<div style="font-size:12px;color:var(--text-muted);padding:6px 0;border-top:1px solid var(--border);">${l}</div>`).join('') + (lignesHisto.length > 30 ? `<div style="font-size:12px;color:var(--text-muted);padding:6px 0;">… et ${lignesHisto.length - 30} lignes plus anciennes</div>` : '') : '<div style="font-size:12px;color:var(--text-muted);padding:6px 0;">Aucun mouvement enregistré.</div>'}</div>`;
+  const rendreToast = (texte, ton) => { lotReproToast = { texte, ton, t: Date.now() }; renderLotReproDetail(lot.id); setTimeout(() => { const t = document.getElementById('lr-toast'); if (t) t.remove(); lotReproToast = null; }, 6000); const n = document.getElementById('lr-scan'); if (n) n.focus(); };
+  const scanInput = document.getElementById('lr-scan');
+  setActiveScanTarget(scanInput);
+  attachEidBeep(scanInput);
+  wireEidLookupField(scanInput, {
+    pool: pool(),
+    getEid: a => a.eid,
+    feedbackEl: document.getElementById('lr-err'),
+    notFoundMessage: val => { const v = cleanEid(val); const autre = DB.brebis.find(s => cleanEid(s.eid) === v || numeroVisuel(s.eid) === v); return autre && !agn ? 'n°' + numeroVisuel(autre.eid) + ' n\'est pas active (' + (autre.statut || '') + ') : seules les brebis actives peuvent être ajoutées.' : 'Aucune ' + (agn ? 'antenaise' : 'brebis active') + ' correspondante.'; },
+    estDejaTrouve: a => enLot(a.eid),                                   // bip différencié « déjà dans le lot » : rien n'est ajouté
+    onFound: a => {
       if (!garderLotsModifiables()) return;
-      const animaux = pool().filter(a => selected.has(a.id));
-      const lotId = Date.now().toString();
-      // Campagne du lot = celle des MISES BAS (chantier de tri) : déduite de la date de l'évènement (date de lutte pour une éponge). Les mises
-      // bas se rattachent toujours par fenêtre de dates (voir fenetreReproMatch/deduireCodeRepro), jamais par égalité de campagne.
-      const campagneMisesBas = campagneMisesBasDepuisDate(dateEvenement);
-      animaux.forEach(a => {
-        a.modesRepro = a.modesRepro || [];
-        a.modesRepro.push({ date: dateEvenement, mode, campagne: campagneMisesBas !== null ? campagneMisesBas : DB.campagneDebut, codeSieol: REPRO_CODE_SIEOL[mode], lotId });
-      });
-      const champsLot = { id: lotId, nom, dateCreation: today, cible, mode, dateEvenement, campagne: DB.campagneDebut, campagneMisesBas };
-      if (mode === 'EP') champsLot.datePose = datePose;
-      creerLotReproductionJournalise(champsLot, animaux.map(a => a.eid));
+      if (enLot(a.eid)) { rendreToast('n°' + numeroVisuel(a.eid) + ' est déjà dans le lot.', 'warn'); return; }
+      if (affecterAuLotPc(lot, [{ eid: a.eid, obj: a }]) < 0) { rendreToast('Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n\'a été ajouté. À trancher sur PC.', 'warn'); return; }
       saveData(DB);
-      render('lots');
-    };
-  }
-
-  draw();
+      rendreToast('n°' + numeroVisuel(a.eid) + ' ajoutée au lot · ' + libN((lot.membres || []).length), 'ok');
+    }
+  });
+  document.querySelectorAll('.btn-retirer-lot').forEach(btn => { btn.onclick = () => {
+    if (!garderLotsModifiables()) return;
+    const eid = btn.dataset.eid;
+    ouvrirModalRetraitLot(lot, eid, motif => {
+      const animal = trouverAnimalReproOuArchive(eid);
+      if (animal && miseBasRattacheeAuLot(animal, lot)) { rendreToast('Retrait impossible pour n°' + numeroVisuel(eid) + ' : une mise bas lui est déjà rattachée dans ce lot.', 'warn'); return; }
+      if (lotJournalise(lot)) { const ev = ajouterEvenementLot(lot, 'retrait', [eid], { motif }); if (ev && ev.refuse) { rendreToast('Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n\'a été retiré. À trancher sur PC.', 'warn'); return; } }
+      else lot.membres = lot.membres.filter(e => cleanEid(e) !== cleanEid(eid));
+      const vivant = findAnimalReproByEid(eid);
+      if (vivant) vivant.modesRepro = (vivant.modesRepro || []).filter(m => m.lotId !== lot.id);
+      saveData(DB);
+      rendreToast('n°' + numeroVisuel(eid) + ' retirée du lot · ' + libN((lot.membres || []).length), 'ok');
+    });
+  }; });
 }
 
 /* ---------- Modification d'un lot (tous types, Chantier de tri) ----------

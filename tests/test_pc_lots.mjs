@@ -236,9 +236,9 @@ console.log('OK 10 écarts de classe entre sources (lactationModele / bilanLacta
 await jeu();
 const rd = await page.evaluate(() => { const r = {}; render('add-lot'); r.add = !!document.getElementById('pc-lots'); render('add-lot-repro'); r.repro = !!document.getElementById('pc-lots');
   currentLotId = DB.lots[0].id; render('edit-lot'); r.edit = !!document.getElementById('pc-lots') && lotsPcEtat.lotId === DB.lots[0].id;
-  window.electronAPI.isDesktop = false; lotsPcEtat = null; render('lots'); r.mobile = !document.getElementById('pc-lots') && !!document.getElementById('btn-new-lot') && /Nouveau lot de reproduction/.test(document.getElementById('app').textContent);
+  window.electronAPI.isDesktop = false; lotsPcEtat = null; render('lots'); r.mobile = !document.getElementById('pc-lots') && !!document.getElementById('btn-new-lot') && !/Nouveau lot de reproduction/.test(document.getElementById('app').textContent);
   window.electronAPI.isDesktop = true; return r; });
-check(rd.add && rd.repro && rd.edit && rd.mobile, 'anciens écrans de création → page PC ; modification → étape 2 du lot ; mobile : écran d\'origine : ' + JSON.stringify(rd));
+check(rd.add && rd.repro && rd.edit && rd.mobile, 'anciens écrans de création → page PC ; modification → étape 2 du lot ; mobile : écran d\'origine sans « Nouveau lot de reproduction » : ' + JSON.stringify(rd));
 console.log('OK 11 routes : PC redirigé vers la page Lots ; mobile inchangé.');
 
 // ================================================================ 12. lots existants : tableau unique, filtres, Modifier, Excel, Suppr.

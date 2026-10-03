@@ -118,6 +118,19 @@ await waitFor(d2.page, () => ecartsMembresLots().length === 0 && DB.lots.find(l 
 check(await d1.page.evaluate(() => ecartsMembresLots().length) === 0, 'plus aucun écart côté PC');
 console.log('OK 4 appareil non à jour : écart détecté, écriture refusée tant qu\'il n\'est pas tranché, intégré au journal sur choix, convergence.');
 
+// ---------- 4b. le VRAI écran mobile (bip) et le PC (Retirer) ajustent le même lot en même temps ----------
+await Promise.all([
+  d1.page.evaluate(() => { const l = DB.lots.find(x => x.id === 'LC'); retirerDuLotPc(l, '25001629919' + '00005'); saveData(DB); }),
+  (async () => {
+    await d2.page.evaluate(() => { DB.brebis = [{ id: 'b-mob', eid: '25001629919' + '07070', statut: 'active', agnelages: [], modesRepro: [], videesDefinitives: [], sanitaire: [], mouvements: [], echographies: [], controleLaitier: [] }]; currentLotId = 'LC'; render('lot-repro-detail'); });
+    await d2.page.fill('#lr-scan', '07070'); await d2.page.press('#lr-scan', 'Enter');
+  })()
+]);
+await waitFor(d1.page, () => DB.lots.find(l => l.id === 'LC').membres.map(cleanEid).includes('25001629919' + '07070') && !DB.lots.find(l => l.id === 'LC').membres.map(cleanEid).includes('25001629919' + '00005'), { label: 'le PC voit l\'ajout mobile ET son propre retrait' });
+await waitFor(d2.page, () => DB.lots.find(l => l.id === 'LC').membres.map(cleanEid).includes('25001629919' + '07070') && !DB.lots.find(l => l.id === 'LC').membres.map(cleanEid).includes('25001629919' + '00005'), { label: 'le mobile voit son ajout ET le retrait du PC' });
+check(await membresTries(d1.page) === await membresTries(d2.page), 'PC et mobile identiques après ajustements simultanés (ajout par bip sur mobile, retrait sur PC)');
+console.log('OK 4b écran mobile (bip) et PC (Retirer) en même temps sur le même lot : les deux ajustements sont conservés.');
+
 // ---------- 5. suppression d'un lot : son journal disparaît partout ----------
 await d1.page.evaluate(() => { DB.lots = DB.lots.filter(l => l.id !== 'LC'); DB.evenementsLots = DB.evenementsLots.filter(e => e.lotId !== 'LC'); saveData(DB); });
 await waitFor(d2.page, () => !DB.lots.some(l => l.id === 'LC') && DB.evenementsLots.length === 0, { label: 'le mobile voit la suppression du lot et de son journal' });
