@@ -13105,6 +13105,68 @@ function showVendreAgnelleModal(ag, onDone) {
   };
 }
 
+/* ---------- Tri des agnelles : logique commune PC / mobile (chantier de tri, partie d) ----------
+   Trois blocs : À trier (femelles nées sur l'exploitation, bouclées, sans décision, ni vendues ni mortes) · Agnelles triées / achetées (DB.agnelles) ·
+   Écartées. N = agnelles triées (gardées) NÉES sur l'exploitation ; M = TOUTES les femelles nées sur l'exploitation et ENCORE ACTIVES (à trier + gardées
+   + écartées). Les achetées ne comptent ni dans N ni dans M (affichées à part). Une agnelle vendue ou morte sort de M (elle quitte DB.agnelles ou porte
+   statutFinal vendu/mort). Même calcul sur PC et mobile. Classe et lactation de la mère : « - » si absentes (jamais inventées). */
+function libelleNaissance(n) { return n === 1 ? 'Simple' : n === 2 ? 'Double' : n === 3 ? 'Triple' : n > 3 ? n + ' agneaux' : null; }
+function trierAgnellesAgeNumero(items, cle) {
+  return items.slice().sort((a, b) => String(cle(a).date || '').localeCompare(String(cle(b).date || '')) || comparerAnimauxAgeNumero({ age: null, court: cle(a).court, numero: cle(a).numero }, { age: null, court: cle(b).court, numero: cle(b).numero }));
+}
+// Info « mère » d'une agnelle née sur l'exploitation (lamb = l'agneau dans sheep.agnelages[].lambs ; motherEid = la brebis qui l'a mise bas)
+function infoMereAgnelle(motherEid, lamb, dateNaissance) {
+  if (!motherEid) return { mereEid: null, mereNumero: null, mereAge: null, naissance: null, classeMere: null, lactMere: null, lactCampagne: DB.campagneDebut - 1 };
+  const mere = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(motherEid)) || null;
+  let nb = null;
+  if (mere && lamb) { const ag = (mere.agnelages || []).find(a => a && a.lambs && a.lambs.includes(lamb)); if (ag) nb = ag.lambs.length; }
+  else if (mere && dateNaissance) { const ag = (mere.agnelages || []).find(a => a && a.date === dateNaissance); if (ag) nb = ag.lambs.length; }
+  const cl = lactationPrecedenteBrebis(motherEid);
+  return { mereEid: motherEid, mereNumero: numeroVisuel(motherEid), mereAge: mere ? age(motherEid) : null, naissance: nb === null ? null : libelleNaissance(nb), classeMere: cl.classe, lactMere: cl.lactation, lactCampagne: cl.campagne };
+}
+function triAgnellesDonnees() {
+  const aTrier = getCandidatesATrier().map(c => Object.assign({ eid: c.lamb.eid, numero: numeroVisuel(c.lamb.eid), court: c.lamb.numeroCourtTravailSieol || c.lamb.numeroTravailSieol || '' }, c, infoMereAgnelle(c.motherEid, c.lamb, c.date)));
+  const ecartees = getEcartees().map(c => Object.assign({ eid: c.lamb.eid, numero: numeroVisuel(c.lamb.eid), court: c.lamb.numeroCourtTravailSieol || c.lamb.numeroTravailSieol || '' }, c, infoMereAgnelle(c.motherEid, c.lamb, c.date)));
+  const gardees = (DB.agnelles || []).map(a => {
+    const lamb = a.origine === 'née' ? findLambByEid(a.eid) : null;
+    const naiss = (a.mouvements || []).find(m => m && m.type === 'Naissance');
+    return Object.assign({ eid: a.eid, numero: numeroVisuel(a.eid), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', ag: a, origine: a.origine === 'née' ? 'Née' : 'Achetée', date: a.origine === 'née' ? (naiss ? naiss.date : null) : a.dateEntree, dateTri: a.dateEntree, motherEid: a.motherEid || null }, a.origine === 'née' ? infoMereAgnelle(a.motherEid, lamb, naiss ? naiss.date : null) : infoMereAgnelle(null));
+  });
+  const nees = gardees.filter(g => g.ag.origine === 'née'), achetees = gardees.filter(g => g.ag.origine !== 'née');
+  const N = nees.length, M = aTrier.length + nees.length + ecartees.length;
+  return { aTrier: trierAgnellesAgeNumero(aTrier, x => x), gardees: trierAgnellesAgeNumero(gardees, x => x), ecartees: trierAgnellesAgeNumero(ecartees, x => x),
+    compteur: { N, M, aTrier: aTrier.length, ecartees: ecartees.length, achetees: achetees.length, pct: M > 0 ? Math.round((N / M) * 100) : 0 } };
+}
+// Incohérences REMONTÉES (jamais corrigées seules, c'est à l'éleveur de trancher) : une agnelle « gardée » sans fiche d'agnelle (fiche supprimée à la main, l'agneau
+// garde triStatut = 'gardée' : il n'est plus ni à trier ni gardé), ou une fiche d'agnelle née dont l'agneau n'est plus marqué gardé.
+function incoherencesTriAgnelles() {
+  const res = [], eidsFiches = new Set((DB.agnelles || []).map(a => cleanEid(a.eid)));
+  DB.brebis.forEach(sh => (sh.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => {
+    if (l.sexe === 'Femelle' && l.eid && l.triStatut === 'gardée' && l.statutFinal !== 'vendu' && l.statutFinal !== 'mort' && !eidsFiches.has(cleanEid(l.eid)) && !registreContientAgnelle(l.eid))
+      res.push({ type: 'gardée sans fiche d\'agnelle', eid: l.eid, numero: numeroVisuel(l.eid), mere: numeroVisuel(sh.eid) });
+  })));
+  (DB.agnelles || []).forEach(a => { if (a.origine === 'née') { const l = findLambByEid(a.eid); if (l && l.triStatut !== 'gardée') res.push({ type: 'fiche d\'agnelle née dont l\'agneau n\'est plus « gardé »', eid: a.eid, numero: numeroVisuel(a.eid), mere: a.motherEid ? numeroVisuel(a.motherEid) : '-' }); } });
+  return res;
+}
+function registreContientAgnelle(eid) { const reg = (DB.registre && DB.registre.agnelles) || {}; return Object.keys(reg).some(k => cleanEid(k) === cleanEid(eid)); }
+function trouverAgnelleTriParNumero(q) {
+  const t = String(q || '').replace(/\s+/g, '').toLowerCase();
+  if (!t) return null;
+  const d = triAgnellesDonnees();
+  for (const [bloc, liste] of [['aTrier', d.aTrier], ['gardees', d.gardees], ['ecartees', d.ecartees]]) {
+    const it = liste.find(x => x.numero.toLowerCase() === t || String(x.court).toLowerCase() === t || cleanEid(x.eid).toLowerCase() === t);
+    if (it) return { bloc, item: it };
+  }
+  const partiel = [...d.aTrier.map(x => ['aTrier', x]), ...d.gardees.map(x => ['gardees', x]), ...d.ecartees.map(x => ['ecartees', x])].filter(([b, x]) => x.numero.toLowerCase().includes(t) || String(x.court).toLowerCase().includes(t));
+  return partiel.length === 1 ? { bloc: partiel[0][0], item: partiel[0][1] } : null;
+}
+// Compteur : « N triées sur M femelles nées actives » + barre de progression + détail (à trier, écartées, achetées hors total)
+function compteurTriAgnellesHtml(c, variante) {
+  const detail = 'À trier ' + c.aTrier + ' · écartées ' + c.ecartees + ' · achetées ' + c.achetees + (variante === 'pc' ? ' en plus (hors total)' : ' (hors total)');
+  if (variante === 'pc') return `<div id="ta-compteur" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px;"><span style="font-size:15px;"><b style="font-size:20px;">${c.N}</b> triées sur <b style="font-size:20px;">${c.M}</b> femelles nées actives</span><span style="display:inline-block;width:240px;height:8px;border-radius:4px;background:#f0efe9;border:1px solid var(--border);overflow:hidden;"><i style="display:block;height:100%;width:${c.pct}%;background:var(--primary);"></i></span><span style="font-size:13px;color:var(--text-muted);">${detail}</span></div>`;
+  return `<div class="card" id="ta-compteur" style="padding:10px 12px;margin-bottom:12px;"><div style="font-size:13px;"><b style="font-size:18px;">${c.N}</b> triées sur <b style="font-size:18px;">${c.M}</b> femelles nées actives</div><div style="height:8px;border-radius:4px;background:#f0efe9;margin:8px 0 6px;overflow:hidden;"><i style="display:block;height:100%;width:${c.pct}%;background:var(--primary);"></i></div><div style="font-size:11px;color:var(--text-muted);">${detail}</div></div>`;
+}
+
 function renderAgnelles() {
   DB.agnelles = DB.agnelles || [];
   const candidates = getCandidatesATrier();
