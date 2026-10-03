@@ -89,17 +89,16 @@ console.log('OK 2 mouvement individuel : alerte en direct (type, date), frontiè
 
 // ================================================================ 3. mouvement collectif : liste des animaux concernés
 await jeu();   // jeu remis à neuf (la brebis A a été vendue en 2)
-await page.evaluate(() => { window.__mouvementGroupeSelected = { brebis: new Set(['B', 'C']), beliers: new Set(), agnelles: new Set(), agneaux: new Set() }; render('mouvement-groupe'); });
-await page.click('.cat-mc-opt[data-val="brebis"]');
-await page.waitForSelector('#f-date');
-await t('Vente'); await page.fill('#f-date', '2026-10-10');
+await page.evaluate(() => { mvPcEtat = null; render('inventaire'); });          // PC : la page « Mouvements d'animaux » (saisie collective)
+await page.waitForSelector('#mv-table');
+await page.click('.mv-type[data-val="Vente"]'); await page.fill('#mv-date', '2026-10-10');
+await page.click('tr.clic[data-id="B"]'); await page.click('tr.clic[data-id="C"]');
 al = await page.evaluate(() => { const e = document.getElementById('alerte-vente-delai'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
 check(al && /n°00003 est encore sous délai/.test(al) && /Ivomec/.test(al) && /30-10-2026/.test(al) && !/n°00002/.test(al), 'collectif : seul n°00003 (sélectionné ET sous délai) est signalé : ' + al);
-await page.evaluate(() => { window.__mouvementGroupeSelected.brebis.add('A'); });   // la sélection est vivante ; l'alerte suit à l'événement suivant
-await page.fill('#f-date', '2026-10-11');
+await page.click('tr.clic[data-id="A"]');
 al = await page.evaluate(() => { const e = document.getElementById('alerte-vente-delai'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
 check(/2 animaux sont encore sous délai/.test(al) && /n°00001/.test(al) && /n°00003/.test(al), 'collectif : 2 animaux listés après ajout à la sélection : ' + al);
-await t('Morte');
+await page.click('.mv-type[data-val="Morte"]');
 check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'collectif Morte : pas d\'alerte');
 console.log('OK 3 mouvement collectif : seuls les animaux sélectionnés sous délai sont listés, mis à jour avec la date et le type.');
 
