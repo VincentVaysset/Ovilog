@@ -30,14 +30,17 @@ const mig = await page.evaluate(() => {
   return { m, nEv2: m2.evenementsLots.length, ids: [...ids], schema: m.schemaLots, seuil: m.reproSeuilMiseBasMois };
 });
 const [l0, l1, l2, l3] = mig.m.lots;
-check(mig.m.evenementsLots.length === 2 && mig.nEv2 === 2, 'un événement initial par lot de reproduction non vide, migration idempotente : ' + mig.m.evenementsLots.length);
+const E0 = (n) => '25001629919' + String(n).padStart(5, '0');
+check(mig.m.evenementsLots.length === 4 && mig.nEv2 === 4, 'un événement initial par lot non vide (reproduction, recherche, réforme), migration idempotente : ' + mig.m.evenementsLots.length);
 check(mig.m.evenementsLots[0].id === 'EL-init-1700000000000' && mig.m.evenementsLots[0].type === 'initial' && mig.m.evenementsLots[0].eids.length === 2 && mig.m.evenementsLots[0].source === 'migration', 'événement initial : id déterministe, type initial, tous les membres');
-check(mig.ids.length === 2, 'deux appareils qui migrent chacun de leur côté produisent les MÊMES ids (aucun doublon après fusion)');
+check(mig.ids.length === 4, 'deux appareils qui migrent chacun de leur côté produisent les MÊMES ids (aucun doublon après fusion)');
 check(l0.journal === 1 && l1.journal === 1 && JSON.stringify(l0.membres) === JSON.stringify(['25001629919' + '00059', '25001629919' + '00069']) && l0.journalN === 1, 'lot migré : journalisé, membres conservés, cache à jour');
 check(l0.campagneMisesBas === 2027 && l0.campagneMisesBasDeduite === true && l1.campagneMisesBas === 2026, 'campagne des mises bas déduite (IA du 15/06/2027 → 2027 ; éponge lutte 20/10/2026 → 2026) : ' + l0.campagneMisesBas + ' / ' + l1.campagneMisesBas);
 check(l0.campagne === 2026, 'lot.campagne (ancien sens) jamais réécrit');
-check(l2.journal === undefined && l3.journal === undefined && l2.campagneMisesBas === undefined && mig.m.evenementsLots.every(e => e.lotId !== l2.id && e.lotId !== l3.id), 'lots de recherche et de réforme : intacts (aucun journal)');
-check(mig.schema === 2 && mig.seuil === 3, 'marqueur de version du format = 2 ; seuil mise bas = 3 mois par défaut');
+check(l2.journal === 1 && l3.journal === 1 && l2.type === undefined && l3.type === 'reforme' && l2.campagneMisesBas === undefined && l3.campagneMisesBas === undefined, 'lots de recherche et de réforme : journalisés, sans campagne des mises bas');
+const ev23 = mig.m.evenementsLots.filter(e => e.lotId === l2.id || e.lotId === l3.id);
+check(ev23.length === 2 && ev23.every(e => e.id === 'EL-init-' + e.lotId && e.type === 'initial' && e.source === 'migration') && JSON.stringify(l2.membres) === JSON.stringify([E0(1), E0(2)]) && JSON.stringify(l3.membres) === JSON.stringify([E0(3)]), 'recherche / réforme : un événement initial déterministe, membres conservés : ' + JSON.stringify(ev23));
+check(mig.schema === 3 && mig.seuil === 3, 'marqueur de version du format = 3 ; seuil mise bas = 3 mois par défaut');
 console.log('OK 1 migration : événement initial par lot de reproduction, ids déterministes, idempotente, campagne des mises bas déduite, recherche/réforme intacts.');
 
 // ================================================================ 2. moteur du journal
@@ -202,11 +205,11 @@ await reset();
 const src = await page.evaluate(() => fetch(location.href).then(r => r.text()));
 const pl = { doc: /const DOC_COLLECTIONS = \[[^\]]*'evenementsLots'[^\]]*\]/.test(src), meta: /const META_FIELDS = \[[\s\S]*?'reproSeuilMiseBasMois', 'schemaLots'[\s\S]*?\];/.test(src), lastSynced: /lastSynced: \{[\s\S]{0,200}evenementsLots: \{\}/.test(src), hook: /if \(colName === 'evenementsLots'\) recalculerMembresLotsRepro\(\)/.test(src) };
 check(pl.doc && pl.meta && pl.lastSynced && pl.hook, 'evenementsLots dans DOC_COLLECTIONS (1 document par événement) et lastSynced, schemaLots et seuil dans META_FIELDS, cache recalculé à la réception : ' + JSON.stringify(pl));
-const gf = await page.evaluate(() => { const r = {}; r.libre = garderLotsModifiables(); DB.schemaLots = 3; r.verrou = lotsVerrouilles(); r.refus = garderLotsModifiables(); DB.schemaLots = 2; return r; });
+const gf = await page.evaluate(() => { const r = {}; r.libre = garderLotsModifiables(); DB.schemaLots = 4; r.verrou = lotsVerrouilles(); r.refus = garderLotsModifiables(); DB.schemaLots = 3; return r; });
 check(gf.libre === true && gf.verrou === true && gf.refus === false && alertes.some(m => /Mettre à jour l'application/.test(m)), 'garde-fou : version du format plus récente → « Mettre à jour l\'application », lots non modifiables ; sinon libre');
-await page.evaluate(() => { DB.schemaLots = 3; window.electronAPI.isDesktop = false; render('lots'); });
+await page.evaluate(() => { DB.schemaLots = 4; window.electronAPI.isDesktop = false; render('lots'); });
 check(/Mettre à jour l'application/.test(await page.evaluate(() => document.getElementById('app').textContent)), 'bandeau « Mettre à jour l\'application » sur l\'écran des lots (mobile)');
-await page.evaluate(() => { DB.schemaLots = 2; });
+await page.evaluate(() => { DB.schemaLots = 3; });
 const vide = await page.evaluate(() => {
   creerLotReproductionJournalise({ id: 'LV', nom: 'Lot vide', mode: 'IA', cible: 'Brebis', dateCreation: '2026-10-20', dateEvenement: '2026-10-20', campagneMisesBas: 2026 }, []);
   creerLotReproductionJournalise({ id: 'LP', nom: 'Lot plein', mode: 'IA', cible: 'Brebis', dateCreation: '2026-10-20', dateEvenement: '2026-10-20', campagneMisesBas: 2026 }, [E(1)]);

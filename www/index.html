@@ -1320,7 +1320,7 @@ function loadData() {
     ],
     lots: [],
     evenementsLots: [],
-    schemaLots: 2,
+    schemaLots: 3,
     reproSeuilMiseBasMois: 3,
     reproGestationMin: 144,
     reproGestationMax: 152,
@@ -3700,10 +3700,12 @@ function findAnimalReproByEid(eid) {
    lot.membres reste un CACHE recalculé (les ~30 lecteurs existants -- stats, PDF, bilan -- ne changent pas) ; il porte son empreinte
    (membresEmpreinte) et le nombre d'événements rejoués (journalN) : un appareil non à jour qui modifierait lot.membres directement est
    DÉTECTÉ (empreinte qui ne correspond plus) et remonté (ecartsMembresLots), jamais écrasé ni corrigé en silence.
-   Les lots de recherche et de réforme ne sont pas concernés (mobile inchangé : ils s'écrivent comme avant, sans journal).
+   Chantier « Lots échographies » (schemaLots 3) : les lots de RECHERCHE et de RÉFORME sont journalisés de la même façon (affectation progressive depuis plusieurs
+   onglets ou appareils, édition mobile par différences). Seuls les lots de reproduction touchent modesRepro. Les lots automatiques (`auto`, régénérés à la demande depuis
+   un critère) restent sans journal : leur contenu est dérivé, jamais saisi.
    ATTENTION : migrateData() tourne pendant `let DB = loadData()` -- ces fonctions prennent donc `base` en paramètre (jamais le global DB
    par défaut dans le chemin de migration) et la version courante est une fonction, pas une const (zone morte temporelle). */
-function schemaLotsVersionCourante() { return 2; }
+function schemaLotsVersionCourante() { return 3; }
 // Garde-fou version : un appareil plus ANCIEN que le format écrit dans meta.schemaLots ne doit pas modifier les lots (il écraserait le
 // journal sans le savoir) -- il affiche « Mettre à jour l'application ». Ne protège que les versions qui connaissent ce marqueur.
 function lotsVerrouilles() { return ((DB && DB.schemaLots) || 0) > schemaLotsVersionCourante(); }
@@ -3715,7 +3717,7 @@ function garderLotsModifiables() {
 function bandeauLotsVerrouillesHtml() {
   return lotsVerrouilles() ? '<div class="error-box" style="margin-bottom:10px;">Mettre à jour l\'application : les lots sont en lecture seule tant que cette version n\'est pas mise à jour.</div>' : '';
 }
-function lotJournalise(lot) { return !!lot && lot.type === 'reproduction' && lot.journal === 1; }
+function lotJournalise(lot) { return !!lot && lot.journal === 1; }
 function sourceEvenementLot() { return isDesktopMode() ? 'PC' : 'mobile'; }
 function comparerEvenementsLot(a, b) {
   return String(a.date || '').localeCompare(String(b.date || '')) || String(a.id).localeCompare(String(b.id));
@@ -3811,23 +3813,30 @@ function ajouterEvenementLot(lot, type, eids, opts) {
   materialiserMembresLot(lot);
   return ev;
 }
-// Aligne le journal sur une liste finale de membres (écrans qui travaillent en « liste complète ») : un événement par sens de variation.
-function appliquerMembresLot(lot, eidsFinaux, opts) {
-  if (!lotJournalise(lot)) { lot.membres = eidsFinaux.slice(); return true; }
-  const actuels = new Set((lot.membres || []).map(cleanEid)), finaux = new Set(eidsFinaux.map(cleanEid));
-  const ajouts = eidsFinaux.filter(e => !actuels.has(cleanEid(e))), retraits = (lot.membres || []).filter(e => !finaux.has(cleanEid(e)));
-  if (retraits.length) { const r = ajouterEvenementLot(lot, 'retrait', retraits, opts); if (r && r.refuse) return false; }
-  if (ajouts.length) { const r = ajouterEvenementLot(lot, 'affectation', ajouts, opts); if (r && r.refuse) return false; }
-  return true;
-}
-// Création d'un lot de reproduction journalisé (vide si eids est vide)
-function creerLotReproductionJournalise(champs, eids, opts) {
-  const lot = Object.assign({}, champs, { type: 'reproduction', journal: 1, membres: [] });
+// Création d'un lot journalisé (reproduction, recherche ou réforme ; vide si eids est vide)
+function creerLotJournalise(champs, eids, opts) {
+  const lot = Object.assign({}, champs, { journal: 1, membres: [] });
   DB.lots = DB.lots || [];
   DB.lots.push(lot);
   if (eids && eids.length) ajouterEvenementLot(lot, 'affectation', eids, opts);
   else { lot.membresEmpreinte = empreinteMembresLot([]); lot.journalN = 0; }
   return lot;
+}
+function creerLotReproductionJournalise(champs, eids, opts) { return creerLotJournalise(Object.assign({}, champs, { type: 'reproduction' }), eids, opts); }
+// Édition « par différences » : applique SEULEMENT ce que l'écran a changé depuis son ouverture (initiaux -> finaux), jamais l'état complet -- les brebis qu'un autre
+// appareil a ajoutées ou retirées entre-temps ne sont donc ni retirées ni rajoutées par cet enregistrement. `retirables` (facultatif) limite les retraits aux brebis
+// que l'écran proposait (une brebis vendue ou morte, absente de la liste, n'est jamais retirée en silence). Retourne false si le lot porte un écart non tranché.
+function appliquerDiffMembresLot(lot, initiaux, finaux, opts, retirables) {
+  const ini = new Set(initiaux.map(cleanEid)), fin = new Set(finaux.map(cleanEid)), ret = retirables ? new Set(retirables.map(cleanEid)) : null;
+  const ajouts = finaux.filter(e => !ini.has(cleanEid(e))), retraits = initiaux.filter(e => !fin.has(cleanEid(e)) && (!ret || ret.has(cleanEid(e))));
+  if (!lotJournalise(lot)) {
+    const cle = new Set((lot.membres || []).map(cleanEid)), suppr = new Set(retraits.map(cleanEid));
+    lot.membres = (lot.membres || []).filter(e => !suppr.has(cleanEid(e))).concat(ajouts.filter(e => !cle.has(cleanEid(e))));
+    return true;
+  }
+  if (retraits.length) { const r = ajouterEvenementLot(lot, 'retrait', retraits, opts); if (r && r.refuse) return false; }
+  if (ajouts.length) { const r = ajouterEvenementLot(lot, 'affectation', ajouts, opts); if (r && r.refuse) return false; }
+  return true;
 }
 // Résolution d'un écart (appareil non à jour) -- toujours un choix de l'éleveur
 function integrerEcartLot(lotId) {
@@ -3846,13 +3855,13 @@ function rejeterEcartLot(lotId) {
   lot.membresEmpreinte = empreinteMembresLot(lot.membres);
   return true;
 }
-// Migration (appelée par migrateData, sans accès à DB) : chaque lot de reproduction existant reçoit UN événement initial portant ses membres
+// Migration (appelée par migrateData, sans accès à DB) : chaque lot existant (reproduction, recherche, réforme ; pas les lots automatiques) reçoit UN événement initial portant ses membres
 // actuels (rien n'est perdu) ; id déterministe (EL-init-<lotId>) pour que deux appareils qui migrent chacun de leur côté ne créent jamais
-// deux doublons. Idempotent. Ajoute aussi campagneMisesBas (déduite, jamais écrasée) aux lots qui n'en ont pas.
+// deux doublons. Idempotent. Ajoute aussi campagneMisesBas (déduite, jamais écrasée) aux lots de reproduction qui n'en ont pas.
 function migrerLotsVersJournal(d) {
   d.evenementsLots = d.evenementsLots || [];
   (d.lots || []).forEach(lot => {
-    if (!lot || lot.type !== 'reproduction') return;
+    if (!lot || lot.auto) return;       // lot automatique : contenu dérivé, jamais journalisé
     if (lot.journal !== 1) {
       const init = 'EL-init-' + lot.id;
       const membres = Array.isArray(lot.membres) ? lot.membres : [];
@@ -3864,7 +3873,7 @@ function migrerLotsVersJournal(d) {
       delete lot.membresEmpreinte; delete lot.journalN;       // le cache sera recalculé depuis le journal
       materialiserMembresLot(lot, d);
     }
-    if (lot.campagneMisesBas === undefined || lot.campagneMisesBas === null) {
+    if (lot.type === 'reproduction' && (lot.campagneMisesBas === undefined || lot.campagneMisesBas === null)) {
       const c = campagneMisesBasDepuisDate(lot.dateEvenement || lot.dateCreation, d);
       if (c !== null) { lot.campagneMisesBas = c; lot.campagneMisesBasDeduite = true; }
     }
@@ -13060,8 +13069,7 @@ function showCreerLotControleLaitierModal(eids) {
     }
     DB.lots = DB.lots || [];
     if (!garderLotsModifiables()) return;
-    const lot = { id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO(), membres: eids };
-    DB.lots.push(lot);
+    const lot = creerLotJournalise({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO() }, eids);
     saveData(DB);
     effacerTrouveesLot(lot.id);
     document.body.removeChild(overlay);
@@ -16398,9 +16406,9 @@ function renderLotsPc() {
         if (f.mode === 'EP') champs.datePose = f.date;
         nouveau = creerLotReproductionJournalise(champs, []);
       } else {
-        nouveau = { id, nom: f.nom, dateCreation: f.type === 'reforme' ? today : f.date, membres: [] };
-        if (f.type === 'reforme') nouveau.type = 'reforme';
-        DB.lots = DB.lots || []; DB.lots.push(nouveau);
+        const champs = { id, nom: f.nom, dateCreation: f.type === 'reforme' ? today : f.date };
+        if (f.type === 'reforme') champs.type = 'reforme';
+        nouveau = creerLotJournalise(champs, []);
       }
       saveData(DB);
       E.lotId = id; E.selection = new Set(); E.F = filtresLotsVides(); E.onglet = 'misesbas'; E.messagePanneau = '';
@@ -16835,8 +16843,7 @@ function renderAddLot() {
     }
     err.classList.add('hidden');
     const membres = actives.filter(s => selected.has(s.id)).map(s => s.eid);
-    DB.lots = DB.lots || [];
-    DB.lots.push({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO(), membres });
+    creerLotJournalise({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO() }, membres);
     saveData(DB);
     render('lots');
   };
@@ -16877,8 +16884,7 @@ function renderAddLotReforme() {
     if (selected.size === 0) { err.textContent = "Sélectionne au moins une brebis (à la main ou au bip)."; err.classList.remove('hidden'); return; }
     err.classList.add('hidden');
     const membres = actives.filter(s => selected.has(s.id)).map(s => s.eid);
-    DB.lots = DB.lots || [];
-    DB.lots.push({ id: Date.now().toString(), nom, dateCreation: today, membres, type: 'reforme' });
+    creerLotJournalise({ id: Date.now().toString(), nom, dateCreation: today, type: 'reforme' }, membres);
     saveData(DB);
     render('lots');
   };
@@ -17009,6 +17015,9 @@ function renderEditLot(lotId) {
   // travaille en id, comme partout ailleurs) ; un membre déjà supprimé de la
   // base est silencieusement ignoré plutôt que de faire planter l'écran.
   const membresIds = new Set(lot.membres.map(eid => { const a = findAnimalReproByEid(eid); return a ? a.id : null; }).filter(Boolean));
+  // Membres du lot À L'OUVERTURE de l'écran : l'enregistrement n'applique que les différences par rapport à eux (jamais l'état complet), donc les brebis qu'un autre
+  // appareil ajoute ou retire pendant que cet écran est ouvert ne sont ni retirées ni rajoutées par erreur.
+  const membresInitiaux = lot.membres.slice();
   const dateActuelle = isRepro ? (lot.dateEvenement || lot.dateCreation) : lot.dateCreation;
 
   function draw() {
@@ -17046,7 +17055,7 @@ function renderEditLot(lotId) {
       // l'animal ici, pour que lot.membres reste cohérent avec le fait que
       // son évènement modesRepro, lui, n'a pas été touché.
       const nouveauxMembres = poolActuel.filter(a => membresIds.has(a.id));
-      const ancienEids = new Set(lot.membres.map(cleanEid));
+      const ancienEids = new Set(membresInitiaux.map(cleanEid));
       const nouveauEidsInitial = new Set(nouveauxMembres.map(a => cleanEid(a.eid)));
       // Mise bas déjà rattachée à CE lot -- par fenêtre de dates (voir
       // fenetreReproMatch), jamais par égalité de campagne : lot.campagne
@@ -17062,7 +17071,7 @@ function renderEditLot(lotId) {
         // lotId), sauf mise bas déjà rattachée à ce lot -- bloqué,
         // l'animal reste alors dans le lot (cohérence avec son évènement
         // modesRepro, conservé lui aussi).
-        lot.membres.forEach(eid => {
+        membresInitiaux.forEach(eid => {
           if (nouveauEidsInitial.has(cleanEid(eid))) return;
           const animal = findAnimalReproByEid(eid);
           if (!animal) return;
@@ -17095,7 +17104,7 @@ function renderEditLot(lotId) {
       lot.nom = nom;
       if (isRepro) { lot.dateEvenement = dateVal; }
       else { lot.dateCreation = dateVal; }
-      if (!appliquerMembresLot(lot, nouveauxMembres.map(a => a.eid))) { err.textContent = "Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n'a été enregistré."; err.classList.remove('hidden'); return; }
+      if (!appliquerDiffMembresLot(lot, membresInitiaux, nouveauxMembres.map(a => a.eid), undefined, poolActuel.map(a => a.eid))) { err.textContent = "Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n'a été enregistré."; err.classList.remove('hidden'); return; }
       saveData(DB);
 
       if (bloquesSet.size > 0) {
@@ -19320,7 +19329,7 @@ function ouvrirModalNouveauLot(options) {
     if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
     DB.lots = DB.lots || [];
     if (!garderLotsModifiables()) return;
-    DB.lots.push({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO(), membres: options.membres.slice() });
+    creerLotJournalise({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO() }, options.membres.slice());
     saveData(DB);
     document.body.removeChild(overlay);
     if (options.onCreated) options.onCreated();

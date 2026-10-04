@@ -81,7 +81,7 @@ await page.click('#lt-type .opt-btn[data-val="recherche"]');
 check(!await page.evaluate(() => !!document.getElementById('lt-cible')), 'recherche : ni cible, ni mode, ni campagne');
 await page.fill('#lt-nom', 'Brebis à voir'); await page.click('#lt-creer'); await page.waitForSelector('#lt-table');
 const rch = await page.evaluate(() => { const l = DB.lots[DB.lots.length - 1]; return [l.type === undefined, l.nom, l.membres.length, l.dateCreation, l.journal]; });
-check(rch[0] && rch[1] === 'Brebis à voir' && rch[2] === 0 && rch[3] === '2026-10-03' && rch[4] === undefined, 'lot de recherche créé vide, sans journal : ' + JSON.stringify(rch));
+check(rch[0] && rch[1] === 'Brebis à voir' && rch[2] === 0 && rch[3] === '2026-10-03' && rch[4] === 1, 'lot de recherche créé vide, journalisé : ' + JSON.stringify(rch));
 await jeu();
 await page.click('#lt-type .opt-btn[data-val="reforme"]');
 check(await $t('#lt-creer') === 'Créer le lot de réforme' && await page.evaluate(() => document.getElementById('lt-nom').value) === 'Réforme du 03-10-2026' && !await page.evaluate(() => !!document.getElementById('lt-date')), 'réforme : bouton rouge « Créer le lot de réforme », nom « Réforme du … », pas de date');

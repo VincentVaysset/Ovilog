@@ -97,7 +97,7 @@ await page.evaluate(() => { DB.lots.find(x => x.id === 'LR').membres.push('25001
 await scanner(await page.evaluate(() => E(9, 152)));
 check(/écart non tranché/.test(await $t('#lr-toast')) && await page.evaluate(() => DB.evenementsLots.length) === 1, 'écart non tranché : rien n\'est ajouté, message (à trancher sur PC)');
 await jeu(); await ouvrir();
-await page.evaluate(() => { DB.schemaLots = 3; });
+await page.evaluate(() => { DB.schemaLots = 4; });
 await scanner(await page.evaluate(() => E(9, 152)));
 check(alertes.some(m => /Mettre à jour l'application/.test(m)) && await page.evaluate(() => DB.evenementsLots.length) === 1, 'format de lots plus récent : « Mettre à jour l\'application », lot non modifié');
 console.log('OK 5 écart non tranché et garde-fou de version : rien n\'est écrit.');
