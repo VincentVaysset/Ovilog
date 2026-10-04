@@ -3,13 +3,19 @@
    enrichie par ce chantier) et Ajouter une agnelle : HTML comparé octet pour octet à tests/ref/chantier_tri_mobile.json, pris AVANT le chantier de tri (code du commit
    f1f61de ; jeu SYNTHÉTIQUE, horloge figée, mobile = pas d'electronAPI.isDesktop). Exceptions voulues, absentes de cette référence : bouton « Nouveau lot de
    reproduction » et carte d'un lot de reproduction (détail), carte « À trier » + compteur + comportement au bip.
-   Régénérer volontairement : OVILOG_MAJ_REF=1 node test_chantier_tri_mobile_reference.mjs (sur le code d'origine, jamais sur le code modifié). */
+   Régénérer volontairement : OVILOG_MAJ_REF=1 node test_chantier_tri_mobile_reference.mjs (sur le code d'origine, jamais sur le code modifié).
+   EXCEPTION VOULUE du chantier « Lots échographies » : les deux écrans « Nouveau lot » (recherche : add_lot ; réforme : add_lot_reforme) ont de nouveaux critères d'échographie ;
+   ils ne sont donc plus comparés à la référence d'origine mais à tests/ref/lots_echos_mobile.json (écrite volontairement avec OVILOG_MAJ_REF_ECHOS=1). Tous les autres écrans restent
+   comparés à la référence d'origine. Les identifiants d'infobulle (data-info-id, compteur global) sont neutralisés : ils décalent d'un écran à l'autre sans rien changer d'affiché. */
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
 const REF = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ref', 'chantier_tri_mobile.json');
+const REF_ECHOS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ref', 'lots_echos_mobile.json');
+const ECRANS_ECHOS = ['add_lot', 'add_lot_reforme'];
+const norm = h => h.replace(/data-info-id="ib\d+"/g, 'data-info-id="ibN"');
 const browser = await chromium.launch(LAUNCH);
 const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
 const page = await ctx.newPage();
@@ -46,9 +52,14 @@ const res = await page.evaluate(() => {
 });
 await browser.close();
 res.lots = sansBoutonRepro(res.lots);
+Object.keys(res).forEach(k => { res[k] = norm(res[k]); });
+if (process.env.OVILOG_MAJ_REF_ECHOS === '1' || !existsSync(REF_ECHOS)) { writeFileSync(REF_ECHOS, JSON.stringify(Object.fromEntries(ECRANS_ECHOS.map(k => [k, res[k]])))); console.log('Référence « Nouveau lot » (critères d\'échographie) écrite : ' + REF_ECHOS); }
 if (process.env.OVILOG_MAJ_REF === '1' || !existsSync(REF)) { writeFileSync(REF, JSON.stringify(res)); console.log('Référence écrite : ' + REF + ' (' + Object.entries(res).map(([k, v]) => k + ' ' + v.length).join(', ') + ')'); process.exit(0); }
 const attendu = JSON.parse(readFileSync(REF, 'utf8'));
 attendu.lots = sansBoutonRepro(attendu.lots);
+ECRANS_ECHOS.forEach(k => { delete attendu[k]; });
+Object.assign(attendu, JSON.parse(readFileSync(REF_ECHOS, 'utf8')));
+Object.keys(attendu).forEach(k => { attendu[k] = norm(attendu[k]); });
 let ko = false;
 for (const k of Object.keys(attendu)) if (attendu[k] !== res[k]) { ko = true; const i = [...res[k]].findIndex((c, n) => c !== attendu[k][n]); console.log('FAIL: écran mobile « ' + k + ' » modifié (caractère ' + i + ') :\n  attendu …' + attendu[k].slice(Math.max(0, i - 60), i + 80).replace(/\s+/g, ' ') + '\n  obtenu  …' + res[k].slice(Math.max(0, i - 60), i + 80).replace(/\s+/g, ' ')); }
 if (ko) process.exit(1);

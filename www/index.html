@@ -3825,6 +3825,13 @@ function ajouterEvenementLot(lot, type, eids, opts) {
   return ev;
 }
 // Création d'un lot journalisé (reproduction, recherche ou réforme ; vide si eids est vide)
+// Identifiant de lot unique même si plusieurs lots sont créés dans la même milliseconde (ex. raccourci Vides / Simples / Doubles) : jamais deux lots, donc jamais deux journaux, avec le même id
+function idLotUnique() {
+  let n = Date.now();
+  const pris = new Set((DB.lots || []).map(l => String(l.id)));
+  while (pris.has(String(n))) n++;
+  return String(n);
+}
 function creerLotJournalise(champs, eids, opts) {
   const lot = Object.assign({}, champs, { journal: 1, membres: [] });
   DB.lots = DB.lots || [];
@@ -13080,7 +13087,7 @@ function showCreerLotControleLaitierModal(eids) {
     }
     DB.lots = DB.lots || [];
     if (!garderLotsModifiables()) return;
-    const lot = creerLotJournalise({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO() }, eids);
+    const lot = creerLotJournalise({ id: idLotUnique(), nom, dateCreation: jourAujourdhuiISO() }, eids);
     saveData(DB);
     effacerTrouveesLot(lot.id);
     document.body.removeChild(overlay);
@@ -16451,7 +16458,7 @@ function renderLotsPc() {
       if (f.type !== 'reforme' && !f.date) err.push('Renseigne la date.');
       if (err.length) { E.erreurs = err; redessiner(); return; }
       E.erreurs = [];
-      const id = Date.now().toString(), today = jourAujourdhuiISO();
+      const id = idLotUnique(), today = jourAujourdhuiISO();
       let nouveau;
       if (f.type === 'reproduction') {
         const champs = { id, nom: f.nom, dateCreation: today, cible: f.cible, mode: f.mode, dateEvenement: dateEvenementDuFormulaire(f), campagne: DB.campagneDebut, campagneMisesBas: campagneMisesBasDuFormulaire(f) };
@@ -16751,41 +16758,90 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
   full();
 }
 
+/* ---------- Critères d'échographie du « Nouveau lot » mobile (recherche ET réforme) ----------
+   Chantier « Lots échographies », partie 4. MÊMES libellés, MÊME ordre et MÊME fonction de filtrage (echoCorrespond, voir criteresEchoVides) que l'onglet PC « Échographies » :
+   Type d'échographie (Toutes / Constat / Stades) → Campagne de l'écho (en cours / à venir) → Stade (ou Résultat pour un constat) → Nombre d'agneaux → Cas particuliers.
+   Dans un groupe « ou », entre groupes « et ». « Vide » avec un nombre d'agneaux : aide affichée, aucun critère effacé ni grisé, aucun résultat pour Vide. Les dates d'écho
+   et les critères lourds (contrôles, lactation, classe, réussite IA, mises bas) restent sur PC. Sans critère, la sélection reste vide et se fait à la main ou au bip. */
+function echoCriteresMobileHtml(c) {
+  const chips = (id, vals) => `<div class="chip-list" id="${id}">${vals}</div>`;
+  const sous = t => `<div style="font-size:12px;color:var(--text-muted);margin:12px 0 6px;">${t}</div>`;
+  const enCours = DB.campagneDebut, avenir = DB.campagneDebut + 1;
+  return `<label style="display:flex;align-items:center;">Critères d'échographie (facultatif)${infoBulleHtml("Critères d'échographie", "Choisis un ou plusieurs critères pour présélectionner des brebis ci-dessous, d'après leur DERNIÈRE écho de la campagne choisie. Dans un groupe : « ou ». Entre groupes : « et ». Tu peux ensuite ajuster la sélection à la main ou au bip. Sans critère, la sélection reste vide.")}</label>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Type d'échographie</div>
+    ${chips('echo-type-list', [['toutes', 'Toutes'], ['constat', 'Constat'], ['stades', 'Stades']].map(([v, l]) => `<button type="button" class="chip${c.type === v ? ' selected' : ''}" data-val="${v}">${l}</button>`).join(''))}
+    ${sous("Campagne de l'écho")}
+    ${chips('echo-campagne-list', [[enCours, libCampagneAffichee(enCours) + ' · en cours'], [avenir, libCampagneAffichee(avenir) + ' · à venir']].map(([v, l]) => `<button type="button" class="chip${c.campagne === v ? ' selected' : ''}" data-val="${v}">${l}</button>`).join(''))}
+    <div id="echo-stade-label" style="font-size:12px;color:var(--text-muted);margin:12px 0 6px;">Stade</div>
+    ${chips('echo-stade-list', '')}
+    ${sous("Nombre d'agneaux")}
+    ${chips('echo-agneaux-list', ['Simple', 'Double'].map(v => `<button type="button" class="chip" data-val="${v}">${v}</button>`).join(''))}
+    ${sous('Cas particuliers')}
+    ${chips('echo-cas-list', '')}
+    <div id="echo-aide" class="hidden" style="margin-top:10px;padding:8px 12px;border-radius:10px;background:var(--amber-bg);color:var(--amber-fg);font-size:13px;"></div>
+    <div id="echo-compteur" style="font-size:13px;color:var(--text-muted);margin:10px 0 0;"></div>`;
+}
+// Branche les chips ; `c` est l'objet de critères (modifié en place) ; onChange() est appelé après chaque choix (le lot recalcule alors sa sélection).
+function brancherCriteresEchoMobile(c, onChange) {
+  const casListe = () => [...new Set([ECHO_PARASITISME, ...casParticuliersDisponibles(DB.brebis, DB.casParticuliers), ...c.cas])];
+  const basculer = (liste, v) => liste.includes(v) ? liste.filter(x => x !== v) : liste.concat(v);
+  const dessiner = () => {
+    document.querySelectorAll('#echo-type-list .chip').forEach(b => b.classList.toggle('selected', b.dataset.val === c.type));
+    document.querySelectorAll('#echo-campagne-list .chip').forEach(b => b.classList.toggle('selected', parseInt(b.dataset.val, 10) === c.campagne));
+    document.getElementById('echo-stade-label').textContent = c.type === 'constat' ? 'Résultat' : 'Stade';
+    const stades = [...new Set([...ECHO_STADES_PAR_TYPE[c.type], ...c.stades])];       // un critère déjà choisi reste visible et décochable même s'il n'est plus proposé pour ce type
+    document.getElementById('echo-stade-list').innerHTML = stades.map(v => `<button type="button" class="chip${c.stades.includes(v) ? ' selected' : ''}" data-val="${echoHtml(v)}">${echoHtml(v)}</button>`).join('');
+    document.querySelectorAll('#echo-agneaux-list .chip').forEach(b => b.classList.toggle('selected', c.agneaux.includes(b.dataset.val)));
+    document.getElementById('echo-cas-list').innerHTML = casListe().map(v => `<button type="button" class="chip${c.cas.includes(v) ? ' selected' : ''}" data-val="${echoHtml(v)}">${echoHtml(echoLibelleCas(v))}</button>`).join('');
+    const aide = echoAideCriteres(c), a = document.getElementById('echo-aide');
+    a.textContent = aide; a.classList.toggle('hidden', !aide);
+    document.querySelectorAll('#echo-stade-list .chip').forEach(b => { b.onclick = () => { c.stades = basculer(c.stades, b.dataset.val); dessiner(); onChange(); }; });
+    document.querySelectorAll('#echo-cas-list .chip').forEach(b => { b.onclick = () => { c.cas = basculer(c.cas, b.dataset.val); dessiner(); onChange(); }; });
+  };
+  document.querySelectorAll('#echo-type-list .chip').forEach(b => { b.onclick = () => { c.type = b.dataset.val; dessiner(); onChange(); }; });
+  document.querySelectorAll('#echo-campagne-list .chip').forEach(b => { b.onclick = () => { c.campagne = parseInt(b.dataset.val, 10); dessiner(); onChange(); }; });
+  document.querySelectorAll('#echo-agneaux-list .chip').forEach(b => { b.onclick = () => { c.agneaux = basculer(c.agneaux, b.dataset.val); dessiner(); onChange(); }; });
+  dessiner();
+}
+// Texte de la 2e ligne d'une brebis dans la liste : dernière écho de la campagne choisie
+function echoMetaMobile(sheep, campagne) {
+  const echo = derniereEchoCampagne(sheep, campagne);
+  if (!echo) return 'Aucune écho';
+  const parasit = echo.parasitisme ? ' <span class="compact-tag compact-tag-amber">Parasit.</span>' : '';
+  if (echo.special) return echoHtml(echo.special) + parasit;
+  const ag = echoAgneauxLibelle(echo), comptage = ag ? ` <span class="compact-tag compact-tag-green">${ag}</span>` : '';
+  return echoHtml(echoStadeCle(echo) || 'Non précisé') + comptage + parasit;
+}
+// Sélection et liste d'un écran « Nouveau lot » pilotées par les critères : recalcul COMPLET à chaque changement (décocher un critère retire les brebis qu'il avait ajoutées) ;
+// sans critère actif la sélection est vide et purement manuelle.
+function brancherSelectionParCriteres(actives, selected, picker, c) {
+  const compteur = () => document.getElementById('echo-compteur');
+  const meta = s => echoMetaMobile(s, c.campagne);
+  const dessiner = () => renderSelectionPicker(picker, actives, selected, { renderMeta: meta });
+  const recalculer = () => {
+    selected.clear();
+    const actifs = criteresEchoActifs(c);
+    if (actifs) actives.forEach(s => { if (echoCorrespond(s, c)) selected.add(s.id); });
+    compteur().textContent = actifs ? selected.size + (selected.size > 1 ? ' brebis correspondent' : ' brebis correspond') + ' aux critères.' : '';
+    dessiner();
+  };
+  dessiner();
+  brancherCriteresEchoMobile(c, recalculer);
+}
+
 function renderAddLot() {
   pageTitle.textContent = 'Nouveau lot';
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-
-  // Dernière échographie de chaque brebis par date réelle (voir
-  // dernierEchoParDate, chantier "Échographies"), sans filtre de campagne
-  // (une brebis sans écho cette campagne mais avec un historique plus
-  // ancien reste malgré tout caractérisée par sa toute dernière écho).
-  function lastEchoOf(sheep) {
-    return dernierEchoParDate(sheep.echographies || []);
-  }
+  const c = criteresEchoVides(); c.campagne = DB.campagneDebut;
 
   app.innerHTML = `
     <div class="card">
       <label>Nom du lot</label>
       <input type="text" id="f-lot-nom" placeholder="ex: Brebis vides à trier">
+      <label>Date</label>
+      <input type="date" id="f-lot-date" value="${jourAujourdhuiISO()}">
 
-      <label style="display:flex;align-items:center;">Filtrer par dernière échographie (facultatif) — critères combinables${infoBulleHtml('Filtrer par dernière échographie', "Coche un ou plusieurs critères (combinés en ET) pour présélectionner des brebis ci-dessous — tu peux ensuite ajuster la sélection à la main ou au bip. Sans aucun critère coché, la sélection reste vide et se fait entièrement à la main.")}</label>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Stade</div>
-      <div class="chip-list" id="stade-filtre-list">
-        <button type="button" class="chip" data-val="Vide">Vide</button>
-        <button type="button" class="chip" data-val="Début">Début</button>
-        <button type="button" class="chip" data-val="Milieu">Milieu</button>
-        <button type="button" class="chip" data-val="Fin">Fin</button>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);margin:12px 0 6px;">Nombre d'agneaux</div>
-      <div class="chip-list" id="agneaux-filtre-list">
-        <button type="button" class="chip" data-val="Simple">Simple</button>
-        <button type="button" class="chip" data-val="Double">Double</button>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);margin:12px 0 6px;">Cas particuliers</div>
-      <div class="chip-list" id="cas-filtre-list">
-        <button type="button" class="chip" data-val="__parasitisme">Parasitisme</button>
-        ${DB.casParticuliers.map(cp => `<button type="button" class="chip" data-val="${cp.replace(/"/g,'&quot;')}">${cp}</button>`).join('')}
-      </div>
+      ${echoCriteresMobileHtml(c)}
       <label>Brebis du lot</label>
       <div id="lot-picker" style="margin-bottom:14px;"></div>
 
@@ -16795,103 +16851,20 @@ function renderAddLot() {
   `;
 
   const selected = new Set();
-  const stadeSet = new Set();
-  const agneauxSet = new Set();
-  const casSet = new Set(); // valeurs de DB.casParticuliers cochées
-  let parasitismeOn = false;
-
-  function renderMeta(sheep) {
-    const echo = lastEchoOf(sheep);
-    if (!echo) return 'Aucune écho';
-    const parasitTag = echo.parasitisme ? ' <span class="compact-tag compact-tag-amber">Parasit.</span>' : '';
-    if (echo.special) return echo.special + parasitTag;
-    // Comptage : agneaux (Simple/Double) et nombreAgneaux (1-4, chantier
-    // "Échographies : Dénombrement") sont mutuellement exclusifs -- au plus
-    // un des deux tags s'affiche.
-    const comptageTag = echo.agneaux ? ` <span class="compact-tag compact-tag-green">${echo.agneaux === 'Double' ? '2+' : '1'}</span>`
-      : echo.nombreAgneaux ? ` <span class="compact-tag compact-tag-green">Dénombrement (${echo.nombreAgneaux >= 4 ? '4+' : echo.nombreAgneaux})</span>` : '';
-    return (echo.stade || 'Non précisé') + comptageTag + parasitTag;
-  }
-
-  function matches(sheep) {
-    const echo = lastEchoOf(sheep);
-    if (stadeSet.size > 0 && (!echo || !stadeSet.has(echo.stade))) return false;
-    if (agneauxSet.size > 0 && (!echo || !agneauxSet.has(echo.agneaux))) return false;
-    if (casSet.size > 0 && (!echo || !casSet.has(echo.special))) return false;
-    if (parasitismeOn && (!echo || !echo.parasitisme)) return false;
-    return true;
-  }
-
-  function unFiltreActif() {
-    return stadeSet.size > 0 || agneauxSet.size > 0 || casSet.size > 0 || parasitismeOn;
-  }
-
-  const picker = document.getElementById('lot-picker');
-  const agneauxContainer = document.getElementById('agneaux-filtre-list');
-
-  function updateAgneauxDisponibilite() {
-    // "Vide" seul coché -> agneaux non pertinent (une écho "Vide" n'a jamais
-    // de valeur agneaux) : grisé et vidé pour éviter une combinaison
-    // structurellement impossible.
-    const seulVide = stadeSet.size === 1 && stadeSet.has('Vide');
-    agneauxContainer.querySelectorAll('.chip').forEach(chip => {
-      chip.disabled = seulVide;
-      chip.style.opacity = seulVide ? '0.4' : '';
-      chip.style.pointerEvents = seulVide ? 'none' : '';
-    });
-    if (seulVide && agneauxSet.size > 0) {
-      agneauxSet.clear();
-      agneauxContainer.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
-    }
-  }
-
-  // Recalcule ENTIÈREMENT la sélection à partir des critères actifs à
-  // chaque changement de filtre (jamais une simple accumulation) : sinon
-  // décocher un critère ne retirerait jamais les brebis qu'il avait
-  // ajoutées. Aucun critère actif -> sélection vide, purement manuelle.
-  function recomputeSelection() {
-    selected.clear();
-    if (unFiltreActif()) {
-      actives.forEach(s => { if (matches(s)) selected.add(s.id); });
-    }
-    renderSelectionPicker(picker, actives, selected, { renderMeta });
-  }
-
-  renderSelectionPicker(picker, actives, selected, { renderMeta });
-
-  function wireChipGroup(containerId, targetSet, onAfter) {
-    document.querySelectorAll(`#${containerId} .chip`).forEach(chip => {
-      chip.onclick = () => {
-        const val = chip.dataset.val;
-        if (targetSet.has(val)) { targetSet.delete(val); chip.classList.remove('selected'); }
-        else { targetSet.add(val); chip.classList.add('selected'); }
-        if (onAfter) onAfter();
-        recomputeSelection();
-      };
-    });
-  }
-  wireChipGroup('stade-filtre-list', stadeSet, updateAgneauxDisponibilite);
-  wireChipGroup('agneaux-filtre-list', agneauxSet);
-  document.querySelectorAll('#cas-filtre-list .chip').forEach(chip => {
-    chip.onclick = () => {
-      const val = chip.dataset.val;
-      if (val === '__parasitisme') {
-        parasitismeOn = !parasitismeOn;
-        chip.classList.toggle('selected', parasitismeOn);
-      } else {
-        if (casSet.has(val)) { casSet.delete(val); chip.classList.remove('selected'); }
-        else { casSet.add(val); chip.classList.add('selected'); }
-      }
-      recomputeSelection();
-    };
-  });
+  brancherSelectionParCriteres(actives, selected, document.getElementById('lot-picker'), c);
 
   document.getElementById('btn-save-lot').onclick = () => {
     if (!garderLotsModifiables()) return;
     const err = document.getElementById('err');
     const nom = document.getElementById('f-lot-nom').value.trim();
+    const date = document.getElementById('f-lot-date').value;
     if (!nom) {
       err.textContent = "Donne un nom au lot.";
+      err.classList.remove('hidden');
+      return;
+    }
+    if (!date) {
+      err.textContent = "Renseigne la date.";
       err.classList.remove('hidden');
       return;
     }
@@ -16902,7 +16875,7 @@ function renderAddLot() {
     }
     err.classList.add('hidden');
     const membres = actives.filter(s => selected.has(s.id)).map(s => s.eid);
-    creerLotJournalise({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO() }, membres);
+    creerLotJournalise({ id: idLotUnique(), nom, dateCreation: date }, membres);
     saveData(DB);
     render('lots');
   };
@@ -16917,6 +16890,7 @@ function renderAddLotReforme() {
   pageTitle.textContent = 'Nouveau lot de réforme';
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   const today = jourAujourdhuiISO();
+  const c = criteresEchoVides(); c.campagne = DB.campagneDebut;
 
   app.innerHTML = `
     <div class="card">
@@ -16924,6 +16898,7 @@ function renderAddLotReforme() {
       <label>Nom du lot</label>
       <input type="text" id="f-lot-nom" value="Réforme du ${formatDateFr(today)}">
 
+      ${echoCriteresMobileHtml(c)}
       <label>Brebis à réformer</label>
       <div id="reforme-picker" style="margin-bottom:14px;"></div>
 
@@ -16933,7 +16908,7 @@ function renderAddLotReforme() {
   `;
 
   const selected = new Set();
-  renderSelectionPicker(document.getElementById('reforme-picker'), actives, selected);
+  brancherSelectionParCriteres(actives, selected, document.getElementById('reforme-picker'), c);
 
   document.getElementById('btn-save-lot-reforme').onclick = () => {
     if (!garderLotsModifiables()) return;
@@ -16943,7 +16918,7 @@ function renderAddLotReforme() {
     if (selected.size === 0) { err.textContent = "Sélectionne au moins une brebis (à la main ou au bip)."; err.classList.remove('hidden'); return; }
     err.classList.add('hidden');
     const membres = actives.filter(s => selected.has(s.id)).map(s => s.eid);
-    creerLotJournalise({ id: Date.now().toString(), nom, dateCreation: today, type: 'reforme' }, membres);
+    creerLotJournalise({ id: idLotUnique(), nom, dateCreation: today, type: 'reforme' }, membres);
     saveData(DB);
     render('lots');
   };
@@ -19388,7 +19363,7 @@ function ouvrirModalNouveauLot(options) {
     if (!nom) { err.textContent = "Donne un nom au lot."; err.classList.remove('hidden'); return; }
     DB.lots = DB.lots || [];
     if (!garderLotsModifiables()) return;
-    creerLotJournalise({ id: Date.now().toString(), nom, dateCreation: jourAujourdhuiISO() }, options.membres.slice());
+    creerLotJournalise({ id: idLotUnique(), nom, dateCreation: jourAujourdhuiISO() }, options.membres.slice());
     saveData(DB);
     document.body.removeChild(overlay);
     if (options.onCreated) options.onCreated();
