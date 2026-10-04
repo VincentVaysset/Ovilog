@@ -126,6 +126,7 @@ const ETATS_PC = [
   ['Nouvelle ordonnance', "editContext = null; render('add-ordonnance');"],
   ['Chantier de tri · Lots (étape 1)', "lotsPcEtat = null; render('lots');"],
   ['Chantier de tri · Lots (recherche)', "lotsPcEtat = null; render('lots'); document.querySelector('#lt-type .opt-btn[data-val=\"recherche\"]').click();"],
+  ['Chantier de tri · étape 2 Échographies', "lotsPcEtat = null; render('lots'); document.querySelector('#lt-type .opt-btn[data-val=\"recherche\"]').click(); document.getElementById('lt-creer').click(); lotsPcEtat.onglet = 'echos'; renderLotsPc();"],
   ['Chantier de tri · étape 2 Mises bas', "lotsPcEtat = null; render('lots'); document.getElementById('lt-creer').click(); lotsPcEtat.onglet = 'misesbas'; renderLotsPc(); lotsPcEtat.F.mbMode = 'entre'; renderLotsPc();"],
   ['Chantier de tri · étape 2 Contrôles', "lotsPcEtat = null; render('lots'); document.getElementById('lt-creer').click(); lotsPcEtat.onglet = 'controles'; renderLotsPc();"],
   ['Chantier de tri · étape 2 Lactations', "lotsPcEtat = null; render('lots'); document.getElementById('lt-creer').click(); lotsPcEtat.onglet = 'lactations'; renderLotsPc();"],

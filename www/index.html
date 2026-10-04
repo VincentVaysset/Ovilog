@@ -884,6 +884,15 @@ function restaurerSaisieEnCours(saisie) {
   n.focus();
   try { if (saisie.ss !== null && saisie.ss !== undefined) n.setSelectionRange(saisie.ss, saisie.se); } catch (e) { /* champ numérique ou date */ }
 }
+/* Champ date en cours de frappe : un champ date a des SEGMENTS (jour / mois / année) dont la frappe partielle n'est PAS dans sa valeur -- le recréer (redessin) ou lui
+   retirer le focus (blur) pendant qu'on tape détruit la saisie (« des fois ça marche, des fois pas »). Un redessin différé (filtres) ou venu de la synchro attend donc
+   que la frappe s'arrête (0,9 s sans touche) tant qu'un champ date a le focus. */
+let derniereFrappeMs = 0;
+document.addEventListener('keydown', () => { derniereFrappeMs = performance.now(); }, true);
+function saisieDateEnCours() {
+  const a = document.activeElement;
+  return !!a && a.tagName === 'INPUT' && ['date', 'time', 'datetime-local', 'month', 'week'].includes(a.type) && performance.now() - derniereFrappeMs < 900;
+}
 function isDesktopMode() {
   return !!(window.electronAPI && window.electronAPI.isDesktop);
 }
@@ -2286,6 +2295,8 @@ function echoResumeCampagne(brebis, campagne) {
   });
   return r;
 }
+function echoHtml(t) { return String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function echoLibelleCas(v) { return v === ECHO_PARASITISME ? 'Parasitisme' : v; }
 // Libellés d'affichage (colonnes de l'onglet et pastilles du mobile) : « Constat » / « Stades », « 1 » / « 2+ », pastilles de cas particuliers.
 function echoTypeLibelle(e) { return !e ? '' : (echoEstConstat(e) ? 'Constat' : 'Stades'); }
 function echoAgneauxLibelle(e) { const n = echoComptage(e); return n === 'Simple' ? '1' : (n === 'Double' ? '2+' : ''); }
@@ -5416,7 +5427,7 @@ function render(view, sheepId) {
   if (isDesktopMode() && (view === 'mouvement-groupe' || view === 'mouvements-collectifs')) view = 'inventaire';
   // PC : le Chantier de tri a UNE page « Lots » (créer, affecter, lots existants) ; les anciens écrans de création / modification y renvoient
   if (isDesktopMode() && (view === 'add-lot' || view === 'add-lot-reforme' || view === 'add-lot-repro')) view = 'lots';
-  if (isDesktopMode() && view === 'edit-lot') { if (!lotsPcEtat) lotsPcEtat = lotsPcEtatInitial(); lotsPcEtat.lotId = currentLotId; lotsPcEtat.selection = new Set(); lotsPcEtat.F = filtresLotsVides(); view = 'lots'; }
+  if (isDesktopMode() && view === 'edit-lot') { if (!lotsPcEtat) lotsPcEtat = lotsPcEtatInitial(); lotsPcEtat.lotId = currentLotId; lotsPcEtat.selection = new Set(); lotsPcEtat.F = filtresLotsVides(); lotsPcEtat.onglet = ongletParDefautLot((DB.lots || []).find(l => l.id === currentLotId)); view = 'lots'; }
   if (ROOT_VIEWS.has(currentView)) scrollPositions[currentView] = window.scrollY;
   currentView = view;
   if (sheepId !== undefined) currentSheepId = sheepId;
@@ -15924,15 +15935,20 @@ function openAutoLot(id, nom, membres) {
    colonnes ; la sélection (cases cochées) est CONSERVÉE d'un onglet à l'autre ; « Affecter » AJOUTE au lot et n'en retire jamais ; les filtres rapides
    règlent des filtres, ne cochent JAMAIS aucune brebis. Aucune donnée inventée : champ absent = « - ». Pas de bip en série sur PC.
    Lot de reproduction : membres écrits dans le journal (voir ajouterEvenementLot) + évènement modesRepro sur chaque animal, comme l'écran mobile. */
-const LOTS_ONGLETS = [['controles', 'Contrôles'], ['lactations', 'Lactations et classes'], ['ia', 'Réussite à l\'IA'], ['misesbas', 'Mises bas']];
+const LOTS_ONGLETS = [['echos', 'Échographies'], ['controles', 'Contrôles'], ['lactations', 'Lactations et classes'], ['ia', 'Réussite à l\'IA'], ['misesbas', 'Mises bas']];
 let lotsPcEtat = null, lotsPcRedessin = false, lotsPcMinuterieLE = null;
 function filtresLotsVides() {
   return { q: '', millesime: '', statut: '', dansLot: '',
     ctrlCampagne: '', anomalieAny: false, anomalie: { 1: '', 2: '', 3: '' }, lait: { 1: ['', ''], 2: ['', ''], 3: ['', ''] },
     lactMin: '', lactMax: '', classes: [], age: '',
     ia: {}, sansDeuxEchecs: false,
-    mbMode: '', mbDu: '', mbAu: '' };
+    mbMode: '', mbDu: '', mbAu: '',
+    echo: criteresEchoVides() };      // critères d'échographie (communs PC / mobile, voir criteresEchoVides) ; campagne null = campagne en cours
 }
+// Onglet affiché à l'ouverture de l'étape 2 : Échographies pour un lot de recherche ou de réforme, Mises bas pour la reproduction (Échographies reste le premier onglet de la barre)
+function ongletParDefautLot(lot) { return lot && lot.type === 'reproduction' ? 'misesbas' : 'echos'; }
+function campagneEchoPc(F) { return F.echo && F.echo.campagne !== null && F.echo.campagne !== undefined ? F.echo.campagne : DB.campagneDebut; }
+function criteresEchoPc(F) { return Object.assign({}, F.echo, { campagne: campagneEchoPc(F) }); }
 function lotsPcEtatInitial() {
   return { lotId: null, form: { type: 'reproduction', cible: 'Brebis', mode: 'IA', campagne: 'avenir', nom: '', nomTouche: false, date: jourAujourdhuiISO() },
     onglet: 'misesbas', F: filtresLotsVides(), tri: { col: null, dir: 1 }, selection: new Set(), erreurs: [], message: '', messagePanneau: '', messageEdition: '',
@@ -16016,6 +16032,7 @@ function lignesLotsPc(lot) {
   const F = lotsPcEtat.F, S = DB.campagneDebut, lots = lotsParEidMap(), colsIA = campagnesIAColonnes();
   const ctrlC = F.ctrlCampagne !== '' ? parseInt(F.ctrlCampagne, 10) : (campagnesControlesDisponibles()[0] != null ? campagnesControlesDisponibles()[0] : S);
   const membres = new Set((lot.membres || []).map(cleanEid));
+  const campEcho = campagneEchoPc(F);
   const dateRef = lot.type === 'reproduction' ? (lot.dateEvenement || lot.dateCreation) : null;
   if (lot.cible === 'Agnelles') {
     return (DB.agnelles || []).map(a => {
@@ -16030,7 +16047,7 @@ function lignesLotsPc(lot) {
     const ia = {}; colsIA.forEach(c => { ia[c] = resultatIAPourCampagne(s, c); });
     return { eid: s.eid, id: s.id, obj: s, numero: numeroVisuel(s.eid), court: s.numeroCourtTravailSieol || s.numeroTravailSieol || '', age: age(s.eid), millesime: anneeNaissance(s.eid), statut: statutReproductionCampagne(s),
       lait: [1, 2, 3].map(n => ctr(n) ? ctr(n).quantite : null), anomalie: [1, 2, 3].map(n => ctr(n) ? (ctr(n).anomalie || null) : null), ctrlPresent: [1, 2, 3].map(n => !!ctr(n)),
-      lactN1: cl.lactation, classe: cl.classe, ia, deuxEchecs: deuxEchecsIADeSuite(s), derniereMB: dmb, delaiMB: dateRef ? moisEntre(dmb, dateRef) : null,
+      echo: derniereEchoCampagne(s, campEcho), lactN1: cl.lactation, classe: cl.classe, ia, deuxEchecs: deuxEchecsIADeSuite(s), derniereMB: dmb, delaiMB: dateRef ? moisEntre(dmb, dateRef) : null,
       lots: (lots.get(k) || []).map(l => l.nom), dansCeLot: membres.has(k), dansUnAutreLot: (lots.get(k) || []).some(l => l.id !== lot.id) };
   }).sort(comparerAnimauxAgeNumero);
 }
@@ -16049,7 +16066,16 @@ function filtrerLignesLotsPc(lignes, onglet, lot) {
     if (F.age !== '') { out = out.filter(r => String(r.age) === F.age); tags.push(['Âge : ' + F.age + ' ans', f => { f.age = ''; }]); }
     return { lignes: out, tags };
   }
-  if (onglet === 'controles') {
+  if (onglet === 'echos') {
+    const c = criteresEchoPc(F), E0 = F.echo;
+    if (criteresEchoActifs(c)) out = out.filter(r => echoCorrespond(r.obj, c));
+    if (E0.type !== 'toutes') tags.push(['Type : ' + (E0.type === 'constat' ? 'Constat' : 'Stades'), f => { f.echo.type = 'toutes'; }]);
+    if (E0.campagne !== null && E0.campagne !== undefined && E0.campagne !== DB.campagneDebut) tags.push(["Campagne de l'écho : " + libCampagneAffichee(E0.campagne) + (E0.campagne === DB.campagneDebut + 1 ? ' · à venir' : ''), f => { f.echo.campagne = null; }]);
+    if (E0.du || E0.au) tags.push(['Écho du ' + (E0.du ? formatDateFr(E0.du) : '…') + ' au ' + (E0.au ? formatDateFr(E0.au) : '…'), f => { f.echo.du = ''; f.echo.au = ''; }]);
+    if (E0.stades.length) tags.push(['Stade : ' + E0.stades.map(echoHtml).join(' ou '), f => { f.echo.stades = []; }]);
+    if (E0.agneaux.length) tags.push(['Agneaux : ' + E0.agneaux.join(' ou '), f => { f.echo.agneaux = []; }]);
+    if (E0.cas.length) tags.push(['Cas particuliers : ' + E0.cas.map(v => echoHtml(echoLibelleCas(v))).join(' ou '), f => { f.echo.cas = []; }]);
+  } else if (onglet === 'controles') {
     if (F.anomalieAny) { out = out.filter(r => r.anomalie.some(a => !!a)); tags.push(['Une anomalie sur au moins un contrôle', f => { f.anomalieAny = false; }]); }
     [1, 2, 3].forEach(n => {
       const a = F.anomalie[n];
@@ -16084,7 +16110,7 @@ function filtrerLignesLotsPc(lignes, onglet, lot) {
   return { lignes: out, tags };
 }
 function cleTriLotsPc(r, col) {
-  const m = { numero: r.court || r.numero, age: r.age, statut: r.statut, derniereMB: r.derniereMB, delaiMB: r.delaiMB, lactN1: r.lactN1, classe: r.classe, lait1: r.lait && r.lait[0], lait2: r.lait && r.lait[1], lait3: r.lait && r.lait[2], an1: r.anomalie && r.anomalie[0], an2: r.anomalie && r.anomalie[1], an3: r.anomalie && r.anomalie[2], lactMere: r.lactMere, classeMere: r.classeMere, origine: r.origine };
+  const m = { numero: r.court || r.numero, age: r.age, statut: r.statut, derniereMB: r.derniereMB, delaiMB: r.delaiMB, lactN1: r.lactN1, classe: r.classe, lait1: r.lait && r.lait[0], lait2: r.lait && r.lait[1], lait3: r.lait && r.lait[2], an1: r.anomalie && r.anomalie[0], an2: r.anomalie && r.anomalie[1], an3: r.anomalie && r.anomalie[2], lactMere: r.lactMere, classeMere: r.classeMere, origine: r.origine, echoDate: r.echo ? r.echo.date : null, echoType: r.echo ? echoTypeLibelle(r.echo) : null, echoStade: r.echo ? echoStadeCle(r.echo) : null, echoAgn: r.echo ? echoAgneauxLibelle(r.echo) : null };
   if (col.startsWith('ia')) return r.ia ? r.ia[col.slice(2)] : null;
   return m[col];
 }
@@ -16180,7 +16206,7 @@ function lotsExistantsPcHtml(conteneur) {
   conteneur.querySelector('#le-campagne').onchange = ev => { T.campagne = ev.target.value; redessiner(); };
   conteneur.querySelector('#le-q').addEventListener('input', ev => { T.q = ev.target.value; clearTimeout(lotsPcMinuterieLE); lotsPcMinuterieLE = setTimeout(redessiner, 250); });
   conteneur.querySelector('#le-export').onclick = () => exporterLotsExistantsXlsx(liste);
-  conteneur.querySelectorAll('.le-modifier').forEach(b => { b.onclick = () => { lotsPcEtat.lotId = b.dataset.id; lotsPcEtat.selection = new Set(); lotsPcEtat.F = filtresLotsVides(); lotsPcEtat.onglet = 'misesbas'; lotsPcEtat.messagePanneau = ''; lotsPcEtat.messageEdition = ''; redessiner(); }; });
+  conteneur.querySelectorAll('.le-modifier').forEach(b => { b.onclick = () => { lotsPcEtat.lotId = b.dataset.id; lotsPcEtat.selection = new Set(); lotsPcEtat.F = filtresLotsVides(); lotsPcEtat.onglet = ongletParDefautLot((DB.lots || []).find(l => l.id === b.dataset.id)); lotsPcEtat.messagePanneau = ''; lotsPcEtat.messageEdition = ''; redessiner(); }; });
   conteneur.querySelectorAll('.le-excel').forEach(b => { b.onclick = () => { const l = tous.find(x => x.id === b.dataset.id); if (l) exporterListeLotsXlsx('lot-' + String(l.nom).replace(/[^\w\-]+/g, '_') + '_' + jourAujourdhuiISO() + '.xlsx', membresDuLotPourExport(l), 'Lot'); }; });
   conteneur.querySelectorAll('.le-suppr').forEach(b => { b.onclick = () => { const l = tous.find(x => x.id === b.dataset.id); if (l) supprimerLotPc(l); }; });
 }
@@ -16243,7 +16269,7 @@ function renderLotsPc() {
   pageTitle.textContent = 'Chantier de tri';
   const lot = E.lotId ? (DB.lots || []).find(l => l.id === E.lotId) : null;
   if (E.lotId && !lot) { E.lotId = null; }
-  const planifier = (() => { let t = null; return () => { clearTimeout(t); t = setTimeout(() => redessiner(), 300); }; })();      // champs de saisie : l'état suit CHAQUE frappe, le redessin est différé (jamais entre le clic dans un autre champ et son focus)
+  const planifier = (() => { let t = null; const tic = () => { if (saisieDateEnCours()) { t = setTimeout(tic, 300); return; } t = null; redessiner(); }; return () => { clearTimeout(t); t = setTimeout(tic, 300); }; })();      // champs de saisie : l'état suit CHAQUE frappe, le redessin est différé (jamais entre le clic dans un autre champ et son focus)
   const redessiner = () => { if (lotsPcRedessin) return; lotsPcRedessin = true; const sv = capturerSaisieEnCours(); try { renderLotsPc(); restaurerSaisieEnCours(sv); } finally { lotsPcRedessin = false; } };      // pas de redessin imbriqué ; saisie en cours conservée
   const barre = `<div class="pc-seg2" style="max-width:420px;margin-bottom:16px;"><button type="button" class="opt-btn selected" id="lt-tab-lots">Lots</button><button type="button" class="opt-btn" id="lt-tab-agnelles">Tri des agnelles</button></div>`;
   const seg = (id, opts, val) => `<div class="pc-seg2" id="${id}">${opts.map(([v, l]) => `<button type="button" class="opt-btn${val === v ? ' selected' : ''}" data-val="${v}">${l}</button>`).join('')}</div>`;
@@ -16294,6 +16320,9 @@ function renderLotsPc() {
     if (agn) {
       cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + th('origine', 'Origine', true) + th('classeMere', 'Classe mère') + th('lactMere', 'Lactation mère N-1');
       cellules = r => `<td class="l"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td><td class="l">${r.origine}</td><td>${dash(r.classeMere)}</td><td>${dash(r.lactMere === null ? null : fmtDecimal(r.lactMere, 1) + ' L')}</td>`;
+    } else if (E.onglet === 'echos') {
+      cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + th('echoDate', 'Dernière écho') + th('echoType', 'Type', true) + th('echoStade', 'Stade', true) + th('echoAgn', 'Agneaux') + `<th style="text-align:left;">Cas particuliers</th>`;
+      cellules = r => `<td class="l"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td><td>${dash(r.echo && r.echo.date ? formatDateFr(r.echo.date) : null)}</td><td class="l">${dash(r.echo ? echoTypeLibelle(r.echo) : null)}</td><td class="l">${dash(r.echo ? echoStadeCle(r.echo) : null)}</td><td>${r.echo && echoAgneauxLibelle(r.echo) ? pcPill('ok', echoAgneauxLibelle(r.echo)) : dash(null)}</td><td class="l">${r.echo && echoCasLibelles(r.echo).length ? echoCasLibelles(r.echo).map(c => pcPill(c === 'PARASIT.' ? 'warn' : 'info', echoHtml(c))).join(' ') : '—'}</td>`;
     } else if (E.onglet === 'controles') {
       cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + [1, 2, 3].map(n => th('lait' + n, 'Lait C' + n + ' (mL)') + th('an' + n, 'Anomalie C' + n)).join('');
       cellules = r => `<td class="l"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td>` + [0, 1, 2].map(i => `<td>${dash(r.lait[i])}</td><td>${r.anomalie[i] ? pcPill('warn', r.anomalie[i]) : (r.ctrlPresent[i] ? '—' : dash(null))}</td>`).join('');
@@ -16319,7 +16348,30 @@ function renderLotsPc() {
       `<div style="flex:0 0 auto;"><button type="button" class="btn btn-secondary" id="lt-reinit" style="width:auto;">Réinitialiser</button></div>`
     ].join('');
     let specifiques = '';
+    let resumeEchoHtml = '';
+    if (!agn && E.onglet === 'echos') {
+      const eC = F.echo, eCamp = campagneEchoPc(F), eCrit = criteresEchoPc(F);
+      const stadesProposes = [...new Set([...ECHO_STADES_PAR_TYPE[eC.type], ...eC.stades])];       // les critères déjà choisis restent visibles et décochables, même s'ils ne sont plus proposés pour ce type
+      const casProposes = [...new Set([ECHO_PARASITISME, ...casParticuliersDisponibles(DB.brebis, DB.casParticuliers), ...eC.cas])];
+      const chip = (cls, v, label, on) => `<button type="button" class="pc-gc ${cls}${on ? ' on' : ''}" data-val="${echoHtml(v)}">${on ? '✓ ' : ''}${echoHtml(label)}</button>`;
+      const aide = echoAideCriteres(eCrit);
+      specifiques = `<div style="min-width:340px;"><label>Type d'échographie</label>${seg('lt-echo-type', [['toutes', 'Toutes'], ['constat', 'Constat'], ['stades', 'Stades']], eC.type)}</div>`
+        + champ("Campagne de l'écho", selectHtml('lt-echo-campagne', eCamp, [[DB.campagneDebut, libCampagneAffichee(DB.campagneDebut) + ' · en cours'], [DB.campagneDebut + 1, libCampagneAffichee(DB.campagneDebut + 1) + ' · à venir']]))
+        + champ('Écho du', `<input type="date" id="lt-echo-du" value="${eC.du}">`) + champ('au', `<input type="date" id="lt-echo-au" value="${eC.au}">`)
+        + `<div style="flex:1 1 100%;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;background:var(--bg);">
+          <div style="display:flex;gap:24px;flex-wrap:wrap;">
+            <div><label>${eC.type === 'constat' ? 'Résultat' : 'Stade'} <span style="color:var(--text-muted);">(ou)</span></label><div style="display:flex;gap:6px;flex-wrap:wrap;" id="lt-echo-stades">${stadesProposes.map(v => chip('lt-echo-stade', v, v, eC.stades.includes(v))).join('')}</div></div>
+            <div><label>Nombre d'agneaux <span style="color:var(--text-muted);">(ou)</span></label><div style="display:flex;gap:6px;flex-wrap:wrap;" id="lt-echo-agneaux">${['Simple', 'Double'].map(v => chip('lt-echo-agn', v, v, eC.agneaux.includes(v))).join('')}</div></div>
+            <div><label>Cas particuliers <span style="color:var(--text-muted);">(ou)</span></label><div style="display:flex;gap:6px;flex-wrap:wrap;" id="lt-echo-cas">${casProposes.map(v => chip('lt-echo-cas-chip', v, echoLibelleCas(v), eC.cas.includes(v))).join('')}</div></div>
+          </div>
+          ${aide ? `<div id="lt-echo-aide" style="margin-top:10px;padding:8px 12px;border-radius:var(--radius-sm);background:var(--amber-bg);color:var(--amber-fg);font-size:13px;">${echoHtml(aide)}</div>` : ''}
+          <p class="brd-note" style="margin:8px 0 0;">Dans un groupe : « ou ». Entre groupes : « et ». Basé sur la DERNIÈRE écho de chaque brebis dans la campagne choisie. Simple = 1 agneau, Double = 2 et plus (un constat peut aussi être compté). Le nombre d'agneaux ne concerne que les brebis non vides.</p>
+        </div>`;
+      const rs = echoResumeCampagne(toutes.map(r => r.obj), eCamp);
+      resumeEchoHtml = `<p class="brd-note" style="margin:2px 0 0;" id="lt-echo-resume">Dernière écho de la campagne ${libCampagneAffichee(eCamp)} : vides ${rs.vides} · simples ${rs.simples} · doubles ${rs.doubles} · gestantes sans comptage ${rs.gestantesSansComptage} · cas particuliers ${rs.casParticuliers}${rs.autres ? ' · autres ' + rs.autres : ''} · sans écho ${rs.sansEcho} (${rs.total} brebis actives)${rs.sansCampagne ? ' — dont ' + rs.sansCampagne + ' avec des échos sans campagne, non rattachées' : ''}</p>`;
+    }
     if (agn) specifiques = champ('Âge (ans)', selectHtml('lt-age', F.age, [['', 'Tous'], ...[...new Set(toutes.map(r => r.age).filter(a => a !== null))].sort((a, b) => a - b).map(a => [String(a), String(a)])]));
+    else if (E.onglet === 'echos') { /* construit ci-dessus */ }
     else if (E.onglet === 'controles') specifiques = `<div style="flex:1 1 230px;"><label style="display:flex;gap:8px;align-items:center;margin-top:20px;"><input type="checkbox" id="lt-anomalie-any" style="width:auto;"${F.anomalieAny ? ' checked' : ''}> Au moins une anomalie</label></div>` + champ('Campagne des contrôles', selectHtml('lt-ctrl-campagne', F.ctrlCampagne, [['', 'Dernière avec contrôles (' + libCampagneAffichee(ctrlC) + ')'], ...ctrlCamps.map(c => [String(c), 'Campagne ' + libCampagneAffichee(c)])]))
       + [1, 2, 3].map(n => champ('Anomalie C' + n, selectHtml('lt-an' + n, F.anomalie[n], [['', 'Toutes'], ['toutes', 'Une anomalie'], ['aucune', 'Aucune'], ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(x => [String(x), 'Code ' + x])])) + champ('Lait C' + n + ' (mL) min – max', `<div style="display:flex;gap:4px;"><input type="number" id="lt-lait${n}-min" value="${F.lait[n][0]}" placeholder="min" style="min-width:70px;"><input type="number" id="lt-lait${n}-max" value="${F.lait[n][1]}" placeholder="max" style="min-width:70px;"></div>`)).join('');
     else if (E.onglet === 'lactations') specifiques = champ('Lactation N-1 (L) min – max', `<div style="display:flex;gap:4px;"><input type="number" id="lt-lact-min" value="${F.lactMin}" placeholder="min"><input type="number" id="lt-lact-max" value="${F.lactMax}" placeholder="max"></div>`)
@@ -16358,7 +16410,7 @@ function renderLotsPc() {
           <div class="pc-filtres-ligne" style="margin-bottom:10px;">${transverses}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;" id="lt-tags">${tags.map((t, i) => `<span class="pc-pill info" style="padding:3px 10px;">${t[0]} <a href="#" class="lt-tag" data-i="${i}" style="text-decoration:none;color:inherit;" title="Supprimer ce filtre">✕</a></span>`).join('')}</div>
           <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;margin-bottom:10px;">
-            <div><p class="brd-ttl" style="margin:0;" id="lt-compte">${lignes.length} ${agn ? 'agnelle' : 'brebis'}${lignes.length > 1 && !agn ? '' : ''}${lignes.length > 1 && agn ? 's' : ''} correspondent · ${selFiltre} sélectionnée${selFiltre > 1 ? 's' : ''} sur cet onglet</p><p class="brd-note" style="margin:2px 0 0;">Clique sur une ligne pour la cocher. En-têtes triables. La sélection est conservée quand tu changes d'onglet ou de critères.</p></div>
+            <div><p class="brd-ttl" style="margin:0;" id="lt-compte">${lignes.length} ${agn ? 'agnelle' : 'brebis'}${lignes.length > 1 && !agn ? '' : ''}${lignes.length > 1 && agn ? 's' : ''} correspondent · ${selFiltre} sélectionnée${selFiltre > 1 ? 's' : ''} sur cet onglet</p><p class="brd-note" style="margin:2px 0 0;">Clique sur une ligne pour la cocher. En-têtes triables. La sélection est conservée quand tu changes d'onglet ou de critères.</p>${resumeEchoHtml}</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn btn-secondary" id="lt-tout" style="width:auto;">Tout cocher (${lignes.filter(r => !r.dansCeLot).length})</button><button type="button" class="btn btn-secondary" id="lt-rien" style="width:auto;">Tout décocher</button><button type="button" class="btn btn-secondary" id="lt-export-sel" style="width:auto;"${nbTot ? '' : ' disabled'}>Exporter la sélection (.xlsx)</button><button type="button" class="btn btn-primary" id="lt-affecter" style="width:auto;"${nbTot ? '' : ' disabled'}>Affecter ${nbTot} ${agn ? 'agnelle' : 'brebis'}${nbTot > 1 && agn ? 's' : ''} au lot</button></div>
           </div>
           ${tableau}
@@ -16411,7 +16463,7 @@ function renderLotsPc() {
         nouveau = creerLotJournalise(champs, []);
       }
       saveData(DB);
-      E.lotId = id; E.selection = new Set(); E.F = filtresLotsVides(); E.onglet = 'misesbas'; E.messagePanneau = '';
+      E.lotId = id; E.selection = new Set(); E.F = filtresLotsVides(); E.onglet = ongletParDefautLot(nouveau); E.messagePanneau = '';
       redessiner();
     };
     if (typeof lotsExistantsPcHtml === 'function') lotsExistantsPcHtml($('lt-existants'));
@@ -16434,6 +16486,13 @@ function renderLotsPc() {
   lie('lt-sans2', t => { F.sansDeuxEchecs = t.checked; });
   document.querySelectorAll('#lt-mb-mode .opt-btn').forEach(b => { b.onclick = () => { F.mbMode = F.mbMode === b.dataset.val ? '' : b.dataset.val; redessiner(); }; });
   lie('lt-mb-du', t => { F.mbDu = t.value; }); lie('lt-mb-au', t => { F.mbAu = t.value; });
+  document.querySelectorAll('#lt-echo-type .opt-btn').forEach(b => { b.onclick = () => { F.echo.type = b.dataset.val; redessiner(); }; });
+  lie('lt-echo-campagne', t => { F.echo.campagne = parseInt(t.value, 10); });
+  lie('lt-echo-du', t => { F.echo.du = t.value; }); lie('lt-echo-au', t => { F.echo.au = t.value; });
+  const basculer = (liste, v) => liste.includes(v) ? liste.filter(x => x !== v) : liste.concat(v);
+  document.querySelectorAll('.lt-echo-stade').forEach(b => { b.onclick = () => { F.echo.stades = basculer(F.echo.stades, b.dataset.val); redessiner(); }; });
+  document.querySelectorAll('.lt-echo-agn').forEach(b => { b.onclick = () => { F.echo.agneaux = basculer(F.echo.agneaux, b.dataset.val); redessiner(); }; });
+  document.querySelectorAll('.lt-echo-cas-chip').forEach(b => { b.onclick = () => { F.echo.cas = basculer(F.echo.cas, b.dataset.val); redessiner(); }; });
   if ($('lt-mb-raccourci')) $('lt-mb-raccourci').onclick = () => { F.mbMode = 'avant'; F.mbDu = ajouterMoisISO(lot.dateEvenement || lot.dateCreation || jourAujourdhuiISO(), -seuilMiseBasMois()); redessiner(); };
   $('lt-reinit').onclick = () => { E.F = filtresLotsVides(); E.tri = { col: null, dir: 1 }; redessiner(); };
   // filtres rapides : règlent des filtres, JAMAIS de case cochée
@@ -28404,7 +28463,19 @@ saveData = function(data) {
 /* Applique un changement reçu depuis Firestore (un autre appareil, ou notre
    propre écriture confirmée) : met à jour DB + le cache local + l'écran
    affiché, sans redéclencher un envoi vers le cloud (sync.applyingRemote). */
+let redessinSynchroDiffere = false;
 function applyRemoteUpdate(mutatorFn) {
+  if (saisieDateEnCours()) {
+    // les données sont appliquées tout de suite, l'écran attend la fin de la frappe (voir saisieDateEnCours)
+    sync.applyingRemote = true;
+    try { mutatorFn(); localStorage.setItem(DB_KEY, JSON.stringify(DB)); } finally { sync.applyingRemote = false; }
+    if (!redessinSynchroDiffere) {
+      redessinSynchroDiffere = true;
+      const retenter = () => { if (saisieDateEnCours()) { setTimeout(retenter, 500); return; } redessinSynchroDiffere = false; applyRemoteUpdate(() => {}); };
+      setTimeout(retenter, 500);
+    }
+    return;
+  }
   sync.applyingRemote = true;
   // Saisie en cours : un écho de synchro redessine l'écran, ce qui faisait perdre la valeur tapée ET le focus du champ (« des fois ça marche, des fois pas »).
   // On valide d'abord la saisie (blur : les « change » mettent l'état à jour), puis on la restaure après le redessin (voir capturerSaisieEnCours).
