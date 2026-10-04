@@ -146,7 +146,21 @@ app.whenReady().then(() => {
     autoUpdater.on('update-not-available', () => envoyerStatutMiseAJour({ status: 'not-available' }));
     autoUpdater.on('download-progress', (p) => envoyerStatutMiseAJour({ status: 'downloading', percent: Math.round(p.percent) }));
     autoUpdater.on('update-downloaded', (info) => envoyerStatutMiseAJour({ status: 'downloaded', version: info.version }));
-    autoUpdater.on('error', (err) => envoyerStatutMiseAJour({ status: 'error', message: (err && err.message) || 'Erreur inconnue' }));
+    // Erreur serveur TRANSITOIRE (5xx de GitHub, coupure réseau) : nouvelle vérification automatique après une attente croissante (3 reprises au plus), au lieu de
+    // laisser l'appli sur « erreur » jusqu'au prochain redémarrage -- signalé en usage réel (erreur 500 au téléchargement, résolue d'elle-même quelques minutes plus tard).
+    let reprisesMaj = 0;
+    const ATTENTES_REPRISE_MAJ_MS = [20000, 60000, 180000];
+    autoUpdater.on('error', (err) => {
+      const message = (err && err.message) || 'Erreur inconnue';
+      envoyerStatutMiseAJour({ status: 'error', message });
+      if (/status (5\d\d)|\b5\d\d\b|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(message) && reprisesMaj < ATTENTES_REPRISE_MAJ_MS.length) {
+        const attente = ATTENTES_REPRISE_MAJ_MS[reprisesMaj++];
+        log.warn(`Erreur de mise à jour transitoire (${message}) -- nouvelle tentative ${reprisesMaj}/${ATTENTES_REPRISE_MAJ_MS.length} dans ${attente / 1000} s`);
+        setTimeout(() => { autoUpdater.checkForUpdates().catch(e => log.error(`Reprise de la vérification de mise à jour en échec : ${e && e.message || e}`)); }, attente);
+      }
+    });
+    autoUpdater.on('update-downloaded', () => { reprisesMaj = 0; });
+    autoUpdater.on('update-not-available', () => { reprisesMaj = 0; });
 
     // Vérification silencieuse une seule fois, ici, au démarrage -- comme
     // verifierMiseAJourAuDemarrage() côté Android (voir www/index.html) :
