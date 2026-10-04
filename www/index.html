@@ -2192,6 +2192,110 @@ function dernierEchoParDate(echos) {
   return echos.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''))[echos.length - 1];
 }
 
+/* ---------- Échographies : critères COMMUNS au PC (onglet « Échographies » des lots) et au mobile (« Nouveau lot ») ----------
+   Chantier « Lots échographies », partie 1 : fonctions PURES (aucune lecture de DB, aucune écriture), appelées par les deux écrans -- un même objet de critères
+   donne STRICTEMENT les mêmes brebis des deux côtés (test de parité). Les statistiques existantes (dernierEchoParDate, statutReproductionCampagne, tableau de bord)
+   ne sont pas modifiées.
+   - Référence = la DERNIÈRE échographie (par date réelle) de la campagne choisie. Une écho SANS tag de campagne n'est rattachée à aucune campagne (jamais attribuée en
+     silence, comme à la saisie) : elle n'entre dans aucun filtre de campagne et la brebis est comptée à part (echoResumeCampagne.sansCampagne).
+   - Type d'écho : Constat = echo.type 'constat' ; Stades = tout autre type ('stade', et 'stade_comptage' encore présent dans les anciennes données).
+   - Stade / résultat : constat -> Gestante (stade stocké « Pleine ») ou Vide ; stades -> Vide, Début, Milieu, Fin, IA, Retour 1, Retour 2, Tardive. Une écho « cas
+     particulier » n'a pas de stade : elle ne correspond à aucun stade.
+   - Nombre d'agneaux : Simple = agneaux « Simple » ou nombreAgneaux 1 ; Double = agneaux « Double » ou nombreAgneaux >= 2. Valable pour tout type (un constat peut être compté).
+   - Cas particuliers : un groupe « ou » avec le chip fixe Parasitisme (echo.parasitisme, valeur '__parasitisme') + la liste modulable (echo.special).
+   - Dans un groupe : « ou ». Entre groupes : « et ». « Vide » avec un nombre d'agneaux : aucun critère n'est modifié, le résultat est simplement vide pour Vide
+     (aide : echoAideCriteres). */
+const ECHO_PARASITISME = '__parasitisme';
+const ECHO_STADES_PAR_TYPE = {
+  toutes: ['Gestante', 'Vide', 'Début', 'Milieu', 'Fin', 'IA', 'Retour 1', 'Retour 2', 'Tardive'],
+  constat: ['Gestante', 'Vide'],
+  stades: ['Vide', 'Début', 'Milieu', 'Fin', 'IA', 'Retour 1', 'Retour 2', 'Tardive']
+};
+function criteresEchoVides() {
+  return { type: 'toutes', campagne: null, du: '', au: '', stades: [], agneaux: [], cas: [] };
+}
+// Les 6 critères autres que la campagne : s'il n'y en a aucun, la liste n'est pas restreinte par l'écho.
+function criteresEchoActifs(c) {
+  return !!c && (c.type === 'constat' || c.type === 'stades' || !!c.du || !!c.au || (c.stades || []).length > 0 || (c.agneaux || []).length > 0 || (c.cas || []).length > 0);
+}
+function echoEstConstat(e) { return !!e && e.type === 'constat'; }
+// Stade tel que proposé aux critères : Gestante / Vide pour un constat, la valeur stockée pour un stade ; null (aucun) pour un cas particulier.
+function echoStadeCle(e) {
+  if (!e || !e.stade) return null;
+  if (echoEstConstat(e)) return e.stade === 'Pleine' ? 'Gestante' : (e.stade === 'Vide' ? 'Vide' : null);
+  return e.stade;
+}
+// 'Simple' | 'Double' | null (pas de comptage).
+function echoComptage(e) {
+  if (!e) return null;
+  if (e.agneaux === 'Simple' || e.agneaux === 'Double') return e.agneaux;
+  const n = Number(e.nombreAgneaux);
+  if (n >= 1) return n === 1 ? 'Simple' : 'Double';
+  return null;
+}
+function derniereEchoCampagne(brebis, campagne) {
+  const echos = Array.isArray(brebis && brebis.echographies) ? brebis.echographies : [];
+  return dernierEchoParDate(echos.filter(e => e && e.campagne !== undefined && e.campagne !== null && Number(e.campagne) === Number(campagne)));
+}
+function echoCorrespondEcho(e, c) {
+  if (!e) return false;
+  if (c.type === 'constat' && !echoEstConstat(e)) return false;
+  if (c.type === 'stades' && echoEstConstat(e)) return false;
+  if (c.du && (!e.date || e.date < c.du)) return false;
+  if (c.au && (!e.date || e.date > c.au)) return false;
+  if ((c.stades || []).length > 0 && !c.stades.includes(echoStadeCle(e))) return false;
+  if ((c.agneaux || []).length > 0 && !c.agneaux.includes(echoComptage(e))) return false;
+  if ((c.cas || []).length > 0 && !c.cas.some(v => v === ECHO_PARASITISME ? !!e.parasitisme : (!!e.special && e.special === v))) return false;
+  return true;
+}
+// Une brebis correspond-elle aux critères ? Sans critère actif : toujours oui (avec ou sans écho). Avec un critère : il faut une dernière écho de la campagne
+// qui les vérifie tous.
+function echoCorrespond(brebis, c) {
+  if (!criteresEchoActifs(c)) return true;
+  return echoCorrespondEcho(derniereEchoCampagne(brebis, c.campagne), c);
+}
+// Aide affichée (jamais de correction) quand « Vide » est combiné à un nombre d'agneaux ; chaîne vide sinon.
+function echoAideCriteres(c) {
+  if (c && (c.stades || []).includes('Vide') && (c.agneaux || []).length > 0) return "Vide n'a pas d'agneaux : aucun résultat pour Vide avec ce critère.";
+  return '';
+}
+// Cas particuliers proposés : la liste modulable + les valeurs réellement présentes sur les échos mais absentes de la liste (jamais invisibles).
+function casParticuliersDisponibles(brebis, liste) {
+  const out = (liste || []).slice();
+  const extra = new Set();
+  (brebis || []).forEach(s => (s.echographies || []).forEach(e => { if (e && e.special && !out.includes(e.special)) extra.add(e.special); }));
+  return out.concat([...extra].sort((a, b) => a.localeCompare(b, 'fr')));
+}
+// Répartition de la dernière écho de la campagne (ligne d'information et raccourci Vides / Simples / Doubles) : catégories EXCLUSIVES dont la somme = total.
+// Les brebis passées en paramètre sont celles à compter (le PC passe toutes les brebis actives).
+function echoResumeCampagne(brebis, campagne) {
+  const r = { total: 0, vides: 0, simples: 0, doubles: 0, gestantesSansComptage: 0, casParticuliers: 0, autres: 0, sansEcho: 0, sansCampagne: 0 };
+  (brebis || []).forEach(s => {
+    r.total++;
+    const e = derniereEchoCampagne(s, campagne);
+    if (!e) {
+      r.sansEcho++;
+      if ((s.echographies || []).some(x => x && (x.campagne === undefined || x.campagne === null))) r.sansCampagne++;
+      return;
+    }
+    if (e.special) { r.casParticuliers++; return; }
+    if (e.stade === 'Vide') { r.vides++; return; }
+    if (!isGestanteEcho(e)) { r.autres++; return; }
+    const n = echoComptage(e);
+    if (n === 'Simple') r.simples++; else if (n === 'Double') r.doubles++; else r.gestantesSansComptage++;
+  });
+  return r;
+}
+// Libellés d'affichage (colonnes de l'onglet et pastilles du mobile) : « Constat » / « Stades », « 1 » / « 2+ », pastilles de cas particuliers.
+function echoTypeLibelle(e) { return !e ? '' : (echoEstConstat(e) ? 'Constat' : 'Stades'); }
+function echoAgneauxLibelle(e) { const n = echoComptage(e); return n === 'Simple' ? '1' : (n === 'Double' ? '2+' : ''); }
+function echoCasLibelles(e) {
+  const out = [];
+  if (e && e.parasitisme) out.push('PARASIT.');
+  if (e && e.special) out.push(e.special);
+  return out;
+}
+
 /* ---------- Vide définitive ----------
    Une brebis peut être notée "Vide" à plusieurs échographies d'affilée sans
    que ce soit définitif (elle peut redevenir pleine à l'écho suivante) —
