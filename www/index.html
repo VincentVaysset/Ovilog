@@ -2275,25 +2275,55 @@ function casParticuliersDisponibles(brebis, liste) {
   (brebis || []).forEach(s => (s.echographies || []).forEach(e => { if (e && e.special && !out.includes(e.special)) extra.add(e.special); }));
   return out.concat([...extra].sort((a, b) => a.localeCompare(b, 'fr')));
 }
-// Répartition de la dernière écho de la campagne (ligne d'information et raccourci Vides / Simples / Doubles) : catégories EXCLUSIVES dont la somme = total.
-// Les brebis passées en paramètre sont celles à compter (le PC passe toutes les brebis actives).
-function echoResumeCampagne(brebis, campagne) {
-  const r = { total: 0, vides: 0, simples: 0, doubles: 0, gestantesSansComptage: 0, casParticuliers: 0, autres: 0, sansEcho: 0, sansCampagne: 0 };
+// Répartition de la dernière écho de la campagne : catégories EXCLUSIVES dont la somme = nombre de brebis passées. Les brebis passées sont celles à compter (le PC passe toutes
+// les brebis actives). Retourne les LISTES de brebis (le raccourci Vides / Simples / Doubles en a besoin) ; echoResumeCampagne en donne les effectifs.
+function echoRepartitionCampagne(brebis, campagne) {
+  const L = { vides: [], simples: [], doubles: [], gestantesSansComptage: [], casParticuliers: [], autres: [], sansEcho: [] };
+  let sansCampagne = 0;
   (brebis || []).forEach(s => {
-    r.total++;
     const e = derniereEchoCampagne(s, campagne);
     if (!e) {
-      r.sansEcho++;
-      if ((s.echographies || []).some(x => x && (x.campagne === undefined || x.campagne === null))) r.sansCampagne++;
+      L.sansEcho.push(s);
+      if ((s.echographies || []).some(x => x && (x.campagne === undefined || x.campagne === null))) sansCampagne++;
       return;
     }
-    if (e.special) { r.casParticuliers++; return; }
-    if (e.stade === 'Vide') { r.vides++; return; }
-    if (!isGestanteEcho(e)) { r.autres++; return; }
+    if (e.special) { L.casParticuliers.push(s); return; }
+    if (e.stade === 'Vide') { L.vides.push(s); return; }
+    if (!isGestanteEcho(e)) { L.autres.push(s); return; }
     const n = echoComptage(e);
-    if (n === 'Simple') r.simples++; else if (n === 'Double') r.doubles++; else r.gestantesSansComptage++;
+    if (n === 'Simple') L.simples.push(s); else if (n === 'Double') L.doubles.push(s); else L.gestantesSansComptage.push(s);
   });
-  return r;
+  return { listes: L, sansCampagne, total: (brebis || []).length };
+}
+function echoResumeCampagne(brebis, campagne) {
+  const { listes, sansCampagne, total } = echoRepartitionCampagne(brebis, campagne);
+  return { total, vides: listes.vides.length, simples: listes.simples.length, doubles: listes.doubles.length, gestantesSansComptage: listes.gestantesSansComptage.length, casParticuliers: listes.casParticuliers.length, autres: listes.autres.length, sansEcho: listes.sansEcho.length, sansCampagne };
+}
+// Raccourci « Lots Vides / Simples / Doubles » : noms par défaut (date du jour) et plan de création. Fonction PURE : `etat` = { noms: {vides, simples, doubles}, inclureVidesDefinitives }.
+// Un lot sans brebis n'est pas créé ; un nom déjà pris (par un lot existant OU par un autre des 3 lots) n'est jamais écrasé : le lot est écarté avec la raison, l'éleveur change le nom.
+const ECHO_LOTS_RACCOURCI = [['vides', 'Vides'], ['simples', 'Simples'], ['doubles', 'Doubles']];
+function echoNomsRaccourci(dateISO) {
+  const d = formatDateFr(dateISO).replace(/\//g, '-');
+  return { vides: 'Vides du ' + d, simples: 'Simples du ' + d, doubles: 'Doubles du ' + d };
+}
+function echoNomNorm(n) { return String(n || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
+function echoPlanLotsRaccourci(brebis, campagne, etat, lotsExistants) {
+  const { listes } = echoRepartitionCampagne(brebis, campagne);
+  const pris = new Set((lotsExistants || []).map(l => echoNomNorm(l.nom)));
+  const dejaDansPlan = new Set();
+  return ECHO_LOTS_RACCOURCI.map(([cle, lib]) => {
+    let membres = listes[cle];
+    const nbVidesDefinitives = cle === 'vides' ? membres.filter(s => estVideDefinitiveCampagneN(s, campagne)).length : 0;
+    if (cle === 'vides' && !etat.inclureVidesDefinitives) membres = membres.filter(s => !estVideDefinitiveCampagneN(s, campagne));
+    const nom = String(etat.noms[cle] || '').replace(/\s+/g, ' ').trim();
+    let creer = true, raison = '';
+    if (!membres.length) { creer = false; raison = 'aucune brebis : aucun lot créé'; }
+    else if (!nom) { creer = false; raison = 'donne un nom au lot'; }
+    else if (pris.has(echoNomNorm(nom))) { creer = false; raison = 'un lot « ' + nom + ' » existe déjà : rien n\'est écrasé, change le nom'; }
+    else if (dejaDansPlan.has(echoNomNorm(nom))) { creer = false; raison = 'même nom qu\'un autre des 3 lots : change le nom'; }
+    if (nom && membres.length) dejaDansPlan.add(echoNomNorm(nom));
+    return { cle, libelle: lib, nom, eids: membres.map(s => s.eid), nbVidesDefinitives, creer, raison };
+  });
 }
 function echoHtml(t) { return String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function echoLibelleCas(v) { return v === ECHO_PARASITISME ? 'Parasitisme' : v; }
@@ -16270,6 +16300,50 @@ function enregistrerEditionLotPc(lot, { nom, date, campagne }) {
   return bloques;
 }
 
+/* Raccourci « Créer les lots Vides / Simples / Doubles » (onglet PC Échographies) : récapitulatif AVANT toute création (nombre de brebis par lot, noms modifiables, vides
+   définitives incluses ou non, brebis laissées à part), puis création des lots de recherche d'un coup. Aucun lot sans brebis, aucun écrasement d'un lot de même nom. Les champs
+   du récapitulatif ne sont jamais recréés pendant la frappe (seuls les textes d'état sont mis à jour). apresCreation(lotsCrees) est appelé après la création. */
+function ouvrirRaccourciLotsEchos(campagne, apresCreation) {
+  const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const jour = jourAujourdhuiISO();
+  const etat = { noms: echoNomsRaccourci(jour), inclureVidesDefinitives: true };
+  const rep0 = echoRepartitionCampagne(actives, campagne).listes;
+  const plan = () => echoPlanLotsRaccourci(actives, campagne, etat, DB.lots || []);
+  const nbVD = plan()[0].nbVidesDefinitives;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal-card" style="max-width:680px;width:92vw;" id="rl-modal">
+    <div style="font-weight:700;font-size:16px;margin-bottom:4px;">Créer les lots Vides / Simples / Doubles</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">D'après la dernière écho de la campagne ${libCampagneAffichee(campagne)}${campagne === DB.campagneDebut + 1 ? ' · à venir' : campagne === DB.campagneDebut ? ' · en cours' : ''} — ${actives.length} brebis actives. Trois lots de recherche sont créés ; un lot sans brebis n'est pas créé.</div>
+    ${ECHO_LOTS_RACCOURCI.map(([cle, lib]) => `<div style="margin-bottom:10px;"><label for="rl-nom-${cle}" style="margin-bottom:2px;">${lib} <span id="rl-nb-${cle}" style="color:var(--text-muted);font-weight:400;"></span></label><input type="text" id="rl-nom-${cle}" value="${etat.noms[cle].replace(/"/g, '&quot;')}" autocomplete="off"><div id="rl-av-${cle}" style="font-size:12px;color:var(--amber-fg);margin-top:2px;"></div></div>`).join('')}
+    <label style="display:flex;align-items:center;gap:8px;margin:6px 0 10px;"><input type="checkbox" id="rl-inclure" checked style="width:auto;"> Inclure les vides définitives <span style="color:var(--text-muted);font-weight:400;">(dont ${nbVD} vide${nbVD > 1 ? 's' : ''} définitive${nbVD > 1 ? 's' : ''})</span></label>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;" id="rl-apart">À part, sans lot : gestantes sans comptage ${rep0.gestantesSansComptage.length} · cas particuliers ${rep0.casParticuliers.length}${rep0.autres.length ? ' · autres ' + rep0.autres.length : ''} · sans écho ${rep0.sansEcho.length}.</div>
+    <button type="button" class="btn btn-primary" id="rl-creer" style="margin-bottom:8px;"></button>
+    <button type="button" class="btn btn-secondary" id="rl-annuler">Annuler</button></div>`;
+  document.body.appendChild(overlay);
+  const $ = id => overlay.querySelector('#' + id);
+  const maj = () => {
+    const p = plan();
+    p.forEach(l => {
+      $('rl-nb-' + l.cle).textContent = '· ' + l.eids.length + ' brebis' + (l.cle === 'vides' && !etat.inclureVidesDefinitives ? ' (sans les vides définitives)' : '');
+      $('rl-av-' + l.cle).textContent = l.creer ? '' : 'Ce lot ne sera pas créé : ' + l.raison + '.';
+    });
+    const n = p.filter(l => l.creer).length;
+    $('rl-creer').textContent = n ? 'Créer ' + n + ' lot' + (n > 1 ? 's' : '') + ' (' + p.filter(l => l.creer).map(l => l.eids.length).join(' + ') + ' brebis)' : 'Aucun lot à créer';
+    $('rl-creer').disabled = n === 0;
+  };
+  ECHO_LOTS_RACCOURCI.forEach(([cle]) => { $('rl-nom-' + cle).addEventListener('input', ev => { etat.noms[cle] = ev.target.value; maj(); }); });
+  $('rl-inclure').addEventListener('change', ev => { etat.inclureVidesDefinitives = ev.target.checked; maj(); });
+  $('rl-annuler').onclick = () => document.body.removeChild(overlay);
+  $('rl-creer').onclick = () => {
+    if (!garderLotsModifiables()) return;
+    const crees = plan().filter(l => l.creer).map(l => creerLotJournalise({ id: idLotUnique(), nom: l.nom, dateCreation: jour }, l.eids));
+    if (crees.length) saveData(DB);
+    document.body.removeChild(overlay);
+    if (apresCreation) apresCreation(crees);
+  };
+  maj();
+}
 function renderLotsPc() {
   if (!lotsPcEtat) lotsPcEtat = lotsPcEtatInitial();
   const E = lotsPcEtat, F = E.F;
@@ -16421,6 +16495,7 @@ function renderLotsPc() {
             <div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn btn-secondary" id="lt-tout" style="width:auto;">Tout cocher (${lignes.filter(r => !r.dansCeLot).length})</button><button type="button" class="btn btn-secondary" id="lt-rien" style="width:auto;">Tout décocher</button><button type="button" class="btn btn-secondary" id="lt-export-sel" style="width:auto;"${nbTot ? '' : ' disabled'}>Exporter la sélection (.xlsx)</button><button type="button" class="btn btn-primary" id="lt-affecter" style="width:auto;"${nbTot ? '' : ' disabled'}>Affecter ${nbTot} ${agn ? 'agnelle' : 'brebis'}${nbTot > 1 && agn ? 's' : ''} au lot</button></div>
           </div>
           ${tableau}
+          ${!agn && E.onglet === 'echos' ? `${E.messageRaccourci ? `<div class="card" style="margin:10px 0 0;background:var(--green-bg);color:var(--green-fg);" id="lt-msg-raccourci">${E.messageRaccourci}</div>` : ''}<p class="brd-note" style="margin:10px 0 0;">Raccourci : <button type="button" class="btn btn-secondary" id="lt-echo-raccourci" style="width:auto;padding:4px 12px;font-size:12px;">Créer les lots Vides / Simples / Doubles</button> crée d'un coup 3 lots de recherche d'après la dernière écho de la campagne choisie, après un récapitulatif.</p>` : ''}
           ${E.onglet === 'lactations' && !agn ? `<p class="brd-note" style="margin:8px 0 0;">Classe et lactation : source DB.lactationModele (comme la fiche Carrière), classe 1 à 4 seulement, « - » sinon. <button type="button" class="btn btn-secondary" id="lt-ecarts" style="width:auto;padding:3px 10px;font-size:12px;">Écarts de classe entre sources (${ecartsSourcesLactation().length}) → Excel</button></p>` : ''}
         </div>
         <div class="card" id="lt-panneau">
@@ -16478,7 +16553,7 @@ function renderLotsPc() {
   }
   // ----- étape 2 -----
   const agn = lot.cible === 'Agnelles';
-  document.querySelectorAll('#lt-onglets .opt-btn').forEach(b => { b.onclick = () => { E.onglet = b.dataset.val; redessiner(); }; });
+  document.querySelectorAll('#lt-onglets .opt-btn').forEach(b => { b.onclick = () => { E.onglet = b.dataset.val; E.messageRaccourci = ''; redessiner(); }; });
   // Listes et cases : redessin immédiat (le choix est fait). Champs de SAISIE (texte, nombre, date) : l'état suit chaque frappe (événement « input »), le redessin est différé --
   // un redessin déclenché par le « change » du champ quitté remplaçait le champ suivant avant que le clic ne lui donne le focus (« je ne peux pas saisir »).
   const lie = (id, fn) => { const n = $(id); if (!n) return; const saisie = n.tagName === 'INPUT' && !['checkbox', 'radio'].includes(n.type); n.addEventListener(saisie ? 'input' : 'change', ev => { fn(ev.target); if (saisie) planifier(); else redessiner(); }); };
@@ -16496,6 +16571,10 @@ function renderLotsPc() {
   document.querySelectorAll('#lt-echo-type .opt-btn').forEach(b => { b.onclick = () => { F.echo.type = b.dataset.val; redessiner(); }; });
   lie('lt-echo-campagne', t => { F.echo.campagne = parseInt(t.value, 10); });
   lie('lt-echo-du', t => { F.echo.du = t.value; }); lie('lt-echo-au', t => { F.echo.au = t.value; });
+  if ($('lt-echo-raccourci')) $('lt-echo-raccourci').onclick = () => ouvrirRaccourciLotsEchos(campagneEchoPc(F), crees => {
+    E.messageRaccourci = crees.length ? crees.length + ' lot' + (crees.length > 1 ? 's' : '') + ' créé' + (crees.length > 1 ? 's' : '') + ' : ' + crees.map(l => '« ' + echoHtml(l.nom) + ' » (' + l.membres.length + ')').join(', ') + '. Ils figurent dans « Lots existants » (Suppr. avec confirmation).' : 'Aucun lot créé.';
+    redessiner();
+  });
   const basculer = (liste, v) => liste.includes(v) ? liste.filter(x => x !== v) : liste.concat(v);
   document.querySelectorAll('.lt-echo-stade').forEach(b => { b.onclick = () => { F.echo.stades = basculer(F.echo.stades, b.dataset.val); redessiner(); }; });
   document.querySelectorAll('.lt-echo-agn').forEach(b => { b.onclick = () => { F.echo.agneaux = basculer(F.echo.agneaux, b.dataset.val); redessiner(); }; });
