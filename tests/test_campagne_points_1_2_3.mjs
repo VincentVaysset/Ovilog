@@ -187,8 +187,7 @@ await page.evaluate(() => {
 });
 
 // Plan "Export SAF" : plus aucun partage automatique en tâche de fond -- writeAutoBackupFile
-// n'écrit que la copie interne ; le partage se fait à la demande (partagerFichierExistant),
-// avec un retour { ok, cancelled, raison } affiché par l'écran, jamais d'erreur avalée.
+// n'écrit que la copie interne.
 const r1 = await page.evaluate(async () => {
   DB.brebis = [{ id: 'sp1', eid: '250016299930010', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
   DB.agnelles = [];
@@ -201,15 +200,7 @@ if (!r1.r.ok) throw new Error('FAIL: writeAutoBackupFile doit réussir avec les 
 if (r1.shareArgs !== null) throw new Error('FAIL: writeAutoBackupFile ne doit plus jamais ouvrir de feuille de partage en tâche de fond, obtenu ' + JSON.stringify(r1.shareArgs));
 console.log('OK point 1: la sauvegarde interne n\'ouvre plus aucune feuille de partage en tâche de fond.');
 
-const r2 = await page.evaluate(async () => { window.__shareArgs = null; const r = await partagerFichierExistant('test-partage.json'); return { r, shareArgs: window.__shareArgs }; });
-if (!r2.r.ok || !r2.shareArgs || !r2.shareArgs.url) throw new Error('FAIL: partagerFichierExistant doit appeler Share.share() avec une URL, obtenu ' + JSON.stringify(r2));
-console.log('OK point 1: le partage à la demande invoque bien Share.share() avec le fichier écrit.');
-
-const r3 = await page.evaluate(async () => { window.Capacitor.Plugins.Share.share = async () => { throw new Error('Share canceled'); }; return await partagerFichierExistant('test-partage.json'); });
-if (r3.ok || !r3.cancelled) throw new Error('FAIL: un partage annulé doit être signalé comme tel, obtenu ' + JSON.stringify(r3));
-const r4 = await page.evaluate(async () => { window.Capacitor.Plugins.Share.share = async () => { throw new Error('Failed to find configured root'); }; return await partagerFichierExistant('test-partage.json'); });
-if (r4.ok || r4.cancelled || !/configured root/.test(r4.raison)) throw new Error('FAIL: un échec de partage doit remonter sa vraie raison, obtenu ' + JSON.stringify(r4));
-console.log('OK point 1: partage annulé et partage en échec sont distingués, avec la vraie raison -- plus rien n\'est avalé.');
+// (le partage à la demande — « Partager le fichier » — a été retiré avec « Tester la sauvegarde » : refonte Paramètres)
 
 console.log('TOUS LES TESTS SONT PASSÉS');
 await browser.close();

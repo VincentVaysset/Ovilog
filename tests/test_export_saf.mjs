@@ -179,63 +179,49 @@ const apresOk = await page.evaluate(() => ({ actives: DB.brebis.filter(s => (s.s
 check(apresOk.actives === 2 && apresOk.camp === 2027 && apresOk.verrou === false, 'bascule réussie attendue, obtenu ' + JSON.stringify(apresOk));
 console.log('OK I (succès) : après les blocages, la bascule réussit (verrou bien libéré à chaque fois).');
 
-// ---- K. "Tester la sauvegarde" : messages honnêtes + bouton Partager persistant ----
+// ---- K. « Exporter mes données » : la vérification est automatique et alimente la ligne « Dernière sauvegarde vérifiée » (le bouton « Tester la sauvegarde » n'existe plus) ----
+async function fermerModales() { await page.evaluate(() => document.querySelectorAll('.modal-overlay').forEach(e => e.remove())); }
 async function ouvrirSauvegarde() {
   await page.evaluate(() => { parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres'); });
   await page.waitForTimeout(150);
 }
-async function texteStatutTest() { return await page.evaluate(() => document.getElementById('test-sauvegarde-status').textContent); }
-async function partageVisible() { return await page.evaluate(() => !document.getElementById('btn-partager-test').classList.contains('hidden')); }
-await ouvrirSauvegarde();
-check(!(await partageVisible()), 'le bouton Partager ne doit pas être affiché avant tout test');
+async function ligneEtat() { return await page.evaluate(() => document.getElementById('prm-etat-sauvegarde').textContent.replace(/\s+/g, ' ').trim()); }
+await page.evaluate(() => localStorage.removeItem('ovilog_derniere_sauvegarde'));
 await page.evaluate((db) => { Object.assign(DB, db); window.__mode = 'ok'; }, baseDb());
-await page.click('#btn-test-sauvegarde');
-await page.waitForFunction(() => /Test réussi|annulé|échoué/.test(document.getElementById('test-sauvegarde-status').textContent), null, { timeout: 8000 });
-let t = await texteStatutTest();
-check(/Test réussi/.test(t) && /emplacement que tu as choisi/.test(t) && /Sauvegarde choisie\.json/.test(t) && /compteurs identiques/.test(t), 'message de succès honnête attendu, obtenu : ' + t);
-check(!/gestionnaire de fichiers/.test(t), 'le message de succès ne doit jamais renvoyer au gestionnaire de fichiers');
-check(await partageVisible(), 'le bouton Partager doit être affiché après un test réussi');
-// persistance à travers un re-rendu
 await ouvrirSauvegarde();
-check((await texteStatutTest()) === t && (await partageVisible()), 'message et bouton doivent survivre à un re-rendu');
-console.log('OK K (succès) : "' + t + '" -- bouton Partager affiché, persiste après re-rendu.');
-// partage réussi / annulé / en échec : message exact
-await page.click('#btn-partager-test');
-await page.waitForFunction(() => /Feuille de partage ouverte/.test(document.getElementById('test-sauvegarde-status').textContent), null, { timeout: 5000 });
-check((await page.evaluate(() => window.__shareCalls.length)) === 1, 'Share.share doit être appelé une fois');
-await page.evaluate(() => { window.__shareMode = 'fail'; });
-await page.click('#btn-partager-test');
-await page.waitForFunction(() => /Partage impossible/.test(document.getElementById('test-sauvegarde-status').textContent), null, { timeout: 5000 });
-t = await texteStatutTest();
-check(/Failed to find configured root/.test(t), 'l\'échec de partage doit afficher la vraie raison, obtenu : ' + t);
-await page.evaluate(() => { window.__shareMode = 'cancel'; });
-await page.click('#btn-partager-test');
-await page.waitForFunction(() => /Partage annulé/.test(document.getElementById('test-sauvegarde-status').textContent), null, { timeout: 5000 });
-await page.evaluate(() => { window.__shareMode = 'ok'; });
-console.log('OK K (partage) : succès / échec (raison réelle affichée, plus de silence) / annulation -- messages distincts.');
-// annulation du sélecteur : honnête, bouton Partager disponible
+check(await page.evaluate(() => !document.getElementById('btn-test-sauvegarde') && !document.getElementById('btn-partager-test') && !document.getElementById('test-sauvegarde-status')), '« Tester la sauvegarde » et « Partager le fichier » n\'existent plus');
+check((await ligneEtat()) === 'Aucune sauvegarde vérifiée sur cet appareil', 'avant tout export : « Aucune sauvegarde vérifiée » : ' + await ligneEtat());
+const dbAvantExport = await page.evaluate(() => JSON.stringify(DB));
+await fermerModales(); await page.click('#btn-export');
+await page.waitForFunction(() => /Dernière sauvegarde vérifiée le/.test(document.getElementById('prm-etat-sauvegarde').textContent), null, { timeout: 8000 });
+let t = await ligneEtat();
+check(/^Dernière sauvegarde vérifiée le \d\d-\d\d-\d{4}$/.test(t), 'ligne de succès attendue, obtenu : ' + t);
+const mem = await page.evaluate(() => JSON.parse(localStorage.getItem('ovilog_derniere_sauvegarde')));
+check(mem.mode === 'saf' && mem.nom === 'Sauvegarde choisie.json' && mem.taille > 0 && mem.echec === null, 'état mémorisé sur l\'appareil (nom, taille, mode saf) : ' + JSON.stringify(mem));
+await ouvrirSauvegarde();
+check((await ligneEtat()) === t, 'la ligne survit à un re-rendu');
+check((await page.evaluate(() => document.getElementById('app').textContent)).includes('Chaque sauvegarde est relue automatiquement après l\'export'), 'le texte annonce la relecture automatique');
+console.log('OK K (succès) : "' + t + '" -- vérification automatique à l\'export, mémorisée, persistante.');
+// annulation du sélecteur : aucun changement, pas un échec
 await page.evaluate(() => { window.__mode = 'cancel'; });
-await page.click('#btn-test-sauvegarde');
-await page.waitForFunction(() => /annulé/.test(document.getElementById('test-sauvegarde-status').textContent), null, { timeout: 8000 });
-t = await texteStatutTest();
-check(/Export annulé/.test(t) && /Aucun fichier n'a été enregistré à un emplacement visible/.test(t) && /invisible depuis le gestionnaire de fichiers/.test(t), 'message d\'annulation honnête attendu, obtenu : ' + t);
-check(await partageVisible(), 'le bouton Partager doit rester disponible après une annulation (copie interne vérifiée)');
-console.log('OK K (annulation) : message honnête, pas de fausse promesse, bouton Partager disponible.');
-// échec natif
+await fermerModales(); await page.click('#btn-export'); await page.waitForTimeout(600);
+check((await ligneEtat()) === t && await page.evaluate(() => JSON.parse(localStorage.getItem('ovilog_derniere_sauvegarde')).echec === null), 'annulation : la ligne ne change pas et aucun échec n\'est enregistré');
+console.log('OK K (annulation) : ni échec ni fausse sauvegarde enregistrée.');
+// échec natif : affiché clairement, avec la vraie raison, la dernière sauvegarde réussie reste indiquée
 await page.evaluate(() => { window.__mode = 'fail'; });
-await page.click('#btn-test-sauvegarde');
-await page.waitForFunction(() => /Test échoué/.test(document.getElementById('test-sauvegarde-status').textContent), null, { timeout: 8000 });
-t = await texteStatutTest();
-check(/Test échoué/.test(t) && /simulé/.test(t), 'message d\'échec avec raison réelle attendu, obtenu : ' + t);
-console.log('OK K (échec) : raison réelle affichée.');
-// test ne modifie aucune donnée
-await page.evaluate((db) => { Object.assign(DB, db); saveData(DB); window.__mode = 'ok'; }, baseDb());
-const dbAvantTest = await page.evaluate(() => JSON.stringify(DB));
-await ouvrirSauvegarde();
-await page.click('#btn-test-sauvegarde');
-await page.waitForFunction(() => /Test réussi/.test(document.getElementById('test-sauvegarde-status').textContent), null, { timeout: 8000 });
-check((await page.evaluate(() => JSON.stringify(DB))) === dbAvantTest, '"Tester la sauvegarde" ne doit modifier aucune donnée');
-console.log('OK K : "Tester la sauvegarde" ne modifie aucune donnée.');
+await fermerModales(); await page.click('#btn-export');
+await page.waitForFunction(() => /Dernier export échoué/.test(document.getElementById('prm-etat-sauvegarde').textContent), null, { timeout: 8000 });
+t = await ligneEtat();
+check(/⚠️ Dernier export échoué le \d\d-\d\d-\d{4} : .*simulé/.test(t) && /Dernière sauvegarde vérifiée le/.test(t), 'échec affiché clairement avec la raison, dernière sauvegarde réussie conservée : ' + t);
+check(await page.evaluate(() => !!document.querySelector('#prm-etat-sauvegarde .prm-etat-echec')), 'l\'échec a son style d\'alerte');
+console.log('OK K (échec) : raison réelle affichée, dernière réussite conservée.');
+// un export réussi efface l'échec
+await page.evaluate(() => { window.__mode = 'ok'; });
+await fermerModales(); await page.click('#btn-export');
+await page.waitForFunction(() => !/échoué/.test(document.getElementById('prm-etat-sauvegarde').textContent), null, { timeout: 8000 });
+check(/^Dernière sauvegarde vérifiée le/.test(await ligneEtat()), 'un nouvel export réussi efface l\'échec');
+check((await page.evaluate(() => JSON.stringify(DB))) === dbAvantExport, 'exporter ne modifie aucune donnée');
+console.log('OK K : un export réussi efface l\'échec ; aucune donnée modifiée.');
 
 // ---- L. Activité recréée pendant le sélecteur ----
 await page.evaluate((db) => { Object.assign(DB, db); saveData(DB); window.__mode = 'never'; window.__saveAsCalls = []; localStorage.removeItem('ovilog_pre_campagne_snapshot'); }, baseDb());

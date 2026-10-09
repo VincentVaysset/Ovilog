@@ -796,6 +796,8 @@
   .prm-rub-fleche { font-size: 22px; color: var(--text-muted); }
   .prm-pied { display: flex; flex-direction: column; gap: 6px; align-items: center; text-align: center; font-size: 13px; color: var(--text-muted); margin-top: 14px; }
   .prm-etat { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+  .prm-etat-echec { color: var(--coral-fg); margin-bottom: 4px; }
+  .prm-bandeau-maj { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; background: var(--green-bg); border-radius: 10px; padding: 10px 12px; }
   .prm-point { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
   .prm-point-ok { background: var(--primary); }
   .prm-point-cours { background: var(--warning); }
@@ -1430,6 +1432,14 @@ async function exportBackupFile(data, filenamePrefix) {
   const dataStr = JSON.stringify(data, null, 2);
   const bytes = new TextEncoder().encode(dataStr);
   const filename = filenamePrefix + '-' + jourAujourdhuiISO() + '.json';
+  // Contrôle du contenu AVANT tout export : octets non vides, JSON relisible, mêmes compteurs brebis/béliers/agnelles que la base. Sur Android, le fichier enregistré est ensuite
+  // relu depuis son emplacement (exporterFichierVisible) ; sur PC/navigateur, le fichier est un téléchargement qu'on ne peut pas relire : ce contrôle est la vérification.
+  const controle = controlerOctetsSauvegarde(bytes, data);
+  if (!controle.ok) {
+    noterResultatSauvegarde({ ok: false, raison: controle.raison });
+    alert('Export non effectué : ' + controle.raison + '. Rien n\'a été téléchargé.');
+    return;
+  }
   // Voir saveOrShareBinaryFile plus bas dans le fichier : ni navigator.share()
   // ni <a download> sur une blob: URL ne sont fiables dans la WebView Android
   // packagée (aucun DownloadListener natif configuré) -- un clic "réussi" ne
@@ -1437,7 +1447,17 @@ async function exportBackupFile(data, filenamePrefix) {
   // (signalé en usage réel). Passe par le même export visible (sélecteur
   // système + relecture, compteurs brebis/béliers/agnelles comparés) que les
   // autres exports (Registre, PDF).
-  await saveOrShareBinaryFile(filename, bytes, 'application/json', { verifierCompteurs: compteursSauvegarde(data) });
+  const res = await saveOrShareBinaryFile(filename, bytes, 'application/json', { verifierCompteurs: compteursSauvegarde(data) });
+  const surAndroid = !!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem);
+  if (!surAndroid && res && res.ok) noterResultatSauvegarde({ ok: true, mode: 'telechargement', nom: filename, taille: bytes.length });
+}
+function controlerOctetsSauvegarde(bytes, data) {
+  if (!bytes || !bytes.length) return { ok: false, raison: 'le contenu à exporter est vide' };
+  let relu;
+  try { relu = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { return { ok: false, raison: 'le contenu relu est illisible (JSON invalide)' }; }
+  const a = compteursSauvegarde(relu), b = compteursSauvegarde(data);
+  if (a.brebis !== b.brebis || a.beliers !== b.beliers || a.agnelles !== b.agnelles) return { ok: false, raison: 'les compteurs du contenu relu (' + JSON.stringify(a) + ') ne correspondent pas à ceux de la base (' + JSON.stringify(b) + ')' };
+  return { ok: true };
 }
 
 /* Point de passage unique pour toute écriture des données (~100 appelants
@@ -21186,7 +21206,7 @@ const BACKUP_AUTO_DIRECTORY = 'EXTERNAL';
    JSON puis la relit et vérifie taille et compteurs. Ne la rend PAS
    accessible à l'éleveur (dossier masqué sur Android 11+) : voir
    sauvegardeVisibleAvantMutation pour l'export visible, et
-   partagerFichierExistant pour le partage à la demande. */
+   (le partage à la demande a été retiré avec « Tester la sauvegarde »). */
 async function writeAutoBackupFile(filename, data) {
   const bytes = bytesBackupAuto(data, new Date());
   const attendu = { brebis: (data.brebis || []).length, agnelles: (data.agnelles || []).length, beliers: (data.beliers || []).length };
@@ -21298,7 +21318,7 @@ function verifierExportInterrompu() {
    { ok, cancelled?, raison?, uri?, nom?, taille? } -- jamais d'exception.
    `verifierCompteurs` (facultatif, JSON de sauvegarde) : compteurs
    { brebis, beliers, agnelles } attendus, comparés à ceux du fichier relu. */
-async function exporterFichierVisible({ directory, path, fileName, mimeType, verifierCompteurs = null, supprimerSource = false }) {
+async function exporterFichierVisibleInterne({ directory, path, fileName, mimeType, verifierCompteurs = null, supprimerSource = false }) {
   const FileSaver = pluginFileSaver();
   if (!FileSaver) {
     return { ok: false, raison: "le module d'export visible est absent de cette version de l'appli (installe la dernière version)" };
@@ -21341,6 +21361,13 @@ async function exporterFichierVisible({ directory, path, fileName, mimeType, ver
     effacerMarqueurExport();
   }
 }
+// Enveloppe : tout export de SAUVEGARDE (compteurs vérifiés : export manuel, avant bascule, avant nettoyage, avant import) alimente la ligne « Dernière sauvegarde vérifiée »
+// de Paramètres > Sauvegarde. Une annulation du sélecteur n'est pas un échec ; un échec est mémorisé avec sa raison.
+async function exporterFichierVisible(opts) {
+  const res = await exporterFichierVisibleInterne(opts);
+  if (opts && opts.verifierCompteurs) noterResultatSauvegarde(Object.assign({ mode: 'saf' }, res));
+  return res;
+}
 /* LA sauvegarde utilisée avant toute opération qui modifie les données
    (bascule, nettoyage du registre, bouton "Tester la sauvegarde") :
    1) copie interne app-scoped écrite, relue et vérifiée (writeAutoBackupFile,
@@ -21363,24 +21390,6 @@ async function sauvegardeVisibleAvantMutation(filename, data) {
   if (!visible.ok) return { ok: false, interneOk: true, cancelled: !!visible.cancelled, raison: visible.raison };
   return { ok: true, interneOk: true, mode: 'saf', visible };
 }
-/* Partage à la demande (bouton "Partager le fichier") d'un fichier présent
-   dans BACKUP_AUTO_DIRECTORY. Retourne { ok, cancelled?, raison? } pour que
-   l'écran affiche exactement ce qui s'est passé (jamais d'erreur avalée). */
-async function partagerFichierExistant(filename) {
-  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
-  const Share = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Share;
-  if (!Filesystem || !Share) return { ok: false, raison: "le partage n'est disponible que dans l'appli installée sur téléphone" };
-  try {
-    const { uri } = await Filesystem.getUri({ path: filename, directory: BACKUP_AUTO_DIRECTORY });
-    await Share.share({ url: uri, title: filename, dialogTitle: 'Partager la sauvegarde (Drive, e-mail, fichiers...)' });
-    return { ok: true };
-  } catch (e) {
-    const msg = e && e.message ? e.message : 'erreur inconnue';
-    if (/cancel/i.test(msg)) return { ok: false, cancelled: true, raison: 'partage annulé' };
-    return { ok: false, raison: msg };
-  }
-}
-
 /* ---------- Roulement des sauvegardes automatiques locales ----------
    Chantier "Sauvegarde locale automatique" : ne garde que les
    BACKUP_AUTO_MAX (3) fichiers ovilog_backup_*.json les plus récents dans
@@ -21398,15 +21407,6 @@ async function partagerFichierExistant(filename) {
    locale à la console. */
 const BACKUP_AUTO_MAX = 3;
 const BACKUP_AUTO_PREFIX = 'ovilog_backup_';
-/* Nom FIXE, volontairement en dehors de BACKUP_AUTO_PREFIX -- correctif de
-   l'audit "Changement de campagne" (point 5 de la 3e demande) : le bouton
-   "Tester la sauvegarde" (voir renderParametresSauvegarde) réutilise
-   writeAutoBackupFile tel quel, qui écrase ce même fichier à chaque test
-   (jamais un nouvel horodatage). Comme ce nom ne commence PAS par
-   BACKUP_AUTO_PREFIX, listAutoBackupFiles/purgeOldAutoBackups ne le voient
-   jamais : un test ne peut donc jamais faire sortir une vraie sauvegarde
-   pré-bascule du roulement à BACKUP_AUTO_MAX exemplaires. */
-const TEST_BACKUP_FILENAME = 'ovilog_test_sauvegarde.json';
 async function listAutoBackupFiles() {
   const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (!Filesystem) return null; // pas de dossier à lister hors app installée
@@ -26229,8 +26229,6 @@ let nettoyageRegistreEnCours = false;
 // ré-entrance libéré par un finally.
 let doublonsRegistreEtat = { analyse: null, coches: {}, message: '' };
 let dedoublonRegistreEnCours = false;
-let testSauvegardeEtat = { message: '', partageable: false };
-let testSauvegardeEnCours = false;
 let importJsonEnCours = false;
 // PC : 5 onglets dans cet ordre, chacun avec un titre et une ligne d'explication. Mobile : pas d'onglets, mais un écran d'arrivée à 4 rubriques (pas d'Imports :
 // ils se font sur PC) qui ouvrent chacune leur écran, avec retour ; parametresRubrique = null (écran d'arrivée) ou la clé de la rubrique ouverte.
@@ -26314,14 +26312,40 @@ function renderParametresAccueilMobile() {
   <div class="prm-pied"><div class="prm-etat sync-etat-ligne" id="prm-accueil-sync">${syncEtatLigneHtml()}</div><div>${libelleVersion().replace('Version : ', 'Version ')} · les imports de fichiers se font sur PC</div></div>`;
   document.querySelectorAll('.prm-rub').forEach(b => { b.onclick = () => { parametresRubrique = b.dataset.rub; render('parametres'); }; });
 }
-// Ligne de résumé de la rubrique Sauvegarde (alimentée par l'enregistrement de la dernière sauvegarde vérifiée, voir lireDerniereSauvegarde)
+// Dernière sauvegarde vérifiée : mémorisée sur l'appareil (localStorage, jamais dans la base ni le cloud) -- { dateOk, heureOk, mode: 'saf' | 'telechargement', nom, taille, echec: { date, raison } | null }
+const CLE_DERNIERE_SAUVEGARDE = 'ovilog_derniere_sauvegarde';
 function lireDerniereSauvegarde() {
-  try { const v = JSON.parse(localStorage.getItem('ovilog_derniere_sauvegarde') || 'null'); return v && typeof v === 'object' ? v : null; } catch (e) { return null; }
+  try { const v = JSON.parse(localStorage.getItem(CLE_DERNIERE_SAUVEGARDE) || 'null'); return v && typeof v === 'object' ? v : null; } catch (e) { return null; }
 }
+function ecrireDerniereSauvegarde(patch) {
+  try { localStorage.setItem(CLE_DERNIERE_SAUVEGARDE, JSON.stringify(Object.assign({}, lireDerniereSauvegarde() || {}, patch))); } catch (e) { /* stockage indisponible : la ligne reste simplement vide */ }
+  const el = document.getElementById('prm-etat-sauvegarde');
+  if (el) el.innerHTML = etatSauvegardeHtml();
+}
+function noterResultatSauvegarde(res) {
+  if (!res) return;
+  const d = new Date(), date = jourAujourdhuiISO(), heure = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  if (res.ok) ecrireDerniereSauvegarde({ dateOk: date, heureOk: heure, mode: res.mode || 'saf', nom: res.nom || null, taille: res.taille || null, echec: null });
+  else if (!res.cancelled) ecrireDerniereSauvegarde({ echec: { date, raison: res.raison || 'raison inconnue' } });
+}
+function phraseDerniereSauvegarde(s) {
+  if (!s || !s.dateOk) return null;
+  const jour = formatDateFr(s.dateOk.slice(0, 10));
+  return s.mode === 'telechargement' ? 'Dernière sauvegarde exportée le ' + jour + ' (contrôlée avant téléchargement)' : 'Dernière sauvegarde vérifiée le ' + jour;
+}
+function etatSauvegardeHtml() {
+  const s = lireDerniereSauvegarde() || {};
+  const ok = phraseDerniereSauvegarde(s);
+  const echec = s.echec ? `<div class="prm-etat prm-etat-echec"><span class="prm-point prm-point-hors"></span><span>⚠️ Dernier export échoué le ${formatDateFr(s.echec.date)} : ${xlsxEscape(s.echec.raison)}</span></div>` : '';
+  const corps = ok ? `<div class="prm-etat"><span class="prm-point prm-point-ok"></span><span>${ok}</span></div>`
+    : (s.echec ? '' : '<div class="prm-etat"><span class="prm-point"></span><span>Aucune sauvegarde vérifiée sur cet appareil</span></div>');
+  return echec + corps;
+}
+// Résumé de la rubrique Sauvegarde sur l'écran d'arrivée mobile
 function resumeDerniereSauvegarde() {
-  const s = lireDerniereSauvegarde();
-  if (s && s.dateOk) return 'Dernière sauvegarde vérifiée le ' + formatDateFr(s.dateOk.slice(0, 10));
-  return 'Aucune sauvegarde vérifiée sur cet appareil';
+  const s = lireDerniereSauvegarde() || {};
+  if (s.echec) return '⚠️ Dernier export échoué le ' + formatDateFr(s.echec.date);
+  return phraseDerniereSauvegarde(s) || 'Aucune sauvegarde vérifiée sur cet appareil';
 }
 
 /* ---------- Onglet Exploitation ---------- */
@@ -27157,43 +27181,46 @@ function wireDoublonsRegistre() {
 }
 
 /* ---------- Onglet Sauvegarde ---------- */
+// Bandeau « version prête à installer » de la carte Application (Bureau : mise à jour téléchargée ; Android : nouvelle version trouvée)
+function afficherBandeauMaj(texte, libelleBouton, onClick) {
+  const bandeau = document.getElementById('update-pret');
+  if (!bandeau) return;
+  document.getElementById('update-pret-texte').textContent = texte;
+  const btn = document.getElementById('btn-update-pret');
+  btn.textContent = libelleBouton; btn.onclick = onClick;
+  bandeau.classList.remove('hidden');
+}
+function masquerBandeauMaj() { const b = document.getElementById('update-pret'); if (b) b.classList.add('hidden'); }
 function renderParametresSauvegarde(content) {
   const maintenance = maintenanceRegistreBloc();
-  const cardsHtml = `
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Sauvegarde des données${infoBulleHtml('Sauvegarde des données', "Important : à chaque fois qu'une nouvelle version du fichier est installée, exporte d'abord tes données ici, puis réimporte-les une fois la nouvelle version ouverte — sinon tout repart à zéro.")}</div>
-      <button class="btn btn-secondary" id="btn-export" style="margin-bottom:10px;">Exporter mes données (sauvegarde)</button>
+  const carteDonnees = `
+    <div class="card" id="card-mes-donnees">
+      <div class="prm-titre">Mes données</div>
+      <div id="prm-etat-sauvegarde" style="margin-bottom:8px;">${etatSauvegardeHtml()}</div>
+      <div class="prm-note">${isDesktopMode() ? "Chaque sauvegarde est contrôlée automatiquement à l'export : contenu relu et compteurs comparés avant le téléchargement." : "Chaque sauvegarde est relue automatiquement après l'export."} Une sauvegarde est aussi faite avant tout changement de campagne.</div>
+      ${prmEnSavoirPlusHtml("Important : à chaque fois qu'une nouvelle version du fichier est installée, exporte d'abord tes données ici, puis réimporte-les une fois la nouvelle version ouverte — sinon tout repart à zéro.")}
       <input type="file" id="import-file" accept=".json" class="hidden">
-      <button class="btn btn-secondary" id="btn-import">Importer une sauvegarde</button>
-    </div>
-
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Tester la sauvegarde${infoBulleHtml('Tester la sauvegarde', "Fait exactement la même sauvegarde que le changement de campagne et le nettoyage du registre : écrit un fichier de test dans l'espace privé de l'appli (relu et vérifié), puis ouvre le sélecteur de fichiers d'Android pour l'enregistrer à l'emplacement de ton choix, et le relit à cet emplacement. Un bouton « Partager le fichier » reste ensuite disponible. Ne modifie AUCUNE donnée et ne déclenche jamais de changement de campagne. Fichier de test distinct des vraies sauvegardes automatiques (jamais compté ni supprimé par leur roulement).")}</div>
-      <button class="btn btn-secondary" id="btn-test-sauvegarde">Tester la sauvegarde</button>
-      <div id="test-sauvegarde-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;white-space:pre-line;">${xlsxEscape(testSauvegardeEtat.message)}</div>
-      <button class="btn btn-secondary ${testSauvegardeEtat.partageable ? '' : 'hidden'}" id="btn-partager-test" style="margin-top:8px;">Partager le fichier</button>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
-        ${iconCircle(ICON_SYNC, 'blue', 'sm')}
-        <div style="font-size:14px;font-weight:600;">Mises à jour</div>
+      <div class="prm-actions"><button type="button" class="btn btn-primary" id="btn-export">Exporter mes données</button><button type="button" class="btn btn-secondary" id="btn-import">Importer une sauvegarde</button></div>
+    </div>`;
+  const carteApplication = `
+    <div class="card" id="card-application">
+      <div class="prm-titre">Application</div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
+        <div><div class="prm-note" style="margin:0;">Version installée</div><div id="update-version-installee" style="font-size:18px;font-weight:700;">…</div></div>
+        <button type="button" class="btn btn-secondary btn-petit" id="btn-check-update" disabled>Vérifier les mises à jour</button>
       </div>
-      <div id="update-version-installee" style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Version installée : …</div>
-      <button class="btn btn-secondary" id="btn-check-update" disabled>Vérifier les mises à jour</button>
-      <div id="update-check-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
-    </div>
-
-    ${isDesktopMode() ? '' : `
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Diagnostic Bluetooth (bâton Allflex)${infoBulleHtml('Diagnostic Bluetooth', "Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID -- distinct du bouton de connexion du bandeau, qui ne montre jamais ces trames brutes.")}</div>
-      <button class="btn btn-secondary" id="btn-goto-diag-bluetooth">Ouvrir le diagnostic</button>
-    </div>
-    `}
-
-    <div id="version-footer" style="text-align:center;font-size:11px;color:var(--text-muted);padding:6px 0 4px;">${libelleVersion()}</div>
-  `;
-  content.innerHTML = prmGrilleHtml(cardsHtml) + `<details class="prm-maintenance" id="prm-maintenance"${prmMaintenanceOuvert ? ' open' : ''}><summary><b>Maintenance</b> · Rechercher les doublons du registre</summary><div class="prm-maintenance-corps">${maintenance.html}</div></details>`;
+      <div id="update-check-status" class="prm-note" style="margin:0 0 8px;"></div>
+      <div id="update-pret" class="prm-bandeau-maj hidden"><div id="update-pret-texte" style="font-weight:500;"></div><button type="button" class="btn btn-primary btn-petit" id="btn-update-pret"></button></div>
+    </div>`;
+  const carteDiagBt = isDesktopMode() ? '' : `
+    <div class="card" id="card-diag-bluetooth">
+      <div class="prm-titre">Diagnostic Bluetooth (bâton Allflex)</div>
+      <div class="prm-note">Écran de diagnostic pour observer les trames brutes envoyées par le bâton.</div>
+      ${prmEnSavoirPlusHtml("Écran temporaire pour observer les trames brutes envoyées par le bâton en Bluetooth Classic/SPP, avant d'écrire le parsing définitif de l'EID -- distinct du bouton de connexion du bandeau, qui ne montre jamais ces trames brutes.")}
+      <button type="button" class="btn btn-secondary" id="btn-goto-diag-bluetooth">Ouvrir le diagnostic</button>
+    </div>`;
+  const cardsHtml = prmColonnesHtml(carteDonnees, carteApplication);
+  content.innerHTML = cardsHtml + `<details class="prm-maintenance" id="prm-maintenance"${prmMaintenanceOuvert ? ' open' : ''}><summary><b>Maintenance</b> · Rechercher les doublons du registre</summary><div class="prm-maintenance-corps">${carteDiagBt}${maintenance.html}</div></details>`;
   maintenance.brancher();
   document.getElementById('prm-maintenance').ontoggle = (e) => { prmMaintenanceOuvert = e.target.open; };
 
@@ -27215,60 +27242,6 @@ function renderParametresSauvegarde(content) {
     document.getElementById('import-file').click();
   };
 
-  // "Tester la sauvegarde" : exécute EXACTEMENT la même sauvegarde que la
-  // bascule et le nettoyage du registre (sauvegardeVisibleAvantMutation :
-  // copie interne vérifiée + export visible relu), avec TEST_BACKUP_FILENAME
-  // comme SEULE différence -- jamais un appel à saveData ni à
-  // executerChangementCampagne : aucune donnée n'est modifiée, aucune bascule
-  // n'est déclenchée. Le message est persisté dans testSauvegardeEtat (pas
-  // seulement dans le DOM) : un re-rendu de l'écran le régénère sinon vide.
-  // Chaque phrase affichée n'affirme que ce qui a réellement été vérifié.
-  function majTestSauvegarde(message, partageable) {
-    testSauvegardeEtat = { message, partageable };
-    const statusEl = document.getElementById('test-sauvegarde-status');
-    const btnPartage = document.getElementById('btn-partager-test');
-    if (statusEl) statusEl.textContent = message;
-    if (btnPartage) btnPartage.classList.toggle('hidden', !partageable);
-  }
-  document.getElementById('btn-test-sauvegarde').onclick = async () => {
-    if (testSauvegardeEnCours) return;
-    testSauvegardeEnCours = true;
-    const btn = () => document.getElementById('btn-test-sauvegarde');
-    if (btn()) btn().disabled = true;
-    majTestSauvegarde(pluginFileSaver() ? 'Test en cours... Android va te demander où enregistrer le fichier.' : 'Test en cours...', false);
-    try {
-      const res = await sauvegardeVisibleAvantMutation(TEST_BACKUP_FILENAME, DB);
-      const partageable = !!(res.interneOk && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Share);
-      const copieInterne = " Une copie vérifiée existe dans l'espace privé de l'appli (invisible depuis le gestionnaire de fichiers sur Android 11+) : « Partager le fichier » permet de la récupérer.";
-      if (res.ok && res.mode === 'saf') {
-        const v = res.visible;
-        majTestSauvegarde('✅ Test réussi (' + resumeContenuSauvegarde(DB) + ') — fichier enregistré à l\'emplacement que tu as choisi'
-          + (v.nom ? ' (« ' + v.nom + ' »)' : '') + ', puis relu depuis cet emplacement (' + v.taille + ' octets, compteurs identiques à la base).', partageable);
-      } else if (res.ok) {
-        majTestSauvegarde('✅ Test réussi (' + resumeContenuSauvegarde(DB) + ') — fichier écrit, relu et vérifié. Sur navigateur/Bureau, il est téléchargé par le navigateur : son emplacement dépend de celui-ci et ne peut pas être vérifié par l\'appli.', partageable);
-      } else if (res.cancelled) {
-        majTestSauvegarde('⚠️ Export annulé : ' + res.raison + ". Aucun fichier n'a été enregistré à un emplacement visible." + copieInterne, partageable);
-      } else {
-        majTestSauvegarde('⚠️ Test échoué : ' + res.raison + '.' + (res.interneOk ? copieInterne : ''), partageable);
-      }
-    } finally {
-      testSauvegardeEnCours = false;
-      if (btn()) btn().disabled = false;
-    }
-  };
-  document.getElementById('btn-partager-test').onclick = async () => {
-    const btnPartage = () => document.getElementById('btn-partager-test');
-    if (btnPartage()) btnPartage().disabled = true;
-    try {
-      const r = await partagerFichierExistant(TEST_BACKUP_FILENAME);
-      const base = testSauvegardeEtat.message.split('\n')[0];
-      if (r.ok) majTestSauvegarde(base + '\nFeuille de partage ouverte.', true);
-      else if (r.cancelled) majTestSauvegarde(base + '\nPartage annulé : aucun envoi.', true);
-      else majTestSauvegarde(base + '\n⚠️ Partage impossible : ' + r.raison + '.', true);
-    } finally {
-      if (btnPartage()) btnPartage().disabled = false;
-    }
-  };
   document.getElementById('import-file').onchange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -27356,9 +27329,9 @@ function renderParametresSauvegarde(content) {
     if (AppPlugin) {
       try {
         const info = await AppPlugin.getInfo();
-        versionEl.textContent = 'Version installée : ' + info.version;
+        versionEl.textContent = info.version;
       } catch (e) {
-        versionEl.textContent = 'Version installée : inconnue';
+        versionEl.textContent = 'inconnue';
       }
       btnCheck.disabled = false;
       btnCheck.onclick = async () => {
@@ -27381,14 +27354,15 @@ function renderParametresSauvegarde(content) {
           statusEl.textContent = '✅ Vous êtes à jour.';
           return;
         }
-        statusEl.textContent = '🆕 Nouvelle version disponible : ' + release.name;
+        statusEl.textContent = '';
+        afficherBandeauMaj('Version ' + release.name + ' disponible', 'Télécharger et installer', () => afficherPopupMiseAJour(release));
         afficherPopupMiseAJour(release);
       };
       return;
     }
 
     if (window.electronAPI && window.electronAPI.checkForUpdates) {
-      versionEl.textContent = 'Version installée : ' + libelleVersion().replace('Version : ', '');
+      versionEl.textContent = libelleVersion().replace('Version : ', '');
       btnCheck.disabled = false;
 
       // Reflète le statut electron-updater réel (checking/available/
@@ -27397,6 +27371,7 @@ function renderParametresSauvegarde(content) {
       // ici, jamais une supposition sur l'état du téléchargement en fond.
       function afficherStatutDesktop(statut) {
         if (!statut) return;
+        if (statut.status !== 'downloaded') masquerBandeauMaj();
         if (statut.status === 'checking') {
           statusEl.textContent = 'Vérification en cours...';
         } else if (statut.status === 'not-available') {
@@ -27406,15 +27381,8 @@ function renderParametresSauvegarde(content) {
         } else if (statut.status === 'downloading') {
           statusEl.textContent = 'Téléchargement en cours' + (statut.percent != null ? ' (' + statut.percent + ' %)' : '...');
         } else if (statut.status === 'downloaded') {
-          statusEl.innerHTML = '';
-          statusEl.append('Mise à jour ' + statut.version + ' prête à installer.', document.createElement('br'));
-          const btnInstall = document.createElement('button');
-          btnInstall.type = 'button';
-          btnInstall.className = 'btn btn-primary';
-          btnInstall.style.marginTop = '8px';
-          btnInstall.textContent = 'Redémarrer et installer';
-          btnInstall.onclick = () => window.electronAPI.installUpdateNow();
-          statusEl.appendChild(btnInstall);
+          statusEl.textContent = '';
+          afficherBandeauMaj('Version ' + statut.version + ' prête à installer', 'Redémarrer et installer', () => window.electronAPI.installUpdateNow());
         } else if (statut.status === 'error') {
           statusEl.textContent = '⚠️ ' + (statut.message || 'Erreur inconnue lors de la vérification.');
         } else if (statut.status === 'unavailable') {
@@ -27440,7 +27408,7 @@ function renderParametresSauvegarde(content) {
     // Ni Android ni Bureau : navigateur de test/dev, aucun mécanisme de
     // mise à jour disponible ici -- message honnête, qui n'exclut plus le
     // Bureau à tort (voir en-tête de ce bloc).
-    versionEl.textContent = 'Version installée : ' + libelleVersion().replace('Version : ', '');
+    versionEl.textContent = libelleVersion().replace('Version : ', '');
     statusEl.textContent = "Mise à jour disponible uniquement depuis l'application installée (Android ou Bureau).";
   })();
 }

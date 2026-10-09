@@ -244,6 +244,7 @@ await d2.page.evaluate(() => {
       FileSaver: {
         saveAs: async ({ directory, path, fileName }) => {
           const src = window.__writtenFiles[path];
+          window.__writtenFiles[fileName] = src;   // le fichier « choisi » est relu sous son nom (export manuel : le fichier source est un temporaire)
           return { ok: true, uri: 'content://fake/' + fileName, taille: src.length, nom: fileName, __src: src };
         },
         readUri: async ({ uri, asText }) => {
@@ -268,46 +269,43 @@ await d2.page.evaluate(async () => {
 const listeAvantTest = await d2.page.evaluate(() => listAutoBackupFiles());
 if (listeAvantTest.length !== 3) throw new Error('FAIL (infra test) : 3 vraies sauvegardes attendues avant le test, obtenu ' + JSON.stringify(listeAvantTest));
 
-// Lance "Tester la sauvegarde" via le VRAI écran (Paramètres > Sauvegarde), pas un appel direct --
-// c'est bien le bouton, avec son vrai câblage, qui est vérifié ici.
-await d2.page.evaluate(() => { parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres'); });
+// Lance « Exporter mes données » via le VRAI écran (Paramètres > Sauvegarde), pas un appel direct --
+// c'est bien le bouton, avec son vrai câblage, qui est vérifié ici. « Tester la sauvegarde » n'existe plus :
+// la vérification (relecture) est automatique à chaque export et alimente la ligne « Dernière sauvegarde vérifiée ».
+await d2.page.evaluate(() => { localStorage.removeItem('ovilog_derniere_sauvegarde'); parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres'); });
 await d2.page.waitForTimeout(150);
-if (!(await d2.page.$('#btn-test-sauvegarde'))) throw new Error('FAIL point 5: le bouton "Tester la sauvegarde" doit exister dans Paramètres > Sauvegarde.');
-await d2.page.click('#btn-test-sauvegarde');
-await waitFor(d2.page, () => document.getElementById('test-sauvegarde-status').textContent.includes('✅'), { timeout: 5000, label: 'le test de sauvegarde se termine avec succès' });
-const statusTexte = await d2.page.evaluate(() => document.getElementById('test-sauvegarde-status').textContent);
-console.log('OK point 5: le bouton "Tester la sauvegarde" écrit, relit et vérifie -- statut affiché : "' + statusTexte + '"');
+if (await d2.page.$('#btn-test-sauvegarde')) throw new Error('FAIL point 5: le bouton "Tester la sauvegarde" ne doit plus exister.');
+if (!(await d2.page.$('#btn-export'))) throw new Error('FAIL point 5: le bouton "Exporter mes données" doit exister dans Paramètres > Sauvegarde.');
+await d2.page.click('#btn-export');
+await waitFor(d2.page, () => /Dernière sauvegarde vérifiée le/.test(document.getElementById('prm-etat-sauvegarde').textContent), { timeout: 5000, label: "l'export se termine et la ligne « Dernière sauvegarde vérifiée » apparaît" });
+const statusTexte = await d2.page.evaluate(() => document.getElementById('prm-etat-sauvegarde').textContent);
+console.log('OK point 5: « Exporter mes données » écrit, relit et vérifie -- ligne affichée : "' + statusTexte.trim() + '"');
 
-// Plan "Export SAF" : plus de partage automatique en tâche de fond (silencieux en cas d'échec) --
-// l'export visible passe par le sélecteur système, et un bouton "Partager le fichier" reste
-// affiché après le test, qui déclenche le partage seulement à la demande.
+// Plan "Export SAF" : plus de partage automatique en tâche de fond (silencieux en cas d'échec) ;
+// le bouton « Partager le fichier » a disparu avec « Tester la sauvegarde ».
 const shareCountAuto = await d2.page.evaluate(() => window.__shareCallCount);
 if (shareCountAuto !== 0) throw new Error('FAIL point 5: aucun partage automatique en tâche de fond ne doit plus avoir lieu, obtenu ' + shareCountAuto + ' appel(s).');
-if (await d2.page.evaluate(() => document.getElementById('btn-partager-test').classList.contains('hidden'))) throw new Error('FAIL point 5: le bouton "Partager le fichier" doit être affiché après un test réussi.');
-await d2.page.click('#btn-partager-test');
-await waitFor(d2.page, () => window.__shareCallCount === 1, { timeout: 5000, label: 'le partage à la demande' });
-console.log('OK point 5: pas de partage automatique ; le bouton "Partager le fichier" est affiché après le test et ouvre bien le partage à la demande.');
+if (await d2.page.$('#btn-partager-test')) throw new Error('FAIL point 5: le bouton "Partager le fichier" ne doit plus exister.');
+console.log('OK point 5: pas de partage automatique ; plus de bouton « Partager le fichier ».');
 
-// Le fichier de test ne doit JAMAIS apparaître dans le roulement des vraies sauvegardes, et les 3
-// vraies sauvegardes doivent être TOUJOURS PRÉSENTES, intactes, après le test.
+// Un export manuel ne touche JAMAIS au roulement des vraies sauvegardes automatiques : les 3 vraies
+// sauvegardes doivent être TOUJOURS PRÉSENTES, intactes, après l'export.
+await d2.page.evaluate(() => document.querySelectorAll('.modal-overlay').forEach(e => e.remove()));
 const listeApresTest = await d2.page.evaluate(() => listAutoBackupFiles());
 if (listeApresTest.length !== 3) {
-  throw new Error('FAIL point 5: le fichier de test ne doit jamais être compté parmi les vraies sauvegardes (roulement toujours à 3), obtenu ' + JSON.stringify(listeApresTest));
+  throw new Error('FAIL point 5: un export manuel ne doit jamais modifier le roulement des vraies sauvegardes (toujours 3), obtenu ' + JSON.stringify(listeApresTest));
 }
-if (listeApresTest.some(n => n.includes('test'))) {
-  throw new Error('FAIL point 5: aucun fichier de test ne doit apparaître dans la liste des vraies sauvegardes, obtenu ' + JSON.stringify(listeApresTest));
-}
-console.log('OK point 5: le fichier de test (' + await d2.page.evaluate(() => TEST_BACKUP_FILENAME) + ') n\'apparaît jamais dans le roulement des vraies sauvegardes -- toujours 3 vraies sauvegardes intactes après le test.');
+console.log('OK point 5: un export manuel laisse les 3 vraies sauvegardes automatiques intactes.');
 
-// Relance le test une seconde fois : la rotation ne doit jamais évincer la sauvegarde pré-bascule
-// la plus récente (ovilog_backup_2026-01-03...), même après plusieurs tests répétés.
-await d2.page.click('#btn-test-sauvegarde');
+// Relance l'export : la rotation ne doit jamais évincer la sauvegarde pré-bascule la plus récente,
+// même après plusieurs exports répétés.
+await d2.page.click('#btn-export');
 await d2.page.waitForTimeout(400);
 const listeApres2eTest = await d2.page.evaluate(() => listAutoBackupFiles());
 if (!listeApres2eTest.includes('ovilog_backup_2026-01-03T00-00-00.json')) {
-  throw new Error('FAIL point 5: la sauvegarde pré-bascule la plus récente ne doit JAMAIS être évincée par des tests répétés, obtenu ' + JSON.stringify(listeApres2eTest));
+  throw new Error('FAIL point 5: la sauvegarde pré-bascule la plus récente ne doit JAMAIS être évincée par des exports répétés, obtenu ' + JSON.stringify(listeApres2eTest));
 }
-console.log('OK point 5: après plusieurs tests répétés, la sauvegarde pré-bascule la plus récente n\'est jamais évincée du roulement.');
+console.log('OK point 5: après plusieurs exports répétés, la sauvegarde pré-bascule la plus récente n\'est jamais évincée du roulement.');
 
 // ============================================================
 // Carry-over (plan validé, 3e demande, point 2) : erreur de quota localStorage
