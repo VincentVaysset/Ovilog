@@ -22245,10 +22245,7 @@ async function exportLotEpongePdf(lot) {
    le tableau à l'écran (Agnelles/Brebis, statsDetailleesParGroupeAge) reste
    inchangé, ce PDF est un export complémentaire, jamais un remplacement. */
 function buildBilanAgeExactPdfBytes(campagne) {
-  const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
-  const rightEdge = pageW - PDF_MARGIN;
-  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(jourAujourdhuiISO());
+  // Charte colorée commune (pdfProdDoc) : MÊMES données, textes, lignes et notes que l'ancien PDF noir et blanc ; seule la mise en forme change.
   // `campagne` (facultatif) : une campagne passée choisie sur la page PC ; absent = campagne en cours, comme avant.
   const autre = campagne !== undefined && campagne !== null && campagne !== DB.campagneDebut ? bilanPourAffichage(campagne) : null;
   const campagnePdf = autre ? campagne : DB.campagneDebut;
@@ -22259,55 +22256,26 @@ function buildBilanAgeExactPdfBytes(campagne) {
   const parAge = autre ? autre.parMillesime : statsParAgeExactTroupeau(cohort, classement);
   const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
   const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
-
-  let y = pageH - PDF_MARGIN;
-  let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Bilan de reproduction troupeau', 'FB', 14);
-  y -= 16;
-  content += pdfTextOp(PDF_MARGIN, y, exploitationNom + (campagnePdf !== null && campagnePdf !== undefined ? ' · Campagne ' + campagneLabel(campagnePdf) : ''), 'F1', 9);
-  y -= 12;
-  content += pdfTextOp(PDF_MARGIN, y, cohort.length + ' brebis présentes (toutes brebis confondues, IA + Éponge + MN) · édité le ' + aujourdhui, 'F1', 9);
-  y -= 10;
-  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-  y -= 16;
-  if (classement.avertissement) {
-    pdfWrapLines('Attention : ' + classement.avertissement, 95).forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'FB', 8.5); y -= 11; });
-  }
-  if (classement.sansAnnee > 0) {
-    content += pdfTextOp(PDF_MARGIN, y, classement.sansAnnee + ' brebis sans année de naissance lisible dans l\'EID (ligne « Année inconnue », rangées avec les brebis).', 'F1', 8.5);
-    y -= 11;
-  }
-  y -= 8;
-
-  content += pdfTextOp(PDF_MARGIN, y, "DÉTAIL PAR MILLÉSIME", 'FB', 10.5);
-  y -= 20;
-  const cols = [
-    { label: 'Millésime', x: 0 }, { label: 'Présentes', x: 135 }, { label: 'Mises bas', x: 210 },
-    { label: 'Fertilité', x: 290 }, { label: 'Prolificité', x: 370 }, { label: 'Durée mise bas', x: 450 }
-  ];
-  cols.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
-  y -= 5;
-  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-  y -= 16;
+  const doc = pdfProdDoc();
+  doc.page('Bilan de reproduction troupeau', (campagnePdf !== null && campagnePdf !== undefined ? 'Campagne ' + campagneLabel(campagnePdf) + ' · ' : '') + cohort.length + ' brebis présentes (toutes brebis confondues, IA + Éponge + MN)', 'Ovilog — export généré automatiquement');
+  doc.tuiles([pdfTuile('vert', 'Brebis présentes', cohort.length), pdfTuile('bleu', 'Mises bas', parAge.reduce((s, g) => s + g.misesBas, 0))]);
+  if (classement.avertissement) doc.note('Attention : ' + classement.avertissement, 8.5);
+  if (classement.sansAnnee > 0) doc.note(classement.sansAnnee + ' brebis sans année de naissance lisible dans l\'EID (ligne « Année inconnue », rangées avec les brebis).', 8.5);
+  doc.section('DÉTAIL PAR MILLÉSIME');
   if (parAge.length === 0) {
-    content += pdfTextOp(PDF_MARGIN, y, 'Aucune brebis présente cette campagne.', 'F1', 9.5);
-    y -= PDF_ROW_HEIGHT;
+    doc.note('Aucune brebis présente cette campagne.', 9.5);
   } else {
-    parAge.forEach(g => {
-      const row = [
+    doc.tableauCharte({
+      colonnes: [{ l: 'Millésime', w: 155 }, { l: 'Présentes', w: 70 }, { l: 'Mises bas', w: 70 }, { l: 'Fertilité', w: 75 }, { l: 'Prolificité', w: 75 }, { l: 'Durée mise bas', w: 78 }],
+      lignes: parAge.map(g => [
         (g.millesime === null ? 'Année inconnue' : 'Millésime ' + g.millesime + (g.antenaises ? ' (antenaises)' : '')), String(g.presentes), String(g.misesBas),
-        pctTxt(g.fertilite), ratTxt(g.prolificite),
-        g.dureeMiseBas !== null ? g.dureeMiseBas + ' j' : '—'
-      ];
-      cols.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], 'F1', 9.5); });
-      y -= PDF_ROW_HEIGHT;
+        pctTxt(g.fertilite), ratTxt(g.prolificite), g.dureeMiseBas !== null ? g.dureeMiseBas + ' j' : '—'
+      ]), vide: '', premiere: { col: pdfHexCouleur('#2f6e44') },
+      entete: { fond: pdfHexCouleur('#357f4b'), texte: PDF_COULEURS.blanc }, alterne: [pdfHexCouleur('#f6f1e4'), PDF_COULEURS.blanc]
     });
   }
-  y -= 10;
-  pdfWrapLines("Antenaises = millésime le plus jeune présent dans la campagne" + (classement.millesimeAntenaise !== null ? " (" + classement.millesimeAntenaise + ")" : "") + " ; brebis = tous les autres millésimes — même règle que le tableau à l'écran. Ce détail par millésime (année de naissance déduite de l'EID) n'existe que dans cet export.", 95)
-    .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
-
-  content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
-  return buildSinglePagePdfBytes(content, false);
+  doc.note("Antenaises = millésime le plus jeune présent dans la campagne" + (classement.millesimeAntenaise !== null ? " (" + classement.millesimeAntenaise + ")" : "") + " ; brebis = tous les autres millésimes — même règle que le tableau à l'écran. Ce détail par millésime (année de naissance déduite de l'EID) n'existe que dans cet export.", 8);
+  return doc.fin();
 }
 
 async function exportBilanAgeExactPdf(campagne) {

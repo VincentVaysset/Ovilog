@@ -20,6 +20,7 @@ const MIGRES = {
   sous_delai: { paysage: false, ajouts: ["Sous", "délai", "d'attente", 'lait'] },
   controle_laitier: { paysage: true, ajouts: ['Contrôle', 'laitier'], ignorer: ['undefined'] },   // l'ancien PDF imprimait le mot « undefined » comme sous-titre (défaut) : retiré, rien d'autre ne change
   bilan_lactation: { paysage: false, ajouts: ['Litrage', 'total', 'produit', 'L', 'Brebis', 'passées', 'à', 'la', 'traite', '/', 'brebis'], ignorer: ['Ovilog', '—', '·'] },   // « Ovilog — » devant le titre et « · » entre exploitation et campagne : remplacés par le logo OVILOG et la mise en page de l'en-tête
+  bilan_age: { paysage: false, ajouts: ['Bilan', 'de', 'reproduction', 'troupeau', 'Brebis', 'présentes', 'Mises', 'bas', 'Campagne', 'DÉTAIL', 'PAR', 'MILLÉSIME'], ignorer: ['Ovilog', '—', '·', 'édité'] },   // « Ovilog — », « · » et « édité » : repris par le logo OVILOG et l'en-tête (« Édité le »)
   registre_sanitaire_filtre: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] }
 };
 const browser = await chromium.launch(LAUNCH);
