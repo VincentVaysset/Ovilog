@@ -672,6 +672,16 @@
      séparés par un <thead>/<tbody> explicite (implicite navigateur) --
      nth-child compte donc l'en-tête comme 1er enfant, sans conséquence
      sur l'alternance des lignes de données. */
+  /* Inventaire : barre recherche + exports ; PC = tableau compact (colonnes resserrées), mobile = champ puis boutons pleine largeur */
+  .inv-barre { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
+  .inv-barre .inv-q label { margin-bottom: 4px; }
+  .inv-boutons { display: flex; gap: 8px; }
+  .inv-boutons button { flex: 1; }
+  body.desktop-shell .inv-barre { flex-direction: row; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+  body.desktop-shell .inv-barre .inv-q { flex: 1 1 260px; max-width: 380px; }
+  body.desktop-shell .inv-boutons button { flex: 0 0 auto; width: auto; padding-left: 20px; padding-right: 20px; }
+  body.desktop-shell table.inv-compact { width: auto; min-width: 380px; }
+  body.desktop-shell table.inv-compact th, body.desktop-shell table.inv-compact td { padding-right: 28px; }
   .table-desktop { border: 1px solid var(--border); border-radius: var(--radius); }
   .table-desktop th { background: #f0efe9; border-bottom: 2px solid var(--border); border-right: 1px solid var(--border); }
   .table-desktop th:last-child { border-right: none; }
@@ -5338,6 +5348,7 @@ let bilanEconomiqueCampagneAffichee = null; // campagne consultée dans le sous-
 let ecoMobileOuverts = new Set(); // mois dépliés (clés 'YYYY-MM') dans « Mois par mois » du Bilan économique mobile
 let ecoMobileTous = false; // « Voir les 12 mois » : afficher aussi les mois sans donnée
 let bilanEconomiqueMoisAffiche = null; // 'YYYY-MM' du mois consulté pour le détail "Prix du lait" dans Bilan économique, voir bilanEconomiqueHtml
+let inventaireActifsRecherche = ''; // recherche par numéro de l'onglet Inventaire (voir inventaireActifsFiltres)
 let inventaireActifsTab = 'brebis'; // 'brebis' | 'agnelles' | 'beliers' | 'agneaux' — voir renderInventaireActifs
 let declarationAnneeSelectionnee = null; // année civile choisie sur l'écran Déclaration annuelle (voir renderDeclarationAnnuelle), initialisée à l'année en cours au premier rendu
 let calendrierMoisAffiche = null; // 'YYYY-MM' du mois affiché sur le Calendrier (voir renderJournal) -- initialisé au mois en cours au premier rendu, conservé ensuite pour garder la navigation mois précédent/suivant d'un rendu à l'autre
@@ -9070,25 +9081,34 @@ function buildInventairePdfBytes(key, items, recherche) {
   return doc.fin();
 }
 
+/* Numéros d'un animal de l'inventaire (tous ceux de son onglet + EID complet) : la recherche porte sur chacun, sans tenir compte des espaces ni de la casse. */
+function inventaireActifsNumeros(key, it) {
+  const nums = inventaireActifsColumns(key).map(c => c.value(it));
+  nums.push(it.eid || '', cleanEid(it.eid || ''), numeroVisuel(it.eid || ''), it.numeroCourtTravailSieol || '', it.numeroLongTravailSieol || '', it.numeroTravailSieol || '');
+  return nums.filter(Boolean).map(n => String(n).replace(/\s+/g, '').toLowerCase());
+}
+function inventaireActifsFiltres(key, recherche) {
+  const items = inventaireActifsItems(key);
+  const q = String(recherche || '').replace(/\s+/g, '').toLowerCase();
+  return q ? items.filter(it => inventaireActifsNumeros(key, it).some(n => n.includes(q))) : items;
+}
+
 function renderInventaireActifs() {
   pageTitle.textContent = 'Inventaire';
   const cat = INVENTAIRE_ACTIFS_CATEGORIES.find(c => c.key === inventaireActifsTab);
-  const items = inventaireActifsItems(inventaireActifsTab);
   const cols = inventaireActifsColumns(inventaireActifsTab);
+  const desktopInv = isDesktopMode();
+  let items = [];
 
   const tabBarHtml = `<div class="tab-bar">${INVENTAIRE_ACTIFS_CATEGORIES.map(c =>
     `<button type="button" class="tab-btn${inventaireActifsTab === c.key ? ' active' : ''}" data-tab="${c.key}">${c.label}</button>`
   ).join('')}</div>`;
 
-  // Colonnes propres à chaque catégorie (voir inventaireActifsColumns) --
-  // ligne cliquable pour ouvrir la fiche correspondante (voir plus bas),
-  // mais sans rien ajouter visuellement à la ligne elle-même. Sur desktop
-  // (chantier "Version PC desktop") : classe .table-desktop (bordures
-  // complètes + alternance de couleur) au lieu du simple style
-  // REGISTRE_TH/TD (bordures horizontales seules, conservé sur mobile) --
-  // écran déjà pleine largeur grâce à DESKTOP_WIDE_VIEWS (voir render()).
-  const desktopInv = isDesktopMode();
-  const tableHtml = items.length === 0 ? '<div class="empty">Aucun animal dans cette catégorie.</div>' : `<div style="overflow-x:auto;"><table class="${desktopInv ? 'table-desktop' : ''}" style="width:100%;border-collapse:collapse;">
+  // PC : tableau compact (colonnes resserrées, .table-desktop : bordures + alternance de couleur) ; mobile : tableau inchangé (REGISTRE_TH/TD, pleine largeur).
+  // Les lignes sont cliquables pour ouvrir la fiche (voir plus bas). Seul #inv-liste est redessiné pendant la frappe : le champ de recherche garde le focus.
+  const tableHtml = () => items.length === 0
+    ? `<div class="empty">${inventaireActifsRecherche ? 'Aucun animal ne correspond à la recherche.' : 'Aucun animal dans cette catégorie.'}</div>`
+    : `<div style="overflow-x:auto;"><table class="${desktopInv ? 'table-desktop inv-compact' : ''}" style="${desktopInv ? '' : 'width:100%;'}border-collapse:collapse;">
     <thead><tr>${cols.map(c => `<th style="${REGISTRE_TH}">${c.header}</th>`).join('')}</tr></thead>
     <tbody>${items.map((it, i) => `
     <tr class="inventaire-actifs-row" data-i="${i}" style="cursor:pointer;">
@@ -9097,54 +9117,66 @@ function renderInventaireActifs() {
   </table></div>`;
 
   app.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${items.length} animal(aux) actif(s).</div>
+    <div id="inv-compte" style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;"></div>
     ${tabBarHtml}
     ${(inventaireActifsTab === 'brebis' && !desktopInv) ? `
     <button type="button" class="btn btn-secondary" id="btn-maj-inventaire" style="border-color:var(--danger);color:var(--danger);margin:14px 0 0;">Mise à jour inventaire (bipage complet)</button>
     ` : ''}
-    <div class="row" style="margin:14px 0;">
-      <button type="button" class="btn btn-secondary" id="btn-export-inventaire-pdf">Export PDF</button>
-      <button type="button" class="btn btn-secondary" id="btn-export-inventaire-xlsx">Export Excel (.xlsx)</button>
+    <div class="inv-barre">
+      <div class="inv-q"><label for="inventaire-recherche">Rechercher un numéro</label><input type="text" id="inventaire-recherche" placeholder="Rechercher un numéro…" value="${inventaireActifsRecherche.replace(/"/g, '&quot;')}" autocomplete="off"></div>
+      <div class="inv-boutons">
+        <button type="button" class="btn btn-primary" id="btn-export-inventaire-pdf">Export PDF</button>
+        <button type="button" class="btn btn-secondary" id="btn-export-inventaire-xlsx">Export Excel (.xlsx)</button>
+      </div>
     </div>
-    ${tableHtml}
+    <div id="inv-liste"></div>
   `;
 
-  document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
-    btn.onclick = () => { inventaireActifsTab = btn.dataset.tab; render('inventaire-actifs'); };
-  });
+  const dessiner = () => {
+    items = inventaireActifsFiltres(inventaireActifsTab, inventaireActifsRecherche);
+    const total = inventaireActifsItems(inventaireActifsTab).length;
+    document.getElementById('inv-compte').textContent = inventaireActifsRecherche && items.length !== total
+      ? items.length + ' sur ' + total + ' animal(aux) actif(s).' : total + ' animal(aux) actif(s).';
+    document.getElementById('inv-liste').innerHTML = tableHtml();
+    document.querySelectorAll('.inventaire-actifs-row').forEach(tr => {
+      tr.onclick = () => {
+        const it = items[parseInt(tr.dataset.i, 10)];
+        if (inventaireActifsTab === 'brebis') {
+          detailOrigin = 'inventaire-actifs';
+          previousDetailId = null;
+          render('detail', it.id);
+        } else if (inventaireActifsTab === 'beliers') {
+          currentBelierId = it.id;
+          belierDetailOrigin = 'inventaire-actifs';
+          render('belier-detail');
+        } else if (inventaireActifsTab === 'agnelles') {
+          currentAgnelleId = it.id;
+          agnelleDetailOrigin = 'inventaire-actifs';
+          render('agnelle-detail');
+        } else {
+          // Agneaux actifs : pas de fiche dédiée — ouvre celle de la mère,
+          // comme partout ailleurs dans l'appli où un agneau est affiché.
+          const mother = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(it.mereEid));
+          if (!mother) { alert("Fiche de la mère introuvable (peut-être supprimée)."); return; }
+          detailOrigin = 'inventaire-actifs';
+          previousDetailId = null;
+          render('detail', mother.id);
+        }
+      };
+    });
+  };
+  dessiner();
 
+  document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
+    btn.onclick = () => { inventaireActifsTab = btn.dataset.tab; inventaireActifsRecherche = ''; render('inventaire-actifs'); };
+  });
   const btnMajInventaire = document.getElementById('btn-maj-inventaire');
   if (btnMajInventaire) btnMajInventaire.onclick = () => render('maj-inventaire');
+  document.getElementById('inventaire-recherche').addEventListener('input', (e) => { inventaireActifsRecherche = e.target.value; dessiner(); });
 
-  document.querySelectorAll('.inventaire-actifs-row').forEach(tr => {
-    tr.onclick = () => {
-      const it = items[parseInt(tr.dataset.i, 10)];
-      if (inventaireActifsTab === 'brebis') {
-        detailOrigin = 'inventaire-actifs';
-        previousDetailId = null;
-        render('detail', it.id);
-      } else if (inventaireActifsTab === 'beliers') {
-        currentBelierId = it.id;
-        belierDetailOrigin = 'inventaire-actifs';
-        render('belier-detail');
-      } else if (inventaireActifsTab === 'agnelles') {
-        currentAgnelleId = it.id;
-        agnelleDetailOrigin = 'inventaire-actifs';
-        render('agnelle-detail');
-      } else {
-        // Agneaux actifs : pas de fiche dédiée — ouvre celle de la mère,
-        // comme partout ailleurs dans l'appli où un agneau est affiché.
-        const mother = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(it.mereEid));
-        if (!mother) { alert("Fiche de la mère introuvable (peut-être supprimée)."); return; }
-        detailOrigin = 'inventaire-actifs';
-        previousDetailId = null;
-        render('detail', mother.id);
-      }
-    };
-  });
-
+  // Les exports portent sur la liste affichée (filtrée par la recherche)
   document.getElementById('btn-export-inventaire-pdf').onclick = () => {
-    const bytes = buildInventairePdfBytes(inventaireActifsTab, items);
+    const bytes = buildInventairePdfBytes(inventaireActifsTab, items, inventaireActifsRecherche.trim());
     saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + jourAujourdhuiISO() + '.pdf', bytes, 'application/pdf');
   };
   document.getElementById('btn-export-inventaire-xlsx').onclick = async () => {
