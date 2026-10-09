@@ -225,10 +225,10 @@ check(vide.plein === true && vide.vide === false, 'un lot vide n\'apparaît pas 
 await page.evaluate(() => { window.electronAPI.isDesktop = true; });
 await page.evaluate(() => { parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres'); });
 check(await page.evaluate(() => document.getElementById('f-repro-seuil-mb') && document.getElementById('f-repro-seuil-mb').value) === '3', 'Paramètres (PC) : seuil « délai depuis la dernière mise bas » = 3 mois par défaut');
-await page.fill('#f-repro-seuil-mb', '4'); await page.click('#btn-save-repro-seuil');
+await page.fill('#f-repro-seuil-mb', '4'); await page.click('#btn-save-repro');
 check(await page.evaluate(() => DB.reproSeuilMiseBasMois === 4 && window.__saves > 0), 'seuil enregistré (4 mois)');
 await page.evaluate(() => { window.electronAPI.isDesktop = false; render('parametres'); });
-check(await page.evaluate(() => !document.getElementById('f-repro-seuil-mb')), 'Paramètres mobile : carte absente (mobile inchangé)');
+check(await page.evaluate(() => !!document.getElementById('f-repro-seuil-mb')), 'Paramètres mobile : le délai est aussi affiché (réglage seulement, même carte que sur PC)');
 console.log('OK 6 synchro (collection + champs meta), garde-fou version, lot vide hors Bilan et sans « Chercher en bergerie », seuil dans Paramètres (PC seulement).');
 
 

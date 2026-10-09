@@ -80,7 +80,7 @@ await page.waitForTimeout(500);
 // Ouvre Paramètres > Campagne et lit le compteur affiché par le bouton de
 // nettoyage ponctuel -- doit valoir 1 (seulement "avant-ref"), pas 2.
 const compteurAffiche = await page.evaluate(() => {
-  parametresTab = 'campagne'; parametresRubrique = 'campagne';
+  parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; prmMaintenanceOuvert = true;
   render('parametres');
   const texte = document.getElementById('app').textContent;
   const m = texte.match(/(\d+) fiche\(s\) sortie\(s\) non encore archivée/);

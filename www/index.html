@@ -769,6 +769,15 @@
   .prm-plus { font-size: 13px; margin: 2px 0 6px; }
   .prm-plus summary { cursor: pointer; font-weight: 500; color: var(--blue-fg); }
   .prm-plus p { margin: 6px 0 0; color: var(--text-muted); line-height: 1.45; }
+  .prm-campagne-nom { font-size: 28px; font-weight: 700; color: var(--green-fg); }
+  .prm-sous-titre { font-size: 13px; font-weight: 700; color: var(--text-muted); margin: 4px 0 6px; }
+  .prm-avertissement { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--danger); border-radius: 10px; font-size: 12.5px; color: var(--danger); line-height: 1.45; }
+  .prm-restauration { margin-top: 10px; padding: 10px; border: 1px solid var(--danger); border-radius: 10px; }
+  button.btn.prm-danger { color: var(--danger); border-color: var(--danger); font-weight: 700; }
+  body.desktop-shell .prm-actions button.btn.prm-danger { width: auto; }
+  .prm-maintenance { margin-top: 16px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 18px; }
+  .prm-maintenance > summary { min-height: 52px; display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; list-style-position: inside; }
+  .prm-maintenance-corps { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; padding-bottom: 16px; }
   .prm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px; align-items: start; }
   .prm-cols { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
   .prm-col { flex: 2 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
@@ -26230,6 +26239,8 @@ const PARAMETRES_TABS = [
   { key: 'sauvegarde', label: 'Sauvegarde', aide: "Tes données et la version de l'application" }
 ];
 let parametresRubrique = null;
+// bloc Maintenance (Sauvegarde) : l'état ouvert/replié survit à un nouveau rendu de l'écran (écho de synchro pendant une opération du registre)
+let prmMaintenanceOuvert = false;
 const PARAMETRES_RUBRIQUES_MOBILE = ['exploitation', 'campagne', 'listes', 'sauvegarde'];
 // Mise en page commune des cartes : PC = grille de cartes pleine largeur ; mobile = cartes empilées sur une colonne (mêmes cartes, mêmes libellés).
 function prmGrilleHtml(cardsHtml) { return isDesktopMode() ? `<div class="prm-grid">${cardsHtml}</div>` : cardsHtml; }
@@ -26654,115 +26665,85 @@ function renderParametresCampagne(content) {
   // ecrireSnapshotPreCampagne/executerChangementCampagne) -- disparaît une
   // fois utilisé (restaurerSnapshotPreCampagne l'efface).
   const snapshotPreCampagne = lireSnapshotPreCampagne();
-  // Compte ce qu'un nettoyage ponctuel prendrait EFFECTIVEMENT en charge --
-  // même prédicat que archiverSortiesAnterieures, avec la même date de
-  // référence (dateRefNettoyage ci-dessous), pour que ce chiffre annonce
-  // exactement ce qui va se passer, ni plus ni moins.
-  // Référence = date de démarrage de la DERNIÈRE campagne (campagneDateDemarrage),
-  // pas la date du jour -- correctif demandé : le nettoyage ponctuel rattrape
-  // des sorties antérieures à la dernière bascule, jamais des sorties de la
-  // campagne EN COURS (qui seront archivées à la prochaine bascule, pas
-  // avant). Repli sur aujourd'hui seulement si aucune campagne n'a jamais
-  // été démarrée (ne devrait pas arriver en usage réel, cet écran suppose
-  // déjà au moins une campagne active).
-  const dateRefNettoyage = DB.campagneDateDemarrage || jourAujourdhuiISO();
-  function compterSortiesAArchiver(tableau, statutActif) {
-    return (tableau || []).filter(a => {
-      if ((a.statut || statutActif) === statutActif) return false;
-      const dernier = dernierMouvementParDate(a.mouvements);
-      return !!(dernier && dernier.date && dernier.date < dateRefNettoyage);
-    }).length;
-  }
-  const cptSortiesNonArchiveesBrebis = compterSortiesAArchiver(DB.brebis, 'active');
-  const cptSortiesNonArchiveesBeliers = compterSortiesAArchiver(DB.beliers, 'actif');
-  const cptSortiesNonArchivees = cptSortiesNonArchiveesBrebis + cptSortiesNonArchiveesBeliers;
   const snapshotPreCampagneHtml = !snapshotPreCampagne ? '' : `
-    <div style="margin-top:10px;padding:10px;border:1px solid var(--danger);border-radius:10px;">
-      <div style="font-size:12.5px;color:var(--text);margin-bottom:8px;">Point de restauration disponible : état d'avant la dernière bascule (${formatDateFr(snapshotPreCampagne.date.slice(0,10))}, ${snapshotPreCampagne.resume}).</div>
-      <button type="button" class="btn btn-secondary" id="btn-restaurer-pre-campagne" style="color:var(--danger);border-color:var(--danger);width:100%;">Restaurer l'état d'avant bascule</button>
+    <div class="prm-restauration">
+      <div class="prm-note" style="color:var(--text);margin-bottom:8px;">Point de restauration disponible : état d'avant la dernière bascule (${formatDateFr(snapshotPreCampagne.date.slice(0,10))}, ${snapshotPreCampagne.resume}).</div>
+      <button type="button" class="btn btn-secondary" id="btn-restaurer-pre-campagne" style="color:var(--danger);border-color:var(--danger);">Restaurer l'état d'avant bascule</button>
     </div>`;
-  const cardsHtml = `
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Date de démarrage de la campagne</div>
-      <label style="display:flex;align-items:center;">Mois / jour${infoBulleHtml('Date de démarrage de la campagne', "Le jour où ta campagne bascule d'une année sur l'autre — sert de référence à tous les calculs et libellés \"Campagne AAAA\" de l'application (Bilan de reproduction, Bilan de lactation, filtres par campagne...).")}</label>
+  const dateDebutLabel = campagneDateDebutLabel();
+  const periode = DB.campagneDebut ? 'du ' + dateDebutLabel + ' ' + DB.campagneDebut + ' au ' + campagneDateFinLabel() + ' ' + (DB.campagneDebut + 1) : 'non définie';
+  const carteCampagneEnCours = `
+    <div class="card" id="card-campagne-en-cours">
+      <div class="prm-titre">Campagne en cours</div>
+      <div style="display:flex;flex-direction:column;gap:2px;margin-bottom:12px;">
+        <div class="prm-campagne-nom">${DB.campagneDebut ? 'Campagne ' + (DB.campagneDebut + 1) : 'Campagne non définie'}</div>
+        <div style="color:var(--text-muted);">${periode}</div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:12px;">
+        <div class="prm-note">Le changement de campagne se fait le ${dateDebutLabel}. Une sauvegarde est faite avant, puis un écran de vérification détaillé s'affiche avant toute validation : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis.</div>
+        <div class="prm-actions"><button type="button" class="btn btn-secondary prm-danger" id="btn-nouvelle-campagne">Démarrer la campagne ${DB.campagneDebut ? DB.campagneDebut + 2 : ''}</button></div>
+        ${snapshotPreCampagneHtml}
+      </div>
+    </div>`;
+  // Réglage de démarrage initial : seulement sur une installation non initialisée (une fois la première bascule faite, il n'a plus d'effet : le bouton ci-dessus est l'unique façon de changer de campagne)
+  const carteCampagneInitiale = DB.campagneInitialisee ? '' : `
+    <div class="card" id="card-campagne-initiale">
+      <div class="prm-titre">Campagne actuelle</div>
+      <label for="f-campagne-annee">Année de fin — ex: 2026 pour la campagne du ${dateDebutLabel} 2025 au ${campagneDateFinLabel()} 2026</label>
       <div class="row">
-        ${selectMoisHtml('f-exp-campagne-mois', campagneMoisDebutConfig())}
-        ${selectJourHtml('f-exp-campagne-jour', campagneMoisDebutConfig(), campagneJourDebutConfig())}
+        <input type="number" id="f-campagne-annee" value="${DB.campagneDebut ? DB.campagneDebut + 1 : ''}" placeholder="ex: 2026">
+        <button type="button" class="btn btn-secondary" id="btn-save-campagne-annee" style="width:auto;padding:0 16px;">OK</button>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Campagne en cours : ${campagneDateDebutLabel()} au ${campagneDateFinLabel()}.</div>
-      <div style="margin-top:10px;padding:10px;border:1px solid var(--danger);border-radius:10px;">
-        <div style="font-size:12.5px;color:var(--danger);margin-bottom:8px;">Changer cette date peut décaler les campagnes déjà enregistrées (bilans, statuts vide définitive, contrôle laitier, etc.) — aucune correction automatique ne sera appliquée aux données existantes.</div>
-        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);margin-bottom:0;">
-          <input type="checkbox" id="f-exp-campagne-confirm" style="width:16px;height:16px;margin-top:1px;flex-shrink:0;">
-          <span>Je comprends le risque et je confirme</span>
-        </label>
+      <div class="prm-note">Réglage de démarrage initial uniquement — utile si tu installes l'appli en cours de campagne. Cette valeur sera automatiquement remplacée dès ton premier vrai changement de campagne.</div>
+    </div>`;
+  const carteDate = `
+    <div class="card" id="card-date-campagne">
+      <div class="prm-titre">Date de démarrage de la campagne</div>
+      <div id="prm-date-lecture" style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="font-size:18px;font-weight:700;">${dateDebutLabel}</div>
+        <button type="button" class="btn btn-secondary btn-petit" id="btn-modifier-date-campagne">Modifier</button>
       </div>
-      <button class="btn btn-secondary" id="btn-save-exp-campagne-date" style="margin-top:10px;" disabled>Enregistrer</button>
-    </div>
-
-    <div class="card">
-      ${sectionHeaderHtml(ICON_JOURNAL, 'indigo', 'Fenêtres de reproduction')}
-      <div class="row">
-        <div style="flex:1;"><label style="display:flex;align-items:center;">Min (jours) gestation${infoBulleHtml('Fenêtre de gestation (IA/Éponge)', "Fenêtre de gestation utilisée pour déduire automatiquement le code Repro à la saisie d'une mise bas (dans la fenêtre après un lot IA/Éponge → ce mode ; hors fenêtre → Retour IA).")}</label><input type="number" id="f-repro-gestation-min" value="${DB.reproGestationMin}"></div>
-        <div style="flex:1;"><label>Max (jours) gestation</label><input type="number" id="f-repro-gestation-max" value="${DB.reproGestationMax}"></div>
+      <div class="prm-note" style="margin-top:8px;">À ne changer qu'à l'installation : modifier cette date décale les campagnes déjà enregistrées. Une confirmation est demandée.</div>
+      ${prmEnSavoirPlusHtml("Le jour où ta campagne bascule d'une année sur l'autre — sert de référence à tous les calculs et libellés « Campagne AAAA » de l'application (Bilan de reproduction, Bilan de lactation, filtres par campagne...).")}
+      <div id="prm-date-edition" class="hidden">
+        <label>Mois / jour</label>
+        <div class="row">
+          ${selectMoisHtml('f-exp-campagne-mois', campagneMoisDebutConfig())}
+          ${selectJourHtml('f-exp-campagne-jour', campagneMoisDebutConfig(), campagneJourDebutConfig())}
+        </div>
+        <div class="prm-avertissement">
+          <div style="margin-bottom:8px;">Changer cette date peut décaler les campagnes déjà enregistrées (bilans, statuts vide définitive, contrôle laitier, etc.) — aucune correction automatique ne sera appliquée aux données existantes.</div>
+          <label class="prm-case" style="font-weight:400;font-size:12.5px;align-items:flex-start;"><input type="checkbox" id="f-exp-campagne-confirm"><span>Je comprends le risque et je confirme</span></label>
+        </div>
+        <div class="prm-actions" style="margin-top:10px;"><button type="button" class="btn btn-primary" id="btn-save-exp-campagne-date" disabled>Enregistrer</button><button type="button" class="btn btn-secondary" id="btn-annuler-date-campagne">Annuler</button></div>
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin:12px 0;">Fenêtre "1er retour" utilisée dans le Bilan de reproduction (bloc Lots IA) pour distinguer une mise bas issue de l'IA directe de celle d'une saillie de retour de chaleur — comptée à partir de la même date de lot, jamais une saillie enregistrée séparément.</div>
-      <div class="row">
-        <div style="flex:1;"><label>Min (jours) 1er retour</label><input type="number" id="f-repro-retour-min" value="${DB.reproRetourMin}"></div>
-        <div style="flex:1;"><label>Max (jours) 1er retour</label><input type="number" id="f-repro-retour-max" value="${DB.reproRetourMax}"></div>
+    </div>`;
+  const carteRepro = `
+    <div class="card" id="card-repro">
+      <div class="prm-titre">Réglages de reproduction</div>
+      <div class="prm-sous-titre">Durée de gestation (jours)</div>
+      <div class="prm-champs2"><div><label for="f-repro-gestation-min">Minimum</label><input type="number" id="f-repro-gestation-min" value="${DB.reproGestationMin}"></div><div><label for="f-repro-gestation-max">Maximum</label><input type="number" id="f-repro-gestation-max" value="${DB.reproGestationMax}"></div></div>
+      <div class="prm-sous-titre">Premier retour après IA (jours)</div>
+      <div class="prm-champs2"><div><label for="f-repro-retour-min">Minimum</label><input type="number" id="f-repro-retour-min" value="${DB.reproRetourMin}"></div><div><label for="f-repro-retour-max">Maximum</label><input type="number" id="f-repro-retour-max" value="${DB.reproRetourMax}"></div></div>
+      <div class="prm-note">Sert à déduire le code Repro à la saisie d'une mise bas et à distinguer IA directe et retour dans le Bilan de reproduction.</div>
+      ${prmEnSavoirPlusHtml("Fenêtre de gestation utilisée pour déduire automatiquement le code Repro à la saisie d'une mise bas (dans la fenêtre après un lot IA/Éponge → ce mode ; hors fenêtre → Retour IA). La fenêtre « 1er retour » est utilisée dans le Bilan de reproduction (bloc Lots IA) pour distinguer une mise bas issue de l'IA directe de celle d'une saillie de retour de chaleur — comptée à partir de la même date de lot, jamais une saillie enregistrée séparément.")}
+      <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:6px;">
+        <label for="f-repro-seuil-mb">Délai minimal entre la dernière mise bas et l'IA (mois)</label>
+        <input type="number" id="f-repro-seuil-mb" min="0" max="24" step="1" value="${seuilMiseBasMois()}">
+        <div class="prm-note">Utilisé par le raccourci « 3 mois avant l'IA » et le filtre rapide « Critères IA » du Chantier de tri.</div>
       </div>
-      <div style="margin-top:10px;padding:10px;border:1px solid var(--danger);border-radius:10px;">
-        <div style="font-size:12.5px;color:var(--danger);margin-bottom:8px;">Modifier ces fenêtres change le calcul automatique du code Repro pour les prochaines saisies — aucune correction rétroactive ne sera appliquée aux données déjà enregistrées.</div>
-        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);margin-bottom:0;">
-          <input type="checkbox" id="f-repro-confirm" style="width:16px;height:16px;margin-top:1px;flex-shrink:0;">
-          <span>Je comprends le risque et je confirme</span>
-        </label>
-      </div>
-      <button class="btn btn-secondary" id="btn-save-repro-fenetres" style="margin-top:10px;" disabled>Enregistrer</button>
-    </div>
-    ${isDesktopMode() ? `<div class="card">
-      ${sectionHeaderHtml(ICON_JOURNAL, 'indigo', 'Tri des lots de reproduction')}
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Délai minimal entre la dernière mise bas et l'IA, utilisé par le raccourci « 3 mois avant l'IA » et le filtre rapide « Critères IA » du Chantier de tri. Ne modifie aucune donnée enregistrée.</div>
-      <label for="f-repro-seuil-mb">Délai depuis la dernière mise bas (mois)</label>
-      <input type="number" id="f-repro-seuil-mb" min="0" max="24" step="1" value="${seuilMiseBasMois()}">
-      <button class="btn btn-secondary" id="btn-save-repro-seuil" style="margin-top:10px;">Enregistrer</button>
-    </div>` : ''}
-
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Campagne actuelle</div>
-      <label>Année de fin — ex: 2026 pour la campagne du ${campagneDateDebutLabel()} 2025 au ${campagneDateFinLabel()} 2026</label>
-      <div class="row">
-        <input type="number" id="f-campagne-annee" value="${DB.campagneDebut ? DB.campagneDebut + 1 : ''}" placeholder="ex: 2026" ${DB.campagneInitialisee ? 'disabled' : ''}>
-        <button type="button" class="btn btn-secondary" id="btn-save-campagne-annee" style="width:auto;padding:0 16px;" ${DB.campagneInitialisee ? 'disabled' : ''}>OK</button>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">${DB.campagneInitialisee
-        ? 'Ce réglage n\'est plus disponible : le bouton "Démarrer une nouvelle campagne" ci-dessous est désormais l\'unique façon de changer de campagne.'
-        : 'Réglage de démarrage initial uniquement — utile si tu installes l\'appli en cours de campagne. Cette valeur sera automatiquement remplacée dès ton premier vrai changement de campagne ci-dessous.'}</div>
-    </div>
-
-    <div class="card" style="border-color:var(--accent);">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Changement de campagne</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Campagne actuelle : ${DB.campagneDebut ? ('Campagne ' + (DB.campagneDebut + 1) + ' (' + campagneDateDebutLabel() + ' ' + DB.campagneDebut + ' au ' + campagneDateFinLabel() + ' ' + (DB.campagneDebut + 1) + ')') : 'non définie'}. À déclencher le ${campagneDateDebutLabel()} : les ${(DB.agnelles||[]).length} agnelle(s) de l'inventaire rejoignent le troupeau de brebis. Un écran de vérification détaillé s'affiche avant toute validation.</div>
-      <button class="btn btn-secondary" id="btn-nouvelle-campagne" style="color:var(--danger);border-color:var(--danger);">Démarrer une nouvelle campagne</button>
-      ${snapshotPreCampagneHtml}
-    </div>
-
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Nettoyage ponctuel du registre${infoBulleHtml('Nettoyage ponctuel du registre', "Archive dans le registre d'élevage, puis retire des onglets Brebis/Béliers/Mouvements, toute fiche déjà vendue ou morte mais jamais archivée (sortie antérieure à aujourd'hui) -- sans relancer un changement de campagne. À utiliser une fois pour rattraper des sorties anciennes, ou ponctuellement si besoin.")}</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">${cptSortiesNonArchivees} fiche(s) sortie(s) non encore archivée(s) trouvée(s) (${cptSortiesNonArchiveesBrebis} brebis, ${cptSortiesNonArchiveesBeliers} bélier(s)).</div>
-      <button class="btn btn-secondary" id="btn-nettoyer-registre" style="color:var(--danger);border-color:var(--danger);" ${cptSortiesNonArchivees === 0 ? 'disabled' : ''}>Nettoyer le registre maintenant</button>
-      <div id="nettoyage-registre-status" style="font-size:12px;margin-top:8px;">${xlsxEscape(nettoyageRegistreStatusMsg)}</div>
-    </div>
-
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Doublons du registre${infoBulleHtml('Doublons du registre', "Cherche, dans les entrées archivées du registre, les éléments strictement identiques présents plusieurs fois (par exemple après une bascule exécutée deux fois). L'analyse ne modifie rien. Rien n'est retiré sans ta confirmation, après une sauvegarde JSON ; les fiches, l'effectif et les bilans ne sont jamais touchés. Un élément présent 2 fois dans mouvements ou agnelages est coché par défaut ; les autres cas (3 occurrences ou plus, carnet sanitaire, autres champs) sont listés à part, décochés.")}</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Analyse en lecture seule des doublons exacts du registre d'élevage.</div>
-      <div id="dd-registre-zone">${doublonsRegistreZoneHtml()}</div>
-    </div>
-  `;
-  content.innerHTML = prmGrilleHtml(cardsHtml);
+      <div class="prm-note">S'applique aux prochaines saisies. Rien de déjà enregistré n'est recalculé.</div>
+      <div class="prm-actions prm-actions-fin"><button type="button" class="btn btn-primary" id="btn-save-repro">Enregistrer</button></div>
+    </div>`;
+  content.innerHTML = prmColonnesHtml(carteCampagneEnCours + carteCampagneInitiale + carteDate, carteRepro);
 
   wireSelectMoisJour('f-exp-campagne-mois', 'f-exp-campagne-jour');
+  // La date n'est modifiable qu'après un clic sur « Modifier » : l'avertissement et la case de confirmation n'apparaissent qu'à ce moment-là
+  document.getElementById('btn-modifier-date-campagne').onclick = () => {
+    document.getElementById('prm-date-edition').classList.remove('hidden');
+    document.getElementById('prm-date-lecture').classList.add('hidden');
+  };
+  document.getElementById('btn-annuler-date-campagne').onclick = () => render('parametres');
   document.getElementById('f-exp-campagne-confirm').onchange = (e) => {
     document.getElementById('btn-save-exp-campagne-date').disabled = !e.target.checked;
   };
@@ -26779,34 +26760,29 @@ function renderParametresCampagne(content) {
     saveData(DB);
     render('parametres');
   };
-  document.getElementById('f-repro-confirm').onchange = (e) => {
-    document.getElementById('btn-save-repro-fenetres').disabled = !e.target.checked;
-  };
-  document.getElementById('btn-save-repro-fenetres').onclick = () => {
-    if (!document.getElementById('f-repro-confirm').checked) return;
+  // UN seul Enregistrer pour les réglages de reproduction : tout est validé avant la moindre écriture
+  document.getElementById('btn-save-repro').onclick = () => {
     const gMin = parseInt(document.getElementById('f-repro-gestation-min').value, 10);
     const gMax = parseInt(document.getElementById('f-repro-gestation-max').value, 10);
     const rMin = parseInt(document.getElementById('f-repro-retour-min').value, 10);
     const rMax = parseInt(document.getElementById('f-repro-retour-max').value, 10);
+    const seuil = parseInt(document.getElementById('f-repro-seuil-mb').value, 10);
     if (isNaN(gMin) || isNaN(gMax) || gMin <= 0 || gMax <= 0 || gMin > gMax || isNaN(rMin) || isNaN(rMax) || rMin <= 0 || rMax <= 0 || rMin > rMax) {
       alert("Fenêtres invalides — vérifie les valeurs (chaque min doit être inférieur ou égal à son max).");
       return;
     }
+    if (isNaN(seuil) || seuil < 0 || seuil > 24) { alert("Saisis un délai entre 0 et 24 mois pour l'IA après mise bas."); return; }
     DB.reproGestationMin = gMin;
     DB.reproGestationMax = gMax;
     DB.reproRetourMin = rMin;
     DB.reproRetourMax = rMax;
+    DB.reproSeuilMiseBasMois = seuil;
     saveData(DB);
+    alert('Réglages de reproduction enregistrés.');
     render('parametres');
   };
-  if (document.getElementById('btn-save-repro-seuil')) document.getElementById('btn-save-repro-seuil').onclick = () => {
-    const v = parseInt(document.getElementById('f-repro-seuil-mb').value, 10);
-    if (isNaN(v) || v < 0 || v > 24) { alert("Saisis un nombre de mois entre 0 et 24."); return; }
-    DB.reproSeuilMiseBasMois = v;
-    saveData(DB);
-    render('parametres');
-  };
-  document.getElementById('btn-save-campagne-annee').onclick = () => {
+  const btnCampagneAnnee = document.getElementById('btn-save-campagne-annee');
+  if (btnCampagneAnnee) btnCampagneAnnee.onclick = () => {
     // Verrouillé dès le premier vrai "changement de campagne" (voir
     // DB.campagneInitialisee) — ce champ rapide ne sert plus qu'au tout
     // premier réglage, avant ce moment-là.
@@ -26841,11 +26817,49 @@ function renderParametresCampagne(content) {
       else alert("Aucun point de restauration disponible (peut-être déjà utilisé).");
     };
   }
-  // Nettoyage ponctuel du registre (chantier "Compléter le changement de
-  // campagne", 2e étape, point 5) : jamais en rejouant la bascule --
-  // réutilise directement archiverSortiesAnterieures (même garantie
-  // écriture+vérification avant retrait), avec une sauvegarde JSON avant,
-  // exactement comme executerChangementCampagne.
+}
+
+/* ---------- Maintenance du registre (Paramètres > Sauvegarde > Maintenance, bloc replié) ----------
+   « Nettoyage ponctuel du registre » et « Doublons du registre » : déplacés depuis l'ancien onglet Campagne, logique inchangée. */
+function maintenanceRegistreBloc() {
+  // Compte ce qu'un nettoyage ponctuel prendrait EFFECTIVEMENT en charge --
+  // même prédicat que archiverSortiesAnterieures, avec la même date de
+  // référence (dateRefNettoyage ci-dessous), pour que ce chiffre annonce
+  // exactement ce qui va se passer, ni plus ni moins.
+  // Référence = date de démarrage de la DERNIÈRE campagne (campagneDateDemarrage),
+  // pas la date du jour -- correctif demandé : le nettoyage ponctuel rattrape
+  // des sorties antérieures à la dernière bascule, jamais des sorties de la
+  // campagne EN COURS (qui seront archivées à la prochaine bascule, pas
+  // avant). Repli sur aujourd'hui seulement si aucune campagne n'a jamais
+  // été démarrée (ne devrait pas arriver en usage réel, cet écran suppose
+  // déjà au moins une campagne active).
+  const dateRefNettoyage = DB.campagneDateDemarrage || jourAujourdhuiISO();
+  function compterSortiesAArchiver(tableau, statutActif) {
+    return (tableau || []).filter(a => {
+      if ((a.statut || statutActif) === statutActif) return false;
+      const dernier = dernierMouvementParDate(a.mouvements);
+      return !!(dernier && dernier.date && dernier.date < dateRefNettoyage);
+    }).length;
+  }
+  const cptSortiesNonArchiveesBrebis = compterSortiesAArchiver(DB.brebis, 'active');
+  const cptSortiesNonArchiveesBeliers = compterSortiesAArchiver(DB.beliers, 'actif');
+  const cptSortiesNonArchivees = cptSortiesNonArchiveesBrebis + cptSortiesNonArchiveesBeliers;
+  const html = `
+    <div class="card" id="card-nettoyage-registre">
+      <div class="prm-titre">Nettoyage ponctuel du registre</div>
+      <div class="prm-note">${cptSortiesNonArchivees} fiche(s) sortie(s) non encore archivée(s) trouvée(s) (${cptSortiesNonArchiveesBrebis} brebis, ${cptSortiesNonArchiveesBeliers} bélier(s)).</div>
+      ${prmEnSavoirPlusHtml("Archive dans le registre d'élevage, puis retire des onglets Brebis/Béliers/Mouvements, toute fiche déjà vendue ou morte mais jamais archivée (sortie antérieure à aujourd'hui) -- sans relancer un changement de campagne. À utiliser une fois pour rattraper des sorties anciennes, ou ponctuellement si besoin.")}
+      <button type="button" class="btn btn-secondary" id="btn-nettoyer-registre" style="color:var(--danger);border-color:var(--danger);" ${cptSortiesNonArchivees === 0 ? 'disabled' : ''}>Nettoyer le registre maintenant</button>
+      <div id="nettoyage-registre-status" style="font-size:12px;margin-top:8px;">${xlsxEscape(nettoyageRegistreStatusMsg)}</div>
+    </div>
+
+    <div class="card" id="card-doublons-registre">
+      <div class="prm-titre">Doublons du registre</div>
+      <div class="prm-note">Analyse en lecture seule des doublons exacts du registre d'élevage.</div>
+      ${prmEnSavoirPlusHtml("Cherche, dans les entrées archivées du registre, les éléments strictement identiques présents plusieurs fois (par exemple après une bascule exécutée deux fois). L'analyse ne modifie rien. Rien n'est retiré sans ta confirmation, après une sauvegarde JSON ; les fiches, l'effectif et les bilans ne sont jamais touchés. Un élément présent 2 fois dans mouvements ou agnelages est coché par défaut ; les autres cas (3 occurrences ou plus, carnet sanitaire, autres champs) sont listés à part, décochés.")}
+      <div id="dd-registre-zone">${doublonsRegistreZoneHtml()}</div>
+    </div>`;
+  const brancher = () => {
   const btnNettoyerRegistreInit = document.getElementById('btn-nettoyer-registre');
   if (btnNettoyerRegistreInit) {
     btnNettoyerRegistreInit.onclick = async () => {
@@ -26906,7 +26920,9 @@ function renderParametresCampagne(content) {
       }
     };
   }
-  wireDoublonsRegistre();
+    wireDoublonsRegistre();
+  };
+  return { html, brancher };
 }
 
 /* ---- Carte « Doublons du registre » (Paramètres > Campagne) ---- */
@@ -27023,6 +27039,7 @@ function wireDoublonsRegistre() {
 
 /* ---------- Onglet Sauvegarde ---------- */
 function renderParametresSauvegarde(content) {
+  const maintenance = maintenanceRegistreBloc();
   const cardsHtml = `
     <div class="card">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;">Sauvegarde des données${infoBulleHtml('Sauvegarde des données', "Important : à chaque fois qu'une nouvelle version du fichier est installée, exporte d'abord tes données ici, puis réimporte-les une fois la nouvelle version ouverte — sinon tout repart à zéro.")}</div>
@@ -27057,7 +27074,9 @@ function renderParametresSauvegarde(content) {
 
     <div id="version-footer" style="text-align:center;font-size:11px;color:var(--text-muted);padding:6px 0 4px;">${libelleVersion()}</div>
   `;
-  content.innerHTML = prmGrilleHtml(cardsHtml);
+  content.innerHTML = prmGrilleHtml(cardsHtml) + `<details class="prm-maintenance" id="prm-maintenance"${prmMaintenanceOuvert ? ' open' : ''}><summary><b>Maintenance</b> · Rechercher les doublons du registre</summary><div class="prm-maintenance-corps">${maintenance.html}</div></details>`;
+  maintenance.brancher();
+  document.getElementById('prm-maintenance').ontoggle = (e) => { prmMaintenanceOuvert = e.target.open; };
 
   // Aucun scan/bip EID sur PC (chantier "Version PC desktop") : le
   // diagnostic Bluetooth n'existe même plus dans le DOM sur desktop (voir

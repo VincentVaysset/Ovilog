@@ -29,7 +29,7 @@ const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? docume
     eq(await txt(page, '.brd-title'), nom, 'titre de l\'onglet ' + nom);
     check((await txt(page, '.brd-sub')).includes(aide), 'ligne d\'explication de ' + nom + ' : ' + await txt(page, '.brd-sub'));
     check(await page.evaluate(() => document.querySelector('.tab-btn.active').textContent) === nom, 'onglet actif ' + nom);
-    check(await page.evaluate(() => !!document.querySelector('#parametres-tab-content .prm-grid')), 'cartes en grille PC (' + nom + ')');
+    check(await page.evaluate(() => !!document.querySelector('#parametres-tab-content .prm-grid, #parametres-tab-content .prm-cols')), 'cartes en grille PC (' + nom + ')');
   }
   console.log('OK PC : 5 onglets dans l\'ordre, titre + explication par onglet, grille de cartes.');
   await page.close();
