@@ -16,6 +16,7 @@ const MIGRES = {
   registre_agnelage: { paysage: true, ajouts: ['Registre', "d'élevage", 'Agnelage', 'Agneaux', 'enregistrés', 'Mâles', 'Femelles', 'Morts-nés'] },
   registre_mouvements: { paysage: true, ajouts: ['Registre', "d'élevage", 'Mouvements', 'Animaux', 'au', 'registre', 'Actifs', 'Entrées', 'Sorties'] },
   registre_sanitaire: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] },
+  traitements12: { paysage: true, ajouts: ['Animaux', 'actifs', 'brebis,', 'antenaises,', 'béliers', 'Aucun', 'traitement', 'compté', 'et', 'plus', 'seuil', 'dépassé', '%', 'Traitements', 'sur', '12', 'mois', 'suivi', 'bio', 'Ovilog'] },
   registre_sanitaire_filtre: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] }
 };
 const browser = await chromium.launch(LAUNCH);

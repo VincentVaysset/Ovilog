@@ -144,7 +144,7 @@ console.log('OK 6 filtres (≥ N traitements, catégories, n°, date « Au »), 
 const exp = await page.evaluate(async () => {
   const cap = [];
   window.buildXlsxWorkbook = async (s) => { cap.push({ t: 'xlsx', s: JSON.parse(JSON.stringify(s)) }); return new Uint8Array([1]); };
-  const bp = window.buildPdfTable; window.buildPdfTable = (a) => { cap.push({ t: 'pdf', a: JSON.parse(JSON.stringify(a)) }); return bp(a); };
+  const nomBp = window.buildPdfTableCharte ? 'buildPdfTableCharte' : 'buildPdfTable', bp = window[nomBp]; window[nomBp] = (a) => { cap.push({ t: 'pdf', a: JSON.parse(JSON.stringify({ title: a.title, subtitle: a.subtitle, columns: a.columns, rows: a.rows, landscape: a.landscape, fontSize: a.fontSize, headerSize: a.headerSize })), tuiles: (a.tuiles || []).map(u => [u.label, u.valeur]) }); return bp(a); };
   window.saveOrShareBinaryFile = async (nom, bytes, mime) => { cap.push({ t: 'file', nom, mime }); };
   suivi12Etat.vue = 'brebis'; suivi12Etat.min = 3; suivi12Etat.q = ''; suivi12Etat.au = ''; suivi12Etat.toutVoir = false; render('traitements-12-mois');
   document.getElementById('s12-export-xlsx').click(); await new Promise(r => setTimeout(r, 100));
