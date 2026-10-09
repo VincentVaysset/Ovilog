@@ -22,6 +22,8 @@ const MIGRES = {
   bilan_lactation: { paysage: false, ajouts: ['Litrage', 'total', 'produit', 'L', 'Brebis', 'passées', 'à', 'la', 'traite', '/', 'brebis'], ignorer: ['Ovilog', '—', '·'] },   // « Ovilog — » devant le titre et « · » entre exploitation et campagne : remplacés par le logo OVILOG et la mise en page de l'en-tête
   bilan_age: { paysage: false, ajouts: ['Bilan', 'de', 'reproduction', 'troupeau', 'Brebis', 'présentes', 'Mises', 'bas', 'Campagne', 'DÉTAIL', 'PAR', 'MILLÉSIME'], ignorer: ['Ovilog', '—', '·', 'édité'] },   // « Ovilog — », « · » et « édité » : repris par le logo OVILOG et l'en-tête (« Édité le »)
   bilan_complet: { paysage: false, ajouts: ['Bilan', 'de', 'reproduction'], ignorer: ['Ovilog', '—', '·', 'édité', 'page'], tolerer: { 1: 1, 2: 3, '/': 2 } },   // « Ovilog — », « · », « édité le » et « page i / N » : repris par le logo, l'en-tête et le pied « Page i/N » de la charte
+  lot_ia: { paysage: true, ajouts: ['Lot', 'de', 'reproduction', 'IA', 'Éponge', 'Effectif', 'du', 'lot', 'Mises', 'bas', 'Fertilité', 'Prolificité', '%'], ignorer: ['Ovilog', '—', '·', 'édité'] },   // « Ovilog — », « · » et « édité le » : repris par le logo OVILOG et l'en-tête
+  lot_eponge: { paysage: false, ajouts: ['Lot', 'de', 'reproduction', 'IA', 'Éponge', 'Effectif', 'du', 'lot', 'Mises', 'bas', 'Fertilité', 'Prolificité', '%'], ignorer: ['Ovilog', '—', '·', 'édité'] },
   registre_sanitaire_filtre: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] }
 };
 const browser = await chromium.launch(LAUNCH);

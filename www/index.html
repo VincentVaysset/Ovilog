@@ -21732,11 +21732,18 @@ function pdfProdDoc(opts) {
     tableauCharte({ colonnes, lignes, entete: st, alterne, premiere, hLigne = 17, hEntete = 20, rayon = 5, taille = 9.5, vide = '—' }) {
       const wTot = colonnes.reduce((s, k) => s + k.w, 0);
       let yHaut = 0, hautSegment = false;
+      const deux = colonnes.some(k => k.l2);   // en-tête sur 2 lignes : groupe (l) au-dessus du libellé de colonne (l2)
+      if (deux) hEntete = Math.max(hEntete, 30);
       const ouvrir = () => {
         yHaut = y; hautSegment = true;
         c += pdfRectArrondiOp(L, y - hEntete, wTot, hEntete, rayon, 0, st.fond);
         let x = L;
-        colonnes.forEach(k => { txt(x + 8, y - hEntete + 7, pdfFit(k.l, Math.min(8.5, taille), true, k.w - 12), 'FB', Math.min(8.5, taille), st.texte); x += k.w; });
+        const te = Math.min(8.5, taille);
+        colonnes.forEach(k => {
+          if (deux) { txt(x + 8, y - hEntete + 18, pdfFit(k.l || '', te, true, k.w - 12), 'FB', te, st.texte); txt(x + 8, y - hEntete + 7, pdfFit(k.l2 || '', te, true, k.w - 12), 'FB', te, st.texte); }
+          else txt(x + 8, y - hEntete + 7, pdfFit(k.l, te, true, k.w - 12), 'FB', te, st.texte);
+          x += k.w;
+        });
         y -= hEntete;
       };
       const fermer = (derniereLigneY) => {
@@ -22058,88 +22065,44 @@ function buildSinglePagePdfBytes(content, landscape) {
    cible toujours exclusive). Paysage : jusqu'à 11 colonnes dans le tableau
    par âge, trop serré en portrait (même choix que exportRegistrePdf). */
 function buildLotIaPdfBytes(lot) {
-  const landscape = true;
-  const pageW = PDF_PAGE_H, pageH = PDF_PAGE_W;
-  const rightEdge = pageW - PDF_MARGIN;
-  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(jourAujourdhuiISO());
+  // Charte colorée commune (pdfProdDoc, paysage) : MÊMES textes, colonnes, lignes et notes que l'ancien PDF noir et blanc ; seule la mise en forme change.
   const stats = statsLotIA(lot);
   const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
   const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
-
-  let y = pageH - PDF_MARGIN;
-  let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Lot de reproduction IA', 'FB', 14);
-  content += pdfTextOp(PDF_MARGIN + 400, y, 'Lot IA — ' + formatDateFr(lot.dateEvenement || lot.dateCreation), 'FB', 10);
-  y -= 14;
-  content += pdfTextOp(PDF_MARGIN, y, exploitationNom, 'F1', 9);
-  content += pdfTextOp(PDF_MARGIN + 400, y, stats.effectif + ' ' + (lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis') + ' · édité le ' + aujourdhui, 'F1', 9);
-  y -= 10;
-  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-  y -= 24;
-
-  content += pdfTextOp(PDF_MARGIN, y, 'RÉSULTATS DU LOT', 'FB', 10.5);
-  y -= 20;
-  const cols3 = [{ label: '', x: 0 }, { label: 'IA', x: 160 }, { label: '1er retour', x: 260 }, { label: 'Global', x: 380 }];
-  cols3.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
-  y -= 5;
-  content += pdfLineOp(PDF_MARGIN, y, PDF_MARGIN + 460, y);
-  y -= 16;
-  const rows3 = [
-    ['Mises bas', String(stats.ia.misesBas), String(stats.retour.misesBas), String(stats.global.misesBas)],
-    ['Fertilité', pctTxt(stats.ia.fertilite), pctTxt(stats.retour.fertilite), pctTxt(stats.global.fertilite)],
-    ['Prolificité', ratTxt(stats.ia.prolificite), ratTxt(stats.retour.prolificite), ratTxt(stats.global.prolificite)]
-  ];
-  rows3.forEach(row => {
-    cols3.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], ci === 3 ? 'FB' : 'F1', 9.5); });
-    y -= PDF_ROW_HEIGHT;
+  const entete = { fond: pdfHexCouleur('#357f4b'), texte: PDF_COULEURS.blanc }, alterne = [pdfHexCouleur('#f6f1e4'), PDF_COULEURS.blanc];
+  const doc = pdfProdDoc({ paysage: true });
+  doc.page('Lot de reproduction IA', 'Lot IA — ' + formatDateFr(lot.dateEvenement || lot.dateCreation) + ' · ' + stats.effectif + ' ' + (lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'), 'Ovilog — export généré automatiquement');
+  doc.tuiles([pdfTuile('vert', 'Effectif du lot', stats.effectif), pdfTuile('bleu', 'Mises bas', stats.global.misesBas), pdfTuile('ambre', 'Fertilité', pctTxt(stats.global.fertilite)), pdfTuile('rouge', 'Prolificité', ratTxt(stats.global.prolificite))]);
+  doc.section('RÉSULTATS DU LOT');
+  doc.tableauCharte({
+    colonnes: [{ l: '', w: 280 }, { l: 'IA', w: 150 }, { l: '1er retour', w: 150 }, { l: 'Global', w: 150 }], vide: '', premiere: null, entete, alterne,
+    lignes: [
+      ['Mises bas', String(stats.ia.misesBas), String(stats.retour.misesBas), String(stats.global.misesBas)],
+      ['Fertilité', pctTxt(stats.ia.fertilite), pctTxt(stats.retour.fertilite), pctTxt(stats.global.fertilite)],
+      ['Prolificité', ratTxt(stats.ia.prolificite), ratTxt(stats.retour.prolificite), ratTxt(stats.global.prolificite)]
+    ]
   });
-  y -= 6;
-  pdfWrapLines("Fenêtres : IA " + DB.reproGestationMin + "–" + DB.reproGestationMax + " j après la date du lot · 1er retour " + DB.reproRetourMin + "–" + DB.reproRetourMax + " j après la même date (réglable, Paramètres). Fertilité 1er retour = mises bas 1er retour ÷ brebis restantes après l'IA directe (" + stats.effectif + " − " + stats.ia.misesBas + " = " + (stats.effectif - stats.ia.misesBas) + ").", 150)
-    .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
-  y -= 16;
-
+  doc.note("Fenêtres : IA " + DB.reproGestationMin + "–" + DB.reproGestationMax + " j après la date du lot · 1er retour " + DB.reproRetourMin + "–" + DB.reproRetourMax + " j après la même date (réglable, Paramètres). Fertilité 1er retour = mises bas 1er retour ÷ brebis restantes après l'IA directe (" + stats.effectif + " − " + stats.ia.misesBas + " = " + (stats.effectif - stats.ia.misesBas) + ").", 8);
+  doc.y -= 8;
   if (lot.cible !== 'Agnelles') {
     const parAge = statsLotIAParAgeExact(lot);
-    content += pdfTextOp(PDF_MARGIN, y, 'DÉTAIL PAR MILLÉSIME, AU SEIN DE CE LOT', 'FB', 10.5);
-    y -= 5;
-    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-    y -= 18;
-    const colsAge = [
-      { label: 'Millésime', x: 0 }, { label: 'Effectif', x: 75 },
-      { label: 'MB', x: 145 }, { label: 'Fert.', x: 190 }, { label: 'Prol.', x: 240 },
-      { label: 'MB', x: 305 }, { label: 'Fert.', x: 350 }, { label: 'Prol.', x: 400 },
-      { label: 'MB', x: 465 }, { label: 'Fert.', x: 510 }, { label: 'Prol.', x: 560 }
-    ];
-    content += pdfTextOp(PDF_MARGIN + 145, y + 14, 'IA', 'FB', 8.5);
-    content += pdfTextOp(PDF_MARGIN + 305, y + 14, '1er retour', 'FB', 8.5);
-    content += pdfTextOp(PDF_MARGIN + 465, y + 14, 'Global', 'FB', 8.5);
-    colsAge.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 8.5); });
-    y -= 5;
-    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-    y -= 14;
+    doc.section('DÉTAIL PAR MILLÉSIME, AU SEIN DE CE LOT');
     if (parAge.length === 0) {
-      content += pdfTextOp(PDF_MARGIN, y, "Aucune mise bas enregistrée pour ce lot pour l'instant.", 'F1', 9);
-      y -= PDF_ROW_HEIGHT;
+      doc.tableauCharte({ colonnes: [{ l: 'Millésime', w: 770 }], lignes: [["Aucune mise bas enregistrée pour ce lot pour l'instant."]], vide: '', premiere: null, entete, alterne });
     } else {
-      parAge.forEach(g => {
-        const row = [
-          'Millésime ' + g.millesime, String(g.effectif),
-          String(g.ia.misesBas), pctTxt(g.ia.fertilite), ratTxt(g.ia.prolificite),
-          String(g.retour.misesBas), pctTxt(g.retour.fertilite), ratTxt(g.retour.prolificite),
-          String(g.global.misesBas), pctTxt(g.global.fertilite), ratTxt(g.global.prolificite)
-        ];
-        colsAge.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], ci >= 8 ? 'FB' : 'F1', 8.5); });
-        y -= PDF_ROW_HEIGHT;
+      doc.tableauCharte({
+        taille: 8.5, vide: '', premiere: { col: pdfHexCouleur('#2f6e44') }, entete, alterne,
+        colonnes: [{ l: '', l2: 'Millésime', w: 120 }, { l: '', l2: 'Effectif', w: 58 }, { l: 'IA', l2: 'MB', w: 62 }, { l: '', l2: 'Fert.', w: 62 }, { l: '', l2: 'Prol.', w: 62 },
+          { l: '1er retour', l2: 'MB', w: 70 }, { l: '', l2: 'Fert.', w: 62 }, { l: '', l2: 'Prol.', w: 62 }, { l: 'Global', l2: 'MB', w: 70 }, { l: '', l2: 'Fert.', w: 71 }, { l: '', l2: 'Prol.', w: 71 }],
+        lignes: parAge.map(g => ['Millésime ' + g.millesime, String(g.effectif), String(g.ia.misesBas), pctTxt(g.ia.fertilite), ratTxt(g.ia.prolificite),
+          String(g.retour.misesBas), pctTxt(g.retour.fertilite), ratTxt(g.retour.prolificite), String(g.global.misesBas), pctTxt(g.global.fertilite), ratTxt(g.global.prolificite)])
       });
     }
-    y -= 6;
-    content += pdfTextOp(PDF_MARGIN, y, "MB = mises bas, Fert. = fertilité, Prol. = prolificité — mêmes formules qu'au-dessus, par millésime (année de naissance déduite de l'EID).", 'F1', 8);
+    doc.note("MB = mises bas, Fert. = fertilité, Prol. = prolificité — mêmes formules qu'au-dessus, par millésime (année de naissance déduite de l'EID).", 8);
   } else {
-    content += pdfTextOp(PDF_MARGIN, y, "Pas de détail par millésime pour un lot d'antenaises : toutes nées la même année.", 'F1', 9);
+    doc.note("Pas de détail par millésime pour un lot d'antenaises : toutes nées la même année.", 9);
   }
-
-  content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
-  return buildSinglePagePdfBytes(content, landscape);
+  return doc.fin();
 }
 
 async function exportLotIaPdf(lot) {
@@ -22157,80 +22120,38 @@ async function exportLotIaPdf(lot) {
    Portrait (5 colonnes seulement dans le détail par millésime, contrairement
    au lot IA qui en a 11 et reste donc en paysage). */
 function buildLotEpongePdfBytes(lot) {
-  const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H;
-  const rightEdge = pageW - PDF_MARGIN;
-  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(jourAujourdhuiISO());
+  // Charte colorée commune (pdfProdDoc) : MÊMES textes, colonnes, lignes et notes que l'ancien PDF noir et blanc ; seule la mise en forme change.
   const stats = statsLotEponge(lot);
   const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
   const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
-
-  let y = pageH - PDF_MARGIN;
-  let content = pdfTextOp(PDF_MARGIN, y, 'Ovilog — Lot de reproduction Éponge', 'FB', 14);
-  content += pdfTextOp(PDF_MARGIN + 280, y, 'Éponge — ' + (lot.nom || formatDateFr(lot.dateEvenement || lot.dateCreation)), 'FB', 10);
-  y -= 14;
-  content += pdfTextOp(PDF_MARGIN, y, exploitationNom, 'F1', 9);
-  content += pdfTextOp(PDF_MARGIN + 280, y, stats.effectif + ' ' + (lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis') + ' · édité le ' + aujourdhui, 'F1', 9);
-  y -= 10;
-  content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-  y -= 24;
-
-  content += pdfTextOp(PDF_MARGIN, y, 'RÉSULTATS DU LOT', 'FB', 10.5);
-  y -= 20;
-  const cols1 = [{ label: '', x: 0 }, { label: 'Global', x: 160 }];
-  cols1.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9.5); });
-  y -= 5;
-  content += pdfLineOp(PDF_MARGIN, y, PDF_MARGIN + 260, y);
-  y -= 16;
-  const rows1 = [
-    ['Mises bas', String(stats.misesBas)],
-    ['Fertilité', pctTxt(stats.fertilite)],
-    ['Prolificité', ratTxt(stats.prolificite)]
-  ];
-  rows1.forEach(row => {
-    cols1.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], ci === 1 ? 'FB' : 'F1', 9.5); });
-    y -= PDF_ROW_HEIGHT;
+  const entete = { fond: pdfHexCouleur('#357f4b'), texte: PDF_COULEURS.blanc }, alterne = [pdfHexCouleur('#f6f1e4'), PDF_COULEURS.blanc];
+  const doc = pdfProdDoc();
+  doc.page('Lot de reproduction Éponge', 'Éponge — ' + (lot.nom || formatDateFr(lot.dateEvenement || lot.dateCreation)) + ' · ' + stats.effectif + ' ' + (lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'), 'Ovilog — export généré automatiquement');
+  doc.tuiles([pdfTuile('vert', 'Effectif du lot', stats.effectif), pdfTuile('bleu', 'Mises bas', stats.misesBas), pdfTuile('ambre', 'Fertilité', pctTxt(stats.fertilite))]);
+  doc.section('RÉSULTATS DU LOT');
+  doc.tableauCharte({
+    colonnes: [{ l: '', w: 300 }, { l: 'Global', w: 223 }], vide: '', premiere: null, entete, alterne,
+    lignes: [['Mises bas', String(stats.misesBas)], ['Fertilité', pctTxt(stats.fertilite)], ['Prolificité', ratTxt(stats.prolificite)]]
   });
-  y -= 6;
-  pdfWrapLines("Pas de distinction IA/1er retour pour une éponge (pas de fenêtre de saillie précise, contrairement à l'IA) : mises bas ÷ effectif du lot (" + stats.effectif + ").", 95)
-    .forEach(line => { content += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
-  y -= 16;
-
+  doc.note("Pas de distinction IA/1er retour pour une éponge (pas de fenêtre de saillie précise, contrairement à l'IA) : mises bas ÷ effectif du lot (" + stats.effectif + ").", 8);
+  doc.y -= 8;
   if (lot.cible !== 'Agnelles') {
     const parAge = statsLotEpongeParAgeExact(lot);
-    content += pdfTextOp(PDF_MARGIN, y, 'DÉTAIL PAR MILLÉSIME, AU SEIN DE CE LOT', 'FB', 10.5);
-    y -= 5;
-    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-    y -= 18;
-    const colsAge = [
-      { label: 'Millésime', x: 0 }, { label: 'Effectif', x: 90 },
-      { label: 'Mises bas', x: 180 }, { label: 'Fertilité', x: 270 }, { label: 'Prolificité', x: 360 }
-    ];
-    colsAge.forEach(c => { content += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 8.5); });
-    y -= 5;
-    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-    y -= 14;
+    doc.section('DÉTAIL PAR MILLÉSIME, AU SEIN DE CE LOT');
     if (parAge.length === 0) {
-      content += pdfTextOp(PDF_MARGIN, y, "Aucune mise bas enregistrée pour ce lot pour l'instant.", 'F1', 9);
-      y -= PDF_ROW_HEIGHT;
+      doc.tableauCharte({ colonnes: [{ l: 'Millésime', w: 523 }], lignes: [["Aucune mise bas enregistrée pour ce lot pour l'instant."]], vide: '', premiere: null, entete, alterne });
     } else {
-      parAge.forEach(g => {
-        const row = [
-          'Millésime ' + g.millesime, String(g.effectif),
-          String(g.misesBas), pctTxt(g.fertilite), ratTxt(g.prolificite)
-        ];
-        colsAge.forEach((c, ci) => { content += pdfTextOp(PDF_MARGIN + c.x, y, row[ci], 'F1', 8.5); });
-        y -= PDF_ROW_HEIGHT;
+      doc.tableauCharte({
+        taille: 8.5, vide: '', premiere: { col: pdfHexCouleur('#2f6e44') }, entete, alterne,
+        colonnes: [{ l: 'Millésime', w: 130 }, { l: 'Effectif', w: 90 }, { l: 'Mises bas', w: 100 }, { l: 'Fertilité', w: 100 }, { l: 'Prolificité', w: 103 }],
+        lignes: parAge.map(g => ['Millésime ' + g.millesime, String(g.effectif), String(g.misesBas), pctTxt(g.fertilite), ratTxt(g.prolificite)])
       });
     }
-    y -= 6;
-    content += pdfTextOp(PDF_MARGIN, y, "Fertilité = mises bas ÷ effectif de ce millésime dans le lot. Prolificité = agneaux nés ÷ mises bas de ce millésime.", 'F1', 8);
+    doc.note("Fertilité = mises bas ÷ effectif de ce millésime dans le lot. Prolificité = agneaux nés ÷ mises bas de ce millésime.", 8);
   } else {
-    content += pdfTextOp(PDF_MARGIN, y, "Pas de détail par millésime pour un lot d'antenaises : toutes nées la même année.", 'F1', 9);
+    doc.note("Pas de détail par millésime pour un lot d'antenaises : toutes nées la même année.", 9);
   }
-
-  content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — export généré automatiquement', 'F1', 8);
-  return buildSinglePagePdfBytes(content, false);
+  return doc.fin();
 }
 
 async function exportLotEpongePdf(lot) {
