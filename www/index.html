@@ -9039,6 +9039,37 @@ function inventaireActifsColumns(key) {
   ];
 }
 
+/* PDF Inventaire (onglet actif) -- charte commune des PDF Ovilog (pdfProdDoc : titre, filet vert, logo OVILOG, pied « Page n/N »), même rendu sur PC et sur mobile.
+   3 tuiles d'effectifs (toujours Brebis, Agnelles, Béliers actifs, quel que soit l'onglet) ; tableau = les colonnes de l'écran (inventaireActifsColumns) pour les animaux
+   passés en paramètre (la liste affichée, filtrée par la recherche le cas échéant). */
+const INVENTAIRE_PDF_NOMS = { brebis: 'Brebis', agnelles: 'Agnelles', beliers: 'Béliers', agneaux: 'Agneaux' };
+function buildInventairePdfBytes(key, items, recherche) {
+  const doc = pdfProdDoc();
+  const nom = INVENTAIRE_PDF_NOMS[key];
+  const campagne = DB.campagneDebut !== null && DB.campagneDebut !== undefined ? DB.campagneDebut : campagneAnneeDebutPourDate(jourAujourdhuiISO());
+  doc.page('Inventaire · ' + nom, 'Campagne ' + campagneLabel(campagne) + ' · Situation au ' + formatDateFr(jourAujourdhuiISO()), 'Ovilog · Inventaire des ' + nom.toLowerCase());
+  const tuile = (cle, couleur, fond) => ({ label: INVENTAIRE_ACTIFS_CATEGORIES.find(c => c.key === cle).label, valeur: String(inventaireActifsItems(cle).length), couleur: pdfHexCouleur(couleur), fond: pdfHexCouleur(fond), lisere: pdfHexCouleur(couleur), tailleValeur: 20 });
+  doc.tuiles([tuile('brebis', '#2f6e44', '#e3f3e6'), tuile('agnelles', '#b5701c', '#fbeed7'), tuile('beliers', '#1f5a8a', '#e6f0fa')]);
+  const cols = inventaireActifsColumns(key);
+  const filtre = recherche ? ' · recherche « ' + recherche + ' »' : '';
+  doc.section(nom + ' actifs · ' + items.length + (recherche ? ' sur ' + inventaireActifsItems(key).length : '') + filtre);
+  if (!items.length) {
+    doc.note(recherche ? 'Aucun animal ne correspond à la recherche.' : 'Aucun animal dans cette catégorie.', 10);
+  } else {
+    const wTot = PDF_PL.LARG;
+    const poids = cols.length === 2 ? [1, 1] : [1, 1.2, 1.8];
+    const somme = poids.reduce((s, v) => s + v, 0);
+    doc.tableauCharte({
+      colonnes: cols.map((c, i) => ({ l: c.header, w: wTot * poids[i] / somme })),
+      lignes: items.map(it => cols.map(c => c.value(it))),
+      entete: { fond: pdfHexCouleur('#357f4b'), texte: PDF_COULEURS.blanc },
+      alterne: [pdfHexCouleur('#f6f1e4'), PDF_COULEURS.blanc],
+      premiere: { col: pdfHexCouleur('#2f6e44') }
+    });
+  }
+  return doc.fin();
+}
+
 function renderInventaireActifs() {
   pageTitle.textContent = 'Inventaire';
   const cat = INVENTAIRE_ACTIFS_CATEGORIES.find(c => c.key === inventaireActifsTab);
@@ -9112,20 +9143,9 @@ function renderInventaireActifs() {
     };
   });
 
-  // x des colonnes PDF : espacées selon le nombre de colonnes de la
-  // catégorie (voir inventaireActifsColumns) -- 2 colonnes (béliers, la 1re
-  // pouvant être un texte libre assez long) ou 3 (brebis : 3 numéros
-  // courts ; agnelles/agneaux : 2 numéros + l'EID complet, plus long).
-  const pdfColX = cols.length === 2 ? [0, 260] : (inventaireActifsTab === 'brebis' ? [0, 110, 230] : [0, 90, 190]);
   document.getElementById('btn-export-inventaire-pdf').onclick = () => {
-    const todayIso = jourAujourdhuiISO();
-    const bytes = buildPdfTable({
-      title: 'Inventaire — ' + cat.label,
-      subtitle: items.length + ' animal(aux) — ' + formatDateFr(todayIso),
-      columns: cols.map((c, i) => ({ label: c.header, x: pdfColX[i] })),
-      rows: items.map(it => cols.map(c => c.value(it)))
-    });
-    saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + todayIso + '.pdf', bytes, 'application/pdf');
+    const bytes = buildInventairePdfBytes(inventaireActifsTab, items);
+    saveOrShareBinaryFile('inventaire_' + cat.fichier + '_' + jourAujourdhuiISO() + '.pdf', bytes, 'application/pdf');
   };
   document.getElementById('btn-export-inventaire-xlsx').onclick = async () => {
     const bytes = await buildXlsxWorkbook([{ name: cat.label, rows: [
@@ -21611,9 +21631,11 @@ function pdfProdDoc() {
       liste.forEach((t, i) => {
         const x = L + i * (w + gap);
         c += pdfFillRectOp(x, y - h, w, h, t.fond || C.fond);
-        etiquettes[i].forEach((l, k) => txt(x + 9, y - 14 - 10 * k, l, 'F1', 8, X.gris));
-        txt(x + 9, y - 32 - decal, pdfFit(t.valeur, 14, true, maxW), 'FB', 14, t.couleur || X.sombre);
-        sous[i].forEach((l, k) => txt(x + 9, y - 44 - decal - 9 * k, l, 'F1', 7.5, X.gris));
+        if (t.lisere) c += pdfFillRectOp(x, y - h, 4, h, t.lisere); // liseré gauche épais coloré (option : les autres PDF n'en ont pas)
+        const dx = t.lisere ? 13 : 9;
+        etiquettes[i].forEach((l, k) => txt(x + dx, y - 14 - 10 * k, l, 'F1', 8, X.gris));
+        txt(x + dx, y - 32 - decal, pdfFit(t.valeur, t.tailleValeur || 14, true, maxW), 'FB', t.tailleValeur || 14, t.couleur || X.sombre);
+        sous[i].forEach((l, k) => txt(x + dx, y - 44 - decal - 9 * k, l, 'F1', 7.5, X.gris));
       });
       y -= h + 16;
     },
@@ -21667,6 +21689,43 @@ function pdfProdDoc() {
         y = yb;
       });
       y -= 12;
+    },
+    /* Tableau « charte Inventaire » (méthode à part : ne change pas doc.tableau des autres PDF) : coins arrondis, en-tête plein { fond, texte }, lignes alternées [a, b],
+       contour fin ; chaque page de tableau est arrondie et contournée séparément. colonnes : [{ l, w }] ; lignes : [[texte, ...]] ; options.premiere : { col, gras } pour la 1re colonne. */
+    tableauCharte({ colonnes, lignes, entete: st, alterne, premiere, hLigne = 17, hEntete = 20, rayon = 5, taille = 9.5 }) {
+      const wTot = colonnes.reduce((s, k) => s + k.w, 0);
+      let yHaut = 0, hautSegment = false;
+      const ouvrir = () => {
+        yHaut = y; hautSegment = true;
+        c += pdfRectArrondiOp(L, y - hEntete, wTot, hEntete, rayon, 0, st.fond);
+        let x = L;
+        colonnes.forEach(k => { txt(x + 8, y - hEntete + 7, pdfFit(k.l, 8.5, true, k.w - 12), 'FB', 8.5, st.texte); x += k.w; });
+        y -= hEntete;
+      };
+      const fermer = (derniereLigneY) => {
+        // contour fin de la portion de tableau déjà dessinée sur cette page
+        c += pdfRectArrondiOp(L, derniereLigneY, wTot, yHaut - derniereLigneY, rayon, rayon, C.trait, 'S', 0.7);
+      };
+      doc.assurer(hEntete + hLigne * 2);
+      ouvrir();
+      lignes.forEach((ln, i) => {
+        if (y - hLigne < PDF_PL.BAS) { fermer(y); doc.suite(); ouvrir(); }
+        const yb = y - hLigne;
+        const dernierePage = (i === lignes.length - 1) || (yb - hLigne < PDF_PL.BAS);
+        const fond = alterne[i % 2];
+        c += dernierePage ? pdfRectArrondiOp(L, yb, wTot, hLigne, 0, rayon, fond) : pdfFillRectOp(L, yb, wTot, hLigne, fond);
+        let x = L;
+        colonnes.forEach((k, j) => {
+          const v = ln[j] === null || ln[j] === undefined || ln[j] === '' ? '—' : String(ln[j]);
+          const vide = v === '—';
+          const prem = j === 0 && premiere && !vide;
+          txt(x + 8, yb + 5.2, pdfFit(v, taille, !!prem, k.w - 12), prem ? 'FB' : 'F1', taille, vide ? X.gris2 : (prem ? premiere.col : X.sombre));
+          x += k.w;
+        });
+        y = yb;
+        if (dernierePage) fermer(yb);
+      });
+      y -= 14;
     },
     encadre(titre, ligne2, col) {
       const h = ligne2 ? 32 : 22;
@@ -22206,6 +22265,21 @@ const PDF_COULEURS = {
   trait: [0.902, 0.867, 0.788], bleu: [0.247, 0.498, 0.690], indigo: [0.435, 0.451, 0.820], blanc: [1, 1, 1]
 };
 function pdfN(v) { return String(Math.round(v * 100) / 100); }
+// Couleur « #rrggbb » -> [r, g, b] (0..1) pour les opérateurs PDF
+function pdfHexCouleur(hex) { const h = hex.replace('#', ''); return [0, 2, 4].map(i => Math.round(parseInt(h.slice(i, i + 2), 16) / 255 * 1000) / 1000); }
+// Rectangle à coins arrondis (rayon rHaut en haut, rBas en bas, 0 = angle droit) : mode 'f' = rempli, 'S' = contour
+function pdfRectArrondiOp(x, y, w, h, rHaut, rBas, c, mode, ep) {
+  const k = 0.5523, a = rBas, b = rHaut;
+  const P = (...v) => v.map(pdfN).join(' ');
+  const ops = [
+    P(x + a, y) + ' m', P(x + w - a, y) + ' l',
+    P(x + w - a + k * a, y, x + w, y + a - k * a, x + w, y + a) + ' c', P(x + w, y + h - b) + ' l',
+    P(x + w, y + h - b + k * b, x + w - b + k * b, y + h, x + w - b, y + h) + ' c', P(x + b, y + h) + ' l',
+    P(x + b - k * b, y + h, x, y + h - b + k * b, x, y + h - b) + ' c', P(x, y + a) + ' l',
+    P(x, y + a - k * a, x + a - k * a, y, x + a, y) + ' c', 'h'
+  ].join(' ');
+  return mode === 'S' ? 'q ' + pdfCol(c) + ' RG ' + pdfN(ep || 0.6) + ' w ' + ops + ' S Q\n' : 'q ' + pdfCol(c) + ' rg ' + ops + ' f Q\n';
+}
 function pdfCol(c) { return c.map(v => pdfN(v)).join(' '); }
 function pdfFillRectOp(x, y, w, h, c) { return 'q ' + pdfCol(c) + ' rg ' + pdfN(x) + ' ' + pdfN(y) + ' ' + pdfN(w) + ' ' + pdfN(h) + ' re f Q\n'; }
 function pdfLineColorOp(x1, y1, x2, y2, c, ep, tirets) {
