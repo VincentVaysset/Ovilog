@@ -1,7 +1,7 @@
 /* Référence « mobile identique » du Bilan de reproduction : le HTML de l'écran
    mobile (jeu SYNTHÉTIQUE, date de bascule fixe, aucun EID réel) est comparé
-   octet pour octet à tests/ref/bilan_mobile.html, prise APRÈS l'étape A (règle
-   antenaise). Toute évolution ultérieure (page PC, PDF complet...) qui ne doit
+   octet pour octet à tests/ref/bilan_mobile.html (régénérée volontairement lors
+   de la refonte « Bilan de campagne mobile » : écran en cartes selon la maquette). Toute évolution ultérieure (page PC, PDF complet...) qui ne doit
    PAS toucher l'affichage mobile fait échouer ce test si elle le modifie.
    Pour régénérer volontairement la référence : OVILOG_MAJ_REF=1 node test_bilan_mobile_reference.mjs */
 import { chromium } from 'playwright';

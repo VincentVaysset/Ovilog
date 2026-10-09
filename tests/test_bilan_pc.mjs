@@ -109,13 +109,13 @@ check(nes && nes.slice(1).join('|') === '175|172|38|28|413', 'mouvements agneaux
 console.log('OK 1c mouvements des brebis et des agneaux (nés vivants 413).');
 check((await page.evaluate(() => window.__saves)) === 0, 'aucun saveData pendant l\'affichage');
 
-// ================================================================ 2. mobile inchangé
+// ================================================================ 2. mobile : écran en cartes (maquette « Bilan de campagne mobile »), pas la page PC
 const mobile = await ouvrir(false);
 await mobile.evaluate(() => { jeu(); ouvrirBilan(); });
 await mobile.waitForSelector('#btn-export-bilan-age-pdf');
-const mob = await mobile.evaluate(() => ({ brd: !!document.querySelector('.brd'), egal: (() => { const d = document.createElement('div'); d.innerHTML = bilanReproductionHtml(); return document.getElementById('app').innerHTML.includes(d.innerHTML); })(), th: [...document.querySelectorAll('table th')].map(t => t.textContent.trim()).join('|') }));
-check(!mob.brd && mob.egal && /Indicateur\|Antenaises\|Brebis/.test(mob.th), 'mobile : tableau compact inchangé, aucune page PC : ' + JSON.stringify(mob));
-console.log('OK 2 mobile : tableau compact inchangé (HTML identique à bilanReproductionHtml), pas de page PC.');
+const mob = await mobile.evaluate(() => ({ brd: !!document.querySelector('.brd'), egal: (() => { const d = document.createElement('div'); d.innerHTML = bilanReproductionHtml(); return document.getElementById('app').innerHTML.includes(d.innerHTML); })(), th: [...document.querySelectorAll('#bc-groupes .bc-gh > div')].map(t => t.textContent.trim()).join('|') }));
+check(!mob.brd && mob.egal && /Brebis\|Anten\.\|Total/.test(mob.th), 'mobile : écran en cartes (Brebis | Anten. | Total), aucune page PC : ' + JSON.stringify(mob));
+console.log('OK 2 mobile : écran en cartes (HTML identique à bilanReproductionHtml), pas de page PC.');
 await mobile.context().close();
 
 // ================================================================ 3. sélecteur de campagne, lots
