@@ -32,6 +32,7 @@ const jeu = () => page.evaluate(() => {
   render('bilan-campagne');
 });
 const euroTxt = v => (v < 0 ? '−' : '') + Math.abs(v).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' €';
+const litresTxt = v => Math.round(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ") + " L";
 
 // ================================================================ 1. mise en page : une ligne campagne + coefficient, un bloc de synthèse, pas de tuiles
 await jeu();
@@ -47,7 +48,7 @@ const d = await page.evaluate(() => { const e = ecoCampagneData(2025), T = e.tot
 eq(await $t('#eco-montant-avec'), euroTxt(d.avec), 'montant avec qualité');
 check(d.avec === d.bilan.montantAvecQualite && Math.abs(d.gain - (d.grades + d.superA - d.pen)) < 1e-6 && d.pen === 240, 'cohérence : montant = bilanCampagneQualite ; gain = grades + Super A − pénalités ; pénalités = 200 € × 1,2 = 240 €');
 const synth = await $t('#eco-synthese');
-[euroTxt(d.hors), '+' + euroTxt(d.grades), '+' + euroTxt(d.superA), '−240,00 €', 'Lait livré (tank) 8 400 L'.replace('8 400', '8 400'), 'Prix moyen hors qualité', 'Prix moyen avec qualité', '/ 1000 L', euroTxt(d.pm[0]), euroTxt(d.pm[1])].forEach(x => check(synth.includes(x), 'synthèse contient « ' + x + ' » : ' + synth));
+[euroTxt(d.hors), (d.grades > 0 ? '+' : '') + euroTxt(d.grades), (d.superA > 0 ? '+' : '') + euroTxt(d.superA), '−240,00 €', 'Lait livré (tank)' + litresTxt(d.litres), 'Prix moyen hors qualité', 'Prix moyen avec qualité', '/ 1000 L', euroTxt(d.pm[0]), euroTxt(d.pm[1])].forEach(x => check(synth.includes(x), 'synthèse contient « ' + x + ' » : ' + synth));
 check(/grâce à la qualité/.test(await $t('#eco-gain')) && (await $t('#eco-gain')).includes('+' + euroTxt(d.gain)), 'gain affiché : ' + await $t('#eco-gain'));
 console.log('OK 2 synthèse : montant avec qualité, gain, lait livré, hors qualité, grades, Super A, pénalités, prix moyens — égaux aux fonctions communes.');
 
@@ -68,11 +69,13 @@ console.log('OK 3 mois par mois : lignes dépliables (plusieurs ouvertes), mois 
 await page.evaluate(() => { ecoMobileOuverts = new Set(['2026-07']); render('bilan-campagne'); });
 const dj = await $t('.eco-mois-corps[data-cle="2026-07"]');
 const m7 = await page.evaluate(() => { const m = ecoCampagneData(2025).mois.find(x => x.cle === '2026-07'); return { hors: m.prixHors, avec: m.prixAvec, total: m.total, vol: m.volume, msu: m.res.grades.moyennes.msu, sa: m.superA.eligible, pen: m.penalites }; });
-['€ / 1000 L', 'Prix hors qualité', 'MSU ' + m7.msu.toFixed(2).replace('.', ',') + ' × 12,0000', 'Cellules', 'Coliformes', 'Flore totale', 'Butyriques', 'Bonus Super A', 'Non obtenu', 'Prix avec qualité', '× volume livré 2 500 L', 'Pénalités bactério', '+ Ajouter', 'Total du mois', euroTxt(m7.total), '−240,00 €', 'Salmonelles · 1 200 L'].forEach(x => check(dj.includes(x), 'détail juillet contient « ' + x + ' » : ' + dj));
+['€ / 1000 L', 'Prix hors qualité', 'MSU ' + m7.msu.toFixed(2).replace('.', ',') + ' × 12,0000', 'Cellules', 'Coliformes', 'Flore totale', 'Butyriques', 'Bonus Super A', 'Non obtenu', 'Prix avec qualité', '× volume livré2 500 L', 'Pénalités bactério', '+ Ajouter', 'Total du mois', euroTxt(m7.total), '−240,00 €', 'Salmonelles · 1 200 L'].forEach(x => check(dj.includes(x), 'détail juillet contient « ' + x + ' » : ' + dj));
 check(m7.sa === false && m7.pen === 240 && Math.abs(m7.total - (m7.avec * 2.5 - 240)) < 1e-6, 'total du mois = prix avec qualité × volume − pénalités (Super A annulé par le Salmonelles positif)');
 console.log('OK 4 détail d\'un mois : prix hors qualité (MSU × coefficient), 4 grades, Super A, prix avec qualité, volume, pénalités, total.');
 
 // ================================================================ 5. pénalités saisies ICI : ajout, retour sur l'écran, modification, suppression
+if (!(await page.locator('.eco-mois-tete[data-cle="2025-12"]').count())) await page.click('#eco-voir-12');
+if (!(await page.locator('.eco-pen-add[data-mois="2025-12"]').isVisible())) await page.click('.eco-mois-tete[data-cle="2025-12"]');
 await page.click('.eco-pen-add[data-mois="2025-12"]');
 check(await page.evaluate(() => !!document.querySelector('.sheet-card')) , 'la fiche de pénalité s\'ouvre depuis le mois');
 await page.focus('#ps-date-debut'); await page.keyboard.type('12102025', { delay: 40 });
