@@ -2,7 +2,7 @@
 
 Relevé en lecture seule (aucun écran modifié) des endroits qui utilisent encore l'ancien style gris, un tableau « tableur » de l'ancien gabarit, une bulle d'aide « ? » ou des couleurs écrites en dur hors de la charte (voir la section « Charte graphique » de `CLAUDE.md`). Méthode : analyse de chaque fonction de rendu de `www/index.html` (couleurs `#rrggbb` absentes de la charte, gabarits `REGISTRE_TH/TD` et `table-desktop`, `infoBulleHtml`, fonds gris `#f0efe9`, `#f7f5ee`, `#f6f3ea`, `--gray-bg`).
 
-Les écrans déjà conformes (non listés) : Production laitière (Tank, Qualité, Bilan économique), Paramètres, Déclaration annuelle, Calendrier, Inventaire (PC, mobile, PDF), Registre d'élevage (PC, mobile, PDF) et tous les PDF.
+Les écrans déjà conformes (non listés) : Production laitière (Tank, Qualité, Bilan économique), Paramètres, Déclaration annuelle, Calendrier, Inventaire (PC, mobile, PDF), Registre d'élevage (PC, mobile, PDF), Contrôle laitier (mobile), Bilan de campagne mobile (Brebis à régulariser, Bilan de reproduction) et tous les PDF.
 
 ## 1. Styles globaux (CSS) encore à l'ancien gris
 | Élément | Valeur actuelle | Écrans touchés |
