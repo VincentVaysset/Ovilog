@@ -18,6 +18,7 @@ const MIGRES = {
   registre_sanitaire: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] },
   traitements12: { paysage: true, ajouts: ['Animaux', 'actifs', 'brebis,', 'antenaises,', 'béliers', 'Aucun', 'traitement', 'compté', 'et', 'plus', 'seuil', 'dépassé', '%', 'Traitements', 'sur', '12', 'mois', 'suivi', 'bio', 'Ovilog'] },
   sous_delai: { paysage: false, ajouts: ["Sous", "délai", "d'attente", 'lait'] },
+  controle_laitier: { paysage: true, ajouts: ['Contrôle', 'laitier'], ignorer: ['undefined'] },   // l'ancien PDF imprimait le mot « undefined » comme sous-titre (défaut) : retiré, rien d'autre ne change
   registre_sanitaire_filtre: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] }
 };
 const browser = await chromium.launch(LAUNCH);
