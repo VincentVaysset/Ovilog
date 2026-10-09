@@ -175,10 +175,10 @@ console.log('OK 7 écriture : béliers (Mort + cause), agnelles (archivées, lot
 // ================================================================ 8. répertoires : ajout d'un acheteur et d'une cause
 await jeu(); await ouvrir();
 await page.click('.mv-type[data-val="Vente"]');
-await page.fill('#mv-nouvel-acheteur', 'Acheteur Z'); await page.click('#mv-ajout-acheteur');
+await page.selectOption('#mv-acheteur', '__ajouter__'); await page.click('#liste-ajout-input'); await page.keyboard.type('Acheteur Z', { delay: 20 }); await page.click('#liste-ajout-ok');
 check(await page.evaluate(() => DB.acheteurs.includes('Acheteur Z') && window.__saves === 1 && document.getElementById('mv-acheteur').value === 'Acheteur Z'), 'acheteur ajouté au répertoire et sélectionné');
 await page.click('.mv-type[data-val="Morte"]');
-await page.fill('#mv-nouvelle-cause', 'Météorite'); await page.click('#mv-ajout-cause');
+await page.selectOption('#mv-cause', '__ajouter__'); await page.click('#liste-ajout-input'); await page.keyboard.type('Météorite', { delay: 20 }); await page.keyboard.press('Enter');
 check(await page.evaluate(() => DB.causesMortalite.includes('Météorite') && document.getElementById('mv-cause').value === 'Météorite'), 'cause ajoutée à la liste et sélectionnée');
 console.log('OK 8 répertoires : acheteur et cause ajoutables depuis la page.');
 
