@@ -2976,6 +2976,8 @@ function fmtGroupe(n, dec) {
   const [ent, frac] = a.split(',');
   return (n < 0 ? '−' : '') + ent.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (frac !== undefined ? ',' + frac : '');
 }
+// Litres : entier sans décimale, sinon une décimale (les relevés tank se saisissent au dixième : jamais d'arrondi qui fausserait un total)
+function fmtLitres(v) { if (v === null || v === undefined || isNaN(v)) return '—'; const r = Math.round(v * 10) / 10; return fmtGroupe(r, Number.isInteger(r) ? 0 : 1); }
 function fmtCellulesMilliers(v) { return v === null || v === undefined || isNaN(v) ? '—' : fmtGroupe(v / 1000, 0); }
 function moisLibelleLong(key) {
   const [y, m] = key.split('-').map(Number);
@@ -21101,7 +21103,7 @@ const PDF_WINANSI_SPECIALS = {
   0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85,
   0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A,
   0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92,
-  0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
+  0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x2212: 0x96,
   0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C,
   0x017E: 0x9E, 0x0178: 0x9F
 };
@@ -21694,230 +21696,334 @@ function periodeBacterioLabel(p) {
   return (p.dateFin && p.dateFin !== p.dateDebut) ? formatDateFr(p.dateDebut) + ' -> ' + formatDateFr(p.dateFin) : formatDateFr(p.dateDebut);
 }
 
-function buildRapportCampagnePdfBytes(campagne) {
-  const bilan = bilanCampagneQualite(campagne);
-  const coef = coefficientMsuPourCampagne(campagne);
-  const penalitesCampagne = (DB.penalitesBacterio || [])
-    .filter(p => campagneAnneeDebutPourDate(p.dateDebut) === campagne)
-    .sort((a, b) => (a.dateDebut || '').localeCompare(b.dateDebut || ''));
+/* ---------- Exports Production laitière : PDF A4 portrait EN COULEUR + Excel, TOUS par campagne ----------
+   Chantier « Refonte Production laitière / Bilan économique », partie 1. Quatre exports générés par les MÊMES fonctions sur mobile et sur PC (aucune branche isDesktopMode) :
+   le contenu, la mise en page et le nom du fichier sont identiques des deux côtés. Les chiffres viennent des fonctions de données communes (tankCampagneData, qualiteCampagneData,
+   ecoCampagneData, calendrierTankData) : mêmes totaux qu'à l'écran. Chaque export ne contient QUE la campagne demandée.
+   Mise en page commune : bandeau OVILOG, titre, campagne et ses dates, exploitation, date d'édition, filet vert ; chiffres clés ; tableau des 12 mois (tirets pour un mois sans
+   donnée) avec ligne de total ; pied de page numéroté « Page n/N ». Taille de police fixe et lisible : un contenu long continue sur la page suivante, il n'est jamais rétréci. */
+const PDF_PL = { M: 36, L: 36, R: 595 - 36, LARG: 595 - 72, TOP: 842 - 36, BAS: 56 };
+const PDF_PL_COUL = { vertTitre: [0.184, 0.431, 0.267], rouge: [0.639, 0.227, 0.192], barre: [0.427, 0.612, 0.769], sombre: [0.169, 0.149, 0.11], gris: [0.369, 0.357, 0.278], gris2: [0.6, 0.58, 0.5] };
+function nomFichierCampagne(prefixe, campagne, ext) { return prefixe + '_campagne-' + campagneLabel(campagne) + '_' + jourAujourdhuiISO() + '.' + ext; }
+
+function pdfProdDoc() {
+  const C = PDF_COULEURS, X = PDF_PL_COUL, L = PDF_PL.L, R = PDF_PL.R, LARG = PDF_PL.LARG;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
-  const aujourdhui = formatDateFr(jourAujourdhuiISO());
-
-  // "Prix du lait final" = masse d'argent totale ÷ production totale de LA
-  // CAMPAGNE ENTIÈRE (mois sans prélèvement inclus au dénominateur) --
-  // volontairement distinct de bilan.prixMoyenAvecQualite, qui ne pondère
-  // que les mois où un prix a pu être calculé (voir footnote page 2).
-  const prixLaitFinal = bilan.productionTotaleL > 0 && bilan.montantAvecQualite !== null
-    ? (bilan.montantAvecQualite / bilan.productionTotaleL) * 1000
-    : null;
-
-  const pageW = PDF_PAGE_H, pageH = PDF_PAGE_W; // paysage
-  const rightEdge = pageW - PDF_MARGIN;
-
-  function lettrehead(farmSub, docTitle) {
-    let y = pageH - PDF_MARGIN;
-    let content = pdfTextOp(PDF_MARGIN, y, exploitationNom, 'FB', 14);
-    content += pdfTextOp(PDF_MARGIN + 420, y, docTitle, 'FB', 10);
-    y -= 14;
-    content += pdfTextOp(PDF_MARGIN, y, farmSub, 'F1', 9);
-    content += pdfTextOp(PDF_MARGIN + 420, y, 'Édité le ' + aujourdhui, 'F1', 9);
-    y -= 10;
-    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-    return { content, y: y - 20 };
-  }
-  function sectionHeader(content0, y0, titre) {
-    let content = pdfTextOp(PDF_MARGIN, y0, titre.toUpperCase(), 'FB', 10.5);
-    let y = y0 - 5;
-    content += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-    return { content: content0 + content, y: y - 16 };
-  }
-  function footerBloc(pageIndex) {
-    let content = pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Ovilog — Rapport généré automatiquement', 'F1', 8);
-    content += pdfTextOp(rightEdge - 40, PDF_MARGIN / 2, 'Page ' + pageIndex + '/2', 'F1', 8);
-    return content;
-  }
-
-  // ---------- Page 1 (recto) : KPI + suivi mensuel ----------
-  let p1 = lettrehead(
-    'Campagne ' + (campagne + 1) + ' — ' + campagneDateDebutLabel() + ' ' + campagne + ' au ' + campagneDateFinLabel() + ' ' + (campagne + 1),
-    'Rapport de synthèse — Qualité du lait'
-  );
-  let content1 = p1.content, y = p1.y;
-
-  // 3 cartes KPI, comme demandé : production totale, masse d'argent totale
-  // TOUT INCLUS, prix du lait final (= les 2 précédents divisés l'un par
-  // l'autre) -- jamais un 4e chiffre qui romprait cette lecture directe.
-  const kpiGap = 14, kpiW = (rightEdge - PDF_MARGIN - 2 * kpiGap) / 3, kpiH = 46;
-  const kpiTopY = y, kpiBotY = y - kpiH;
-  const kpis = [
-    { label: 'PRODUCTION TOTALE', value: fmtDecimal(bilan.productionTotaleL, 0) + ' L' },
-    { label: "MASSE D'ARGENT TOTALE (TOUT INCLUS)", value: bilan.montantAvecQualite !== null ? fmtEuro(bilan.montantAvecQualite) : '—' },
-    { label: 'PRIX DU LAIT FINAL', value: prixLaitFinal !== null ? fmtEuro(prixLaitFinal) + '/1000L' : '—' }
-  ];
-  kpis.forEach((k, i) => {
-    const x = PDF_MARGIN + i * (kpiW + kpiGap);
-    content1 += pdfRectOp(x, kpiBotY, kpiW, kpiH);
-    content1 += pdfTextOp(x + 10, kpiTopY - 16, k.label, 'F1', 8);
-    content1 += pdfTextOp(x + 10, kpiTopY - 34, k.value, 'FB', 15);
-  });
-  y = kpiBotY - 24;
-
-  const s1 = sectionHeader(content1, y, 'Suivi mensuel');
-  content1 = s1.content; y = s1.y;
-
-  const colsMois = [
-    { label: 'Mois', x: 0 }, { label: 'Volume', x: 92 }, { label: 'TB', x: 152 }, { label: 'TP', x: 187 },
-    { label: 'MSU', x: 222 }, { label: 'Cellules', x: 260 }, { label: 'Prix HQ', x: 317 }, { label: 'Prix AQ', x: 377 },
-    { label: 'Pénalité', x: 437 }, { label: 'Total mois', x: 507 }, { label: 'Super A', x: 582 }
-  ];
-  colsMois.forEach(c => { content1 += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9); });
-  y -= 5;
-  content1 += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-  y -= 14;
-
-  let sommeVolumeCampagne = 0;
-  for (let i = 0; i < 12; i++) {
-    const info = moisInfoPourIndex(campagne, i);
-    const volumeMois = volumeTankMois(info.key);
-    sommeVolumeCampagne += volumeMois;
-    const listMois = DB.prelevementsQualite.filter(p => campagneAnneeDebutPourDate(p.date) === campagne && p.date.slice(0, 7) === info.key);
-    const penalitesMois = penalitesCampagne.filter(p => (p.dateDebut || '').slice(0, 7) === info.key);
-    const res = calculerPrixLaitMois(listMois, volumeMois, coef, penalitesMois);
-    const cells = listMois.length === 0
-      ? [info.label, fmtDecimal(volumeMois, 0) + ' L', 'Aucun prélèvement ce mois-ci', '', '', '', '', '',
-         res.montantPenalites > 0 ? '-' + fmtEuro(res.montantPenalites) : '—',
-         res.totalMois !== null ? fmtEuro(res.totalMois) : (res.montantPenalites > 0 ? '-' + fmtEuro(res.montantPenalites) : '—'),
-         res.superA.eligible ? 'Oui' : 'Non']
-      : [info.label, fmtDecimal(volumeMois, 0) + ' L',
-         fmtDecimal(res.grades.moyennes.tb, 2), fmtDecimal(res.grades.moyennes.tp, 2), fmtDecimal(res.grades.moyennes.msu, 2),
-         fmtDecimal(res.grades.moyennes.cellules, 0),
-         res.prixHorsQualite !== null ? fmtEuro(res.prixHorsQualite) : '—',
-         res.prixAvecQualite !== null ? fmtEuro(res.prixAvecQualite) : '—',
-         res.montantPenalites > 0 ? '-' + fmtEuro(res.montantPenalites) : '—',
-         res.totalMois !== null ? fmtEuro(res.totalMois) : '—',
-         res.superA.eligible ? 'Oui' : 'Non'];
-    colsMois.forEach((c, ci) => { content1 += pdfTextOp(PDF_MARGIN + c.x, y, cells[ci] || '', 'F1', 8.5); });
-    y -= PDF_ROW_HEIGHT;
-  }
-  // Ligne "Campagne" -- mêmes totaux que le bloc "Bilan financier de la
-  // campagne" de l'écran Qualité (bilanCampagneQualite), jamais recalculés
-  // autrement ici.
-  y -= 2;
-  content1 += pdfLineOp(PDF_MARGIN, y + 12, rightEdge, y + 12);
-  const nbMoisSuperA = Array.from({ length: 12 }, (_, i) => moisInfoPourIndex(campagne, i).key).filter(k => bilan.superAParMois[k]).length;
-  const totalRow = [
-    'Campagne ' + (campagne + 1), fmtDecimal(sommeVolumeCampagne, 0) + ' L',
-    fmtDecimal(bilan.tb, 2), fmtDecimal(bilan.tp, 2), fmtDecimal(bilan.msu, 2), '—',
-    bilan.prixMoyenHorsQualite !== null ? fmtEuro(bilan.prixMoyenHorsQualite) : '—',
-    bilan.prixMoyenAvecQualite !== null ? fmtEuro(bilan.prixMoyenAvecQualite) : '—',
-    bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : '—',
-    bilan.montantAvecQualite !== null ? fmtEuro(bilan.montantAvecQualite) : '—',
-    nbMoisSuperA + '/12'
-  ];
-  colsMois.forEach((c, ci) => { content1 += pdfTextOp(PDF_MARGIN + c.x, y, totalRow[ci] || '', 'FB', 8.5); });
-  y -= 24;
-
-  pdfWrapLines("Lecture du tableau : les mois sans prélèvement apparaissent explicitement (\"Aucun prélèvement ce mois-ci\") plutôt que d'être masqués ou comptés comme 0, pour que le trou de suivi soit visible d'un coup d'oeil. TB/TP/MSU en g/L, moyennes pondérées par le volume livré. La ligne \"Campagne " + (campagne + 1) + "\" reprend les mêmes totaux que l'écran Qualité de l'application.", 150)
-    .forEach(line => { content1 += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
-
-  content1 += footerBloc(1);
-
-  // ---------- Page 2 (verso) : bilan financier détaillé + pénalités + notes ----------
-  let p2 = lettrehead('Campagne ' + (campagne + 1) + ' — suite du rapport de synthèse', 'Bilan financier détaillé');
-  let content2 = p2.content; y = p2.y;
-
-  const s2 = sectionHeader(content2, y, 'Bilan financier de campagne');
-  content2 = s2.content; y = s2.y;
-
-  const colGap = 40, colW = (rightEdge - PDF_MARGIN - colGap) / 2;
-  const xLeft = PDF_MARGIN, xRight = PDF_MARGIN + colW + colGap;
-  const finRowsLeft = [
-    ['Prix moyen hors qualité (€/1000L)', bilan.prixMoyenHorsQualite !== null ? fmtEuro(bilan.prixMoyenHorsQualite) : '—'],
-    ['Prix moyen avec qualité (€/1000L)', bilan.prixMoyenAvecQualite !== null ? fmtEuro(bilan.prixMoyenAvecQualite) : '—'],
-    ['Montant total hors qualité', bilan.montantHorsQualite !== null ? fmtEuro(bilan.montantHorsQualite) : '—'],
-    ['Montant total avec qualité', bilan.montantAvecQualite !== null ? fmtEuro(bilan.montantAvecQualite) : '—']
-  ];
-  const finRowsRight = [
-    ['Montant total Super A', '+' + fmtEuro(bilan.montantSuperA)],
-    ['Montant total pénalités', bilan.montantPenalitesCampagne > 0 ? '-' + fmtEuro(bilan.montantPenalitesCampagne) : fmtEuro(0)],
-    ['Gain lié à la qualité', bilan.gainQualite !== null ? fmtEuro(bilan.gainQualite, true) : '—']
-  ];
-  const yFinStart = y;
-  finRowsLeft.forEach((row, i) => {
-    const ry = yFinStart - i * 18;
-    content2 += pdfTextOp(xLeft, ry, row[0], 'F1', 9.5);
-    content2 += pdfTextOp(xLeft + colW - 70, ry, row[1], 'FB', 9.5);
-  });
-  finRowsRight.forEach((row, i) => {
-    const ry = yFinStart - i * 18;
-    const isGain = i === finRowsRight.length - 1;
-    content2 += pdfTextOp(xRight, ry, row[0], isGain ? 'FB' : 'F1', isGain ? 10.5 : 9.5);
-    content2 += pdfTextOp(xRight + colW - 70, ry, row[1], 'FB', isGain ? 12 : 9.5);
-  });
-  y = yFinStart - Math.max(finRowsLeft.length, finRowsRight.length) * 18 - 16;
-
-  const s3 = sectionHeader(content2, y, 'Détail des pénalités bactério de la campagne');
-  content2 = s3.content; y = s3.y;
-
-  const colsPenalites = [
-    { label: 'Période', x: 0 }, { label: 'Cause', x: 160 }, { label: 'Litrage pénalisé', x: 240 },
-    { label: 'Commentaire', x: 330 }, { label: 'Montant', x: 560 }
-  ];
-  colsPenalites.forEach(c => { content2 += pdfTextOp(PDF_MARGIN + c.x, y, c.label, 'FB', 9); });
-  y -= 5;
-  content2 += pdfLineOp(PDF_MARGIN, y, rightEdge, y);
-  y -= 14;
-  if (penalitesCampagne.length === 0) {
-    content2 += pdfTextOp(PDF_MARGIN, y, 'Aucune pénalité enregistrée pour cette campagne.', 'F1', 9);
-    y -= PDF_ROW_HEIGHT;
-  } else {
-    penalitesCampagne.forEach(p => {
-      const row = [periodeBacterioLabel(p), causeBacterioLabel(p.cause), fmtDecimal(p.litrageL, 0) + ' L', p.commentaire || '', '-' + fmtEuro(montantPenaliteBacterio(p))];
-      colsPenalites.forEach((c, ci) => { content2 += pdfTextOp(PDF_MARGIN + c.x, y, row[ci] || '', 'F1', 8.5); });
-      y -= PDF_ROW_HEIGHT;
-    });
-  }
-  y -= 10;
-
-  const footnote2Paragraphs = [
-    "Prix du lait final vs prix moyen avec qualité : le \"prix du lait final\" en tête du rapport (page 1) est la masse d'argent totale divisée par la production totale de la campagne, mois sans prélèvement inclus au dénominateur" + (prixLaitFinal !== null ? ' (' + fmtEuro(prixLaitFinal) + '/1000L)' : '') + ". Le \"prix moyen avec qualité\" ci-dessus ne pondère que les mois où un prix a pu être calculé, donc exclut les mois sans MSU renseigné" + (bilan.prixMoyenAvecQualite !== null ? ' (' + fmtEuro(bilan.prixMoyenAvecQualite) + '/1000L)' : '') + " — les deux chiffres sont proches mais mesurent des choses légèrement différentes, tous deux affichés pour transparence.",
-    "Bonus Super A : calculé sur les critères suivis par Ovilog (4 grades bactério + Listéria/Salmonelles). La grille laiterie exige aussi l'absence d'antibiotiques, de virage résazurine et de déclassement pour conditions d'hygiène insuffisantes — à vérifier hors Ovilog avant application. Un mois avec une pénalité Listéria ou Salmonelles perd automatiquement le bonus Super A, même sans prélèvement marqué positif ce mois-là.",
-    "Pénalités : rattachées au mois de leur date de début ; une période à cheval sur deux mois doit être saisie comme deux pénalités distinctes, une par mois."
-  ];
-  footnote2Paragraphs.forEach(para => {
-    pdfWrapLines(para, 150).forEach(line => { content2 += pdfTextOp(PDF_MARGIN, y, line, 'F1', 8); y -= 11; });
-    y -= 6;
-  });
-
-  content2 += footerBloc(2);
-
-  // ---------- Assemblage du document (2 pages fixes) ----------
-  const objects = [];
-  let nextNum = 1;
-  const alloc = () => nextNum++;
-  const catalogNum = alloc(), pagesNum = alloc(), fontNum = alloc(), fontBoldNum = alloc();
-  const pageNums = [alloc(), alloc()], contentNums = [alloc(), alloc()];
-  const contents = [content1, content2];
-  contents.forEach((content, i) => {
-    objects.push({ num: contentNums[i], body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
-    objects.push({ num: pageNums[i], body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + pageW + ' ' + pageH + '] /Contents ' + contentNums[i] + ' 0 R >>' });
-  });
-  objects.push({ num: catalogNum, body: '<< /Type /Catalog /Pages ' + pagesNum + ' 0 R >>' });
-  objects.push({ num: pagesNum, body: '<< /Type /Pages /Kids [' + pageNums.map(n => n + ' 0 R').join(' ') + '] /Count ' + pageNums.length + ' >>' });
-  objects.push({ num: fontNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>' });
-  objects.push({ num: fontBoldNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>' });
-  objects.sort((a, b) => a.num - b.num);
-
-  let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
-  const offsets = [0];
-  objects.forEach(obj => { offsets[obj.num] = pdf.length; pdf += obj.num + ' 0 obj\n' + obj.body + '\nendobj\n'; });
-  const xrefStart = pdf.length;
-  pdf += 'xref\n0 ' + nextNum + '\n0000000000 65535 f \n';
-  for (let i = 1; i < nextNum; i++) pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
-  pdf += 'trailer\n<< /Size ' + nextNum + ' /Root ' + catalogNum + ' 0 R >>\nstartxref\n' + xrefStart + '\n%%EOF';
-
-  return pdfLatin1ToBytes(pdf);
+  const edite = 'Édité le ' + formatDateFr(jourAujourdhuiISO());
+  const pages = [];     // { contenu, pied }
+  let c = '', y = 0, pied = '', titreDoc = '';
+  const txt = (x, yy, t, font, size, col) => { c += pdfTextColorOp(x, yy, t, font, size, col || X.sombre); };
+  const txtD = (xd, yy, t, font, size, col) => { c += pdfTextColorOp(xd - pdfTextWidth(t, size, font === 'FB'), yy, t, font, size, col || X.sombre); };
+  const doc = {
+    get y() { return y; }, set y(v) { y = v; },
+    page(titre, sousTitre, piedTexte) {
+      if (c) pages.push({ contenu: c, pied });
+      c = ''; pied = piedTexte; titreDoc = titre;
+      y = PDF_PL.TOP;
+      txt(L, y - 8, 'OVILOG', 'FB', 8.5, X.vertTitre);
+      txt(L, y - 28, titre, 'FB', 18, X.sombre);
+      txt(L, y - 43, sousTitre, 'F1', 10, X.gris);
+      txtD(R, y - 18, pdfFit(exploitationNom, 10.5, true, 240), 'FB', 10.5, X.sombre);
+      txtD(R, y - 31, edite, 'F1', 8.5, X.gris);
+      y -= 52;
+      c += pdfFillRectOp(L, y, LARG, 2.2, C.vert);
+      y -= 16;
+    },
+    suite() {
+      pages.push({ contenu: c, pied }); c = '';
+      y = PDF_PL.TOP;
+      txt(L, y - 8, 'OVILOG', 'FB', 8.5, X.vertTitre);
+      txt(L + 52, y - 8, titreDoc + ' (suite)', 'F1', 9, X.gris);
+      y -= 14;
+      c += pdfFillRectOp(L, y, LARG, 1.2, C.vert);
+      y -= 14;
+    },
+    assurer(h) { if (y - h < PDF_PL.BAS) { doc.suite(); return true; } return false; },
+    tuiles(liste) {
+      const gap = 8, w = (LARG - gap * (liste.length - 1)) / liste.length, h = 50;
+      liste.forEach((t, i) => {
+        const x = L + i * (w + gap);
+        c += pdfFillRectOp(x, y - h, w, h, C.fond);
+        txt(x + 9, y - 14, pdfFit(t.label, 8, false, w - 14), 'F1', 8, X.gris);
+        txt(x + 9, y - 32, pdfFit(t.valeur, 14, true, w - 14), 'FB', 14, t.couleur || X.sombre);
+        if (t.sous) txt(x + 9, y - 44, pdfFit(t.sous, 7.5, false, w - 14), 'F1', 7.5, X.gris);
+      });
+      y -= h + 16;
+    },
+    section(titre, droite) {
+      txt(L, y - 11, titre, 'FB', 12, X.vertTitre);
+      if (droite) txtD(R, y - 10, droite, 'F1', 8.5, X.gris);
+      y -= 20;
+    },
+    /* colonnes : [{ l, l2, w, a: 'g'|'d', bar }] ; lignes : [{ c: [texte | { t, col, b }], gris, b, total, fusion: { de, t, col } }] */
+    tableau({ colonnes, lignes, hLigne = 16, taille = 9 }) {
+      const wTot = colonnes.reduce((s, k) => s + k.w, 0);
+      const entete = () => {
+        const deuxLignes = colonnes.some(k => k.l2);
+        const hE = deuxLignes ? 24 : 15;
+        let x = L;
+        colonnes.forEach(k => {
+          if (k.l2) { txt0(x, y - 9, k.l, k); txt0(x, y - 19, k.l2, k, true); } else txt0(x, y - (deuxLignes ? 19 : 10), k.l, k);
+          x += k.w;
+        });
+        function txt0(xc, yy, t, col, second) {
+          const tt = pdfFit(t, second ? 7 : 8, false, col.w - 8);
+          if (col.a === 'd') txtD(xc + col.w - 4, yy, tt, 'F1', second ? 7 : 8, X.gris); else txt(xc + 4, yy, tt, 'F1', second ? 7 : 8, X.gris);
+        }
+        y -= hE;
+        c += pdfFillRectOp(L, y - 0.6, wTot, 1.3, X.sombre);
+      };
+      entete();
+      lignes.forEach(ln => {
+        if (y - hLigne < PDF_PL.BAS) { doc.suite(); entete(); }
+        const yb = y - hLigne;
+        if (ln.total) c += pdfFillRectOp(L, yb, wTot, hLigne, C.fond);
+        c += pdfFillRectOp(L, yb, wTot, 0.4, ln.total ? X.sombre : C.trait);
+        let x = L;
+        colonnes.forEach((k, i) => {
+          const cell = ln.c[i];
+          const o = (cell !== null && typeof cell === 'object') ? cell : { t: cell };
+          if (!(ln.fusion && i > ln.fusion.de)) {
+            const bold = !!(ln.b || ln.total || o.b);
+            const col = o.col || (ln.gris ? X.gris : X.sombre);
+            if (k.bar) {
+              if (o.f > 0) c += pdfFillRectOp(x + 4, yb + 4.2, Math.max(1.5, (k.w - 10) * o.f), 7.6, X.barre);
+            } else if (ln.fusion && i === ln.fusion.de) {
+              txt(x + 4, yb + 5, pdfFit(ln.fusion.t, taille, false, wTot - (x - L) - 8), 'F1', taille, ln.fusion.col || X.gris);
+            } else {
+              const t = pdfFit(o.t === null || o.t === undefined ? '' : String(o.t), taille, bold, k.w - 8);
+              if (k.a === 'd') txtD(x + k.w - 4, yb + 5, t, bold ? 'FB' : 'F1', taille, t === '—' ? X.gris2 : col); else txt(x + 4, yb + 5, t, bold ? 'FB' : 'F1', taille, col);
+            }
+          }
+          x += k.w;
+        });
+        y = yb;
+      });
+      y -= 12;
+    },
+    encadre(titre, ligne2, col) {
+      const h = ligne2 ? 32 : 22;
+      doc.assurer(h + 8);
+      c += pdfLineColorOp(L, y - h, R, y - h, col, 0.8) + pdfLineColorOp(L, y, R, y, col, 0.8) + pdfLineColorOp(L, y, L, y - h, col, 0.8) + pdfLineColorOp(R, y, R, y - h, col, 0.8);
+      txt(L + 9, y - 14, pdfFit(titre, 9.5, true, LARG - 18), 'FB', 9.5, col);
+      if (ligne2) txt(L + 9, y - 26, pdfFit(ligne2, 8.5, false, LARG - 18), 'F1', 8.5, X.gris);
+      y -= h + 10;
+    },
+    note(texte, taille = 8) {
+      pdfWrapLines(texte, Math.floor(LARG / (taille * 0.5))).forEach(l => { doc.assurer(taille + 4); txt(L, y - taille, l, 'F1', taille, X.gris); y -= taille + 3.5; });
+    },
+    libre(fn) { fn({ txt, txtD, ajouter: s => { c += s; }, get y() { return y; }, set y(v) { y = v; } }); },
+    fin() {
+      pages.push({ contenu: c, pied });
+      const N = pages.length;
+      const contenus = pages.map((p, i) => {
+        let s = p.contenu;
+        s += pdfFillRectOp(L, 40, LARG, 0.5, C.trait);
+        s += pdfTextColorOp(L, 28, pdfFit(p.pied, 8, false, LARG - 70), 'F1', 8, X.gris);
+        const num = 'Page ' + (i + 1) + '/' + N;
+        s += pdfTextColorOp(R - pdfTextWidth(num, 8, false), 28, num, 'F1', 8, X.gris);
+        return s;
+      });
+      return buildMultiPagePdfBytes(contenus);
+    }
+  };
+  return doc;
 }
+const MOIS_COURTS_PDF = ['Janv.', 'Févr.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.'];
+
+// ---- Tank (PDF) ----
+function buildTankPdfBytes(campagne) {
+  const d = tankCampagneData(campagne), X = PDF_PL_COUL, C = PDF_COULEURS, T = d.total;
+  const doc = pdfProdDoc();
+  const pied = 'Ovilog · Production laitière (tank) · ' + d.titre;
+  doc.page('Production laitière · Tank', d.titre + ' · du ' + formatDateFr(d.dateDebut) + ' au ' + formatDateFr(d.dateFin), pied);
+  doc.tuiles([
+    { label: 'Lait livré', valeur: fmtLitres(T.litres) + ' L', sous: 'tank, toute la campagne' },
+    { label: 'Relevés', valeur: String(T.nbReleves), sous: T.nbReleves ? 'du ' + formatDateFr(T.premiereDate) + ' au ' + formatDateFr(T.derniereDate) : '—' },
+    { label: 'Mois de pointe', valeur: d.pointe ? d.pointe.libelle : '—', sous: d.pointe ? fmtLitres(d.pointe.litres) + ' L' : '' },
+    { label: 'Moyenne par relevé', valeur: T.moyenneReleve !== null ? fmtGroupe(T.moyenneReleve, 0) + ' L' : '—', sous: 'sur la campagne' }
+  ]);
+  doc.section('Litrage par mois');
+  const maxL = Math.max(...d.mois.map(m => m.litres || 0), 0);
+  const lignes = d.mois.map(m => ({ gris: m.nbReleves === 0, c: [m.libelle, m.nbReleves ? String(m.nbReleves) : '—', m.litres !== null ? { t: fmtLitres(m.litres), b: true } : '—', { f: maxL > 0 && m.litres ? m.litres / maxL : 0 }, m.moyenneReleve !== null ? fmtGroupe(m.moyenneReleve, 0) : '—', m.cumul !== null ? fmtLitres(m.cumul) : '—'] }));
+  lignes.push({ total: true, c: [d.titre, String(T.nbReleves), fmtLitres(T.litres), '', T.moyenneReleve !== null ? fmtGroupe(T.moyenneReleve, 0) : '—', fmtLitres(T.litres)] });
+  doc.tableau({ colonnes: [{ l: 'Mois', w: 100, a: 'g' }, { l: 'Relevés', w: 55, a: 'd' }, { l: 'Litres', w: 62, a: 'd' }, { l: '', w: 120, a: 'g', bar: true }, { l: 'Moyenne par relevé (L)', w: 95, a: 'd' }, { l: 'Cumul campagne (L)', w: 91, a: 'd' }], lignes });
+  // détail de tous les relevés, mois par mois : 3 colonnes date / litres, jours de prélèvement marqués
+  d.moisAvecLait.forEach(m => {
+    doc.assurer(34);
+    doc.libre(o => {
+      o.txt(PDF_PL.L, doc.y - 11, 'Détail des relevés · ' + m.libelle, 'FB', 11, X.vertTitre);
+      o.txtD(PDF_PL.R, doc.y - 10, m.nbReleves + ' relevé' + (m.nbReleves > 1 ? 's' : '') + ' · ' + fmtLitres(m.litres) + ' L', 'F1', 8.5, X.gris);
+      doc.y -= 20;
+    });
+    const cw = PDF_PL.LARG / 3, hl = 14;
+    for (let i = 0; i < m.releves.length; i += 3) {
+      doc.assurer(hl + 2);
+      doc.libre(o => {
+        for (let k = 0; k < 3 && i + k < m.releves.length; k++) {
+          const r = m.releves[i + k], x = PDF_PL.L + k * cw;
+          o.txt(x + 4, doc.y - 10, formatDateFr(r.date), 'F1', 9, X.sombre);
+          if (r.prelevement) o.txt(x + 66, doc.y - 10, 'analyse', 'FB', 7, C.vert);
+          o.txtD(x + cw - 12, doc.y - 10, fmtLitres(r.quantite) + ' L', 'FB', 9, X.sombre);
+        }
+        o.ajouter(pdfFillRectOp(PDF_PL.L, doc.y - hl, PDF_PL.LARG, 0.3, C.trait));
+        doc.y -= hl;
+      });
+    }
+    doc.y -= 10;
+  });
+  return doc.fin();
+}
+async function exportTankPdf(campagne) {
+  await saveOrShareBinaryFile(nomFichierCampagne('tank', campagne, 'pdf'), buildTankPdfBytes(campagne), 'application/pdf');
+}
+
+// ---- Calendrier du tank (PDF, une page) ----
+function buildCalendrierTankPdfBytes(campagne) {
+  const d = calendrierTankData(campagne), X = PDF_PL_COUL, C = PDF_COULEURS;
+  const doc = pdfProdDoc();
+  doc.page('Calendrier du tank', d.titre + ' · litres saisis par jour, mois de traite · à rapprocher des factures de la laiterie', 'Ovilog · Calendrier du tank · ' + d.titre);
+  const nb = d.colonnes.length;
+  doc.libre(o => {
+    const L = PDF_PL.L, wJour = 34, wCol = nb ? (PDF_PL.LARG - wJour) / nb : 0, h = 18.5;
+    const tot = fmtLitres(d.totalLitres) + ' L';
+    o.txtD(PDF_PL.R, doc.y + 4, tot, 'FB', 13, X.sombre);
+    doc.y -= 8;
+    if (!nb) { o.txt(L, doc.y - 12, 'Aucun relevé tank sur cette campagne.', 'F1', 10, X.gris); doc.y -= 24; return; }
+    // en-têtes : mois (deux lignes), puis 31 lignes de jours, puis ligne de total
+    o.ajouter(pdfFillRectOp(L, doc.y - 26, PDF_PL.LARG, 26, C.fond));
+    o.txt(L + 5, doc.y - 16, 'Jour', 'FB', 8, X.gris);
+    d.colonnes.forEach((col, i) => {
+      const x = L + wJour + i * wCol, [a, m] = col.cle.split('-'), nomCourt = MOIS_COURTS_PDF[parseInt(m, 10) - 1];
+      o.txtD(x + wCol - 4, doc.y - 11, nomCourt, 'FB', 7.5, X.sombre);
+      o.txtD(x + wCol - 4, doc.y - 21, a, 'F1', 7, X.gris);
+    });
+    doc.y -= 26;
+    for (let j = 0; j < 31; j++) {
+      const yb = doc.y - h;
+      o.ajouter(pdfFillRectOp(L, yb, PDF_PL.LARG, 0.3, C.trait));
+      o.txt(L + 5, yb + 5.2, String(j + 1), 'FB', 8, X.gris);
+      d.colonnes.forEach((col, i) => {
+        const x = L + wJour + i * wCol, cell = col.jours[j];
+        if (!cell.existe) { o.ajouter(pdfFillRectOp(x + 1, yb + 0.6, wCol - 2, h - 1.2, [0.93, 0.92, 0.89])); return; }
+        if (cell.litres !== null) o.txtD(x + wCol - 4, yb + 5.2, fmtLitres(cell.litres), 'F1', 8.2, X.sombre);
+      });
+      doc.y = yb;
+    }
+    const yb = doc.y - 19;
+    o.ajouter(pdfFillRectOp(L, yb, PDF_PL.LARG, 19, C.fond) + pdfFillRectOp(L, yb + 19, PDF_PL.LARG, 1.2, X.sombre));
+    o.txt(L + 5, yb + 6, 'Total saisi', 'FB', 8, X.sombre);
+    d.colonnes.forEach((col, i) => { const x = L + wJour + i * wCol; o.txtD(x + wCol - 4, yb + 6, fmtLitres(col.total), 'FB', 8.2, X.sombre); });
+    doc.y = yb - 8;
+  });
+  return doc.fin();
+}
+async function exportCalendrierTankPdf(campagne) {
+  await saveOrShareBinaryFile(nomFichierCampagne('calendrier-tank', campagne, 'pdf'), buildCalendrierTankPdfBytes(campagne), 'application/pdf');
+}
+
+// ---- Tank (Excel) : mêmes colonnes que le PDF Tank + une 2e feuille avec tous les relevés de la campagne ----
+function tankXlsxFeuilles(campagne) {
+  const d = tankCampagneData(campagne);
+  const rows = [['Mois', 'Relevés', 'Litres', 'Moyenne par relevé (L)', 'Cumul campagne (L)']];
+  d.mois.forEach(m => rows.push([m.libelle, m.nbReleves || '', m.litres === null ? '' : m.litres, m.moyenneReleve === null ? '' : Math.round(m.moyenneReleve * 10) / 10, m.cumul === null ? '' : m.cumul]));
+  rows.push([d.titre, d.total.nbReleves, d.total.litres, d.total.moyenneReleve === null ? '' : Math.round(d.total.moyenneReleve * 10) / 10, d.total.litres]);
+  const releves = [['Date', 'Litres', 'Prélèvement qualité']];
+  d.mois.forEach(m => m.releves.forEach(r => releves.push([formatDateFr(r.date), r.quantite, r.prelevement ? 'Oui' : ''])));
+  return [{ name: 'Tank', colWidths: [18, 10, 12, 22, 20], rows }, { name: 'Relevés', colWidths: [14, 10, 20], rows: releves }];
+}
+async function buildTankXlsxBytes(campagne) { return buildXlsxWorkbook(tankXlsxFeuilles(campagne)); }
+async function exportTankXlsx(campagne) {
+  await saveOrShareBinaryFile(nomFichierCampagne('tank', campagne, 'xlsx'), await buildTankXlsxBytes(campagne), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+// ---- Rapport de campagne (PDF) : page 1 Bilan économique, page 2 Qualité du lait (le détail des prélèvements continue sur une page 3 s'il déborde) ----
+function buildRapportCampagnePdfBytes(campagne) {
+  const e = ecoCampagneData(campagne), q = qualiteCampagneData(campagne), X = PDF_PL_COUL, C = PDF_COULEURS, rouge = X.rouge, vert = X.vertTitre;
+  const dates = campagneDatesIso(campagne);
+  const doc = pdfProdDoc();
+  const euro = (v, sg) => v === null || v === undefined ? '—' : (v < 0 ? '−' : (sg && v > 0 ? '+' : '')) + fmtGroupe(Math.abs(v), 2) + ' €';
+  const mille = (v, sg) => v === null || v === undefined ? '—' : (v < 0 ? '−' : (sg && v > 0 ? '+' : '')) + fmtGroupe(Math.abs(v), 2);
+  // ----- page 1 : Bilan économique -----
+  const piedEco = 'Ovilog · Rapport de campagne · Bilan économique · ' + e.titre;
+  doc.page('Bilan économique', e.titre + ' · du ' + formatDateFr(dates.debut) + ' au ' + formatDateFr(dates.fin) + ' · coefficient MSU ' + fmtDecimal(e.coef, 4), piedEco);
+  const T = e.totaux;
+  doc.libre(o => {
+    const L = PDF_PL.L, W = PDF_PL.LARG, h = 92, y0 = doc.y;
+    o.ajouter(pdfFillRectOp(L, y0 - h, W, h, C.fond));
+    o.txt(L + 12, y0 - 18, pdfFit('Montant avec qualité · ' + fmtLitres(T.litres) + ' L livrés', 8.5, false, W / 2 - 20), 'F1', 8.5, X.gris);
+    o.txt(L + 12, y0 - 46, T.montantAvec !== null ? euro(T.montantAvec) : '—', 'FB', 22, X.sombre);
+    if (T.gain !== null) {
+      const g = euro(T.gain, true) + (T.gain >= 0 ? ' grâce à la qualité' : ' liés à la qualité'), gw = pdfTextWidth(g, 8.5, true) + 16;
+      o.ajouter(pdfFillRectOp(L + 12, y0 - 76, gw, 16, T.gain >= 0 ? C.vertFond : C.ambreFond));
+      o.txt(L + 20, y0 - 71.5, g, 'FB', 8.5, T.gain >= 0 ? vert : rouge);
+    }
+    const xr = L + W / 2 + 10, wr = W / 2 - 22;
+    const lignes = [['Montant hors qualité', euro(T.montantHors), X.sombre, false], ['Grades bactério', euro(T.grades, true), vert, false], ['Bonus Super A', euro(T.superA, true), vert, false], ['Pénalités bactério', T.penalites ? euro(-T.penalites) : euro(0), T.penalites ? rouge : X.sombre, !!T.penalites]];
+    lignes.forEach(([lib, val, col, gras], i) => {
+      const yy = y0 - 19 - i * 14.5;
+      o.txt(xr, yy, lib, gras ? 'FB' : 'F1', 9, col); o.txtD(xr + wr, yy, val, gras ? 'FB' : 'F1', 9, col);
+      if (i === 0) o.ajouter(pdfFillRectOp(xr, yy - 4.5, wr, 0.4, [0.85, 0.81, 0.72]));
+    });
+    o.ajouter(pdfFillRectOp(xr, y0 - 19 - 4 * 14.5 + 8.5, wr, 1.1, X.sombre));
+    o.txt(xr, y0 - 19 - 4 * 14.5 + 0.5, 'Montant avec qualité', 'FB', 9.5, X.sombre); o.txtD(xr + wr, y0 - 19 - 4 * 14.5 + 0.5, euro(T.montantAvec), 'FB', 9.5, X.sombre);
+    doc.y = y0 - h - 16;
+  });
+  doc.section('Mois par mois');
+  const lignesEco = e.mois.map(m => m.visible
+    ? { c: [m.libelle, fmtLitres(m.volume), m.msu !== null ? fmtDecimal(m.msu, 2) : '—', mille(m.prixHors), m.gradesEuroMille === null ? '—' : mille(m.gradesEuroMille, true), m.superAEuroMille === null ? '—' : (m.superAEuroMille === 0 ? '0,00' : mille(m.superAEuroMille, true)), mille(m.prixAvec), m.penalites ? { t: mille(-m.penalites), col: rouge } : '—', { t: m.total !== null ? fmtGroupe(m.total, 2) : '—', b: true }] }
+    : { gris: true, c: [m.libelle, '—', '—', '—', '—', '—', '—', '—', '—'] });
+  lignesEco.push({ total: true, c: [e.titre, fmtLitres(T.litres), T.msu !== null ? fmtDecimal(T.msu, 2) : '—', mille(T.prixMoyenHors), '', '', mille(T.prixMoyenAvec), T.montantPenalitesCampagne ? { t: mille(-T.montantPenalitesCampagne), col: rouge } : '—', fmtGroupe(T.montantAvec, 2)] });
+  doc.tableau({ colonnes: [{ l: 'Mois', w: 80, a: 'g' }, { l: 'Volume', l2: 'L', w: 46, a: 'd' }, { l: 'MSU', w: 38, a: 'd' }, { l: 'Prix hors qualité', l2: '€ / 1000 L', w: 68, a: 'd' }, { l: 'Grades', l2: '€ / 1000 L', w: 46, a: 'd' }, { l: 'Super A', l2: '€ / 1000 L', w: 46, a: 'd' }, { l: 'Prix avec qualité', l2: '€ / 1000 L', w: 70, a: 'd' }, { l: 'Pénalités', l2: '€', w: 58, a: 'd' }, { l: 'Total du mois', l2: '€', w: 71, a: 'd' }], lignes: lignesEco });
+  doc.section('Pénalités bactério', e.penalites.length ? e.penalites.length + ' pénalité' + (e.penalites.length > 1 ? 's' : '') + ' sur la campagne' : '');
+  if (!e.penalites.length) doc.note('Aucune pénalité bactério sur la campagne.', 9);
+  e.penalites.forEach(p => {
+    doc.assurer(20);
+    doc.libre(o => {
+      const periode = (p.dateFin && p.dateFin !== p.dateDebut) ? 'Du ' + formatDateFr(p.dateDebut) + ' au ' + formatDateFr(p.dateFin) : 'Le ' + formatDateFr(p.dateDebut);
+      o.ajouter(pdfFillRectOp(PDF_PL.L, doc.y - 18, PDF_PL.LARG, 0.4, C.trait));
+      o.txt(PDF_PL.L + 4, doc.y - 13, pdfFit(periode + ' · ' + p.causeLabel + ' · ' + fmtLitres(p.litrageL) + ' L × −200 € / 1000 L' + (p.commentaire ? ' · ' + p.commentaire : ''), 9, false, PDF_PL.LARG - 90), 'F1', 9, X.sombre);
+      o.txtD(PDF_PL.R - 4, doc.y - 13, euro(-p.montant), 'FB', 9, rouge);
+      doc.y -= 18;
+    });
+  });
+  doc.y -= 6;
+  doc.note('Prix moyen avec qualité de la campagne : pénalités déduites. Bonus Super A calculé sur les critères suivis par Ovilog ; antibiotiques, résazurine et conditions d\'hygiène à vérifier avec la laiterie.', 8);
+  // ----- page 2 : Qualité du lait -----
+  const piedQ = 'Ovilog · Rapport de campagne · Qualité du lait · ' + q.titre;
+  doc.page('Production laitière · Qualité du lait', q.titre + ' · du ' + formatDateFr(dates.debut) + ' au ' + formatDateFr(dates.fin), piedQ);
+  const Q = q.total;
+  doc.tuiles([
+    { label: 'TB moyen', valeur: Q.tb !== null ? fmtDecimal(Q.tb, 2) : '—', sous: 'g/L, pondéré par le volume' },
+    { label: 'TP moyen', valeur: Q.tp !== null ? fmtDecimal(Q.tp, 2) : '—', sous: 'g/L, pondéré par le volume' },
+    { label: 'MSU moyen', valeur: Q.msu !== null ? fmtDecimal(Q.msu, 2) : '—', sous: 'TB + TP pondérés' },
+    { label: 'Cellules moyennes', valeur: fmtCellulesMilliers(Q.cellules), sous: 'milliers/mL, moyenne simple' }
+  ]);
+  doc.section('Moyennes par mois');
+  const lignesQ = q.mois.map(m => m.nbPrelevements
+    ? { c: [m.libelle, fmtLitres(m.volume), String(m.nbPrelevements), fmtDecimal(m.tb, 2), fmtDecimal(m.tp, 2), fmtDecimal(m.msu, 2), fmtCellulesMilliers(m.cellules), { t: m.superA ? 'Obtenu' : 'Non obtenu', col: m.superA ? vert : rouge, b: true }] }
+    : { gris: true, c: [m.libelle, m.volume ? fmtLitres(m.volume) : '—', '—', '—', '—', '—', '—', '—'] });
+  lignesQ.push({ total: true, c: [q.titre, fmtLitres(Q.volume), String(Q.nbPrelevements), Q.tb !== null ? fmtDecimal(Q.tb, 2) : '—', Q.tp !== null ? fmtDecimal(Q.tp, 2) : '—', Q.msu !== null ? fmtDecimal(Q.msu, 2) : '—', fmtCellulesMilliers(Q.cellules), Q.moisAvecPrelevements ? Q.moisSuperA + ' mois sur ' + Q.moisAvecPrelevements : '—'] });
+  doc.tableau({ colonnes: [{ l: 'Mois', w: 80, a: 'g' }, { l: 'Volume', l2: 'L', w: 58, a: 'd' }, { l: 'Prélèv.', w: 48, a: 'd' }, { l: 'TB', l2: 'g/L', w: 52, a: 'd' }, { l: 'TP', l2: 'g/L', w: 52, a: 'd' }, { l: 'MSU', w: 52, a: 'd' }, { l: 'Cellules', l2: 'milliers/mL', w: 70, a: 'd' }, { l: 'Super A', w: 111, a: 'd' }], lignes: lignesQ });
+  q.positifs.forEach(p => doc.encadre(p.libelleMois + ' · ' + p.germe + ' : résultat positif le ' + formatDateFr(p.date), 'Bonus Super A non obtenu pour ce mois.', rouge));
+  doc.section('Détail des prélèvements', Q.nbPrelevements + ' prélèvement' + (Q.nbPrelevements > 1 ? 's' : ''));
+  const colsDet = [{ l: 'Date', w: 62, a: 'g' }, { l: 'Litres', w: 40, a: 'd' }, { l: 'TB', w: 38, a: 'd' }, { l: 'TP', w: 38, a: 'd' }, { l: 'MSU', w: 44, a: 'd' }, { l: 'Cellules', w: 50, a: 'd' }, { l: 'Flore', w: 48, a: 'd' }, { l: 'Colif.', w: 40, a: 'd' }, { l: 'Butyr.', w: 42, a: 'd' }, { l: 'Listéria', w: 60, a: 'd' }, { l: 'Salmon.', w: 61, a: 'd' }];
+  const tri = v => v === 'positif' ? { t: 'positif', col: rouge, b: true } : (v === 'negatif' ? 'négatif' : '—');
+  const lignesDet = [];
+  q.mois.forEach(m => m.prelevements.forEach(p => {
+    const msu = (p.tb !== null && p.tb !== undefined && p.tp !== null && p.tp !== undefined) ? p.tb + p.tp : null;
+    lignesDet.push(prelevementSansResultats(p)
+      ? { fusion: { de: 2, t: 'résultats à saisir', col: PDF_COULEURS.ambre }, c: [formatDateFr(p.date), fmtLitres(p.volumeLait), '', '', '', '', '', '', '', '', ''] }
+      : { c: [formatDateFr(p.date), fmtLitres(p.volumeLait), fmtDecimal(p.tb, 2), fmtDecimal(p.tp, 2), fmtDecimal(msu, 2), fmtCellulesMilliers(p.cellules), p.floreTotale === null || p.floreTotale === undefined ? '—' : fmtGroupe(p.floreTotale, 0), p.coliformes === null || p.coliformes === undefined ? '—' : fmtGroupe(p.coliformes, 0), p.butyriques === null || p.butyriques === undefined ? '—' : fmtGroupe(p.butyriques, 0), tri(p.listeria), tri(p.salmonelles)] });
+  }));
+  if (!lignesDet.length) doc.note('Aucun prélèvement qualité sur cette campagne.', 9);
+  else doc.tableau({ colonnes: colsDet, lignes: lignesDet });
+  return doc.fin();
+}
+async function exportRapportCampagnePdf(campagne) {
+  await saveOrShareBinaryFile('rapport-campagne_' + campagneLabel(campagne) + '_' + jourAujourdhuiISO() + '.pdf', buildRapportCampagnePdfBytes(campagne), 'application/pdf');
+}
+
 
 /* Assemble un PDF portrait/paysage d'UNE SEULE PAGE à partir d'un contenu
    déjà construit (opérateurs pdfTextOp/pdfLineOp/pdfRectOp) -- factorise le
@@ -22675,11 +22781,6 @@ async function exportBilanLactationXlsx(campagne) {
   await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
-async function exportRapportCampagnePdf(campagne) {
-  const bytes = buildRapportCampagnePdfBytes(campagne);
-  const filename = 'rapport-campagne_' + (campagne + 1) + '_' + jourAujourdhuiISO() + '.pdf';
-  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
-}
 
 /* Exports Contrôle laitier (PDF + .xlsx) -- reçoivent directement les lignes
    déjà triées/filtrées telles qu'affichées à l'écran (voir currentFiltered()
