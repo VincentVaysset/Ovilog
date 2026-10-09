@@ -11,7 +11,7 @@ import { lirePdfMots, ecartMots } from './lib/pdf_texte.mjs';
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 const ref = JSON.parse(readFileSync(new URL('./ref/pdf_avant.json', import.meta.url)));
 // PDF déjà migrés vers la charte : paysage ou portrait, et mots que la charte AJOUTE (logo, édition, tuiles, pied de page) en plus du contenu d'origine
-const COMMUNS = ['OVILOG', 'Ovilog', 'Édité', 'le', '·', '—', /^\d\d-\d\d-\d{4}$/, /^\d+$/, /^\d+\/\d+$/, 'Page'];
+const COMMUNS = ['OVILOG', 'Ovilog', 'Édité', 'le', '·', '—', /^\d\d-\d\d-\d{4}$/, /^[\d.,]+$/, /^\d+\/\d+$/, 'Page'];
 const MIGRES = {
   registre_agnelage: { paysage: true, ajouts: ['Registre', "d'élevage", 'Agnelage', 'Agneaux', 'enregistrés', 'Mâles', 'Femelles', 'Morts-nés'] },
   registre_mouvements: { paysage: true, ajouts: ['Registre', "d'élevage", 'Mouvements', 'Animaux', 'au', 'registre', 'Actifs', 'Entrées', 'Sorties'] },
