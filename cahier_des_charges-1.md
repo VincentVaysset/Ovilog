@@ -109,6 +109,9 @@ Non traité dans cette V1 — trop de risque d'erreur pour l'instant. À reprend
 ### Exports PDF
 Tout PDF généré par Ovilog doit être beau, coloré et jovial, avec une charte unique : bandeau vert Ovilog, tuiles et pastilles colorées, mêmes couleurs et même mise en page partout. Un export disponible sur PC et sur mobile produit exactement le même PDF des deux côtés. Pas de PDF en noir et blanc sobre. Références : maquettes "Export PDF" Tank, Qualité, Rapport de campagne, Déclaration annuelle.
 
+### Charte graphique
+La charte graphique Ovilog (couleurs, composants, PDF) est définie dans `CLAUDE.md`, section « Charte graphique » : référence unique pour tout nouvel écran et tout PDF. Les écrans restant à migrer sont listés dans `docs/ecrans_a_migrer.md`.
+
 ---
 
 ## Décisions prises
