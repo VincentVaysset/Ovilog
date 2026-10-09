@@ -21043,7 +21043,6 @@ async function buildXlsxWorkbook(sheets) {
    garder la génération simple et déterministe. */
 const PDF_PAGE_W = 595, PDF_PAGE_H = 842; // A4 portrait, en points
 const PDF_MARGIN = 40;
-const PDF_ROW_HEIGHT = 16;
 
 // Une chaîne JS où chaque caractère est déjà un code 0-255 (voir
 // pdfTextBytes/pdfEscapeString) -> octets bruts du fichier PDF final.
@@ -21100,69 +21099,6 @@ function pdfTextOp(x, y, text, font, size) {
    affiché automatiquement sous le titre — un même en-tête pour tous les
    PDF générés par cette fonction. Retourne les octets du PDF complet
    (Uint8Array), prêt pour saveOrShareBinaryFile. */
-function buildPdfTable({ title, subtitle, columns, rows, landscape, fontSize, headerSize }) {
-  const pageW = landscape ? PDF_PAGE_H : PDF_PAGE_W;
-  const pageH = landscape ? PDF_PAGE_W : PDF_PAGE_H;
-  const exploitationNom = (DB.exploitation && DB.exploitation.nom) || '';
-  const topY = pageH - PDF_MARGIN;
-  const headerBlockHeight = 84; // titre + nom d'exploitation + sous-titre + en-têtes de colonnes + marge avant les lignes
-  const footerHeight = 20;
-  const usableHeight = topY - PDF_MARGIN - footerHeight;
-  const rowsPerPage = Math.max(1, Math.floor((usableHeight - headerBlockHeight) / PDF_ROW_HEIGHT));
-  const pages = [];
-  for (let i = 0; i < rows.length; i += rowsPerPage) pages.push(rows.slice(i, i + rowsPerPage));
-  if (pages.length === 0) pages.push([]);
-
-  const objects = []; // { num, body } — body = chaîne "octets" (voir pdfLatin1ToBytes)
-  let nextNum = 1;
-  const alloc = () => nextNum++;
-  const catalogNum = alloc();
-  const pagesNum = alloc();
-  const fontNum = alloc();
-  const fontBoldNum = alloc();
-  const pageNums = [];
-  const contentNums = [];
-  pages.forEach(() => { pageNums.push(alloc()); contentNums.push(alloc()); });
-
-  pages.forEach((pageRows, pageIndex) => {
-    let y = topY;
-    let content = pdfTextOp(PDF_MARGIN, y, title, 'FB', 13);
-    y -= 16;
-    if (exploitationNom) content += pdfTextOp(PDF_MARGIN, y, exploitationNom, 'F1', 10);
-    y -= 14;
-    content += pdfTextOp(PDF_MARGIN, y, subtitle, 'F1', 9);
-    y -= 22;
-    columns.forEach(col => { content += pdfTextOp(PDF_MARGIN + col.x, y, col.label, 'FB', headerSize || 10); });
-    y -= 6;
-    content += PDF_MARGIN + ' ' + y + ' m ' + (pageW - PDF_MARGIN) + ' ' + y + ' l S\n';
-    y -= 14;
-    pageRows.forEach(row => {
-      columns.forEach((col, ci) => { content += pdfTextOp(PDF_MARGIN + col.x, y, row[ci] || '', 'F1', fontSize || 9.5); });
-      y -= PDF_ROW_HEIGHT;
-    });
-    content += pdfTextOp(PDF_MARGIN, PDF_MARGIN / 2, 'Page ' + (pageIndex + 1) + '/' + pages.length, 'F1', 8);
-    objects.push({ num: contentNums[pageIndex], body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
-    objects.push({ num: pageNums[pageIndex], body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + pageW + ' ' + pageH + '] /Contents ' + contentNums[pageIndex] + ' 0 R >>' });
-  });
-  objects.push({ num: catalogNum, body: '<< /Type /Catalog /Pages ' + pagesNum + ' 0 R >>' });
-  objects.push({ num: pagesNum, body: '<< /Type /Pages /Kids [' + pageNums.map(n => n + ' 0 R').join(' ') + '] /Count ' + pageNums.length + ' >>' });
-  objects.push({ num: fontNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>' });
-  objects.push({ num: fontBoldNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>' });
-  objects.sort((a, b) => a.num - b.num);
-
-  let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
-  const offsets = [0];
-  objects.forEach(obj => {
-    offsets[obj.num] = pdf.length;
-    pdf += obj.num + ' 0 obj\n' + obj.body + '\nendobj\n';
-  });
-  const xrefStart = pdf.length;
-  pdf += 'xref\n0 ' + nextNum + '\n0000000000 65535 f \n';
-  for (let i = 1; i < nextNum; i++) pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
-  pdf += 'trailer\n<< /Size ' + nextNum + ' /Root ' + catalogNum + ' 0 R >>\nstartxref\n' + xrefStart + '\n%%EOF';
-
-  return pdfLatin1ToBytes(pdf);
-}
 
 function uint8ToBase64(bytes) {
   let binary = '';
@@ -21577,9 +21513,6 @@ function labelTriStateCourt(v) {
 function pdfRectOp(x, y, w, h) {
   return x + ' ' + y + ' ' + w + ' ' + h + ' re S\n';
 }
-function pdfLineOp(x1, y1, x2, y2) {
-  return x1 + ' ' + y1 + ' m ' + x2 + ' ' + y2 + ' l S\n';
-}
 // Découpe un texte en lignes d'au plus `maxChars` caractères, sur des
 // limites de mots -- approximation grossière (pas de vraie mesure de
 // largeur de police, comme le reste des primitives PDF de l'appli) mais
@@ -21805,7 +21738,7 @@ function pdfTuile(teinte, label, valeur, sous) {
   const [fond, coul] = PDF_TUILE_TEINTES[teinte];
   return { label, valeur: String(valeur), sous, fond: pdfHexCouleur(fond), couleur: pdfHexCouleur(coul), lisere: pdfHexCouleur(coul), tailleValeur: 20 };
 }
-/* Remplaçant « charte colorée » de buildPdfTable : MÊMES paramètres (title, subtitle, columns [{label, x}], rows, landscape, fontSize, headerSize), même contenu (titre, sous-titre, en-têtes,
+/* Charte colorée de l'ancien export tabulaire noir et blanc (buildPdfTable, supprimé) : MÊMES paramètres (title, subtitle, columns [{label, x}], rows, landscape, fontSize, headerSize), même contenu (titre, sous-titre, en-têtes,
    cellules telles quelles -- une cellule vide reste vide --, « Page n/N »), seule la mise en forme change : logo OVILOG, titre, filet vert, tuiles d'effectifs facultatives (`tuiles`),
    tableau arrondi à en-tête vert, lignes alternées, N° (1re colonne) en vert gras, pied de page. Les largeurs de colonnes sont calculées d'après le texte (la police diminue plutôt que de
    couper un texte) ; les positions x de `columns` ne servent plus qu'à garder l'ordre des colonnes. */
@@ -22025,37 +21958,6 @@ async function exportRapportCampagnePdf(campagne) {
 }
 
 
-/* Assemble un PDF portrait/paysage d'UNE SEULE PAGE à partir d'un contenu
-   déjà construit (opérateurs pdfTextOp/pdfLineOp/pdfRectOp) -- factorise le
-   squelette (objets/xref) commun aux exports PDF du Bilan de reproduction
-   (voir buildLotIaPdfBytes/buildBilanAgeExactPdfBytes ci-dessous), qui
-   tiennent toujours sur une page (peu de lots/âges en réalité). buildPdfTable
-   (pagination multi-lignes) et buildRapportCampagnePdfBytes (2 pages fixes)
-   ci-dessus restent inchangés, pas concernés par ce chantier. */
-function buildSinglePagePdfBytes(content, landscape) {
-  const pageW = landscape ? PDF_PAGE_H : PDF_PAGE_W;
-  const pageH = landscape ? PDF_PAGE_W : PDF_PAGE_H;
-  const objects = [];
-  let nextNum = 1;
-  const alloc = () => nextNum++;
-  const catalogNum = alloc(), pagesNum = alloc(), fontNum = alloc(), fontBoldNum = alloc();
-  const pageNum = alloc(), contentNum = alloc();
-  objects.push({ num: contentNum, body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
-  objects.push({ num: pageNum, body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + pageW + ' ' + pageH + '] /Contents ' + contentNum + ' 0 R >>' });
-  objects.push({ num: catalogNum, body: '<< /Type /Catalog /Pages ' + pagesNum + ' 0 R >>' });
-  objects.push({ num: pagesNum, body: '<< /Type /Pages /Kids [' + pageNum + ' 0 R] /Count 1 >>' });
-  objects.push({ num: fontNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>' });
-  objects.push({ num: fontBoldNum, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>' });
-  objects.sort((a, b) => a.num - b.num);
-  let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
-  const offsets = [0];
-  objects.forEach(obj => { offsets[obj.num] = pdf.length; pdf += obj.num + ' 0 obj\n' + obj.body + '\nendobj\n'; });
-  const xrefStart = pdf.length;
-  pdf += 'xref\n0 ' + nextNum + '\n0000000000 65535 f \n';
-  for (let i = 1; i < nextNum; i++) pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
-  pdf += 'trailer\n<< /Size ' + nextNum + ' /Root ' + catalogNum + ' 0 R >>\nstartxref\n' + xrefStart + '\n%%EOF';
-  return pdfLatin1ToBytes(pdf);
-}
 
 /* Export PDF d'un lot IA (voir bouton "Export PDF de ce lot" sur la carte
    dépliée, bilanReproductionHtml) : tableau 3 colonnes IA/1er retour/Global
@@ -22267,7 +22169,7 @@ function pdfFit(text, size, bold, maxW) {
   while (t.length > 1 && pdfTextWidth(t + '...', size, bold) > maxW) t = t.slice(0, -1);
   return t + '...';
 }
-// Plusieurs pages de contenu -> un seul PDF (mêmes polices F1/FB que buildSinglePagePdfBytes)
+// Plusieurs pages de contenu -> un seul PDF (polices F1/FB)
 function buildMultiPagePdfBytes(contents, paysage) {
   const pageW = paysage ? PDF_PAGE_H : PDF_PAGE_W, pageH = paysage ? PDF_PAGE_W : PDF_PAGE_H;
   const objects = [];
