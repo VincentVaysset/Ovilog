@@ -2965,6 +2965,173 @@ function superAPourMois(moisKey) {
   return calculerPrixLaitMois(listMois, volumeMois, coef, penalitesPourMois(moisKey)).superA.eligible;
 }
 
+/* ---------- Production laitière : données COMMUNES aux écrans (mobile + PC) et aux exports ----------
+   Chantier « Refonte Production laitière / Bilan économique », partie 0. Fonctions PURES (aucune écriture), construites sur les calculs existants (volumeTankMois,
+   moyennesQualitePonderees, bilanCampagneQualite, bilanEconomiquePcData, calculerPrixLaitMois) sans en changer un seul : les totaux affichés à l'écran et ceux des
+   exports PDF / Excel viennent donc de LA MÊME fonction. Chaque donnée est filtrée sur UNE campagne (campagneAnneeDebutPourDate) : jamais de donnée d'une autre campagne.
+   Cellules : stockées en cellules/mL, AFFICHÉES en milliers/mL (valeur ÷ 1000, affichage seul, voir fmtCellulesMilliers) -- jamais utilisé dans un calcul. */
+function fmtGroupe(n, dec) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  const a = Math.abs(n).toFixed(dec === undefined ? 0 : dec).replace('.', ',');
+  const [ent, frac] = a.split(',');
+  return (n < 0 ? '−' : '') + ent.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (frac !== undefined ? ',' + frac : '');
+}
+function fmtCellulesMilliers(v) { return v === null || v === undefined || isNaN(v) ? '—' : fmtGroupe(v / 1000, 0); }
+function moisLibelleLong(key) {
+  const [y, m] = key.split('-').map(Number);
+  const nom = NOMS_MOIS[m - 1];
+  return nom.charAt(0).toUpperCase() + nom.slice(1) + ' ' + y;
+}
+// Dates ISO de début et de fin (incluse) de la campagne `campagne` (année de début), d'après la date de démarrage configurée
+function campagneDatesIso(campagne) {
+  const mm = String(campagneMoisDebutConfig()).padStart(2, '0'), jj = String(campagneJourDebutConfig()).padStart(2, '0');
+  return { debut: campagne + '-' + mm + '-' + jj, fin: addDaysToDateStr((campagne + 1) + '-' + mm + '-' + jj, -1) };
+}
+function relevesTankCampagne(campagne) {
+  return (DB.laitTank || []).filter(l => l && l.date && campagneAnneeDebutPourDate(l.date) === campagne).slice().sort((a, b) => a.date.localeCompare(b.date));
+}
+function prelevementsCampagne(campagne) {
+  return (DB.prelevementsQualite || []).filter(p => p && p.date && campagneAnneeDebutPourDate(p.date) === campagne).slice().sort((a, b) => a.date.localeCompare(b.date));
+}
+// Prélèvement créé par la case du Tank mais dont aucune analyse n'est encore saisie (« résultats à saisir »)
+function prelevementSansResultats(p) {
+  return ['tb', 'tp', 'cellules', 'floreTotale', 'coliformes', 'butyriques'].every(k => p[k] === null || p[k] === undefined)
+    && (!p.listeria || p.listeria === 'non_analyse') && (!p.salmonelles || p.salmonelles === 'non_analyse');
+}
+// Campagnes qui ont au moins un relevé tank / un prélèvement / une pénalité, plus la campagne en cours ; plus récente d'abord
+function campagnesProductionLaitiere() {
+  const set = new Set();
+  set.add(DB.campagneDebut !== null && DB.campagneDebut !== undefined ? DB.campagneDebut : campagneAnneeDebutPourDate(jourAujourdhuiISO()));
+  (DB.laitTank || []).forEach(l => { if (l && l.date) set.add(campagneAnneeDebutPourDate(l.date)); });
+  (DB.prelevementsQualite || []).forEach(p => { if (p && p.date) set.add(campagneAnneeDebutPourDate(p.date)); });
+  (DB.penalitesBacterio || []).forEach(p => { if (p && p.dateDebut) set.add(campagneAnneeDebutPourDate(p.dateDebut)); });
+  return Array.from(set).sort((a, b) => b - a);
+}
+function campagnesAvecRelevesTank() {
+  return Array.from(new Set((DB.laitTank || []).filter(l => l && l.date).map(l => campagneAnneeDebutPourDate(l.date)))).sort((a, b) => b - a);
+}
+// Mois (YYYY-MM, ordre chronologique) ayant au moins un prélèvement qualité, toutes campagnes confondues -- parcourus par les flèches de l'onglet Qualité mobile
+function moisAvecPrelevements() {
+  return Array.from(new Set((DB.prelevementsQualite || []).filter(p => p && p.date).map(p => p.date.slice(0, 7)))).sort();
+}
+
+// ----- Tank -----
+function tankCampagneData(campagne) {
+  const releves = relevesTankCampagne(campagne);
+  const jourPrelev = new Set((DB.prelevementsQualite || []).filter(p => p && p.date).map(p => p.date));
+  const mois = [];
+  let cumul = 0;
+  for (let i = 0; i < 12; i++) {
+    const info = moisInfoPourIndex(campagne, i);
+    const rs = releves.filter(l => l.date.slice(0, 7) === info.key);
+    const litres = Math.round(rs.reduce((s, l) => s + l.quantite, 0) * 10) / 10;
+    cumul = Math.round((cumul + litres) * 10) / 10;
+    mois.push({
+      cle: info.key, libelle: moisLibelleLong(info.key), libelleCourt: info.label, indexMois: i,
+      nbReleves: rs.length, litres: rs.length ? litres : null, moyenneReleve: rs.length ? litres / rs.length : null, cumul: rs.length ? cumul : null,
+      releves: rs.map(l => ({ date: l.date, quantite: l.quantite, prelevement: jourPrelev.has(l.date) }))
+    });
+  }
+  const avecLait = mois.filter(m => m.nbReleves > 0);
+  const litresTotal = Math.round(releves.reduce((s, l) => s + l.quantite, 0) * 10) / 10;
+  let pointe = null;
+  avecLait.forEach(m => { if (pointe === null || m.litres > pointe.litres) pointe = m; });
+  const dates = campagneDatesIso(campagne);
+  const aujourdhui = jourAujourdhuiISO();
+  const enCours = campagneAnneeDebutPourDate(aujourdhui) === campagne;
+  const moisTuile = enCours ? (mois.find(m => m.cle === aujourdhui.slice(0, 7)) || null) : (avecLait.length ? avecLait[avecLait.length - 1] : null);
+  return {
+    campagne, titre: 'Campagne ' + campagneLabel(campagne), dateDebut: dates.debut, dateFin: dates.fin,
+    mois, moisAvecLait: avecLait,
+    total: { nbReleves: releves.length, litres: litresTotal, moyenneReleve: releves.length ? litresTotal / releves.length : null, premiereDate: releves.length ? releves[0].date : null, derniereDate: releves.length ? releves[releves.length - 1].date : null },
+    pointe: pointe ? { libelle: pointe.libelle, litres: pointe.litres } : null,
+    tuileMois: { titre: enCours ? 'Mois en cours' : 'Dernier mois', cle: moisTuile ? moisTuile.cle : (enCours ? aujourdhui.slice(0, 7) : null), libelle: moisTuile ? moisTuile.libelle : (enCours ? moisLibelleLong(aujourdhui.slice(0, 7)) : '—'), litres: moisTuile && moisTuile.litres !== null ? moisTuile.litres : 0, nbReleves: moisTuile ? moisTuile.nbReleves : 0 }
+  };
+}
+// Calendrier du tank : une colonne par mois de traite (au moins un relevé), une ligne par jour de 1 à 31
+function calendrierTankData(campagne) {
+  const d = tankCampagneData(campagne);
+  const colonnes = d.moisAvecLait.map(m => {
+    const [y, mm] = m.cle.split('-').map(Number);
+    const nbJours = new Date(y, mm, 0).getDate();
+    const parJour = new Map(m.releves.map(r => [parseInt(r.date.slice(8, 10), 10), r.quantite]));
+    return { cle: m.cle, libelle: m.libelle, libelleCourt: m.libelleCourt, total: m.litres, jours: Array.from({ length: 31 }, (_, k) => ({ jour: k + 1, existe: k + 1 <= nbJours, litres: parJour.has(k + 1) ? parJour.get(k + 1) : null })) };
+  });
+  return { campagne, titre: d.titre, dateDebut: d.dateDebut, dateFin: d.dateFin, colonnes, totalLitres: d.total.litres };
+}
+
+// ----- Qualité -----
+function qualiteCampagneData(campagne) {
+  const list = prelevementsCampagne(campagne);
+  const bilan = bilanCampagneQualite(campagne);
+  const mois = [];
+  for (let i = 0; i < 12; i++) {
+    const info = moisInfoPourIndex(campagne, i);
+    const prelevements = list.filter(p => p.date.slice(0, 7) === info.key);
+    const volume = volumeTankMois(info.key);
+    const m = moyennesQualitePonderees(prelevements);
+    mois.push({
+      cle: info.key, libelle: moisLibelleLong(info.key), libelleCourt: info.label, indexMois: i,
+      volume: volume > 0 ? Math.round(volume * 10) / 10 : null, nbPrelevements: prelevements.length, prelevements,
+      tb: m.tb, tp: m.tp, msu: m.msu, cellules: m.cellules, moyennes: m,
+      superA: prelevements.length ? !!bilan.superAParMois[info.key] : null
+    });
+  }
+  const moy = moyennesQualitePonderees(list);
+  const avecPrelev = mois.filter(m => m.nbPrelevements > 0);
+  return {
+    campagne, titre: 'Campagne ' + campagneLabel(campagne), mois,
+    total: {
+      volume: productionTankCampagne(campagne), nbPrelevements: list.length, tb: moy.tb, tp: moy.tp, msu: moy.msu, cellules: moy.cellules,
+      moisSuperA: avecPrelev.filter(m => m.superA).length, moisAvecPrelevements: avecPrelev.length
+    },
+    positifs: resultatsPositifsCampagne(campagne)
+  };
+}
+// Résultats Listéria / Salmonelles POSITIFS de la campagne (un par germe et par prélèvement), avec le mois et son statut Super A
+function resultatsPositifsCampagne(campagne) {
+  const bilan = bilanCampagneQualite(campagne);
+  const out = [];
+  prelevementsCampagne(campagne).forEach(p => {
+    const cle = p.date.slice(0, 7);
+    if (p.listeria === 'positif') out.push({ date: p.date, mois: cle, libelleMois: moisLibelleLong(cle), germe: 'Listéria', superAObtenu: !!bilan.superAParMois[cle] });
+    if (p.salmonelles === 'positif') out.push({ date: p.date, mois: cle, libelleMois: moisLibelleLong(cle), germe: 'Salmonelles', superAObtenu: !!bilan.superAParMois[cle] });
+  });
+  return out;
+}
+
+// ----- Économique -----
+function penalitesCampagneListe(campagne) {
+  return (DB.penalitesBacterio || []).filter(p => p && p.dateDebut && campagneAnneeDebutPourDate(p.dateDebut) === campagne)
+    .slice().sort((a, b) => (a.dateDebut || '').localeCompare(b.dateDebut || ''))
+    .map(p => ({ id: p.id, record: p, dateDebut: p.dateDebut, dateFin: p.dateFin || p.dateDebut, cause: p.cause, causeLabel: causeBacterioLabel(p.cause), litrageL: p.litrageL || 0, commentaire: p.commentaire || '', montant: montantPenaliteBacterio(p), mois: p.dateDebut.slice(0, 7) }));
+}
+function ecoCampagneData(campagne) {
+  const d = bilanEconomiquePcData(campagne);
+  const bilan = bilanCampagneQualite(campagne);
+  const penalites = penalitesCampagneListe(campagne);
+  const mois = d.mois.map(m => {
+    const g = m.res.grades;
+    const incidenceGrades = g.cellules.incidence + g.coliformes.incidence + g.floreTotale.incidence + g.butyriques.incidence;
+    return {
+      cle: m.cle, libelle: moisLibelleLong(m.cle), libelleCourt: m.libelle, hasData: m.hasData, volume: m.volume > 0 ? m.volume : null, compte: m.compte,
+      msu: g.moyennes.msu, prixHors: m.prixHors, gradesEuroMille: m.compte ? incidenceGrades : null, superAEuroMille: m.hasData ? (m.res.superA.eligible ? 70 : 0) : null,
+      prixAvec: m.prixAvec, penalites: m.montantPenalites > 0 ? m.montantPenalites : null, total: m.total,
+      res: m.res, grades: g, superA: m.res.superA, coef: m.coef, penalitesListe: penalites.filter(p => p.mois === m.cle),
+      visible: m.volume > 0 || m.hasData || m.montantPenalites > 0
+    };
+  });
+  return {
+    campagne, titre: 'Campagne ' + campagneLabel(campagne), coef: d.coef, mois, penalites,
+    totaux: {
+      litres: d.litrageTank, montantHors: d.montantHors, montantAvec: d.montantAvec, gain: d.gain, prixMoyenHors: d.prixMoyenHors, prixMoyenAvec: d.prixMoyenAvec,
+      grades: d.composition ? d.composition.grades : null, superA: d.composition ? d.composition.superA : null, penalites: d.composition ? d.composition.penalites : null,
+      msu: bilan.msu, montantPenalitesCampagne: bilan.montantPenalitesCampagne, montantSuperACampagne: bilan.montantSuperA
+    },
+    horsGain: d.horsGain
+  };
+}
+
 // Formatage euros à la française, avec signe explicite pour les incidences
 // (utile pour distinguer "0,00 €" d'un B neutre d'un "+70,00 €" de bonus).
 function fmtEuro(n, avecSigne) {
