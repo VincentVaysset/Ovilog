@@ -4,6 +4,8 @@
    et la règle « sans contrôle laitier ». Cas « Brebis à régulariser » :
      - aucun contrôle laitier importé dans la campagne (la règle n'apparaît pas) ;
      - toutes les brebis ayant mis bas ont un contrôle (liste vide : rien à signaler).
+   Référence régénérée volontairement lors de la refonte « Bilan de campagne mobile » : « Brebis à régulariser » est un nouvel écran (la carte « sans contrôle laitier »
+   n'y est plus, les deux cas sont donc identiques), Économique et Lactation ne changent que par la barre d'onglets (libellés raccourcis).
    Les écrans ne doivent changer que par ce qui est demandé : la règle elle-même est testée dans
    test_controle_laitier_manquant. Régénérer volontairement : OVILOG_MAJ_REF=1 node test_mobile_ecrans_reference.mjs */
 import { chromium } from 'playwright';
