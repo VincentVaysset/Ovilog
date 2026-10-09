@@ -6786,14 +6786,16 @@ function renderBilanCampagne() {
   if (bilanCampagneTab === 'economique') {
     const selectEco = document.getElementById('bilan-eco-campagne-select');
     if (selectEco) selectEco.onchange = () => { bilanEconomiqueCampagneAffichee = parseInt(selectEco.value, 10); bilanEconomiqueMoisAffiche = null; ecoMobileOuverts = new Set(); ecoMobileTous = false; render('bilan-campagne'); };
-    // Détail mensuel "Prix du lait" (coupé de Production laitière, qui ne
-    // garde plus que les moyennes techniques et les prélèvements bruts) --
-    // mêmes chips que l'ancien #qualite-months, mais un clic déclenche un
-    // render complet (comme le sélecteur de campagne ci-dessus) plutôt
-    // qu'une mise à jour ciblée du DOM.
-    document.querySelectorAll('#bilan-eco-mois .chip').forEach(chip => {
-      if (chip.classList.contains('chip-empty')) return;
-      chip.onclick = () => { bilanEconomiqueMoisAffiche = chip.dataset.mois; render('bilan-campagne'); };
+    // PC : clic sur un mois du tableau « Mois par mois » -> son détail ; carte Pénalités bactério (ajout / modification, même fiche que le mobile)
+    document.querySelectorAll('.pc-eco-row').forEach(r => {
+      const aller = () => { bilanEconomiqueMoisAffiche = r.dataset.cle; render('bilan-campagne'); };
+      r.onclick = aller; r.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); aller(); } };
+    });
+    const apresPenalite = () => render('bilan-campagne');
+    const penAdd = document.getElementById('pc-pen-add'); if (penAdd) penAdd.onclick = () => openPenaliteSheet(null, bilanEconomiqueMoisAffiche, apresPenalite);
+    document.querySelectorAll('.pc-pen').forEach(r => {
+      const aller = () => { const rec = DB.penalitesBacterio.find(x => x.id === r.dataset.id); if (rec) openPenaliteSheet(rec, null, apresPenalite); };
+      r.onclick = aller; r.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); aller(); } };
     });
     // Mobile : « Mois par mois » dépliable, pénalités saisies depuis le mois, « Voir les 12 mois », lien vers Production laitière
     document.querySelectorAll('.eco-mois-tete').forEach(tete => {
@@ -7223,6 +7225,7 @@ function bilanEconomiqueDesktopHtml() {
   const d = bilanEconomiquePcData(campagne);
   const premier = d.mois.find(m => m.hasData);
   if (bilanEconomiqueMoisAffiche === null || !d.mois.some(m => m.cle === bilanEconomiqueMoisAffiche && m.hasData)) bilanEconomiqueMoisAffiche = premier ? premier.cle : null;
+  const e = ecoCampagneData(campagne), T = e.totaux;
   const moisSel = d.mois.find(m => m.cle === bilanEconomiqueMoisAffiche) || null;
   const litres = v => v === null || v === undefined ? '—' : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' L';
   const gainTxt = d.gain === null ? '—' : pcEuro(d.gain, 0, true);
@@ -7235,7 +7238,18 @@ function bilanEconomiqueDesktopHtml() {
     const gain = Math.max(tot - hors, 0);
     return { label: m.label, valeur: tot, texte: m.total !== null && m.total !== undefined && m.volume > 0 ? fmtDecimal(m.total / 1000, 1) : '0', parts: [{ v: gain, couleur: 'var(--primary)' }, { v: Math.min(hors, tot > 0 ? hors : 0), couleur: '#a9cdb8' }] };   // gain qualité (foncé) au-dessus du prix hors qualité (clair)
   }), { hauteur: 160 });
-  const chips = d.mois.map(m => `<button type="button" class="chip${m.hasData ? '' : ' chip-empty'}${m.cle === bilanEconomiqueMoisAffiche ? ' selected' : ''}" data-mois="${m.cle}">${m.libelle}</button>`).join('');
+  // ---- tableau « Mois par mois » : mêmes colonnes et mêmes valeurs que la page 1 du rapport de campagne (ecoCampagneData) ; un clic sur un mois affiche son détail
+  const mille = (v, sg) => v === null || v === undefined ? '—' : (v < 0 ? '−' : (sg && v > 0 ? '+' : '')) + fmtGroupe(Math.abs(v), 2);
+  const rouge = 'color:var(--coral-fg);';
+  const lignesMois = e.mois.map(m => m.visible
+    ? `<tr${m.hasData ? ` class="clic pc-eco-row${m.cle === bilanEconomiqueMoisAffiche ? ' sel' : ''}" data-cle="${m.cle}" tabindex="0"` : ''}><td>${m.libelle}</td><td>${fmtLitres(m.volume)}</td><td>${m.msu !== null && m.msu !== undefined ? fmtDecimal(m.msu, 2) : '—'}</td><td>${mille(m.prixHors)}</td><td>${m.gradesEuroMille === null ? '—' : mille(m.gradesEuroMille, true)}</td><td>${m.superAEuroMille === null ? '—' : (m.superAEuroMille === 0 ? '0,00' : mille(m.superAEuroMille, true))}</td><td>${mille(m.prixAvec)}</td><td>${m.penalites ? `<span style="${rouge}">${mille(-m.penalites)}</span>` : '—'}</td><td><b>${m.total !== null ? fmtGroupe(m.total, 2) : '—'}</b></td></tr>`
+    : `<tr style="color:var(--text-muted);"><td>${m.libelle}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`).join('');
+  const totalMois = `<tr class="b"><td>${e.titre}</td><td>${fmtLitres(T.litres)}</td><td>${T.msu !== null && T.msu !== undefined ? fmtDecimal(T.msu, 2) : '—'}</td><td>${mille(T.prixMoyenHors)}</td><td></td><td></td><td>${mille(T.prixMoyenAvec)}</td><td>${T.montantPenalitesCampagne ? `<span style="${rouge}">${mille(-T.montantPenalitesCampagne)}</span>` : '—'}</td><td>${T.montantAvec !== null ? fmtGroupe(T.montantAvec, 2) : '—'}</td></tr>`;
+  const tableauMois = `<table class="brd-t"><thead><tr><th style="width:15%;">Mois</th><th style="width:9%;">Volume<br>L</th><th style="width:8%;">MSU</th><th style="width:12%;">Prix hors qualité<br>€ / 1000 L</th><th style="width:9%;">Grades<br>€ / 1000 L</th><th style="width:9%;">Super A<br>€ / 1000 L</th><th style="width:12%;">Prix avec qualité<br>€ / 1000 L</th><th style="width:11%;">Pénalités<br>€</th><th style="width:15%;">Total du mois<br>€</th></tr></thead><tbody>${lignesMois}${totalMois}</tbody></table>`;
+  // ---- carte « Pénalités bactério » : liste + ajout + modification (même fiche que sur mobile)
+  const lignesPen = e.penalites.map(p => `<div class="pc-li pc-pen" data-id="${p.id}" tabindex="0" role="button" style="cursor:pointer;"><span class="a">${p.dateFin !== p.dateDebut ? formatDateFr(p.dateDebut) + ' → ' + formatDateFr(p.dateFin) : formatDateFr(p.dateDebut)}<br><span class="b">${p.causeLabel} · ${fmtLitres(p.litrageL)} L${p.commentaire ? ' · ' + echoHtml(p.commentaire) : ''}</span></span><b style="${rouge}">${pcEuro(-p.montant, 2)}</b></div>`).join('');
+  const cartePenalites = `<div class="card" id="pc-eco-penalites"><div class="pc-cardhead"><div><p class="brd-ttl" style="margin:0;">Pénalités bactério</p><p class="brd-note" style="margin:0;">${e.penalites.length ? e.penalites.length + ' pénalité' + (e.penalites.length > 1 ? 's' : '') + ' sur la campagne · 200 € / 1000 L pénalisés' : '200 € / 1000 L pénalisés'}</p></div><button type="button" class="btn btn-secondary" id="pc-pen-add" style="width:auto;padding:7px 14px;font-size:13px;">+ Ajouter</button></div>
+      ${e.penalites.length ? lignesPen + `<div class="pc-li" style="cursor:default;font-weight:700;"><span class="a">Total des pénalités</span><span style="${rouge}">${pcEuro(-T.montantPenalitesCampagne, 2)}</span></div>` : '<div class="brd-vide">Aucune pénalité bactério sur cette campagne.</div>'}</div>`;
 
   // ---- détail du mois
   const ligneGradePc = (nom, g) => {
@@ -7297,13 +7311,14 @@ function bilanEconomiqueDesktopHtml() {
       ${kpi('Gain lié à la qualité', gainTxt, d.gainParMille !== null ? pcEuro(d.gainParMille, 1, true) + ' /1000 L' : '—', d.gain !== null ? (d.gain >= 0 ? 'var(--primary)' : 'var(--coral-fg)') : undefined)}
     </div>
 
+    <div class="card" id="pc-eco-mois"><p class="brd-ttl">Mois par mois</p><p class="brd-note">Cliquer sur un mois avec prélèvement pour voir son détail · prix, grades et Super A en € / 1000 L</p>${tableauMois}</div>
+
     <div class="brd-grid2">
       <div class="card">
         <p class="brd-ttl">Montant du lait par mois</p>
         <p class="brd-note">Prix hors qualité (vert clair) et gain qualité (vert foncé), en milliers d'euros</p>
         ${d.litrageTank > 0 ? barres : '<div class="brd-vide">Aucune saisie tank sur cette campagne.</div>'}
-        <div class="chip-list" id="bilan-eco-mois" style="margin-top:12px;">${chips}</div>
-        <p class="brd-note" style="margin:0;">Les mois en pointillé n'ont pas de prélèvement qualité. Cliquer sur un mois affiche son détail.</p>
+        <p class="brd-note" style="margin:12px 0 0;">Le détail d'un mois s'ouvre en cliquant sur sa ligne du tableau « Mois par mois ».</p>
       </div>
       <div class="card" id="bilan-eco-prix-mois-card">
         <p class="brd-ttl">Détail du mois${moisSel ? ' : ' + moisSel.libelle : ''}</p>
@@ -7313,6 +7328,10 @@ function bilanEconomiqueDesktopHtml() {
 
     <div class="brd-grid2">
       <div class="card"><p class="brd-ttl">Composition du gain qualité</p><p class="brd-note">Sur toute la campagne</p>${composition}</div>
+      ${cartePenalites}
+    </div>
+
+    <div class="brd-grid2" style="grid-template-columns:1fr;">
       <div class="card pc-card-warn" style="background:var(--amber-bg);">
         <p class="brd-ttl" style="color:var(--amber-fg);">À vérifier hors Ovilog</p>
         <p style="margin:0;font-size:13px;color:var(--amber-fg);">Le statut Super A est calculé sur les critères suivis par Ovilog (4 grades + Listéria / Salmonelles). La grille laitière exige aussi l'absence d'antibiotiques, de virage résazurine et de déclassement pour conditions d'hygiène insuffisantes. À contrôler avant application.</p>

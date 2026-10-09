@@ -70,21 +70,22 @@ check(await page.evaluate(() => !document.querySelector('.fiche-desktop-grid') &
 const bars = await page.evaluate(() => [...document.querySelectorAll('#pc-economique .pc-bar > span')].map(s => s.textContent));
 const attendu = await page.evaluate(() => bilanEconomiquePcData(2026).mois.map(m => m.total !== null && m.volume > 0 ? fmtDecimal(m.total / 1000, 1) : '0'));
 check(bars.length === 12 && bars.join() === attendu.join(), 'montant par mois (k€) = totaux calculés : ' + bars.join(' | '));
-const chips = await page.evaluate(() => [...document.querySelectorAll('#bilan-eco-mois .chip')].map(c => c.textContent + (c.classList.contains('chip-empty') ? '(vide)' : '') + (c.classList.contains('selected') ? '(sél)' : '')));
-check(chips.join('|') === 'Oct 26(vide)|Nov 26(vide)|Déc 26(sél)|Jan 27|Fév 27(vide)|Mar 27|Avr 27(vide)|Mai 27(vide)|Jun 27(vide)|Jul 27(vide)|Aoû 27(vide)|Sep 27(vide)', 'mois : pointillé = pas de prélèvement, premier mois avec données sélectionné : ' + chips.join('|'));
+const lignes = await page.evaluate(() => [...document.querySelectorAll('#pc-eco-mois tbody tr')].map(tr => (tr.classList.contains('clic') ? '[clic]' : '') + (tr.classList.contains('sel') ? '[sél]' : '') + tr.cells[0].textContent));
+check(lignes.join('|') === 'Octobre 2026|Novembre 2026|[clic][sél]Décembre 2026|[clic]Janvier 2027|Février 2027|[clic]Mars 2027|Avril 2027|Mai 2027|Juin 2027|Juillet 2027|Août 2027|Septembre 2027|Campagne 2027', 'tableau Mois par mois : 12 mois + total, seuls les mois avec prélèvement sont cliquables, premier mois avec données sélectionné : ' + lignes.join('|'));
+check(await page.evaluate(() => [...document.querySelectorAll('#pc-eco-mois thead th')].map(th => th.textContent.replace(/\s+/g, ' ').trim()).join('|')) === 'Mois|VolumeL|MSU|Prix hors qualité€ / 1000 L|Grades€ / 1000 L|Super A€ / 1000 L|Prix avec qualité€ / 1000 L|Pénalités€|Total du mois€'.replace(/L\|MSU/, 'L|MSU'), 'colonnes du tableau = colonnes de la page 1 du rapport PDF');
 console.log('OK 2 indicateurs (45 000 L, gain +30 €), montant par mois, mois en pointillé / sélectionné.');
 
 // ================================================================ 3. détail du mois (clic sur un mois)
 let det = await page.evaluate(() => document.getElementById('bilan-eco-prix-mois-card').textContent.replace(/ /g, ' ').replace(/\s+/g, ' '));
 check(/Détail du mois : Déc 26/.test(det) && /MSU 125,0 × 12,0000/.test(det) && /1500,0 €\/1000 L/.test(det) && /Bonus Super A\s*Obtenu/.test(det) && /Prix avec qualité\s*1570,0 €\/1000 L/.test(det) && /Total du mois\s*18 840 €/.test(det), 'détail de décembre (125 × 12 = 1500 ; +70 ; 1570 × 12 = 18 840) : ' + det);
-await page.click('#bilan-eco-mois .chip[data-mois="2027-01"]');
+await page.click('.pc-eco-row[data-cle="2027-01"]');
 await page.waitForFunction(() => /Détail du mois : Jan 27/.test(document.getElementById('bilan-eco-prix-mois-card').textContent));
 det = await page.evaluate(() => document.getElementById('bilan-eco-prix-mois-card').textContent.replace(/ /g, ' ').replace(/\s+/g, ' '));
 check(/Cellules\s*C.*30,50 €\s*\/1000 L/.test(det) && /Non obtenu/.test(det) && /Pénalités bactério\s*déduites du total du mois\s*−200 €/.test(det), 'détail de janvier (cellules C, Super A non obtenu, pénalité −200 €) : ' + det);
 const totalJanv = await page.evaluate(() => bilanEconomiquePcData(2026).mois[3].total);
 check(proche(totalJanv, (130 * 12 - 30.5) * 20 - 200), 'total de janvier = (130 × 12 − 30,50) × 20 − 200 : ' + totalJanv);
 // un clic sur un mois en pointillé ne fait rien
-await page.click('#bilan-eco-mois .chip[data-mois="2027-02"]');
+await page.evaluate(() => document.querySelector('#pc-eco-mois tbody tr:nth-child(5)').click());
 check(/Jan 27/.test(await page.evaluate(() => document.getElementById('bilan-eco-prix-mois-card').textContent)), 'mois sans prélèvement : non sélectionnable');
 console.log('OK 3 détail du mois : décembre (Super A obtenu), janvier (cellules C, pénalité −200 €, total calculé à la main), mois en pointillé non cliquable.');
 
