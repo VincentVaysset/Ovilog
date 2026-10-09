@@ -108,8 +108,12 @@ const coh = await page.evaluate(() => {
 check(coh.inter === 0 && coh.brebisTraite === coh.traites && coh.partition, 'aucune brebis à la fois sans contrôle et passée à la traite ; partition mises bas actives = traites + sans contrôle ; lactation : ' + JSON.stringify(coh));
 console.log('OK 3 cohérence avec le bilan de lactation : « brebis passées à la traite » (' + coh.brebisTraite + ') et « sans contrôle » ne se recoupent jamais ; chaque brebis active ayant mis bas est dans l\'un ou l\'autre.');
 
-// ================================================================ 4. carte mobile
+// ================================================================ 4. carte mobile : plus dans « Brebis à régulariser » (remplacée par la bande ambre du Contrôle laitier)
 await page.evaluate(() => { bilanCampagneTab = 'incoherences'; render('bilan-campagne'); });
+check(await page.evaluate(() => !document.getElementById('carte-sans-controle-laitier') && !/sans contrôle laitier/i.test(document.getElementById('app').textContent)), 'mobile : plus de carte « sans contrôle laitier » dans Brebis à régulariser');
+// la même carte (5 lignes) s'ouvre depuis la bande ambre de l'écran Contrôle laitier
+await page.evaluate(() => render('controle-laitier'));
+await page.click('#btn-cl-bande-sans');
 const mob = await page.evaluate(() => {
   const c = document.getElementById('carte-sans-controle-laitier');
   return c ? { texte: c.textContent.replace(/\s+/g, ' '), lignes: [...c.querySelectorAll('.sans-controle-ligne')].map(l => l.textContent.replace(/\s+/g, ' ').trim()), nb: c.querySelectorAll('.bilan-eid-link').length } : null;
@@ -117,14 +121,14 @@ const mob = await page.evaluate(() => {
 check(mob && mob.lignes.length === 5 && mob.nb === 5, 'carte mobile : 5 lignes : ' + JSON.stringify(mob));
 check(/Ont mis bas, sans contrôle laitier/.test(mob.texte) && /5 brebis/.test(mob.texte) && /2 attendues à la traite : signal fort/.test(mob.texte), 'titre, compteur, signal fort : ' + mob.texte);
 check(/n°0002 .*mise bas le 12\/11 · 2 agneaux.*attendue à la traite.*Ouvrir la fiche/.test(mob.lignes[0]) || /mise bas le 12\/11 · 2 agneaux/.test(mob.lignes[0]) && /attendue à la traite/.test(mob.lignes[0]) && !/pas encore/.test(mob.lignes[0]) && /Ouvrir la fiche/.test(mob.lignes[0]), 'ligne B : date, agneaux, attendue (fort), lien : ' + mob.lignes[0]);
-check(/mise bas le 20\/11 · 2 agneaux/.test(mob.lignes[2]) && /pas encore attendue à la traite \(1 agneau non réglé\)/.test(mob.lignes[2]), 'ligne C : pas encore attendue (1 agneau non réglé) : ' + mob.lignes[2]);
+check(/mise bas le 20\/11 · 2 agneaux/.test(mob.lignes[2]) && /pas encore attendue \(1 agneau non réglé\)/.test(mob.lignes[2]), 'ligne C : pas encore attendue (1 agneau non réglé) : ' + mob.lignes[2]);
 check(/mise bas le 02\/12 · 0 agneau/.test(mob.lignes[3]) && /aucun agneau enregistré/.test(mob.lignes[3]), 'ligne D : aucun agneau enregistré : ' + mob.lignes[3]);
 check(/\(dont 1 mort-né\)/.test(mob.lignes[1]), 'ligne M : « dont 1 mort-né » : ' + mob.lignes[1]);
 // « Ouvrir la fiche » ouvre la fiche de la brebis, sans rien écrire
 await page.click('#carte-sans-controle-laitier .sans-controle-ligne >> nth=0');
 const vue = await page.evaluate(() => ({ view: currentView, id: currentSheepId || (typeof currentId !== 'undefined' ? currentId : null), saves: window.__saves, titre: document.getElementById('app').textContent.slice(0, 300).replace(/\s+/g, ' ') }));
 check(vue.view === 'detail' && vue.saves === 0 && /0002/.test(vue.titre), 'clic = fiche de la brebis B ouverte, 0 saveData : ' + JSON.stringify(vue));
-console.log('OK 4 carte mobile : 5 lignes (n°, date, agneaux, état « attendue / pas encore attendue »), signal fort compté, « Ouvrir la fiche » ouvre la fiche, 0 écriture.');
+console.log('OK 4 carte mobile : retirée de Brebis à régulariser ; dans Contrôle laitier (bande ambre) : 5 lignes (n°, date, agneaux, état), signal fort compté, « Ouvrir la fiche » ouvre la fiche, 0 écriture.');
 await page.context().close();
 
 // ================================================================ 5. PC : même carte dans « Brebis à régulariser »

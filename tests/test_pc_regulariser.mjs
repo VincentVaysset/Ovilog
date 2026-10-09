@@ -108,8 +108,8 @@ const coh = await page.evaluate(() => {
   const mb = actives.filter(s => agnelageCampagneActuelleIdx(s) !== -1).length;
   const vd = actives.filter(s => agnelageCampagneActuelleIdx(s) === -1 && estVideDefinitiveCampagne(s)).length;
   // l'écran mobile : mêmes groupes (compteurs « N brebis »)
-  const div = document.createElement('div'); div.innerHTML = bilanIncoherencesHtml(actives);
-  const mobile = [...div.querySelectorAll('.card')].map(c => c.textContent.replace(/\s+/g, ' ')).join(' ');
+  const div = document.createElement('div'); div.innerHTML = bilanARegulariserMobileHtml();
+  const mobile = [...div.querySelectorAll('.reg-pastille')].map(c => c.textContent.replace(/\s+/g, ' ')).join(' ');
   return { d: [d.groupes.aRegulariser.length, d.groupes.misesBas.length, d.groupes.videsDefinitives.length, d.actives], f: [regul, mb, vd, actives.length], mobile };
 });
 check(JSON.stringify(coh.d) === JSON.stringify(coh.f), 'groupes PC = prédicats de l\'appli : ' + JSON.stringify(coh));
