@@ -753,6 +753,11 @@
   .pl-moy:first-child { border-top: 0; }
   .eco-lig { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 36px; padding: 4px 0; font-size: 14px; }
   .eco-coef { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); font-family: inherit; font-size: 15px; color: var(--text); cursor: pointer; }
+  #pc-tank, #pc-qualite { display: flex; flex-direction: column; gap: 16px; }
+  .brd-t tr.clic { cursor: pointer; }
+  .brd-t tr.clic:hover td { background: #f7f5ee; }
+  .brd-t tr.sel td { background: var(--green-bg); }
+  .pc-li.sel { background: var(--green-bg); border-radius: 8px; }
   .pl-lien { display: flex; align-items: center; justify-content: center; min-height: 44px; text-align: center; font-size: 13px; font-weight: 500; color: var(--blue-fg); text-decoration: none; }
   .modal-overlay { position: fixed; inset: 0; background: rgba(43,38,28,0.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 1000; }
   .modal-card { background: var(--card); border-radius: var(--radius); padding: 20px; max-width: 380px; width: 100%; box-shadow: 0 12px 40px rgba(0,0,0,0.28); }
@@ -15472,6 +15477,185 @@ function plQualiteBrancher() {
   document.getElementById('pl-lien-eco').onclick = ev => { ev.preventDefault(); bilanCampagneTab = 'economique'; bilanEconomiqueCampagneAffichee = camp; bilanEconomiqueMoisAffiche = null; render('bilan-campagne'); };
 }
 
+/* ---------- Production laitière, version PC : onglets « Tank » et « Qualité » ----------
+   Même structure que la page PC du Bilan économique (titre, sélecteur de campagne et boutons d'action en haut à droite, rangée de tuiles blanches, puis cartes côte à côte).
+   Aucun montant en euros ici. Mêmes fonctions de données (tankCampagneData, qualiteCampagneData) et mêmes opérations sur un relevé (enregistrerReleveTank, supprimerReleveTank)
+   que la version mobile ; les exports sont les mêmes fonctions (exportTankPdf, exportTankXlsx, exportCalendrierTankPdf, exportRapportCampagnePdf) appelées avec la campagne affichée. */
+let plPcCampagne = null, plPcMoisTank = null, plPcDate = null /* date du relevé affiché, ou 'nouveau' */, plPcMoisQual = null;
+
+function plPcCampagnes() {
+  const camps = campagnesProductionLaitiere();
+  if (plPcCampagne === null || !camps.includes(plPcCampagne)) {
+    const enCours = campagneAnneeDebutPourDate(jourAujourdhuiISO());
+    plPcCampagne = camps.includes(enCours) ? enCours : camps[0];
+  }
+  return camps;
+}
+const plPcEnteteHtml = (titre, sous, camps, boutonsHtml) => `<div class="brd-head">
+    <div><h2 class="brd-title">${titre}</h2><div class="brd-sub">${sous}</div></div>
+    <div class="brd-actions"><select id="pl-pc-campagne" aria-label="Campagne consultée">${camps.map(c => `<option value="${c}"${c === plPcCampagne ? ' selected' : ''}>Campagne ${campagneLabel(c)}</option>`).join('')}</select>${boutonsHtml}</div>
+  </div>`;
+
+// ----- Tank -----
+function plPcTankHtml(camps) {
+  const camp = plPcCampagne, d = tankCampagneData(camp), T = d.total, tm = d.tuileMois;
+  const moisValide = plPcMoisTank !== null && d.mois.some(m => m.cle === plPcMoisTank && m.nbReleves > 0);
+  if (!moisValide) plPcMoisTank = tm.cle && d.mois.some(m => m.cle === tm.cle && m.nbReleves > 0) ? tm.cle : (d.moisAvecLait.length ? d.moisAvecLait[d.moisAvecLait.length - 1].cle : null);
+  const mSel = d.mois.find(m => m.cle === plPcMoisTank) || null;
+  if (plPcDate !== 'nouveau' && !(mSel && mSel.releves.some(r => r.date === plPcDate))) plPcDate = mSel ? mSel.releves[mSel.releves.length - 1].date : 'nouveau';
+  const maxL = Math.max(...d.moisAvecLait.map(m => m.litres), 1);
+  const lignes = d.moisAvecLait.map(m => `<tr class="clic pc-mois-row${m.cle === plPcMoisTank ? ' sel' : ''}" data-cle="${m.cle}"><td>${m.libelle}</td><td>${fmtGroupe(m.nbReleves, 0)}</td><td>${fmtLitres(m.litres)}</td><td><div class="brd-bar" style="height:10px;"><div style="width:${Math.round(m.litres / maxL * 100)}%;background:var(--primary);"></div></div></td><td>${fmtLitres(m.cumul)}</td></tr>`).join('');
+  const releves = mSel ? mSel.releves.map(r => `<div class="pc-li pc-rel${r.date === plPcDate ? ' sel' : ''}" data-date="${r.date}" tabindex="0" role="button" style="cursor:pointer;"><span class="a">${formatDateFr(r.date)} ${r.prelevement ? pcPill('info', 'Analyse') : ''}</span><b>${fmtLitres(r.quantite)} L</b></div>`).join('') : '';
+  // fiche du relevé affiché (date figée pour un relevé existant ; saisie libre pour un nouveau)
+  const nouveau = plPcDate === 'nouveau';
+  const existant = nouveau ? null : (DB.laitTank || []).find(l => l.date === plPcDate);
+  const prelev = existant ? findPrelevementQualiteByDate(existant.date) : null;
+  const dateNouveau = campagneAnneeDebutPourDate(jourAujourdhuiISO()) === camp ? jourAujourdhuiISO() : '';
+  const fiche = `<div class="card" id="pc-releve-fiche">
+      <p class="brd-ttl">${nouveau ? 'Nouveau relevé' : 'Relevé du ' + formatDateFr(plPcDate)}</p>
+      <div class="brd-grid2" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;">
+        <div><label for="pc-rel-date">Date</label><input type="date" id="pc-rel-date" value="${nouveau ? dateNouveau : plPcDate}"${nouveau ? '' : ' disabled'}></div>
+        <div><label for="pc-rel-qte">Litres</label><input type="number" step="0.1" inputmode="decimal" id="pc-rel-qte" value="${existant ? existant.quantite : ''}" placeholder="0"></div>
+      </div>
+      <div id="pc-rel-note" class="brd-note hidden" style="margin:6px 0 0;"></div>
+      <label class="row" style="align-items:center;gap:10px;cursor:pointer;margin:12px 0 4px;"><input type="checkbox" id="pc-rel-prelev" style="width:19px;height:19px;margin:0;flex-shrink:0;"${prelev ? ' checked disabled' : ''}><span style="font-size:14px;font-weight:600;">Prélèvement qualité ce jour</span></label>
+      <div id="pc-rel-prelev-note" class="brd-note${prelev ? '' : ' hidden'}" style="margin:0 0 6px;">Un prélèvement qualité existe déjà ce jour : ses résultats se saisissent dans l'onglet Qualité.</div>
+      <div id="pc-rel-err" class="error-box hidden"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;"><button type="button" class="btn btn-primary" id="pc-rel-save" style="width:auto;padding:9px 18px;">Enregistrer</button>${nouveau ? '' : '<button type="button" class="btn btn-secondary" id="pc-rel-del" style="width:auto;padding:9px 18px;color:var(--danger);border-color:var(--danger);">Supprimer ce relevé</button>'}</div>
+    </div>`;
+  return `<div id="pc-tank">
+    ${plPcEnteteHtml('Tank', 'Campagne ' + campagneLabel(camp) + ' · litres livrés', camps,
+      `<button type="button" class="btn btn-secondary" id="btn-export-tank-xlsx">Excel</button><button type="button" class="btn btn-secondary" id="btn-export-tank-pdf">Tank (PDF)</button><button type="button" class="btn btn-secondary" id="btn-export-calendrier-pdf">Calendrier (PDF)</button>`)}
+    <div class="pc-kpis">
+      ${pcKpi(tm.titre, tm.litres !== null && tm.litres !== undefined ? fmtLitres(tm.litres) + ' L' : '—', tm.libelle + (tm.nbReleves ? ' · ' + tm.nbReleves + ' relevé' + (tm.nbReleves > 1 ? 's' : '') : ''))}
+      ${pcKpi(d.titre, fmtLitres(T.litres) + ' L', 'tank, toute la campagne')}
+      ${pcKpi('Relevés', fmtGroupe(T.nbReleves, 0), T.premiereDate ? 'du ' + formatDateFr(T.premiereDate) + ' au ' + formatDateFr(T.derniereDate) : 'aucun relevé')}
+      ${pcKpi('Mois de pointe', d.pointe ? d.pointe.libelle : '—', d.pointe ? fmtLitres(d.pointe.litres) + ' L' : '')}
+    </div>
+    <div class="brd-grid2">
+      <div class="card" id="pc-tank-mois">
+        <p class="brd-ttl">Litrage par mois</p><p class="brd-note">Cliquer sur un mois pour voir ses relevés</p>
+        ${d.moisAvecLait.length ? `<table class="brd-t"><thead><tr><th style="width:26%;">Mois</th><th style="width:14%;">Relevés</th><th style="width:18%;">Litres</th><th style="width:24%;"></th><th style="width:18%;">Cumul (L)</th></tr></thead><tbody>${lignes}
+          <tr class="b"><td>${d.titre}</td><td>${fmtGroupe(T.nbReleves, 0)}</td><td>${fmtLitres(T.litres)}</td><td></td><td>${fmtLitres(T.litres)}</td></tr></tbody></table>` : '<div class="brd-vide">Aucun relevé tank sur cette campagne.</div>'}
+      </div>
+      <div class="brd-col">
+        ${mSel ? `<div class="card" id="pc-tank-releves"><div class="pc-cardhead"><div><p class="brd-ttl" style="margin:0;">${mSel.libelle}</p><p class="brd-note" style="margin:0;">${mSel.nbReleves} relevé${mSel.nbReleves > 1 ? 's' : ''} · ${fmtLitres(mSel.litres)} L</p></div><button type="button" class="btn btn-secondary" id="pc-rel-nouveau" style="width:auto;padding:7px 14px;font-size:13px;">+ Nouveau relevé</button></div>${releves}</div>`
+          : `<div class="card"><div class="pc-cardhead"><p class="brd-ttl" style="margin:0;">Relevés</p><button type="button" class="btn btn-secondary" id="pc-rel-nouveau" style="width:auto;padding:7px 14px;font-size:13px;">+ Nouveau relevé</button></div><div class="brd-vide">Aucun relevé : saisis le premier ci-dessous.</div></div>`}
+        ${fiche}
+      </div>
+    </div>
+  </div>`;
+}
+function plPcTankBrancher() {
+  const camp = plPcCampagne;
+  document.querySelectorAll('.pc-mois-row').forEach(r => { r.onclick = () => { plPcMoisTank = r.dataset.cle; plPcDate = null; render('qualite'); }; });
+  document.querySelectorAll('.pc-rel').forEach(r => {
+    const aller = () => { plPcDate = r.dataset.date; render('qualite'); };
+    r.onclick = aller; r.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); aller(); } };
+  });
+  const nv = document.getElementById('pc-rel-nouveau'); if (nv) nv.onclick = () => { plPcDate = 'nouveau'; render('qualite'); };
+  const dateInput = document.getElementById('pc-rel-date'), qte = document.getElementById('pc-rel-qte'), cb = document.getElementById('pc-rel-prelev');
+  const note = document.getElementById('pc-rel-note'), noteP = document.getElementById('pc-rel-prelev-note'), err = document.getElementById('pc-rel-err');
+  const nouveau = plPcDate === 'nouveau';
+  // nouveau relevé : si la date saisie a déjà un relevé / un prélèvement, on le dit (sans redessiner la page pendant la frappe)
+  const sync = () => {
+    const l = (DB.laitTank || []).find(x => x.date === dateInput.value);
+    if (l) { qte.value = l.quantite; note.textContent = 'Un relevé existe déjà pour le ' + formatDateFr(dateInput.value) + ' (' + fmtLitres(l.quantite) + ' L) : il sera mis à jour.'; note.classList.remove('hidden'); }
+    else { note.classList.add('hidden'); }
+    const p = findPrelevementQualiteByDate(dateInput.value);
+    cb.checked = !!p; cb.disabled = !!p; noteP.classList.toggle('hidden', !p);
+  };
+  if (nouveau) { dateInput.addEventListener('input', sync); sync(); if (!(DB.laitTank || []).some(x => x.date === dateInput.value)) qte.value = ''; }
+  document.getElementById('pc-rel-save').onclick = () => {
+    const q = parseFloat(qte.value), date = dateInput.value;
+    if (!date) { err.textContent = 'Renseigne la date.'; err.classList.remove('hidden'); return; }
+    if (isNaN(q) || q < 0) { err.textContent = 'Saisis une quantité valide.'; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    const exist = (DB.laitTank || []).find(l => l.date === date);
+    if (nouveau && exist && !confirm('Un relevé existe déjà pour le ' + formatDateFr(date) + ' (' + fmtLitres(exist.quantite) + ' L). Le remplacer par ' + fmtLitres(Math.round(q * 10) / 10) + ' L ?')) return;
+    enregistrerReleveTank(date, q, cb.checked);
+    saveData(DB);
+    plPcCampagne = campagneAnneeDebutPourDate(date); plPcMoisTank = date.slice(0, 7); plPcDate = date;
+    render('qualite');
+  };
+  const del = document.getElementById('pc-rel-del');
+  if (del) del.onclick = () => {
+    const date = plPcDate;
+    if (!confirm(messageSuppressionReleve(date))) return;
+    supprimerReleveTank(date); saveData(DB); plPcDate = null; render('qualite');
+  };
+  const lie = (id, fn) => { const b = document.getElementById(id); if (b) b.onclick = () => lancerExportAvecBouton(b, () => fn(camp)); };
+  lie('btn-export-tank-pdf', exportTankPdf); lie('btn-export-tank-xlsx', exportTankXlsx); lie('btn-export-calendrier-pdf', exportCalendrierTankPdf);
+}
+
+// ----- Qualité -----
+function plPcQualiteHtml(camps) {
+  const camp = plPcCampagne, q = qualiteCampagneData(camp), T = q.total;
+  const avec = q.mois.filter(m => m.nbPrelevements > 0);
+  if (!avec.some(m => m.cle === plPcMoisQual)) plPcMoisQual = avec.length ? avec[avec.length - 1].cle : null;
+  const mSel = avec.find(m => m.cle === plPcMoisQual) || null;
+  const d2 = v => v === null || v === undefined ? '—' : fmtDecimal(v, 2);
+  const superAPill = m => m.superA === null ? '—' : pcPill(m.superA ? 'ok' : 'danger', m.superA ? 'Obtenu' : 'Non obtenu');
+  const lignes = avec.map(m => `<tr class="clic pc-qmois-row${m.cle === plPcMoisQual ? ' sel' : ''}" data-cle="${m.cle}"><td>${m.libelle}</td><td>${m.volume !== null ? fmtLitres(m.volume) : '—'}</td><td>${m.nbPrelevements}</td><td>${d2(m.tb)}</td><td>${d2(m.tp)}</td><td>${d2(m.msu)}</td><td>${fmtCellulesMilliers(m.cellules)}</td><td>${superAPill(m)}</td></tr>`).join('');
+  const cellule = (lib, v) => `<div><span class="b" style="font-size:11.5px;color:var(--text-muted);">${lib}</span><br><b>${v}</b></div>`;
+  const val = (p, k, f) => p[k] === null || p[k] === undefined ? '—' : f(p[k]);
+  const prelevs = mSel ? [...mSel.prelevements].sort((a, b) => b.date.localeCompare(a.date)).map(p => {
+    const msu = (p.tb !== null && p.tb !== undefined && p.tp !== null && p.tp !== undefined) ? p.tb + p.tp : null;
+    const vide = prelevementSansResultats(p);
+    return `<div class="pc-prelev" data-date="${p.date}" style="border-top:1px solid var(--border);padding:12px 0;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:${vide ? 0 : 8}px;"><b style="font-size:14px;">${formatDateFr(p.date)}</b><span class="b" style="color:var(--text-muted);font-size:13px;">${fmtLitres(p.volumeLait)} L</span>${mSel.superA && !vide ? pcPill('ok', 'Super A') : ''}${vide ? pcPill('warn', 'résultats à saisir') : ''}<span style="flex:1;"></span><button type="button" class="btn btn-secondary pc-prelev-modif" data-date="${p.date}" style="width:auto;padding:6px 14px;font-size:13px;">Modifier</button></div>
+      ${vide ? '' : `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px 12px;font-size:13px;">${cellule('TB', d2(p.tb))}${cellule('TP', d2(p.tp))}${cellule('MSU', d2(msu))}${cellule('Cellules', fmtCellulesMilliers(p.cellules))}${cellule('Flore', val(p, 'floreTotale', v => fmtGroupe(v, 0)))}${cellule('Colif.', val(p, 'coliformes', v => fmtGroupe(v, 0)))}${cellule('Butyr.', val(p, 'butyriques', v => fmtGroupe(v, 0)))}${cellule('Listéria · Salmonelles', labelTriStateCourt(p.listeria) + ' · ' + labelTriStateCourt(p.salmonelles))}</div>`}
+    </div>`;
+  }).join('') : '';
+  const mois = Array.from(new Set(q.positifs.map(x => x.libelleMois)));
+  const banniere = q.positifs.length ? `<div class="brd-alert err" id="qualite-banner" tabindex="0" role="button" style="cursor:pointer;"><b>Résultat positif : ${q.positifs.map(x => x.germe + ' (' + formatDateFr(x.date) + ')').join(', ')}</b><br>Bonus « Super A » annulé pour : ${mois.join(', ')}. Cliquer pour voir le prélèvement concerné.</div>` : '';
+  return `<div id="pc-qualite">
+    ${plPcEnteteHtml('Qualité du lait', 'Campagne ' + campagneLabel(camp) + ' · analyses de la laiterie', camps,
+      `<button type="button" class="btn btn-secondary" id="btn-rapport-qualite">Rapport de campagne (PDF)</button><button type="button" class="btn btn-primary" id="btn-qualite-add">+ Nouveau prélèvement</button>`)}
+    ${banniere}
+    <div class="pc-kpis">
+      ${pcKpi('TB moyen', d2(T.tb), 'g/L, pondéré par le volume')}
+      ${pcKpi('TP moyen', d2(T.tp), 'g/L, pondéré par le volume')}
+      ${pcKpi('MSU moyen', d2(T.msu), 'TB + TP pondérés')}
+      ${pcKpi('Cellules moyennes', fmtCellulesMilliers(T.cellules), 'milliers/mL, moyenne simple')}
+      ${pcKpi('Super A', T.moisAvecPrelevements ? T.moisSuperA + ' sur ' + T.moisAvecPrelevements : '—', 'mois avec bonus obtenu')}
+    </div>
+    <div class="brd-grid2">
+      <div class="card" id="pc-qualite-mois">
+        <p class="brd-ttl">Moyennes par mois</p><p class="brd-note">TB, TP en g/L · cellules en milliers/mL · cliquer sur un mois pour voir ses prélèvements</p>
+        ${avec.length ? `<table class="brd-t"><thead><tr><th style="width:24%;">Mois</th><th style="width:13%;">Volume (L)</th><th style="width:9%;">Prélèv.</th><th style="width:8%;">TB</th><th style="width:8%;">TP</th><th style="width:9%;">MSU</th><th style="width:12%;">Cellules</th><th style="width:17%;">Super A</th></tr></thead><tbody>${lignes}
+          <tr class="b"><td>${q.titre}</td><td>${fmtLitres(T.volume)}</td><td>${T.nbPrelevements}</td><td>${d2(T.tb)}</td><td>${d2(T.tp)}</td><td>${d2(T.msu)}</td><td>${fmtCellulesMilliers(T.cellules)}</td><td>${T.moisSuperA} sur ${T.moisAvecPrelevements}</td></tr></tbody></table>` : '<div class="brd-vide">Aucun prélèvement qualité sur cette campagne.</div>'}
+      </div>
+      <div class="card" id="pc-qualite-prelevs">
+        ${mSel ? `<p class="brd-ttl" style="margin:0;">${mSel.libelle}</p><p class="brd-note" style="margin:0 0 4px;">${mSel.nbPrelevements} prélèvement${mSel.nbPrelevements > 1 ? 's' : ''}</p>${prelevs}` : '<p class="brd-ttl">Prélèvements</p><div class="brd-vide">Aucun prélèvement : « + Nouveau prélèvement » pour saisir le premier.</div>'}
+      </div>
+    </div>
+  </div>`;
+}
+function plPcQualiteBrancher() {
+  const camp = plPcCampagne;
+  document.querySelectorAll('.pc-qmois-row').forEach(r => { r.onclick = () => { plPcMoisQual = r.dataset.cle; render('qualite'); }; });
+  document.querySelectorAll('.pc-prelev-modif').forEach(b => { b.onclick = () => { const r = findPrelevementQualiteByDate(b.dataset.date); if (r) openQualiteSheet(r); }; });
+  document.getElementById('btn-qualite-add').onclick = () => openQualiteSheet(null);
+  const bn = document.getElementById('qualite-banner');
+  if (bn) {
+    const aller = () => { const p = qualiteCampagneData(camp).positifs[0]; if (p) { plPcMoisQual = p.mois; render('qualite'); } };
+    bn.onclick = aller; bn.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); aller(); } };
+  }
+  const rap = document.getElementById('btn-rapport-qualite'); if (rap) rap.onclick = () => lancerExportAvecBouton(rap, () => exportRapportCampagnePdf(camp));
+}
+function renderQualitePc() {
+  DB.prelevementsQualite = DB.prelevementsQualite || []; DB.penalitesBacterio = DB.penalitesBacterio || []; DB.laitTank = DB.laitTank || [];
+  pageTitle.textContent = 'Production laitière';
+  const camps = plPcCampagnes();
+  const onglets = `<div class="tab-bar" id="pl-onglets"><button type="button" class="tab-btn${plOnglet === 'tank' ? ' active' : ''}" data-onglet="tank">Tank</button><button type="button" class="tab-btn${plOnglet === 'qualite' ? ' active' : ''}" data-onglet="qualite">Qualité</button></div>`;
+  app.innerHTML = `<div class="brd" id="pc-production">${onglets}${plOnglet === 'qualite' ? plPcQualiteHtml(camps) : plPcTankHtml(camps)}</div>`;
+  document.querySelectorAll('#pl-onglets .tab-btn').forEach(b => { b.onclick = () => { plOnglet = b.dataset.onglet; render('qualite'); }; });
+  const sel = document.getElementById('pl-pc-campagne');
+  if (sel) sel.onchange = () => { plPcCampagne = parseInt(sel.value, 10); plPcMoisTank = null; plPcDate = null; plPcMoisQual = null; render('qualite'); };
+  if (plOnglet === 'qualite') plPcQualiteBrancher(); else plPcTankBrancher();
+}
+
 function renderQualite() {
   if (isDesktopMode() && typeof renderQualitePc === 'function') { renderQualitePc(); return; }
   DB.prelevementsQualite = DB.prelevementsQualite || [];
@@ -15626,6 +15810,7 @@ function openQualiteSheet(record) {
   }
 
   saveBtn.onclick = () => {
+    let enregistre = null;
     if (!confirmerValeursQualiteInhabituelles({
       tb: numOrNull(tb), tp: numOrNull(tp),
       cellules: numOrNull(cellules), floreTotale: numOrNull(flore),
@@ -15644,7 +15829,9 @@ function openQualiteSheet(record) {
         campagne: campagneAnneeDebutPourDate(date)
       };
       DB.prelevementsQualite.push(rec);
+      enregistre = rec;
     } else {
+      enregistre = currentRecord;
       currentRecord.tb = numOrNull(tb); currentRecord.tp = numOrNull(tp);
       currentRecord.cellules = numOrNull(cellules); currentRecord.floreTotale = numOrNull(flore);
       currentRecord.coliformes = numOrNull(colif); currentRecord.butyriques = numOrNull(buty);
@@ -15652,6 +15839,7 @@ function openQualiteSheet(record) {
     }
     saveData(DB);
     document.body.removeChild(overlay);
+    if (enregistre && enregistre.date) { plMoisQualite = plPcMoisQual = enregistre.date.slice(0, 7); plPcCampagne = campagneAnneeDebutPourDate(enregistre.date); }
     render('qualite');
   };
 
