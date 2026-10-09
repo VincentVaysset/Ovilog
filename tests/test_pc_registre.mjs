@@ -29,7 +29,8 @@ await page.evaluate((fn) => {
   window.__avant = JSON.stringify(DB);
   window.__cap = [];
   window.buildXlsxWorkbook = async (s) => { window.__cap.push({ t: 'xlsx', s }); return new Uint8Array([1]); };
-  window.saveOrShareBinaryFile = async (nom, bytes, mime) => { window.__cap.push({ t: 'file', nom, mime, b: Array.from(bytes).length > 20 ? Array.from(bytes) : null }); };
+  window.saveOrShareBinaryFile = async (nom, bytes, mime) => { window.__cap.push({ t: 'file', nom, mime, b: bytes.length > 20 }); };
+  const __bp = window.buildPdfTableCharte ? 'buildPdfTableCharte' : 'buildPdfTable', __orig = window[__bp]; window[__bp] = (a) => { window.__cap.push({ t: 'pdf', a: JSON.parse(JSON.stringify({ title: a.title, subtitle: a.subtitle, columns: a.columns, rows: a.rows, landscape: a.landscape, fontSize: a.fontSize, headerSize: a.headerSize })) }); return __orig(a); };
   render('registre');
 }, jeuRegistre.toString());
 await page.waitForSelector('#pc-registre');
@@ -101,7 +102,7 @@ check(JSON.stringify(sansSanitaire(got)) === JSON.stringify(sansSanitaire(REF.ex
 for (const o of ['agnelage', 'mouvements', 'sanitaire']) {
   await ouvrirOnglet(o);
   got = await capturer(() => page.click('#btn-export-registre-pdf'));
-  check(o === 'sanitaire' ? JSON.stringify(pdfSanitaire(got)) === JSON.stringify(pdfSanitaire(REF.exports['sans_filtre_pdf_' + o])) : JSON.stringify(got) === JSON.stringify(REF.exports['sans_filtre_pdf_' + o]), 'export PDF « ' + o + ' » sans filtre identique à la référence (octets ; Sanitaire : nom de fichier, colonnes vérifiées par test_export_sanitaire)');
+  check(o === 'sanitaire' ? JSON.stringify(pdfSanitaire(got)) === JSON.stringify(pdfSanitaire(REF.exports['sans_filtre_pdf_' + o])) : JSON.stringify(got) === JSON.stringify(REF.exports['sans_filtre_pdf_' + o]), 'export PDF « ' + o + ' » sans filtre identique à la référence (contenu = arguments de la mise en page ; Sanitaire : nom de fichier, colonnes vérifiées par test_export_sanitaire)');
 }
 // avec filtres (posés sur chaque onglet depuis les listes déroulantes de la page PC)
 await ouvrirOnglet('agnelage'); await page.fill('#registre-filtre', '1');

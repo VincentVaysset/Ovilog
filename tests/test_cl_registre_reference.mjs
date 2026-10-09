@@ -28,9 +28,10 @@ const out = await page.evaluate(async ([jr, jc]) => {
   render('controle-laitier'); R.controle_laitier_sans = app();
   eval('(' + jr + ')')();
   for (const v of ['agnelage', 'mouvements', 'sanitaire']) { registreView = v; registreFiltre = ''; registreColFiltres = { agnelage: { sexe: '', campagne: '' }, mouvements: { categorie: '', type: '', campagne: '' }, sanitaire: { categorie: '', type: '', campagne: '' } }; render('registre'); R['registre_' + v] = app(); }
-  // exports (xlsx : feuilles ; pdf : octets) sans filtre puis avec filtres
+  // exports (xlsx : feuilles ; pdf : contenu = arguments de la mise en page, la mise en forme n'étant plus comparée octet par octet depuis la charte colorée) sans filtre puis avec filtres
   const cap = []; window.buildXlsxWorkbook = async (s) => { cap.push({ t: 'xlsx', s }); return new Uint8Array([1]); };
-  window.saveOrShareBinaryFile = async (nom, bytes, mime) => { cap.push({ t: 'file', nom, mime, b: Array.from(bytes).length > 20 ? Array.from(bytes) : null }); };
+  window.saveOrShareBinaryFile = async (nom, bytes, mime) => { cap.push({ t: 'file', nom, mime, b: bytes.length > 20 }); };
+  const __bp = window.buildPdfTableCharte ? 'buildPdfTableCharte' : 'buildPdfTable', __orig = window[__bp]; window[__bp] = (a) => { cap.push({ t: 'pdf', a: JSON.parse(JSON.stringify({ title: a.title, subtitle: a.subtitle, columns: a.columns, rows: a.rows, landscape: a.landscape, fontSize: a.fontSize, headerSize: a.headerSize })) }); return __orig(a); };
   const cas = {
     sans_filtre: () => { registreFiltre = ''; registreColFiltres = { agnelage: { sexe: '', campagne: '' }, mouvements: { categorie: '', type: '', campagne: '' }, sanitaire: { categorie: '', type: '', campagne: '' } }; },
     avec_filtres: () => { registreFiltre = '1'; registreColFiltres = { agnelage: { sexe: 'Mâle', campagne: '2025' }, mouvements: { categorie: 'Brebis', type: 'Vente', campagne: '2025' }, sanitaire: { categorie: 'Brebis', type: 'Traitement · Antibiotique', campagne: '2025' } }; }

@@ -11,7 +11,13 @@ mots = []
 for p in d:
     for w in p.get_text('words'):
         mots.append(w[4])
-sortie = { 'pages': d.page_count, 'mots': mots, 'tailles': [[p.rect.width, p.rect.height] for p in d] }
+pix = d[0].get_pixmap(dpi=40)
+vert = 0
+for yy in range(0, int(pix.height * 0.2)):
+    for xx in range(pix.width):
+        r, g, b = pix.pixel(xx, yy)[:3]
+        if g > r + 25 and g > b + 25: vert += 1
+sortie = { 'pages': d.page_count, 'mots': mots, 'tailles': [[p.rect.width, p.rect.height] for p in d], 'vert': vert }
 if len(sys.argv) > 2:
     for i, p in enumerate(d):
         p.get_pixmap(dpi=60).save(sys.argv[2] + '_' + str(i) + '.png')

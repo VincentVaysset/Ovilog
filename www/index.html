@@ -21611,8 +21611,11 @@ const PDF_PL = { M: 36, L: 36, R: 595 - 36, LARG: 595 - 72, TOP: 842 - 36, BAS: 
 const PDF_PL_COUL = { vertTitre: [0.184, 0.431, 0.267], rouge: [0.639, 0.227, 0.192], barre: [0.427, 0.612, 0.769], sombre: [0.169, 0.149, 0.11], gris: [0.369, 0.357, 0.278], gris2: [0.6, 0.58, 0.5] };
 function nomFichierCampagne(prefixe, campagne, ext) { return prefixe + '_campagne-' + campagneLabel(campagne) + '_' + jourAujourdhuiISO() + '.' + ext; }
 
-function pdfProdDoc() {
-  const C = PDF_COULEURS, X = PDF_PL_COUL, L = PDF_PL.L, R = PDF_PL.R, LARG = PDF_PL.LARG;
+function pdfProdDoc(opts) {
+  // opts.paysage : page A4 en paysage (mêmes marges) ; sinon portrait comme tous les PDF de production laitière
+  const paysage = !!(opts && opts.paysage);
+  const PL = paysage ? { M: 36, L: 36, R: 842 - 36, LARG: 842 - 72, TOP: 595 - 36, BAS: 56 } : PDF_PL;
+  const C = PDF_COULEURS, X = PDF_PL_COUL, L = PL.L, R = PL.R, LARG = PL.LARG;
   const exploitationNom = (DB.exploitation && DB.exploitation.nom) || 'Ovilog';
   const edite = 'Édité le ' + formatDateFr(jourAujourdhuiISO());
   const pages = [];     // { contenu, pied }
@@ -21624,7 +21627,7 @@ function pdfProdDoc() {
     page(titre, sousTitre, piedTexte) {
       if (c) pages.push({ contenu: c, pied });
       c = ''; pied = piedTexte; titreDoc = titre;
-      y = PDF_PL.TOP;
+      y = PL.TOP;
       txt(L, y - 8, 'OVILOG', 'FB', 8.5, X.vertTitre);
       txt(L, y - 28, titre, 'FB', 18, X.sombre);
       txt(L, y - 43, sousTitre, 'F1', 10, X.gris);
@@ -21636,14 +21639,14 @@ function pdfProdDoc() {
     },
     suite() {
       pages.push({ contenu: c, pied }); c = '';
-      y = PDF_PL.TOP;
+      y = PL.TOP;
       txt(L, y - 8, 'OVILOG', 'FB', 8.5, X.vertTitre);
       txt(L + 52, y - 8, titreDoc + ' (suite)', 'F1', 9, X.gris);
       y -= 14;
       c += pdfFillRectOp(L, y, LARG, 1.2, C.vert);
       y -= 14;
     },
-    assurer(h) { if (y - h < PDF_PL.BAS) { doc.suite(); return true; } return false; },
+    assurer(h) { if (y - h < PL.BAS) { doc.suite(); return true; } return false; },
     tuiles(liste) {
       const gap = 8, w = (LARG - gap * (liste.length - 1)) / liste.length, maxW = w - 14;
       // libellé ou sous-texte trop long : coupé en deux lignes sur les espaces (jamais tronqué) ; toutes les tuiles de la rangée gardent alors la même hauteur
@@ -21696,7 +21699,7 @@ function pdfProdDoc() {
       };
       entete();
       lignes.forEach(ln => {
-        if (y - hLigne < PDF_PL.BAS) { doc.suite(); entete(); }
+        if (y - hLigne < PL.BAS) { doc.suite(); entete(); }
         const yb = y - hLigne;
         if (ln.total) c += pdfFillRectOp(L, yb, wTot, hLigne, C.fond);
         c += pdfFillRectOp(L, yb, wTot, 0.4, ln.total ? X.sombre : C.trait);
@@ -21724,14 +21727,14 @@ function pdfProdDoc() {
     },
     /* Tableau « charte Inventaire » (méthode à part : ne change pas doc.tableau des autres PDF) : coins arrondis, en-tête plein { fond, texte }, lignes alternées [a, b],
        contour fin ; chaque page de tableau est arrondie et contournée séparément. colonnes : [{ l, w }] ; lignes : [[texte, ...]] ; options.premiere : { col, gras } pour la 1re colonne. */
-    tableauCharte({ colonnes, lignes, entete: st, alterne, premiere, hLigne = 17, hEntete = 20, rayon = 5, taille = 9.5 }) {
+    tableauCharte({ colonnes, lignes, entete: st, alterne, premiere, hLigne = 17, hEntete = 20, rayon = 5, taille = 9.5, vide = '—' }) {
       const wTot = colonnes.reduce((s, k) => s + k.w, 0);
       let yHaut = 0, hautSegment = false;
       const ouvrir = () => {
         yHaut = y; hautSegment = true;
         c += pdfRectArrondiOp(L, y - hEntete, wTot, hEntete, rayon, 0, st.fond);
         let x = L;
-        colonnes.forEach(k => { txt(x + 8, y - hEntete + 7, pdfFit(k.l, 8.5, true, k.w - 12), 'FB', 8.5, st.texte); x += k.w; });
+        colonnes.forEach(k => { txt(x + 8, y - hEntete + 7, pdfFit(k.l, Math.min(8.5, taille), true, k.w - 12), 'FB', Math.min(8.5, taille), st.texte); x += k.w; });
         y -= hEntete;
       };
       const fermer = (derniereLigneY) => {
@@ -21741,17 +21744,17 @@ function pdfProdDoc() {
       doc.assurer(hEntete + hLigne * 2);
       ouvrir();
       lignes.forEach((ln, i) => {
-        if (y - hLigne < PDF_PL.BAS) { fermer(y); doc.suite(); ouvrir(); }
+        if (y - hLigne < PL.BAS) { fermer(y); doc.suite(); ouvrir(); }
         const yb = y - hLigne;
-        const dernierePage = (i === lignes.length - 1) || (yb - hLigne < PDF_PL.BAS);
+        const dernierePage = (i === lignes.length - 1) || (yb - hLigne < PL.BAS);
         const fond = alterne[i % 2];
         c += dernierePage ? pdfRectArrondiOp(L, yb, wTot, hLigne, 0, rayon, fond) : pdfFillRectOp(L, yb, wTot, hLigne, fond);
         let x = L;
         colonnes.forEach((k, j) => {
-          const v = ln[j] === null || ln[j] === undefined || ln[j] === '' ? '—' : String(ln[j]);
-          const vide = v === '—';
-          const prem = j === 0 && premiere && !vide;
-          txt(x + 8, yb + 5.2, pdfFit(v, taille, !!prem, k.w - 12), prem ? 'FB' : 'F1', taille, vide ? X.gris2 : (prem ? premiere.col : X.sombre));
+          const v = ln[j] === null || ln[j] === undefined || ln[j] === '' ? vide : String(ln[j]);
+          const estVide = v === vide;
+          const prem = j === 0 && premiere && !estVide;
+          txt(x + 8, yb + 5.2, pdfFit(v, taille, !!prem, k.w - 12), prem ? 'FB' : 'F1', taille, estVide ? X.gris2 : (prem ? premiere.col : X.sombre));
           x += k.w;
         });
         y = yb;
@@ -21782,10 +21785,40 @@ function pdfProdDoc() {
         s += pdfTextColorOp(R - pdfTextWidth(num, 8, false), 28, num, 'F1', 8, X.gris);
         return s;
       });
-      return buildMultiPagePdfBytes(contenus);
+      return buildMultiPagePdfBytes(contenus, paysage);
     }
   };
   return doc;
+}
+// Tuiles d'effectifs aux couleurs de la charte (maquettes Inventaire et Registre) : fond pastel, liseré gauche et chiffre colorés
+const PDF_TUILE_TEINTES = { vert: ['#e3f3e6', '#2f6e44'], bleu: ['#e6f0fa', '#1f5a8a'], ambre: ['#fbeed7', '#b5701c'], rouge: ['#fbe3e0', '#a33a31'] };
+function pdfTuile(teinte, label, valeur, sous) {
+  const [fond, coul] = PDF_TUILE_TEINTES[teinte];
+  return { label, valeur: String(valeur), sous, fond: pdfHexCouleur(fond), couleur: pdfHexCouleur(coul), lisere: pdfHexCouleur(coul), tailleValeur: 20 };
+}
+/* Remplaçant « charte colorée » de buildPdfTable : MÊMES paramètres (title, subtitle, columns [{label, x}], rows, landscape, fontSize, headerSize), même contenu (titre, sous-titre, en-têtes,
+   cellules telles quelles -- une cellule vide reste vide --, « Page n/N »), seule la mise en forme change : logo OVILOG, titre, filet vert, tuiles d'effectifs facultatives (`tuiles`),
+   tableau arrondi à en-tête vert, lignes alternées, N° (1re colonne) en vert gras, pied de page. Les largeurs de colonnes sont calculées d'après le texte (la police diminue plutôt que de
+   couper un texte) ; les positions x de `columns` ne servent plus qu'à garder l'ordre des colonnes. */
+function buildPdfTableCharte({ title, subtitle, columns, rows, landscape, fontSize, tuiles, pied, premiereCol = true }) {
+  const doc = pdfProdDoc({ paysage: !!landscape });
+  doc.page(title, subtitle || '', pied || ('Ovilog · ' + title));
+  if (tuiles && tuiles.length) doc.tuiles(tuiles);
+  const LARG = landscape ? 842 - 72 : 595 - 72;
+  let taille = fontSize || 9.5;
+  const cellules = (i) => rows.map(r => String(r[i] === null || r[i] === undefined ? '' : r[i]));
+  const naturelles = (tl) => columns.map((c, i) => Math.max(pdfTextWidth(c.label, Math.min(8.5, tl), true), ...cellules(i).map(v => pdfTextWidth(v, tl, false))) + 16);
+  let larg = naturelles(taille);
+  while (larg.reduce((s, v) => s + v, 0) > LARG && taille > 6.5) { taille -= 0.5; larg = naturelles(taille); }
+  const somme = larg.reduce((s, v) => s + v, 0), facteur = LARG / somme;
+  larg = larg.map(v => v * facteur);      // trop large : on répartit le surplus ; trop étroit (cas extrême) : on comprime, pdfFit coupe alors le texte
+  if (rows.length) {
+    doc.tableauCharte({
+      colonnes: columns.map((c, i) => ({ l: c.label, w: larg[i] })), lignes: rows, vide: '', taille, hLigne: Math.max(13, Math.round(taille * 1.8 * 10) / 10), hEntete: Math.max(17, taille * 2.1),
+      entete: { fond: pdfHexCouleur('#357f4b'), texte: PDF_COULEURS.blanc }, alterne: [pdfHexCouleur('#f6f1e4'), PDF_COULEURS.blanc], premiere: premiereCol ? { col: pdfHexCouleur('#2f6e44') } : null
+    });
+  }
+  return doc.fin();
 }
 const MOIS_COURTS_PDF = ['Janv.', 'Févr.', 'Mars', 'Avr.', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.'];
 
@@ -22344,7 +22377,8 @@ function pdfFit(text, size, bold, maxW) {
   return t + '...';
 }
 // Plusieurs pages de contenu -> un seul PDF (mêmes polices F1/FB que buildSinglePagePdfBytes)
-function buildMultiPagePdfBytes(contents) {
+function buildMultiPagePdfBytes(contents, paysage) {
+  const pageW = paysage ? PDF_PAGE_H : PDF_PAGE_W, pageH = paysage ? PDF_PAGE_W : PDF_PAGE_H;
   const objects = [];
   let nextNum = 1;
   const alloc = () => nextNum++;
@@ -22354,7 +22388,7 @@ function buildMultiPagePdfBytes(contents) {
     const pageNum = alloc(), contentNum = alloc();
     pageNums.push(pageNum);
     objects.push({ num: contentNum, body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
-    objects.push({ num: pageNum, body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + PDF_PAGE_W + ' ' + PDF_PAGE_H + '] /Contents ' + contentNum + ' 0 R >>' });
+    objects.push({ num: pageNum, body: '<< /Type /Page /Parent ' + pagesNum + ' 0 R /Resources << /Font << /F1 ' + fontNum + ' 0 R /FB ' + fontBoldNum + ' 0 R >> >> /MediaBox [0 0 ' + pageW + ' ' + pageH + '] /Contents ' + contentNum + ' 0 R >>' });
   });
   objects.push({ num: catalogNum, body: '<< /Type /Catalog /Pages ' + pagesNum + ' 0 R >>' });
   objects.push({ num: pagesNum, body: '<< /Type /Pages /Kids [' + pageNums.map(n => n + ' 0 R').join(' ') + '] /Count ' + pageNums.length + ' >>' });
@@ -22936,11 +22970,13 @@ async function exportRegistrePdf() {
     const mise = miseEnPageSanitairePdf(lignes);
     columns = mise.columns; rows = mise.rows; taillePolice = mise.taille;
   }
-  const bytes = buildPdfTable({
+  const bytes = buildPdfTableCharte({
     title,
     subtitle: rows.length + ' ligne(s) — ' + formatDateFr(jourAujourdhuiISO()),
     columns, rows,
     landscape: true,
+    tuiles: registreTuiles(registreView).map(u => pdfTuile(u.teinte, u.label, u.valeur)),
+    pied: 'Ovilog · ' + title,
     ...(taillePolice ? { fontSize: taillePolice, headerSize: taillePolice + 0.5 } : {})
   });
   const resume = registreResumeFiltresFichier(filtreNumero, colFiltres);
@@ -22991,6 +23027,20 @@ function registreIndicateursPc() {
     mouvements: { total: mvt.length, entrees: mvt.filter(r => r.type === 'Entrée').length, ventes: mvt.filter(r => /^Vent/.test(r.type)).length, morts: mvt.filter(r => ['Mort', 'Morte', 'Perte'].includes(r.type)).length, autres: mvt.filter(r => r.type !== 'Entrée' && !/^Vent/.test(r.type) && !['Mort', 'Morte', 'Perte'].includes(r.type)).length },
     agnelage: { agneaux: agn.length, males: agn.filter(r => r.sexe === 'Mâle').length, femelles: agn.filter(r => r.sexe === 'Femelle').length, mortNes: agn.filter(r => r.sexe === 'Mort-né').length }
   };
+}
+/* Tuiles d'effectifs du Registre (mobile et PDF ; le PC garde ses propres indicateurs) : 4 par onglet, mêmes chiffres que registreIndicateursPc.
+   Mouvements = Animaux au registre, Actifs, Entrées, Sorties (modèle de la maquette mobile) ; Agnelage = Agneaux, Mâles, Femelles, Morts-nés ; Sanitaire = Soins, Traitements, Vaccins, Autres. */
+function registreTuiles(view) {
+  const ind = registreIndicateursPc(), A = ind.animaux;
+  if (view === 'mouvements') return [
+    { teinte: 'vert', label: 'Animaux au registre', valeur: A.total }, { teinte: 'bleu', label: 'Actifs', valeur: A.actifs },
+    { teinte: 'ambre', label: 'Entrées', valeur: ind.mouvements.entrees }, { teinte: 'rouge', label: 'Sorties', valeur: ind.mouvements.total - ind.mouvements.entrees }];
+  if (view === 'sanitaire') return [
+    { teinte: 'vert', label: 'Soins enregistrés', valeur: ind.sanitaire.soins }, { teinte: 'bleu', label: 'Traitements', valeur: ind.sanitaire.traitements },
+    { teinte: 'ambre', label: 'Vaccins', valeur: ind.sanitaire.vaccins }, { teinte: 'rouge', label: 'Autres', valeur: ind.sanitaire.autres }];
+  return [
+    { teinte: 'vert', label: 'Agneaux enregistrés', valeur: ind.agnelage.agneaux }, { teinte: 'bleu', label: 'Mâles', valeur: ind.agnelage.males },
+    { teinte: 'ambre', label: 'Femelles', valeur: ind.agnelage.femelles }, { teinte: 'rouge', label: 'Morts-nés', valeur: ind.agnelage.mortNes }];
 }
 function registrePcFiltresHtml(view) {
   const colF = registreColFiltres[view];

@@ -26,7 +26,7 @@ await page.waitForTimeout(300);
 const capture = () => page.evaluate(async () => {
   const cap = [];
   window.buildXlsxWorkbook = async (s) => { cap.push({ t: 'xlsx', s: JSON.parse(JSON.stringify(s)) }); return new Uint8Array([1]); };
-  const bp = window.buildPdfTable; window.buildPdfTable = (a) => { cap.push({ t: 'pdf', a: JSON.parse(JSON.stringify(a)) }); return bp(a); };
+  const nomBp = window.buildPdfTableCharte ? 'buildPdfTableCharte' : 'buildPdfTable', bp = window[nomBp]; window[nomBp] = (a) => { cap.push({ t: 'pdf', a: JSON.parse(JSON.stringify({ title: a.title, subtitle: a.subtitle, columns: a.columns, rows: a.rows, landscape: a.landscape, fontSize: a.fontSize, headerSize: a.headerSize })) }); return bp(a); };
   window.saveOrShareBinaryFile = async (nom, bytes) => { cap.push({ t: 'file', nom }); };
   const cas = {
     sans_filtre: () => { registreFiltre = ''; registreColFiltres = { agnelage: { sexe: '', campagne: '' }, mouvements: { categorie: '', type: '', campagne: '' }, sanitaire: { categorie: '', type: '', campagne: '' } }; },
