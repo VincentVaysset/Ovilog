@@ -21593,13 +21593,27 @@ function pdfProdDoc() {
     },
     assurer(h) { if (y - h < PDF_PL.BAS) { doc.suite(); return true; } return false; },
     tuiles(liste) {
-      const gap = 8, w = (LARG - gap * (liste.length - 1)) / liste.length, h = 50;
+      const gap = 8, w = (LARG - gap * (liste.length - 1)) / liste.length, maxW = w - 14;
+      // libellé ou sous-texte trop long : coupé en deux lignes sur les espaces (jamais tronqué) ; toutes les tuiles de la rangée gardent alors la même hauteur
+      const lignes = (texte, taille) => {
+        if (pdfTextWidth(texte, taille, false) <= maxW) return [texte];
+        const mots = texte.split(' ');
+        for (let k = mots.length - 1; k >= 1; k--) {
+          const a = mots.slice(0, k).join(' '), b = mots.slice(k).join(' ');
+          if (pdfTextWidth(a, taille, false) <= maxW && pdfTextWidth(b, taille, false) <= maxW) return [a, b];
+        }
+        return [pdfFit(texte, taille, false, maxW)];
+      };
+      const etiquettes = liste.map(t => lignes(t.label, 8));
+      const sous = liste.map(t => t.sous ? lignes(t.sous, 7.5) : []);
+      const decal = etiquettes.some(l => l.length > 1) ? 10 : 0;
+      const h = 50 + decal + (sous.some(l => l.length > 1) ? 9 : 0);
       liste.forEach((t, i) => {
         const x = L + i * (w + gap);
-        c += pdfFillRectOp(x, y - h, w, h, C.fond);
-        txt(x + 9, y - 14, pdfFit(t.label, 8, false, w - 14), 'F1', 8, X.gris);
-        txt(x + 9, y - 32, pdfFit(t.valeur, 14, true, w - 14), 'FB', 14, t.couleur || X.sombre);
-        if (t.sous) txt(x + 9, y - 44, pdfFit(t.sous, 7.5, false, w - 14), 'F1', 7.5, X.gris);
+        c += pdfFillRectOp(x, y - h, w, h, t.fond || C.fond);
+        etiquettes[i].forEach((l, k) => txt(x + 9, y - 14 - 10 * k, l, 'F1', 8, X.gris));
+        txt(x + 9, y - 32 - decal, pdfFit(t.valeur, 14, true, maxW), 'FB', 14, t.couleur || X.sombre);
+        sous[i].forEach((l, k) => txt(x + 9, y - 44 - decal - 9 * k, l, 'F1', 7.5, X.gris));
       });
       y -= h + 16;
     },
@@ -23048,6 +23062,8 @@ function declarationAnnuelleChiffres(annee) {
   return { premiereAnnee, recensement, ratioDonneesInsuffisantes, brebisRatio, agneauxNesRatio, agneauxVendusRatio, ratio };
 }
 
+// Ratio affiché à 2 décimales, virgule française, sur l'écran ET dans le PDF (affichage seul : la valeur calculée par declarationAnnuelleChiffres n'est pas modifiée) ; null si non calculable
+function ratioDeclarationTexte(c) { return c.ratio === null || c.ratio === undefined ? null : c.ratio.toFixed(2).replace('.', ','); }
 function renderDeclarationAnnuelle() {
   pageTitle.textContent = 'Déclaration annuelle';
   const anneeCourante = new Date().getFullYear();
@@ -23061,8 +23077,7 @@ function renderDeclarationAnnuelle() {
     `<option value="${y}"${y === an ? ' selected' : ''}>${y}</option>`
   ).join('')}</select>`;
   const tuile = (label, valeur, extra) => `<div class="decl-tuile${extra && extra.classe ? ' ' + extra.classe : ''}"><div class="decl-tuile-l">${label}</div><div class="decl-tuile-v">${valeur}</div>${extra && extra.sous ? `<div class="decl-tuile-s">${extra.sous}</div>` : ''}</div>`;
-  // Ratio affiché à 2 décimales, virgule française (affichage seul : la valeur calculée par declarationAnnuelleChiffres n'est pas modifiée)
-  const ratioTxt = c.ratio === null ? null : c.ratio.toFixed(2).replace('.', ',');
+  const ratioTxt = ratioDeclarationTexte(c);
   const carteRecensement = `
     <div class="card" id="decl-recensement">
       <div class="prm-titre" style="margin-bottom:2px;">Recensement au 1er janvier ${an}</div>
@@ -23116,35 +23131,38 @@ function renderDeclarationAnnuelle() {
   };
 }
 
-/* PDF récapitulatif de la déclaration annuelle — réutilise buildPdfTable()
-   (même en-tête/mise en forme que Registre/Inventaire), en 2 colonnes
-   Libellé/Valeur, portrait (peu de lignes). */
-async function exportDeclarationAnnuellePdf(annee, c) {
-  const rows = [
-    ['Brebis présentes au 1er janvier ' + annee, String(c.recensement.brebis)],
-    ['Béliers présents au 1er janvier ' + annee, String(c.recensement.beliers)],
-    ['Agnelles >6 mois présentes au 1er janvier ' + annee, String(c.recensement.agnelles)],
-    ['Agneaux nés en ' + (annee - 1), String(c.recensement.agneauxNes)],
-    ['', ''],
-    ['Ratio PAC (aide ovine) — ' + (annee - 1), '']
-  ];
+/* PDF de la déclaration annuelle -- charte commune des PDF Ovilog (bandeau vert, tuiles colorées, pied de page : même rendu sur PC et sur mobile, même fonction pdfProdDoc que Tank,
+   Qualité et Rapport de campagne). Mêmes chiffres, mêmes libellés et même ratio (2 décimales) que l'écran. */
+function buildDeclarationAnnuellePdfBytes(annee, c) {
+  const X = PDF_PL_COUL, C = PDF_COULEURS;
+  const doc = pdfProdDoc();
+  doc.page('Déclaration annuelle', 'Déclaration ' + annee + ' · recensement au 1er janvier et ratio de l\'aide ovine · année civile', 'Ovilog · Déclaration annuelle · ' + annee);
+  doc.section('Recensement au 1er janvier ' + annee, 'Animaux présents sur l\'exploitation à cette date');
+  doc.tuiles([
+    { label: 'Brebis présentes', valeur: String(c.recensement.brebis) },
+    { label: 'Béliers présents', valeur: String(c.recensement.beliers) },
+    { label: 'Agnelles >6 mois présentes', valeur: String(c.recensement.agnelles) },
+    { label: 'Agneaux nés en ' + (annee - 1), valeur: String(c.recensement.agneauxNes) }
+  ]);
+  doc.section('Ratio PAC (aide ovine) · ' + (annee - 1), 'Calculé sur l\'année précédente');
   if (c.ratioDonneesInsuffisantes) {
-    rows.push(['Données insuffisantes', 'aucune donnée avant ' + c.premiereAnnee]);
+    doc.note('Données insuffisantes (aucune donnée dans l\'appli avant ' + c.premiereAnnee + ').', 10);
   } else {
-    rows.push(['Brebis présentes au 1er janvier ' + (annee - 1), String(c.brebisRatio)]);
-    rows.push(['Agneaux nés en ' + (annee - 1), String(c.agneauxNesRatio)]);
-    rows.push(['Agneaux vendus en ' + (annee - 1), String(c.agneauxVendusRatio)]);
-    rows.push(['Ratio (vendus / présentes)', c.ratio === null ? 'Non disponible' : String(c.ratio)]);
-    rows.push(['Seuil réglementaire indicatif', '~ 0,5']);
+    const ratio = ratioDeclarationTexte(c);
+    doc.tuiles([
+      { label: 'Brebis présentes au 1er janvier ' + (annee - 1), valeur: String(c.brebisRatio) },
+      { label: 'Agneaux nés en ' + (annee - 1), valeur: String(c.agneauxNesRatio) },
+      { label: 'Agneaux vendus en ' + (annee - 1), valeur: String(c.agneauxVendusRatio) },
+      ratio === null ? { label: 'Ratio', valeur: 'Non disponible', sous: 'agneaux vendus ÷ brebis présentes' }
+        : { label: 'Ratio', valeur: ratio, sous: 'agneaux vendus ÷ brebis présentes', couleur: X.vertTitre, fond: C.vertFond }
+    ]);
+    doc.note('Seuil réglementaire indicatif de l\'aide ovine : environ 0,5.', 8.5);
   }
-  const bytes = buildPdfTable({
-    title: 'Déclaration annuelle — ' + annee,
-    subtitle: 'Registre PAC, recensement au 1er janvier — ' + formatDateFr(jourAujourdhuiISO()),
-    columns: [{ label: 'Libellé', x: 0 }, { label: 'Valeur', x: 320 }],
-    rows
-  });
+  return doc.fin();
+}
+async function exportDeclarationAnnuellePdf(annee, c) {
   const filename = 'declaration-annuelle_' + annee + '_' + jourAujourdhuiISO() + '.pdf';
-  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
+  await saveOrShareBinaryFile(filename, buildDeclarationAnnuellePdfBytes(annee, c), 'application/pdf');
 }
 
 /* Décode un CSV en devinant l'encodage (UTF-8 si valide, sinon Windows-1252)
