@@ -11,7 +11,7 @@ Référence unique pour tout nouvel écran et tout PDF. PC, mobile et PDF ont le
 - Fond de page : #fbf8f1 (crème). Cartes : blanc #ffffff, bord #e6ddc9, rayon 18 px (14 px sur PC).
 - Texte : #2b261c. Texte secondaire : #5e5b47. Icônes/chevrons : #8a8670.
 - Vert Ovilog (en-tête, bouton principal) : #357f4b. Vert foncé (texte, chiffres, 1re colonne) : #2f6e44. Vert pastel : #e3f3e6 (texte #24613a).
-- Bleu : #1f5a8a, pastel #e6f0fa. Ambre : #b5701c, pastel #fbeed7. Rouge : #a33a31, pastel #fbe3e0.
+- Bleu : #1f5a8a, pastel #e6f0fa. Ambre : #b5701c, pastel #fbeed7 (texte des pastilles ambre #8a5413, variable `--ch-ambre-texte`). Rouge : #a33a31, pastel #fbe3e0.
 - Fond segmenté/onglets : #efe9da. Ligne alternée de tableau : #f6f1e4. Séparateur : #efe9da. Bord de champ : #d9cfb8.
 
 ### Composants

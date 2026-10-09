@@ -13,7 +13,7 @@ const section = claude.slice(claude.indexOf('## Charte graphique'));
 check(section.length > 500, 'CLAUDE.md contient la section « Charte graphique »');
 // couleurs de la charte (CLAUDE.md) -> variable attendue
 const ATTENDU = { '--ch-fond': '#fbf8f1', '--ch-carte': '#ffffff', '--ch-bord': '#e6ddc9', '--ch-texte': '#2b261c', '--ch-texte2': '#5e5b47', '--ch-icone': '#8a8670', '--ch-vert': '#357f4b', '--ch-vert-fonce': '#2f6e44',
-  '--ch-vert-pastel': '#e3f3e6', '--ch-vert-texte': '#24613a', '--ch-bleu': '#1f5a8a', '--ch-bleu-pastel': '#e6f0fa', '--ch-ambre': '#b5701c', '--ch-ambre-pastel': '#fbeed7', '--ch-rouge': '#a33a31', '--ch-rouge-pastel': '#fbe3e0',
+  '--ch-vert-pastel': '#e3f3e6', '--ch-vert-texte': '#24613a', '--ch-bleu': '#1f5a8a', '--ch-bleu-pastel': '#e6f0fa', '--ch-ambre': '#b5701c', '--ch-ambre-pastel': '#fbeed7', '--ch-ambre-texte': '#8a5413', '--ch-rouge': '#a33a31', '--ch-rouge-pastel': '#fbe3e0',
   '--ch-onglets': '#efe9da', '--ch-ligne-alt': '#f6f1e4', '--ch-separateur': '#efe9da', '--ch-bord-champ': '#d9cfb8' };
 for (const [v, hex] of Object.entries(ATTENDU)) check(section.toLowerCase().includes(hex) || hex === '#ffffff', 'CLAUDE.md mentionne ' + hex + ' (' + v + ')');
 const racineCss = html.slice(html.indexOf(':root {'), html.indexOf('* { box-sizing'));
