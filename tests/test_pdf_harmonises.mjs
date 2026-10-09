@@ -21,6 +21,7 @@ const MIGRES = {
   controle_laitier: { paysage: true, ajouts: ['Contrôle', 'laitier'], ignorer: ['undefined'] },   // l'ancien PDF imprimait le mot « undefined » comme sous-titre (défaut) : retiré, rien d'autre ne change
   bilan_lactation: { paysage: false, ajouts: ['Litrage', 'total', 'produit', 'L', 'Brebis', 'passées', 'à', 'la', 'traite', '/', 'brebis'], ignorer: ['Ovilog', '—', '·'] },   // « Ovilog — » devant le titre et « · » entre exploitation et campagne : remplacés par le logo OVILOG et la mise en page de l'en-tête
   bilan_age: { paysage: false, ajouts: ['Bilan', 'de', 'reproduction', 'troupeau', 'Brebis', 'présentes', 'Mises', 'bas', 'Campagne', 'DÉTAIL', 'PAR', 'MILLÉSIME'], ignorer: ['Ovilog', '—', '·', 'édité'] },   // « Ovilog — », « · » et « édité » : repris par le logo OVILOG et l'en-tête (« Édité le »)
+  bilan_complet: { paysage: false, ajouts: ['Bilan', 'de', 'reproduction'], ignorer: ['Ovilog', '—', '·', 'édité', 'page'], tolerer: { 1: 1, 2: 3, '/': 2 } },   // « Ovilog — », « · », « édité le » et « page i / N » : repris par le logo, l'en-tête et le pied « Page i/N » de la charte
   registre_sanitaire_filtre: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] }
 };
 const browser = await chromium.launch(LAUNCH);
@@ -42,6 +43,7 @@ for (const [nom, att] of Object.entries(MIGRES)) {
   check(bp === bm, nom + ' : même PDF sur PC et sur mobile (octets identiques)');
   const r = lirePdfMots(Buffer.from(bp, 'base64'), 'h_' + nom);
   const e = ecartMots(ref[nom].mots.filter(w => !(att.ignorer || []).includes(w)), r.mots);
+  Object.keys(att.tolerer || {}).forEach(w => { if (e.manquants[w] && e.manquants[w] <= att.tolerer[w]) delete e.manquants[w]; });   // chiffres du pied « page i / N » devenu « Page i/N »
   check(Object.keys(e.manquants).length === 0, nom + ' : contenu d\'origine intact, mots manquants : ' + JSON.stringify(e.manquants));
   const autorises = COMMUNS.concat(att.ajouts);
   const inattendus = Object.keys(e.ajoutes).filter(w => !autorises.some(a => a instanceof RegExp ? a.test(w) : a === w));

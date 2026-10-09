@@ -65,7 +65,7 @@ let r = await page.evaluate(() => { const p = lirePdf(buildBilanCompletPdfBytes(
 check(r.ok && r.pages === 2, 'structure PDF valide (xref, en-tête), 2 pages : ' + JSON.stringify({ ok: r.ok, pages: r.pages }));
 const txt = r.t;
 const a = (...v) => v.forEach(x => check(txt.includes(x), 'le PDF doit contenir « ' + x + ' »'));
-a('Ovilog — Bilan de reproduction', 'Campagne 2026', 'Ovilog · du 01/10/2025 au 30/09/2026 · troupeau entier', 'MISES BAS', 'PROLIFICITÉ', 'MORTINATALITÉ', 'MORTALITÉ APRÈS NAISSANCE');
+a('Bilan de reproduction', 'Campagne 2026 · du 01/10/2025 au 30/09/2026 · troupeau entier', 'MISES BAS', 'PROLIFICITÉ', 'MORTINATALITÉ', 'MORTALITÉ APRÈS NAISSANCE');
 a('363', '1,18', '3,3 %', '9,2 %', '427 agneaux nés', '14 mort(s)-né(s)', '38 sur 413 nés vivants');
 // tableau par groupe : lignes lues dans l'ordre d'écriture (libellé, brebis, antenaises, total)
 const ligne = (lib) => { const i = txt.indexOf(lib); return txt.slice(i + 1, i + 4); };
@@ -75,7 +75,7 @@ const debut = txt.indexOf("Bilan par groupe d'âge");
 const dansTableau = (lib) => { const i = txt.indexOf(lib, debut); return txt.slice(i + 1, i + 4); };
 for (const [lib, v] of Object.entries(attendu)) check(dansTableau(lib).join('|') === v.join('|'), 'PDF, tableau par groupe « ' + lib + ' » attendu ' + v + ', obtenu ' + dansTableau(lib));
 a('Mises bas par semaine', 'S1', 'S10', '84', 'Répartition des portées', 'Simples', '299', 'Détail par millésime', 'Mouvements des brebis', 'Mouvements des agneaux', 'Nés vivants', '413'.replace('413', '413'));
-check(txt.filter(t => /^page \d \/ 2$/.test(t)).length === 2, 'pieds de page « page 1 / 2 » et « page 2 / 2 »');
+check(txt.filter(t => /^Page \d\/2$/.test(t)).length === 2, 'pieds de page « Page 1/2 » et « Page 2/2 »');
 check(!txt.some(t => /portées doubles.*%/i.test(t) && /\d %/.test(t)), 'aucun pourcentage de portées doubles (supprimé)');
 console.log('OK 1 PDF complet : structure valide, 2 pages, KPI et tableau par groupe égaux au bilan du 23/09 (296+67, 299/64/0, 427, 38, 1,20/1,07/1,18, 9,30/26,39/12,18 %), courbe, portées, millésimes, mouvements, pieds de page.');
 
@@ -88,7 +88,7 @@ r = await page.evaluate(() => {
   const ageC = lirePdf(buildBilanAgeExactPdfBytes());
   return { passee: passee.textes, ageP: ageP.textes, ageC: ageC.textes, okP: passee.xrefOk, okA: ageP.xrefOk };
 });
-check(r.okP && r.okA && r.passee.includes('Campagne 2025') && r.passee.some(t => /campagne terminée/.test(t)) && r.passee.includes('5'), 'PDF d\'une campagne passée (2025, terminée, 5 mises bas)');
+check(r.okP && r.okA && r.passee.some(t => /^Campagne 2025/.test(t)) && r.passee.some(t => /campagne terminée/.test(t)) && r.passee.includes('5'), 'PDF d\'une campagne passée (2025, terminée, 5 mises bas)');
 check(r.ageP.some(t => /Campagne 2025/.test(t)) && r.ageC.some(t => /Campagne 2026/.test(t)), 'PDF « par âge » : campagne passée = Campagne 2025, sans argument = campagne en cours (inchangé)');
 r = await page.evaluate(() => { jeu(); DB.brebis = DB.brebis.slice(0, 5); DB.brebis.forEach(b => b.agnelages = []); const p = lirePdf(buildBilanCompletPdfBytes(2025)); return { ok: p.xrefOk, t: p.textes, pages: p.pages }; });
 check(r.ok && r.t.includes('Aucune mise bas datée') && r.t.includes('—'), 'PDF d\'une campagne sans mise bas : valide, « Aucune mise bas datée », ratios « — »');
@@ -97,7 +97,7 @@ r = await page.evaluate(() => {
   // beaucoup de millésimes (15) : le détail par millésime déborde sur une page de plus
   DB.brebis.forEach((b, i) => { b.eid = eid(i % 10, 1000 + i).slice(0, 10) + String(i % 10) + eid(0, 1000 + i).slice(11); });
   const p = lirePdf(buildBilanCompletPdfBytes(2025));
-  return { pages: p.pages, ok: p.xrefOk, pieds: p.textes.filter(t => /^page \d+ \/ \d+$/.test(t)).length, suites: p.textes.filter(t => /\(suite\)/.test(t)).length };
+  return { pages: p.pages, ok: p.xrefOk, pieds: p.textes.filter(t => /^Page \d+\/\d+$/.test(t)).length, suites: p.textes.filter(t => /\(suite\)/.test(t)).length };
 });
 check(r.ok && r.pages >= 2 && r.pieds === r.pages, 'grosse campagne (40 semaines, 10 millésimes) : PDF valide, un pied de page par page : ' + JSON.stringify(r));
 console.log('OK 2 campagne passée (Campagne 2025, terminée), PDF « par âge » d\'une campagne passée, campagne vide, grosse campagne (40 semaines) : PDF valides.');
