@@ -17,6 +17,7 @@ const MIGRES = {
   registre_mouvements: { paysage: true, ajouts: ['Registre', "d'élevage", 'Mouvements', 'Animaux', 'au', 'registre', 'Actifs', 'Entrées', 'Sorties'] },
   registre_sanitaire: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] },
   traitements12: { paysage: true, ajouts: ['Animaux', 'actifs', 'brebis,', 'antenaises,', 'béliers', 'Aucun', 'traitement', 'compté', 'et', 'plus', 'seuil', 'dépassé', '%', 'Traitements', 'sur', '12', 'mois', 'suivi', 'bio', 'Ovilog'] },
+  sous_delai: { paysage: false, ajouts: ["Sous", "délai", "d'attente", 'lait'] },
   registre_sanitaire_filtre: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] }
 };
 const browser = await chromium.launch(LAUNCH);
@@ -37,7 +38,7 @@ for (const [nom, att] of Object.entries(MIGRES)) {
   const [bp, bm] = [await octets(pc, nom), await octets(mob, nom)];
   check(bp === bm, nom + ' : même PDF sur PC et sur mobile (octets identiques)');
   const r = lirePdfMots(Buffer.from(bp, 'base64'), 'h_' + nom);
-  const e = ecartMots(ref[nom].mots, r.mots);
+  const e = ecartMots(ref[nom].mots.filter(w => !(att.ignorer || []).includes(w)), r.mots);
   check(Object.keys(e.manquants).length === 0, nom + ' : contenu d\'origine intact, mots manquants : ' + JSON.stringify(e.manquants));
   const autorises = COMMUNS.concat(att.ajouts);
   const inattendus = Object.keys(e.ajoutes).filter(w => !autorises.some(a => a instanceof RegExp ? a.test(w) : a === w));
