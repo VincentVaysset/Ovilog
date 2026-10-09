@@ -1,6 +1,6 @@
 /* Inventaire (onglets Brebis, Agnelles, Béliers, Agneaux actifs), PC et mobile : champ « Rechercher un numéro » (frappe réelle au clavier) qui porte sur TOUS les numéros de l'onglet
    (court, long, officiel, travail, EID complet) sans tenir compte des espaces ; le champ garde le focus pendant la frappe ; changer d'onglet vide la recherche ; « Export PDF » en vert plein et
-   « Export Excel (.xlsx) » en contour ; PC : tableau compact (pas pleine largeur) ; clic sur une ligne -> fiche (brebis, agnelle, bélier ; agneau -> fiche de la mère), y compris dans une liste filtrée ;
+   « Export Excel (.xlsx) » en contour ; PC : tableau pleine largeur, 3 tuiles d'effectifs, recherche à gauche et exports à droite ; clic sur une ligne -> fiche (brebis, agnelle, bélier ; agneau -> fiche de la mère), y compris dans une liste filtrée ;
    les exports PDF et Excel portent sur la liste AFFICHÉE ; aucune écriture de données. saveData et saveOrShareBinaryFile REMPLACÉS. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
@@ -32,6 +32,7 @@ for (const bureau of [true, false]) {
   });
   const lignes = () => page.evaluate(() => [...document.querySelectorAll('.inventaire-actifs-row')].map(tr => [...tr.children].map(td => td.textContent)));
   const compte = () => page.evaluate(() => document.getElementById('inv-compte').textContent);
+  const box = (sel) => page.evaluate(s => { const r = document.querySelector(s).getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; }, sel);
   const frappe = async (texte) => { await page.fill('#inventaire-recherche', ''); await page.click('#inventaire-recherche'); await page.keyboard.type(texte, { delay: 15 }); };
 
   // ---- structure : boutons, champ, tableau
@@ -42,7 +43,31 @@ for (const bureau of [true, false]) {
   const yq = await page.evaluate(() => document.getElementById('inventaire-recherche').getBoundingClientRect().y), yt = await page.evaluate(() => document.querySelector('#inv-liste').getBoundingClientRect().y);
   check(yq < yt, nom + ' : recherche au-dessus du tableau');
   const largTab = await page.evaluate(() => Math.round(document.querySelector('#inv-liste table').getBoundingClientRect().width)), largZone = await page.evaluate(() => Math.round(document.getElementById('inv-liste').getBoundingClientRect().width));
-  if (bureau) check(largTab < largZone * 0.6, 'PC : tableau compact (' + largTab + ' px sur ' + largZone + ' px)'); else check(largTab >= largZone - 2, 'mobile : tableau pleine largeur inchangé');
+  check(largTab >= largZone - 2, nom + ' : tableau sur toute la largeur de la page (' + largTab + ' px sur ' + largZone + ' px)');
+  if (bureau) {
+    // 3 colonnes réparties sur la largeur (pas de colonnes resserrées)
+    const colsW = await page.evaluate(() => [...document.querySelectorAll('#inv-liste thead th')].map(th => Math.round(th.getBoundingClientRect().width)));
+    check(colsW.length === 3 && Math.max(...colsW) - Math.min(...colsW) <= 2 && colsW.every(w => w > largZone * 0.3), 'PC : 3 colonnes égales réparties sur la largeur ' + JSON.stringify(colsW));
+    // style de la maquette : en-tête vert, lignes alternées beige / blanc, 1re colonne en vert gras
+    const st = await page.evaluate(() => { const th = document.querySelector('#inv-liste thead th'), tds = [...document.querySelectorAll('#inv-liste tbody tr')].slice(0, 2).map(r => getComputedStyle(r.children[0])), tdb = [...document.querySelectorAll('#inv-liste tbody tr')].slice(0, 2).map(r => getComputedStyle(r.children[1]).backgroundColor);
+      return { th: getComputedStyle(th).backgroundColor + '|' + getComputedStyle(th).color, premiere: tds.map(s => s.color + '|' + s.fontWeight), fonds: tdb }; });
+    eq(st.th, 'rgb(53, 127, 75)|rgb(255, 255, 255)', 'PC : en-tête vert #357f4b, texte blanc');
+    eq(st.premiere, ['rgb(47, 110, 68)|700', 'rgb(47, 110, 68)|700'], 'PC : 1re colonne en vert gras');
+    eq(st.fonds, ['rgb(246, 241, 228)', 'rgb(255, 255, 255)'], 'PC : lignes alternées beige / blanc');
+    // 3 tuiles d'effectifs colorées au-dessus du tableau, sur une ligne, toujours les mêmes
+    const tu = await page.evaluate(() => [...document.querySelectorAll('#inv-tuiles .reg-tuile')].map(e => { const r = e.getBoundingClientRect(); return [e.querySelector('.reg-tuile-l').textContent, e.querySelector('.reg-tuile-v').textContent, e.classList[1], Math.round(r.y), e.classList.contains('actif')]; }));
+    eq(tu.map(x => x.slice(0, 3)), [['Brebis actives', '5', 'vert'], ['Agnelles actives', '2', 'ambre'], ['Béliers actifs', '2', 'bleu']], 'PC : tuiles Brebis / Agnelles / Béliers (sans agneaux)');
+    check(new Set(tu.map(x => x[3])).size === 1, 'PC : les 3 tuiles sont sur une ligne');
+    check(tu[0][4] && !tu[1][4] && !tu[2][4], 'PC : la tuile de l\'onglet courant est cerclée');
+    check(tu[0][3] + 40 < yt && (await box('#inv-tuiles')).y < yq, 'PC : tuiles au-dessus de la recherche et du tableau');
+    // barre : recherche à gauche, Excel puis PDF à droite, sur une seule ligne
+    const bq = await box('#inventaire-recherche'), bx = await box('#btn-export-inventaire-xlsx'), bp = await box('#btn-export-inventaire-pdf');
+    check(Math.abs((bq.y + bq.h / 2) - (bx.y + bx.h / 2)) < 6 && Math.abs((bx.y + bx.h / 2) - (bp.y + bp.h / 2)) < 6, 'PC : recherche et boutons sur une seule ligne');
+    check(bq.x < bx.x && bx.x < bp.x && bp.x + bp.w >= largZone - 10, 'PC : recherche à gauche, Export Excel puis Export PDF à droite');
+  } else {
+    check(await page.evaluate(() => !document.getElementById('inv-tuiles')), 'mobile : pas de tuiles (inchangé)');
+    check(!(await page.evaluate(() => document.querySelector('#inv-liste table').classList.contains('inv-table'))), 'mobile : tableau d\'avant, inchangé');
+  }
   eq(await compte(), '5 animal(aux) actif(s).', nom + ' : compte');
   eq((await lignes()).length, 5, nom + ' : 5 brebis');
   const btnMaj = await page.evaluate(() => !!document.getElementById('btn-maj-inventaire'));
