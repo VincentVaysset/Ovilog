@@ -138,10 +138,10 @@ const ETATS_PC = [
   ['Registre d\'élevage', "render('registre');"],
   ['Bilan de campagne', "render('bilan-campagne');"],
   ['Saisie du résumé de campagne', "render('saisie-resume-campagne');"],
-  ['Paramètres · Exploitation', "parametresTab = 'exploitation'; render('parametres');"],
-  ['Paramètres · Listes', "parametresTab = 'listes'; render('parametres');"],
-  ['Paramètres · Campagne', "parametresTab = 'campagne'; render('parametres');"],
-  ['Paramètres · Sauvegarde', "parametresTab = 'sauvegarde'; render('parametres');"],
+  ['Paramètres · Exploitation', "parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres');"],
+  ['Paramètres · Listes', "parametresTab = 'listes'; parametresRubrique = 'listes'; render('parametres');"],
+  ['Paramètres · Campagne', "parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres');"],
+  ['Paramètres · Sauvegarde', "parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres');"],
   ['Brebis (liste)', "render('list');"],
   ['Qualité du lait', "render('qualite');"]
 ];

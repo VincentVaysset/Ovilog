@@ -91,7 +91,7 @@ async function preparer() {
   await page.evaluate(() => {
     DB.brebis = [{ id: 'orig1', eid: '250016299930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
     DB.beliers = []; DB.agnelles = []; saveData(DB);
-    parametresTab = 'sauvegarde'; render('parametres');
+    parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres');
   });
   await page.waitForSelector('#import-file', { state: 'attached' });
   dialogs.length = 0;

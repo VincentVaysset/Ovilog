@@ -162,7 +162,7 @@ console.log('OK 7 exports : Excel (une ligne par traitement, numéro d\'ordre, c
 
 // ================================================================ 8. seuil réglable (Paramètres) et bio non activé
 await jeu(true);
-await page.evaluate(() => { parametresTab = 'exploitation'; render('parametres'); });
+await page.evaluate(() => { parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
 await page.waitForSelector('#f-exp-seuil-bio');
 check(await page.evaluate(() => document.getElementById('f-exp-seuil-bio').value === '3' && document.getElementById('bloc-seuil-bio').style.display !== 'none'), 'seuil proposé : 3, visible quand le bio est activé');
 await page.fill('#f-exp-seuil-bio', '0'); await page.dispatchEvent('#f-exp-seuil-bio', 'change');

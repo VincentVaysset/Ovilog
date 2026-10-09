@@ -133,7 +133,7 @@ console.log('OK 6 figé : changer le réglage ou la fiche ne modifie aucun soin 
 
 // ================================================================ 7. Paramètres : réglage réversible, ne touche aucun soin
 await jeu(false);
-await page.evaluate(() => { DB.brebis[0].sanitaire.push({ type: 'Traitement', produit: 'Intramicine', date: '2026-09-30', quantiteCc: 8, intervenant: 'Éleveur', dureeJours: 1, delaiLaitJours: 7, delaiViandeJours: 28 }); window.__soinsAvant = JSON.stringify(DB.brebis); parametresTab = 'exploitation'; render('parametres'); });
+await page.evaluate(() => { DB.brebis[0].sanitaire.push({ type: 'Traitement', produit: 'Intramicine', date: '2026-09-30', quantiteCc: 8, intervenant: 'Éleveur', dureeJours: 1, delaiLaitJours: 7, delaiViandeJours: 28 }); window.__soinsAvant = JSON.stringify(DB.brebis); parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
 await page.waitForSelector('#f-exp-bio');
 check(await page.evaluate(() => !document.getElementById('f-exp-bio').checked && /délais LÉGAUX/.test(document.getElementById('card-elevage-bio').textContent)), 'carte « Élevage bio » : décochée par défaut, explication');
 await page.check('#f-exp-bio');

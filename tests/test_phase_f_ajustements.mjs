@@ -270,7 +270,7 @@ if (listeAvantTest.length !== 3) throw new Error('FAIL (infra test) : 3 vraies s
 
 // Lance "Tester la sauvegarde" via le VRAI écran (Paramètres > Sauvegarde), pas un appel direct --
 // c'est bien le bouton, avec son vrai câblage, qui est vérifié ici.
-await d2.page.evaluate(() => { parametresTab = 'sauvegarde'; render('parametres'); });
+await d2.page.evaluate(() => { parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres'); });
 await d2.page.waitForTimeout(150);
 if (!(await d2.page.$('#btn-test-sauvegarde'))) throw new Error('FAIL point 5: le bouton "Tester la sauvegarde" doit exister dans Paramètres > Sauvegarde.');
 await d2.page.click('#btn-test-sauvegarde');

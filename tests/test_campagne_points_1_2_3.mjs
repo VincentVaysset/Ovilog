@@ -128,7 +128,7 @@ if (snapshotApres.data.brebis.length !== 1 || snapshotApres.data.agnelles.length
 console.log('OK point 2: un point de restauration interne (localStorage, jamais synchronisé) est posé avant chaque bascule, avec l\'état exact d\'avant.');
 
 await page.evaluate(() => render('parametres-campagne-onglet-test')); // no-op si la route n'existe pas, on force juste le re-render ci-dessous
-await page.evaluate(() => { parametresTab = 'campagne'; render('parametres'); });
+await page.evaluate(() => { parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres'); });
 await page.waitForTimeout(150);
 if (!(await page.$('#btn-restaurer-pre-campagne'))) {
   throw new Error('FAIL: le bouton "Restaurer l\'état d\'avant bascule" doit apparaître dans Paramètres > Campagne quand un point de restauration existe.');
@@ -152,7 +152,7 @@ if (etatRestaure.actives !== 1 || etatRestaure.agnelles !== 1 || etatRestaure.ca
 if (etatRestaure.snapshotEncorePresent) throw new Error('FAIL: le point de restauration doit être effacé après usage (ne se restaure qu\'une fois).');
 console.log('OK point 2: "Restaurer l\'état d\'avant bascule" ramène exactement l\'état antérieur et efface le point de restauration après usage.');
 
-const boutonDisparu = await page.evaluate(() => { parametresTab = 'campagne'; render('parametres'); return !document.getElementById('btn-restaurer-pre-campagne'); });
+const boutonDisparu = await page.evaluate(() => { parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres'); return !document.getElementById('btn-restaurer-pre-campagne'); });
 if (!boutonDisparu) throw new Error('FAIL: le bouton de restauration ne doit plus apparaître une fois le point de restauration consommé.');
 console.log('OK point 2: le bouton de restauration disparaît bien une fois consommé.');
 

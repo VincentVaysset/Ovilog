@@ -181,7 +181,7 @@ console.log('OK I (succès) : après les blocages, la bascule réussit (verrou b
 
 // ---- K. "Tester la sauvegarde" : messages honnêtes + bouton Partager persistant ----
 async function ouvrirSauvegarde() {
-  await page.evaluate(() => { parametresTab = 'sauvegarde'; render('parametres'); });
+  await page.evaluate(() => { parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres'); });
   await page.waitForTimeout(150);
 }
 async function texteStatutTest() { return await page.evaluate(() => document.getElementById('test-sauvegarde-status').textContent); }
@@ -273,10 +273,10 @@ await page2.evaluate(() => {
   DB.brebis = [{ id: 'avant-ref', eid: '250016210000001', statut: 'vendue', createdAt: 1, dateEntree: '2020-01-01', echographies: [], agnelages: [], sanitaire: [], controleLaitier: [], modesRepro: [], mouvements: [{ type: 'Vente', date: '2026-09-15', acheteur: 'Test' }] }];
   DB.beliers = []; DB.agnelles = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
   saveData(DB);
-  parametresTab = 'campagne'; render('parametres');
+  parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres');
 });
 await page2.waitForTimeout(500);
-async function ouvrirCampagne() { await page2.evaluate(() => { parametresTab = 'campagne'; render('parametres'); }); await page2.waitForSelector('#btn-nettoyer-registre', { timeout: 5000 }); }
+async function ouvrirCampagne() { await page2.evaluate(() => { parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres'); }); await page2.waitForSelector('#btn-nettoyer-registre', { timeout: 5000 }); }
 async function statutNettoyage() { return await page2.evaluate(() => (document.getElementById('nettoyage-registre-status') || {}).textContent || ''); }
 // J1. annulation : rien n'est modifié, bouton non bloqué, verrou libéré
 await page2.evaluate(() => { window.__mode = 'cancel'; });

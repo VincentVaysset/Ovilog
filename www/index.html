@@ -754,6 +754,23 @@
   .eco-lig { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 36px; padding: 4px 0; font-size: 14px; }
   .eco-coef { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); font-family: inherit; font-size: 15px; color: var(--text); cursor: pointer; }
   #pc-tank, #pc-qualite { display: flex; flex-direction: column; gap: 16px; }
+  .prm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px; align-items: start; }
+  .prm-cols { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .prm-col { flex: 2 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  .prm-col-large { flex: 3 1 460px; }
+  .prm-rubriques { padding: 4px 16px; }
+  .prm-rub { width: 100%; min-height: 64px; display: flex; align-items: center; gap: 10px; border: 0; border-top: 1px solid var(--border); background: none; padding: 0; font-family: inherit; color: var(--text); text-align: left; cursor: pointer; }
+  .prm-rub:first-child { border-top: 0; }
+  .prm-rub-txt { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .prm-rub-titre { font-size: 16px; font-weight: 700; }
+  .prm-rub-resume { font-size: 13px; color: var(--text-muted); }
+  .prm-rub-fleche { font-size: 22px; color: var(--text-muted); }
+  .prm-pied { display: flex; flex-direction: column; gap: 6px; align-items: center; text-align: center; font-size: 13px; color: var(--text-muted); margin-top: 14px; }
+  .prm-etat { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+  .prm-point { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+  .prm-point-ok { background: var(--primary); }
+  .prm-point-cours { background: var(--warning); }
+  .prm-point-hors { background: var(--danger); }
   .brd-t tr.clic { cursor: pointer; }
   .brd-t tr.clic:hover td { background: #f7f5ee; }
   .brd-t tr.sel td { background: var(--green-bg); }
@@ -5412,11 +5429,14 @@ navDrawerOverlay.onclick = (e) => { if (e.target === navDrawerOverlay) closeNavD
 navDrawer.querySelectorAll('.nav-item').forEach(btn => {
   btn.onclick = () => {
     closeNavDrawer();
+    if (btn.dataset.view === 'parametres') parametresRubrique = null; // depuis le menu : toujours l'écran d'arrivée des rubriques (mobile)
     render(btn.dataset.view);
   };
 });
 
 btnBack.onclick = () => {
+  // Paramètres mobile : depuis une rubrique, retour à l'écran d'arrivée des rubriques
+  if (currentView === 'parametres' && !isDesktopMode() && parametresRubrique) { parametresRubrique = null; render('parametres'); return; }
   if (currentView === 'detail') {
     if (detailOrigin === 'detail-back' && previousDetailId) {
       const back = previousDetailId;
@@ -26185,28 +26205,94 @@ let dedoublonRegistreEnCours = false;
 let testSauvegardeEtat = { message: '', partageable: false };
 let testSauvegardeEnCours = false;
 let importJsonEnCours = false;
+// PC : 5 onglets dans cet ordre, chacun avec un titre et une ligne d'explication. Mobile : pas d'onglets, mais un écran d'arrivée à 4 rubriques (pas d'Imports :
+// ils se font sur PC) qui ouvrent chacune leur écran, avec retour ; parametresRubrique = null (écran d'arrivée) ou la clé de la rubrique ouverte.
 const PARAMETRES_TABS = [
-  { key: 'exploitation', label: 'Exploitation' },
-  { key: 'listes', label: 'Listes' },
-  { key: 'imports', label: 'Imports' },
-  { key: 'campagne', label: 'Campagne' },
-  { key: 'sauvegarde', label: 'Sauvegarde' }
+  { key: 'exploitation', label: 'Exploitation', aide: "L'identité de l'élevage et la synchronisation entre appareils" },
+  { key: 'campagne', label: 'Campagne', aide: 'La campagne en cours et les réglages qui servent aux calculs de reproduction' },
+  { key: 'listes', label: 'Listes', aide: "Les choix proposés dans les menus déroulants · on peut aussi en ajouter directement depuis chaque écran" },
+  { key: 'imports', label: 'Imports', aide: 'Fichiers Excel au modèle Ovilog · disponible sur PC uniquement' },
+  { key: 'sauvegarde', label: 'Sauvegarde', aide: "Tes données et la version de l'application" }
 ];
+let parametresRubrique = null;
+const PARAMETRES_RUBRIQUES_MOBILE = ['exploitation', 'campagne', 'listes', 'sauvegarde'];
+// Mise en page commune des cartes : PC = grille de cartes pleine largeur ; mobile = cartes empilées sur une colonne (mêmes cartes, mêmes libellés).
+function prmGrilleHtml(cardsHtml) { return isDesktopMode() ? `<div class="prm-grid">${cardsHtml}</div>` : cardsHtml; }
+// Deux colonnes sur PC (gauche, droite), une seule colonne empilée sur mobile.
+function prmColonnesHtml(gaucheHtml, droiteHtml) {
+  return isDesktopMode() ? `<div class="prm-cols"><div class="prm-col prm-col-large">${gaucheHtml}</div><div class="prm-col">${droiteHtml}</div></div>` : gaucheHtml + droiteHtml;
+}
+// État de la synchronisation : à jour / en cours / hors ligne (une seule source pour l'écran d'arrivée mobile et la carte Synchronisation).
+function syncEtatInfo() {
+  const s = window.OvilogSync ? window.OvilogSync.getState() : { loggedIn: false };
+  if (!s.loggedIn) return { cle: 'cours', texte: 'Connexion en cours…' };
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return { cle: 'hors', texte: 'Hors ligne : les modifications se synchroniseront au retour de la connexion' };
+  if (window.__syncEnAttente) return { cle: 'cours', texte: 'Synchronisation en cours : nouvelle tentative automatique' };
+  return { cle: 'ok', texte: 'Synchronisation à jour' };
+}
+function syncEtatLigneHtml() {
+  const e = syncEtatInfo();
+  return `<span class="prm-point prm-point-${e.cle}"></span>${e.texte}`;
+}
 function renderParametres() {
   pageTitle.textContent = 'Paramètres';
+  const bureau = isDesktopMode();
+  if (!bureau) {
+    // retour de l'en-tête : depuis une rubrique, revient à l'écran d'arrivée (voir btnBack.onclick)
+    const enRubrique = PARAMETRES_RUBRIQUES_MOBILE.includes(parametresRubrique);
+    if (!enRubrique) parametresRubrique = null;
+    btnBack.classList.toggle('hidden', !enRubrique);
+    btnMenu.classList.toggle('hidden', enRubrique);
+    if (!enRubrique) { renderParametresAccueilMobile(); return; }
+    const tab = PARAMETRES_TABS.find(x => x.key === parametresRubrique);
+    pageTitle.textContent = 'Paramètres · ' + tab.label;
+    app.innerHTML = `<div id="parametres-tab-content"></div>`;
+    appelerRenduParametres(parametresRubrique, document.getElementById('parametres-tab-content'));
+    return;
+  }
+  const tab = PARAMETRES_TABS.find(x => x.key === parametresTab) || PARAMETRES_TABS[0];
   const tabBarHtml = `<div class="tab-bar">${PARAMETRES_TABS.map(t =>
-    `<button type="button" class="tab-btn${parametresTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
+    `<button type="button" class="tab-btn${tab.key === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
   ).join('')}</div>`;
-  app.innerHTML = `${tabBarHtml}<div id="parametres-tab-content"></div>`;
+  app.innerHTML = `${tabBarHtml}<div class="brd-head"><div><h2 class="brd-title">${tab.label}</h2><div class="brd-sub">${tab.aide}</div></div></div><div id="parametres-tab-content" style="margin-top:14px;"></div>`;
   document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
     btn.onclick = () => { parametresTab = btn.dataset.tab; render('parametres'); };
   });
-  const content = document.getElementById('parametres-tab-content');
-  if (parametresTab === 'exploitation') renderParametresExploitation(content);
-  else if (parametresTab === 'listes') renderParametresListes(content);
-  else if (parametresTab === 'imports') renderParametresImports(content);
-  else if (parametresTab === 'campagne') renderParametresCampagne(content);
-  else if (parametresTab === 'sauvegarde') renderParametresSauvegarde(content);
+  appelerRenduParametres(tab.key, document.getElementById('parametres-tab-content'));
+}
+function appelerRenduParametres(cle, content) {
+  if (cle === 'exploitation') renderParametresExploitation(content);
+  else if (cle === 'listes') renderParametresListes(content);
+  else if (cle === 'imports') renderParametresImports(content);
+  else if (cle === 'campagne') renderParametresCampagne(content);
+  else if (cle === 'sauvegarde') renderParametresSauvegarde(content);
+}
+// Écran d'arrivée mobile : 4 rubriques en lignes cliquables, chacune avec un résumé ; état de synchro et version en pied.
+function renderParametresAccueilMobile() {
+  const ex = DB.exploitation || {};
+  const exploitation = [ex.nom, ex.numeroCheptel ? 'cheptel ' + ex.numeroCheptel : ''].filter(Boolean).join(' · ') || 'Identité, synchronisation, élevage bio';
+  const nbListes = LISTES_GENERALES_CONFIG.length;
+  const resumes = {
+    exploitation,
+    campagne: (DB.campagneDebut ? 'Campagne ' + (DB.campagneDebut + 1) + ' · ' : '') + 'réglages de reproduction',
+    listes: nbListes + ' listes · acheteurs, causes de mortalité…',
+    sauvegarde: resumeDerniereSauvegarde()
+  };
+  app.innerHTML = `<div class="card prm-rubriques">${PARAMETRES_RUBRIQUES_MOBILE.map(k => {
+    const tab = PARAMETRES_TABS.find(x => x.key === k);
+    return `<button type="button" class="prm-rub" data-rub="${k}"><span class="prm-rub-txt"><span class="prm-rub-titre">${tab.label}</span><span class="prm-rub-resume">${resumes[k]}</span></span><span class="prm-rub-fleche" aria-hidden="true">›</span></button>`;
+  }).join('')}</div>
+  <div class="prm-pied"><div class="prm-etat sync-etat-ligne" id="prm-accueil-sync">${syncEtatLigneHtml()}</div><div>${libelleVersion().replace('Version : ', 'Version ')} · les imports de fichiers se font sur PC</div></div>`;
+  document.querySelectorAll('.prm-rub').forEach(b => { b.onclick = () => { parametresRubrique = b.dataset.rub; render('parametres'); }; });
+}
+// Ligne de résumé de la rubrique Sauvegarde (alimentée par l'enregistrement de la dernière sauvegarde vérifiée, voir lireDerniereSauvegarde)
+function lireDerniereSauvegarde() {
+  try { const v = JSON.parse(localStorage.getItem('ovilog_derniere_sauvegarde') || 'null'); return v && typeof v === 'object' ? v : null; } catch (e) { return null; }
+}
+function resumeDerniereSauvegarde() {
+  const s = lireDerniereSauvegarde();
+  if (s && s.dateOk) return 'Dernière sauvegarde vérifiée le ' + formatDateFr(s.dateOk.slice(0, 10));
+  return 'Aucune sauvegarde vérifiée sur cet appareil';
 }
 
 /* ---------- Onglet Exploitation ---------- */
@@ -26267,7 +26353,7 @@ function renderParametresExploitation(content) {
       </div>
     </div>
   `;
-  content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
+  content.innerHTML = prmGrilleHtml(cardsHtml);
 
   document.getElementById('btn-sync-action').onclick = () => {
     // Paramètres n'est accessible qu'une fois connecté (voir "Écran
@@ -26433,7 +26519,7 @@ function renderParametresListes(content) {
     ${carteProduits}
     ${LISTES_GENERALES_CONFIG.map(listeGeneraleHtml).join('')}
   `;
-  content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
+  content.innerHTML = prmGrilleHtml(cardsHtml);
 
   if (document.getElementById('btn-gerer-produits')) document.getElementById('btn-gerer-produits').onclick = () => render('gerer-produits');
   document.querySelectorAll('.btn-del-liste').forEach(btn => {
@@ -26530,7 +26616,7 @@ function renderParametresImports(content) {
   // affiché sur desktop, où les cartes occupent cette place.
   const desktopOnlyNoticeHtml = isDesktopMode() ? '' : `<div class="card" style="text-align:center;color:var(--text-muted);font-size:13px;">Les imports de fichiers (Correspondance SIEOL, Contrôle laitier, Lactation, Nouveaux animaux) se font depuis l'application de bureau — plus confortable pour manipuler de gros fichiers Excel/CSV.</div>`;
   const cardsHtml = desktopOnlyNoticeHtml + correspondanceSieolCard + controleLaitierModeleCard + lactationCard + nouveauxAnimauxCard;
-  content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
+  content.innerHTML = prmGrilleHtml(cardsHtml);
   const btnImportCorrespondanceSieol = document.getElementById('btn-import-correspondance-sieol');
   if (btnImportCorrespondanceSieol) btnImportCorrespondanceSieol.onclick = () => render('import-correspondance-sieol');
   const btnImportControleLaitierModele = document.getElementById('btn-import-controle-laitier-modele');
@@ -26655,7 +26741,7 @@ function renderParametresCampagne(content) {
       <div id="dd-registre-zone">${doublonsRegistreZoneHtml()}</div>
     </div>
   `;
-  content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
+  content.innerHTML = prmGrilleHtml(cardsHtml);
 
   wireSelectMoisJour('f-exp-campagne-mois', 'f-exp-campagne-jour');
   document.getElementById('f-exp-campagne-confirm').onchange = (e) => {
@@ -26952,7 +27038,7 @@ function renderParametresSauvegarde(content) {
 
     <div id="version-footer" style="text-align:center;font-size:11px;color:var(--text-muted);padding:6px 0 4px;">${libelleVersion()}</div>
   `;
-  content.innerHTML = isDesktopMode() ? `<div class="fiche-desktop-grid">${cardsHtml}</div>` : cardsHtml;
+  content.innerHTML = prmGrilleHtml(cardsHtml);
 
   // Aucun scan/bip EID sur PC (chantier "Version PC desktop") : le
   // diagnostic Bluetooth n'existe même plus dans le DOM sur desktop (voir
@@ -27412,6 +27498,7 @@ window.updateHeaderSyncBadge = function updateHeaderSyncBadge() {
 // chaque changement d'état (voir updateHeaderSyncBadge ci-dessus) ; ignore
 // silencieusement si cette carte n'est pas à l'écran.
 function rafraichirStatutSynchroParametres() {
+  document.querySelectorAll('.sync-etat-ligne').forEach(el => { el.innerHTML = syncEtatLigneHtml(); });
   const detail = document.getElementById('sync-status-detail');
   if (!detail) return;
   const btnJournal = document.getElementById('btn-voir-journal-synchro');

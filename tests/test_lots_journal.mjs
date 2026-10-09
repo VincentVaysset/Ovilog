@@ -223,7 +223,7 @@ const vide = await page.evaluate(() => {
 check(JSON.stringify(vide.boutons) === '["LP"]', 'un lot vide n\'a pas « Chercher en bergerie » : ' + JSON.stringify(vide.boutons));
 check(vide.plein === true && vide.vide === false, 'un lot vide n\'apparaît pas dans le Bilan de reproduction : ' + vide.bilan);
 await page.evaluate(() => { window.electronAPI.isDesktop = true; });
-await page.evaluate(() => { parametresTab = 'campagne'; render('parametres'); });
+await page.evaluate(() => { parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres'); });
 check(await page.evaluate(() => document.getElementById('f-repro-seuil-mb') && document.getElementById('f-repro-seuil-mb').value) === '3', 'Paramètres (PC) : seuil « délai depuis la dernière mise bas » = 3 mois par défaut');
 await page.fill('#f-repro-seuil-mb', '4'); await page.click('#btn-save-repro-seuil');
 check(await page.evaluate(() => DB.reproSeuilMiseBasMois === 4 && window.__saves > 0), 'seuil enregistré (4 mois)');
@@ -244,7 +244,7 @@ if (exportPresent(EXPORT_CORRIGE)) {
     const resultat = { identique: JSON.stringify(DB.brebis) === avant || JSON.stringify(DB.brebis.map(s => Object.assign({}, s))) === avant, lots: DB.lots.length, evts: DB.evenementsLots.length, schema: DB.schemaLots, seuil: DB.reproSeuilMiseBasMois,
       codes, ia, orphelins: actives.reduce((n, s) => n + (s.modesRepro || []).length, 0), saves: window.__saves };
     window.electronAPI.isDesktop = false; render('lots'); resultat.lotsMobile = document.getElementById('app').textContent.length > 0;
-    window.electronAPI.isDesktop = true; parametresTab = 'campagne'; render('parametres'); resultat.param = !!document.getElementById('f-repro-seuil-mb');
+    window.electronAPI.isDesktop = true; parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres'); resultat.param = !!document.getElementById('f-repro-seuil-mb');
     return resultat;
   }, reel);
   console.log('   réel :', JSON.stringify(r));

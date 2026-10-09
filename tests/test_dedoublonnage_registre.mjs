@@ -201,7 +201,7 @@ console.log('OK 2 analyse : 4 entrées / 8 lignes ; 4 cochées (2 occurrences, m
 
 // ================================================================ 3. écran
 async function ouvrirCarte() {
-  await page.evaluate(() => { parametresTab = 'campagne'; render('parametres'); });
+  await page.evaluate(() => { parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres'); });
   await page.waitForSelector('#dd-registre-zone', { state: 'attached' });
 }
 async function etatEcran() {
@@ -400,7 +400,7 @@ for (const [nom, chemin] of [['corrigé', EXPORT_CORRIGE], ['original', EXPORT_O
   console.log('[' + nom + '] analyse : ' + an.n + ' lignes dans ' + an.entrees + ' entrées (' + an.defaut + ' cochées par défaut), ' + an.enTrop + ' éléments en trop, dans ' + an.cats.join(','));
   check(an.entrees === 115 && an.n === 230 && an.defaut === 230 && an.enTrop === 230 && an.cats.join() === 'agnelles.mouvements', nom + ' : 115 entrées / 230 lignes exactes à 2 occurrences, uniquement registre.agnelles.mouvements');
   if (nom === 'corrigé') {
-    await p.evaluate(() => { window.__mode = 'ok'; parametresTab = 'campagne'; render('parametres'); });
+    await p.evaluate(() => { window.__mode = 'ok'; parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres'); });
     await p.waitForSelector('#btn-dd-analyser', { state: 'attached' });
     await p.click('#btn-dd-analyser');
     await p.click('#btn-dd-appliquer');
