@@ -745,6 +745,13 @@
   .stat-card.stat-card-wide { grid-column: 1 / -1; }
 
   /* ---------- Modale générique (confirmation, popup d'aide...) ---------- */
+  /* Production laitière (refonte) : lignes cliquables, flèches de mois, tableau des moyennes */
+  .pl-row { min-height: 48px; width: 100%; border: 0; border-top: 1px solid var(--border); background: none; padding: 0; font-family: inherit; font-size: 15px; color: var(--text); display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer; }
+  .pl-fleche { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border); background: var(--card); color: var(--text); font-size: 22px; line-height: 1; cursor: pointer; }
+  .pl-fleche:disabled { opacity: .35; cursor: default; }
+  .pl-moy { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; align-items: center; min-height: 44px; border-top: 1px solid var(--border); }
+  .pl-moy:first-child { border-top: 0; }
+  .pl-lien { display: flex; align-items: center; justify-content: center; min-height: 44px; text-align: center; font-size: 13px; font-weight: 500; color: var(--blue-fg); text-decoration: none; }
   .modal-overlay { position: fixed; inset: 0; background: rgba(43,38,28,0.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 1000; }
   .modal-card { background: var(--card); border-radius: var(--radius); padding: 20px; max-width: 380px; width: 100%; box-shadow: 0 12px 40px rgba(0,0,0,0.28); }
 
@@ -15294,509 +15301,264 @@ function prixLaitMoisDetailHtml(mois, campagne) {
   `;
 }
 
+/* ---------- Production laitière (mobile + base de la version PC) : deux onglets « Tank » et « Qualité » ----------
+   Chantier « Refonte Production laitière / Bilan économique », partie 2. Aucun montant en euros ici (prix, bonus et pénalités vivent dans Bilan de campagne > Bilan économique).
+   Tous les chiffres viennent des fonctions de données communes (tankCampagneData, qualiteCampagneData, moyennesQualitePonderees) : ceux des exports PDF / Excel. Les opérations
+   sur un relevé (enregistrer, supprimer) sont les fonctions partagées enregistrerReleveTank / supprimerReleveTank, utilisées aussi par la version PC. */
+let plOnglet = 'tank', plMoisQualite = null, plTousReleves = false, plCampagneTous = null;
+
+// ----- opérations partagées sur un relevé tank (aucune interface, aucune confirmation : l'appelant confirme) -----
+function prelevementVide(date, volume) {
+  return { id: Date.now().toString() + Math.random().toString(36).slice(2, 6), date, volumeLait: volume, tb: null, tp: null, cellules: null, floreTotale: null, coliformes: null, butyriques: null, listeria: null, salmonelles: null, campagne: campagneAnneeDebutPourDate(date) };
+}
+// Crée ou met à jour le relevé de `date`. La case « prélèvement qualité » CRÉE un prélèvement SANS analyses (« résultats à saisir », saisis ensuite dans l'onglet Qualité) s'il n'en existe pas
+// déjà ; elle n'en supprime jamais. Le volume d'un prélèvement existant reste aligné sur le relevé (resyncPrelevementQualiteVolume). Retourne { ecrase, ancienne, prelevementCree }.
+function enregistrerReleveTank(date, quantite, avecPrelevement) {
+  DB.laitTank = DB.laitTank || []; DB.prelevementsQualite = DB.prelevementsQualite || [];
+  const q = Math.round(quantite * 10) / 10;
+  const idx = DB.laitTank.findIndex(l => l.date === date);
+  const res = { ecrase: idx !== -1, ancienne: idx !== -1 ? DB.laitTank[idx].quantite : null, prelevementCree: false };
+  if (idx !== -1) DB.laitTank[idx].quantite = q; else DB.laitTank.push({ date, quantite: q });
+  resyncPrelevementQualiteVolume(date, q);
+  if (avecPrelevement && !findPrelevementQualiteByDate(date)) { DB.prelevementsQualite.push(prelevementVide(date, q)); res.prelevementCree = true; }
+  return res;
+}
+function messageSuppressionReleve(date) {
+  const l = (DB.laitTank || []).find(x => x.date === date);
+  return 'Supprimer le relevé du ' + formatDateFr(date) + (l ? ' (' + fmtLitres(l.quantite) + ' L)' : '') + ' ?'
+    + (findPrelevementQualiteByDate(date) ? '\n\nCe jour a aussi un prélèvement qualité : il est conservé (supprime-le depuis l\'onglet Qualité si besoin).' : '');
+}
+function supprimerReleveTank(date) {
+  const idx = (DB.laitTank || []).findIndex(l => l.date === date);
+  if (idx === -1) return false;
+  DB.laitTank.splice(idx, 1);
+  return true;
+}
+// Choix de la campagne d'un export depuis le Tank : la campagne en cours d'office s'il n'y en a qu'une avec des relevés, sinon un petit choix (la campagne en cours en premier). Résout null si annulé.
+function choisirCampagneExport(titre) {
+  const camps = campagnesAvecRelevesTank(), enCours = campagneAnneeDebutPourDate(jourAujourdhuiISO());
+  if (camps.length <= 1) return Promise.resolve(camps.length ? camps[0] : enCours);
+  const liste = [enCours, ...camps.filter(c => c !== enCours)].filter((c, i, a) => a.indexOf(c) === i && (c === enCours || camps.includes(c)));
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal-card"><div style="font-weight:700;font-size:15px;margin-bottom:4px;">${titre}</div><div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Campagne à exporter</div>
+      ${liste.map((c, i) => `<button type="button" class="btn ${i === 0 ? 'btn-primary' : 'btn-secondary'} export-camp-opt" data-c="${c}" style="margin-bottom:8px;">Campagne ${campagneLabel(c)}${c === enCours ? ' (en cours)' : ''}</button>`).join('')}
+      <button type="button" class="btn btn-secondary" id="export-camp-annuler">Annuler</button></div>`;
+    document.body.appendChild(overlay);
+    const fermer = v => { document.body.removeChild(overlay); resolve(v); };
+    overlay.querySelectorAll('.export-camp-opt').forEach(b => { b.onclick = () => fermer(parseInt(b.dataset.c, 10)); });
+    overlay.querySelector('#export-camp-annuler').onclick = () => fermer(null);
+  });
+}
+function lancerExportAvecBouton(btn, fn) {
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Génération...';
+  Promise.resolve().then(fn).catch(e => { console.error(e); alert("L'export a échoué : " + (e && e.message ? e.message : 'erreur inconnue')); }).finally(() => { btn.disabled = false; btn.textContent = original; });
+}
+function brancherExportsTank() {
+  const lie = (id, fn) => { const b = document.getElementById(id); if (b) b.onclick = () => lancerExportAvecBouton(b, async () => { const c = await choisirCampagneExport(b.dataset.titre || 'Export'); if (c !== null) await fn(c); }); };
+  lie('btn-export-tank-pdf', exportTankPdf); lie('btn-export-tank-xlsx', exportTankXlsx); lie('btn-export-calendrier-pdf', exportCalendrierTankPdf);
+}
+const exportsTankHtml = () => `<div class="grid2" style="margin-bottom:10px;"><button type="button" class="btn btn-secondary" id="btn-export-tank-pdf" data-titre="Tank (PDF)">Tank (PDF)</button><button type="button" class="btn btn-secondary" id="btn-export-tank-xlsx" data-titre="Tank (Excel)">Tank (Excel)</button></div>
+  <button type="button" class="btn btn-secondary" id="btn-export-calendrier-pdf" data-titre="Calendrier du tank (PDF)" style="margin-bottom:10px;">Calendrier du tank (PDF)</button>`;
+
+// ----- fiche d'un relevé (mobile) : modifier les litres, supprimer avec confirmation -----
+function openReleveSheet(date, apres) {
+  const l = (DB.laitTank || []).find(x => x.date === date);
+  if (!l) return;
+  const fin = apres || (() => render('qualite'));
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  const prelev = findPrelevementQualiteByDate(date);
+  overlay.innerHTML = `<div class="sheet-card">
+      <button type="button" class="sheet-close-btn" id="rs-close">✕</button>
+      <div style="font-weight:700;font-size:16px;margin-bottom:12px;">Relevé du ${formatDateFr(date)}</div>
+      <label for="rs-litres">Litres</label>
+      <input type="number" step="0.1" inputmode="decimal" id="rs-litres" value="${l.quantite}">
+      <label class="row" style="align-items:center;gap:10px;margin:12px 0 4px;"><input type="checkbox" id="rs-prelev" style="width:19px;height:19px;margin:0;"${prelev ? ' checked disabled' : ''}><span style="font-size:14.5px;font-weight:600;">Prélèvement qualité ce jour</span></label>
+      ${prelev ? '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Un prélèvement qualité existe déjà ce jour : ses résultats se saisissent dans l\'onglet Qualité.</div>' : ''}
+      <div id="rs-err" class="error-box hidden"></div>
+      <button type="button" class="btn btn-primary" id="rs-save" style="margin-top:8px;margin-bottom:8px;">Enregistrer</button>
+      <button type="button" class="btn btn-secondary" id="rs-del" style="color:var(--danger);border-color:var(--danger);">Supprimer ce relevé</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  const fermer = () => { if (overlay.parentNode) document.body.removeChild(overlay); };
+  overlay.querySelector('#rs-close').onclick = fermer;
+  overlay.querySelector('#rs-save').onclick = () => {
+    const q = parseFloat(overlay.querySelector('#rs-litres').value);
+    if (isNaN(q) || q < 0) { const e = overlay.querySelector('#rs-err'); e.textContent = 'Saisis une quantité valide.'; e.classList.remove('hidden'); return; }
+    enregistrerReleveTank(date, q, overlay.querySelector('#rs-prelev').checked);
+    saveData(DB); fermer(); fin();
+  };
+  overlay.querySelector('#rs-del').onclick = () => {
+    if (!confirm(messageSuppressionReleve(date))) return;
+    supprimerReleveTank(date); saveData(DB); fermer(); fin();
+  };
+}
+
+// ----- onglet Tank -----
+function plTankHtml() {
+  const today = jourAujourdhuiISO(), camp = campagneAnneeDebutPourDate(today), d = tankCampagneData(camp);
+  const mois = d.tuileMois;
+  const dix = [...DB.laitTank].filter(l => l && l.date).sort((a, b) => a.date.localeCompare(b.date)).slice(-10);
+  const maxL = Math.max(...dix.map(l => l.quantite), 1);
+  const barres = dix.map((l, i) => `<div title="${formatDateFr(l.date)} · ${fmtLitres(l.quantite)} L" style="flex:1;height:${Math.max(4, Math.round(l.quantite / maxL * 64))}px;background:${i === dix.length - 1 ? 'var(--blue-fg)' : '#b9d4ea'};border-radius:4px 4px 0 0;"></div>`).join('');
+  const jm = iso => iso.slice(8, 10) + '-' + iso.slice(5, 7);
+  const dernier = dix[dix.length - 1];
+  const rows = (liste) => liste.map(l => `<button type="button" class="pl-row btn-releve" data-date="${l.date}"><span style="flex:1;display:flex;align-items:center;gap:8px;"><span>${formatDateFr(l.date)}</span>${findPrelevementQualiteByDate(l.date) ? '<span class="badge badge-blue">Analyse</span>' : ''}</span><span style="font-weight:700;">${fmtLitres(l.quantite)} L</span><span style="color:var(--text-muted);">›</span></button>`).join('');
+  const triees = [...DB.laitTank].filter(l => l && l.date).sort((a, b) => b.date.localeCompare(a.date));
+  let listeHtml;
+  if (plTousReleves) {
+    const camps = campagnesProductionLaitiere();
+    if (plCampagneTous === null || !camps.includes(plCampagneTous)) plCampagneTous = camp;
+    const tous = triees.filter(l => campagneAnneeDebutPourDate(l.date) === plCampagneTous);
+    listeHtml = `<div class="card" id="pl-tous-releves"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;"><div style="font-size:15px;font-weight:700;">Tous les relevés</div><button type="button" class="btn btn-secondary" id="pl-retour-releves" style="width:auto;padding:6px 12px;font-size:13px;">Retour</button></div>
+      <label for="pl-camp-tous">Campagne</label><select id="pl-camp-tous">${camps.map(c => `<option value="${c}"${c === plCampagneTous ? ' selected' : ''}>Campagne ${campagneLabel(c)}</option>`).join('')}</select>
+      <div style="font-size:12px;color:var(--text-muted);margin:4px 0 6px;">${tous.length} relevé${tous.length > 1 ? 's' : ''}</div>
+      ${tous.length ? rows(tous) : '<div class="empty" style="margin-bottom:0;">Aucun relevé sur cette campagne.</div>'}</div>`;
+  } else {
+    listeHtml = `<div class="card" id="pl-derniers-releves"><div style="font-size:15px;font-weight:700;margin-bottom:6px;">Derniers relevés</div>
+      ${triees.length ? rows(triees.slice(0, 4)) : '<div class="empty" style="margin-bottom:0;">Aucun relevé pour l\'instant.</div>'}
+      ${triees.length > 4 ? '<button type="button" class="pl-row" id="pl-voir-tous" style="justify-content:center;color:var(--blue-fg);font-weight:500;">Voir tous les relevés</button>' : ''}</div>`;
+  }
+  return `
+    <div class="card" id="pl-tank-resume">
+      <div class="grid2" style="margin-bottom:12px;">
+        <div><div style="font-size:12px;color:var(--text-muted);">${mois.libelle}</div><div style="font-size:24px;font-weight:700;color:var(--blue-fg);" id="pl-litres-mois">${fmtLitres(mois.litres)} L</div></div>
+        <div><div style="font-size:12px;color:var(--text-muted);">${d.titre}</div><div style="font-size:24px;font-weight:700;color:var(--blue-fg);" id="pl-litres-campagne">${fmtLitres(d.total.litres)} L</div></div>
+      </div>
+      ${dix.length ? `<div style="border-top:1px solid var(--border);padding-top:10px;"><div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">${dix.length} derniers relevés</div>
+        <div style="height:64px;display:flex;align-items:flex-end;gap:6px;" id="pl-barres">${barres}</div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-top:4px;"><span>${jm(dix[0].date)}</span><span>${jm(dernier.date)} · ${fmtLitres(dernier.quantite)} L</span></div></div>` : ''}
+    </div>
+    <div class="card" id="pl-releve-jour">
+      <div style="font-size:15px;font-weight:700;margin-bottom:10px;">Relevé du jour</div>
+      <div class="grid2">
+        <div><label for="f-lait-date">Date</label><input type="date" id="f-lait-date" value="${today}"></div>
+        <div><label for="f-lait-qte">Litres</label><input type="number" step="0.1" inputmode="decimal" id="f-lait-qte" placeholder="0"></div>
+      </div>
+      <div id="lait-doublon-note" class="hidden" style="font-size:12px;color:var(--warning);margin-top:6px;"></div>
+      <label class="row" style="align-items:center;gap:10px;cursor:pointer;margin:12px 0 4px;"><input type="checkbox" id="q-checkbox" style="width:19px;height:19px;margin:0;flex-shrink:0;"><span style="font-size:14.5px;font-weight:600;">Prélèvement qualité ce jour</span></label>
+      <div id="q-doublon-note" class="hidden" style="font-size:12px;color:var(--text-muted);margin-bottom:6px;"></div>
+      <div id="lait-err" class="error-box hidden"></div>
+      <button class="btn btn-primary" id="btn-save-lait" style="margin-top:10px;">Enregistrer</button>
+    </div>
+    ${listeHtml}
+    ${exportsTankHtml()}`;
+}
+function plTankBrancher() {
+  const dateInput = document.getElementById('f-lait-date'), qteInput = document.getElementById('f-lait-qte'), note = document.getElementById('lait-doublon-note');
+  const cb = document.getElementById('q-checkbox'), qNote = document.getElementById('q-doublon-note');
+  function sync() {
+    const l = DB.laitTank.find(x => x.date === dateInput.value);
+    if (l) { qteInput.value = l.quantite; note.textContent = 'Une saisie existe déjà pour le ' + formatDateFr(dateInput.value) + ' (' + fmtLitres(l.quantite) + ' L) — elle sera mise à jour.'; note.classList.remove('hidden'); }
+    else { qteInput.value = ''; note.classList.add('hidden'); }
+    const p = findPrelevementQualiteByDate(dateInput.value);
+    cb.checked = !!p; cb.disabled = !!p;
+    qNote.textContent = p ? 'Un prélèvement qualité existe déjà ce jour : ses résultats se saisissent dans l\'onglet Qualité.' : '';
+    qNote.classList.toggle('hidden', !p);
+  }
+  dateInput.addEventListener('input', sync);
+  sync();
+  document.getElementById('btn-save-lait').onclick = () => {
+    const err = document.getElementById('lait-err');
+    const qte = parseFloat(qteInput.value);
+    if (!dateInput.value) { err.textContent = 'Renseigne la date.'; err.classList.remove('hidden'); return; }
+    if (isNaN(qte) || qte < 0) { err.textContent = 'Saisis une quantité valide.'; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    const date = dateInput.value, quantite = Math.round(qte * 10) / 10;
+    const exist = DB.laitTank.find(l => l.date === date);
+    // Écrasement d'un relevé existant : confirmation explicite rappelant l'ancienne et la nouvelle valeur (la note passive peut être manquée)
+    if (exist && !confirm('Un relevé existe déjà pour le ' + formatDateFr(date) + ' (' + fmtLitres(exist.quantite) + ' L). Le remplacer par ' + fmtLitres(quantite) + ' L ?')) return;
+    enregistrerReleveTank(date, quantite, cb.checked);
+    saveData(DB);
+    render('qualite');
+  };
+  document.querySelectorAll('.btn-releve').forEach(b => { b.onclick = () => openReleveSheet(b.dataset.date); });
+  const tous = document.getElementById('pl-voir-tous'); if (tous) tous.onclick = () => { plTousReleves = true; render('qualite'); };
+  const retour = document.getElementById('pl-retour-releves'); if (retour) retour.onclick = () => { plTousReleves = false; render('qualite'); };
+  const sel = document.getElementById('pl-camp-tous'); if (sel) sel.onchange = () => { plCampagneTous = parseInt(sel.value, 10); render('qualite'); };
+  brancherExportsTank();
+}
+
+// ----- onglet Qualité -----
+function plMoisQualiteCourant() {
+  const liste = moisAvecPrelevements();
+  if (!liste.length) { plMoisQualite = null; return null; }
+  if (plMoisQualite === null || !liste.includes(plMoisQualite)) plMoisQualite = liste[liste.length - 1];
+  return plMoisQualite;
+}
+function plQualiteHtml() {
+  const mois = plMoisQualiteCourant();
+  const liste = moisAvecPrelevements();
+  const camp = mois ? campagneAnneeDebutPourDate(mois + '-01') : campagneAnneeDebutPourDate(jourAujourdhuiISO());
+  if (!mois) {
+    return `<div class="card"><div class="empty" style="margin-bottom:12px;">Aucun prélèvement qualité enregistré pour l'instant.</div><button type="button" class="btn btn-primary" id="btn-qualite-add">+ Nouveau prélèvement</button></div>
+      <a href="#" class="pl-lien" id="pl-lien-eco">Prix du lait, bonus et pénalités : Bilan économique</a>`;
+  }
+  const list = DB.prelevementsQualite.filter(p => p.date.slice(0, 7) === mois).sort((a, b) => b.date.localeCompare(a.date));
+  const mM = moyennesQualitePonderees(list), qc = qualiteCampagneData(camp).total, superA = !!bilanCampagneQualite(camp).superAParMois[mois];
+  const idx = liste.indexOf(mois);
+  const nomMois = moisLibelleLong(mois);
+  const positifs = [];
+  list.forEach(p => { if (p.listeria === 'positif') positifs.push('Listéria (' + formatDateFr(p.date) + ')'); if (p.salmonelles === 'positif') positifs.push('Salmonelles (' + formatDateFr(p.date) + ')'); });
+  const ligne = (lib, unite, vm, vc) => `<div class="pl-moy"><div>${lib} <span style="font-size:12px;color:var(--text-muted);">${unite}</span></div><div style="text-align:right;font-size:17px;font-weight:700;color:var(--blue-fg);">${vm}</div><div style="text-align:right;">${vc}</div></div>`;
+  const d2 = v => v === null || v === undefined ? '—' : fmtDecimal(v, 2);
+  const val = (p, k, f) => p[k] === null || p[k] === undefined ? '—' : f(p[k]);
+  const rows = list.map(p => {
+    const msu = (p.tb !== null && p.tb !== undefined && p.tp !== null && p.tp !== undefined) ? p.tb + p.tp : null;
+    const vide = prelevementSansResultats(p);
+    return `<button type="button" class="pl-row pl-prelev" data-date="${p.date}" style="align-items:flex-start;padding:12px 0;"><span style="flex:1;display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-muted);">
+        <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span style="font-size:15px;font-weight:700;color:var(--text);">${formatDateFr(p.date)}</span><span>${fmtLitres(p.volumeLait)} L</span>${superA && !vide ? '<span class="badge badge-green">Super A</span>' : ''}${vide ? '<span class="badge badge-amber">résultats à saisir</span>' : ''}${p.listeria === 'positif' || p.salmonelles === 'positif' ? '<span class="badge badge-coral">Positif</span>' : ''}</span>
+        ${vide ? '' : `<span style="color:var(--text);">TB ${d2(p.tb)} · TP ${d2(p.tp)} · MSU ${d2(msu)}</span>
+        <span>Cellules ${fmtCellulesMilliers(p.cellules)} · Flore ${val(p, 'floreTotale', v => fmtGroupe(v, 0))} · Colif. ${val(p, 'coliformes', v => fmtGroupe(v, 0))} · Butyr. ${val(p, 'butyriques', v => fmtGroupe(v, 0))}</span>
+        <span>Listéria ${labelTriStateCourt(p.listeria)} · Salmonelles ${labelTriStateCourt(p.salmonelles)}</span>`}
+      </span><span style="color:var(--text-muted);margin-top:4px;">›</span></button>`;
+  }).join('');
+  return `
+    ${positifs.length ? `<div id="qualite-banner" class="alert-banner clickable"><span><b>Résultat positif ce mois : ${positifs.join(', ')}</b>Bonus « Super A » annulé pour ce mois.<span class="see-link">Voir le(s) prélèvement(s) concerné(s) ↓</span></span></div>` : ''}
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
+      <button type="button" id="pl-mois-prec" aria-label="Mois précédent" class="pl-fleche"${idx <= 0 ? ' disabled' : ''}>‹</button>
+      <div style="text-align:center;"><div style="font-size:17px;font-weight:700;" id="pl-mois-titre">${nomMois}</div><div style="font-size:12px;color:var(--text-muted);">${list.length} prélèvement${list.length > 1 ? 's' : ''}</div></div>
+      <button type="button" id="pl-mois-suiv" aria-label="Mois suivant" class="pl-fleche"${idx >= liste.length - 1 ? ' disabled' : ''}>›</button>
+    </div>
+    <div class="card" id="pl-moyennes">
+      <div class="pl-moy" style="padding-bottom:6px;"><div style="font-size:15px;font-weight:700;">Moyennes</div><div style="text-align:right;font-size:12px;color:var(--text-muted);">${nomMois.split(' ')[0]}</div><div style="text-align:right;font-size:12px;color:var(--text-muted);">Campagne</div></div>
+      ${ligne('TB', 'g/L', d2(mM.tb), d2(qc.tb))}${ligne('TP', 'g/L', d2(mM.tp), d2(qc.tp))}${ligne('MSU', 'TB + TP', d2(mM.msu), d2(qc.msu))}${ligne('Cellules', 'milliers/mL', fmtCellulesMilliers(mM.cellules), fmtCellulesMilliers(qc.cellules))}
+      <div style="font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:10px;">TB, TP et MSU pondérés par le volume · cellules en moyenne simple.</div>
+    </div>
+    <div class="card" id="pl-prelevements"><div style="font-size:15px;font-weight:700;margin-bottom:4px;">Prélèvements du mois</div>${rows}</div>
+    <button type="button" class="btn btn-primary" id="btn-qualite-add" style="margin-bottom:10px;">+ Nouveau prélèvement</button>
+    <button type="button" class="btn btn-secondary" id="btn-rapport-qualite" style="margin-bottom:10px;">Rapport de campagne (PDF)</button>
+    <a href="#" class="pl-lien" id="pl-lien-eco">Prix du lait, bonus et pénalités : Bilan économique</a>`;
+}
+function plQualiteBrancher() {
+  const mois = plMoisQualiteCourant(), liste = moisAvecPrelevements();
+  const camp = mois ? campagneAnneeDebutPourDate(mois + '-01') : campagneAnneeDebutPourDate(jourAujourdhuiISO());
+  const aller = k => { const i = liste.indexOf(mois) + k; if (i >= 0 && i < liste.length) { plMoisQualite = liste[i]; render('qualite'); } };
+  const prec = document.getElementById('pl-mois-prec'); if (prec) prec.onclick = () => aller(-1);
+  const suiv = document.getElementById('pl-mois-suiv'); if (suiv) suiv.onclick = () => aller(1);
+  document.querySelectorAll('.pl-prelev').forEach(b => { b.onclick = () => { const r = findPrelevementQualiteByDate(b.dataset.date); if (r) openQualiteSheet(r); }; });
+  document.getElementById('btn-qualite-add').onclick = () => openQualiteSheet(null);
+  const bn = document.getElementById('qualite-banner');
+  if (bn) bn.onclick = () => { const rows = Array.from(document.querySelectorAll('.pl-prelev')).filter(r => { const p = findPrelevementQualiteByDate(r.dataset.date); return p && (p.listeria === 'positif' || p.salmonelles === 'positif'); }); if (rows[0]) rows[0].scrollIntoView({ behavior: 'smooth', block: 'center' }); rows.forEach(r => { r.classList.add('flash-highlight'); setTimeout(() => r.classList.remove('flash-highlight'), 1600); }); };
+  const rap = document.getElementById('btn-rapport-qualite'); if (rap) rap.onclick = () => lancerExportAvecBouton(rap, () => exportRapportCampagnePdf(camp));
+  document.getElementById('pl-lien-eco').onclick = ev => { ev.preventDefault(); bilanCampagneTab = 'economique'; bilanEconomiqueCampagneAffichee = camp; bilanEconomiqueMoisAffiche = null; render('bilan-campagne'); };
+}
+
 function renderQualite() {
+  if (isDesktopMode() && typeof renderQualitePc === 'function') { renderQualitePc(); return; }
   DB.prelevementsQualite = DB.prelevementsQualite || [];
   DB.penalitesBacterio = DB.penalitesBacterio || [];
   DB.laitTank = DB.laitTank || [];
   if (!DB.parametresPrixLait || !Array.isArray(DB.parametresPrixLait)) DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null }];
   pageTitle.textContent = 'Production laitière';
-
-  const today = jourAujourdhuiISO();
-  const campagneAujourdhui = DB.campagneDebut != null ? DB.campagneDebut : campagneAnneeDebutPourDate(today);
-  const campagnesPresentes = new Set(DB.prelevementsQualite.map(p => campagneAnneeDebutPourDate(p.date)));
-  campagnesPresentes.add(campagneAujourdhui);
-  const campagnes = Array.from(campagnesPresentes).sort((a, b) => a - b);
-
-  const state = { campagne: campagnesPresentes.has(campagneAujourdhui) ? campagneAujourdhui : campagnes[campagnes.length - 1], mois: null };
-
-  // ---------- Production laitière (tank) + prélèvement qualité du jour ----------
-  // Déplacé tel quel depuis l'ex-Agenda (chantier "Refonte Agenda ->
-  // Calendrier") : le Calendrier ne garde plus que les notes ponctuelles,
-  // toute saisie tank/qualité vit désormais ici. Mêmes ids, même logique,
-  // rien de dupliqué -- seul le point d'entrée change (voir wiring plus
-  // bas et openQualiteSheet, qui referme toujours sur 'qualite').
-  const dateDuJour = today;
-  const moisActuel = dateDuJour.slice(0, 7); // un mois ne chevauche jamais la bascule de campagne (1er oct)
-  const campagneActuelle = campagneAnneeDebutPourDate(dateDuJour);
-  const totalLaitMois = Math.round(DB.laitTank.filter(l => (l.date||'').startsWith(moisActuel)).reduce((s,l) => s + l.quantite, 0) * 10) / 10;
-  const totalLaitCampagne = Math.round(DB.laitTank.filter(l => l.date && campagneAnneeDebutPourDate(l.date) === campagneActuelle).reduce((s,l) => s + l.quantite, 0) * 10) / 10;
-  // Anti-doublon : une saisie par date. On calcule l'index existant pour la
-  // date par défaut (aujourd'hui) au rendu initial ; le champ date a aussi un
-  // écouteur qui refait ce calcul à chaque changement (voir plus bas).
-  const laitIdxPourDateDuJour = DB.laitTank.findIndex(l => l.date === dateDuJour);
-  const tankCardHtml = `
-    <div class="card">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Production laitière (tank)</div>
-      <div class="grid2" style="margin-bottom:12px;">
-        <div>
-          <div style="font-size:12px;color:var(--text-muted);">Ce mois-ci</div>
-          <div style="font-size:22px;font-weight:600;color:var(--blue-fg);">${totalLaitMois} L</div>
-        </div>
-        <div>
-          <div style="font-size:12px;color:var(--text-muted);">Cette campagne</div>
-          <div style="font-size:22px;font-weight:600;color:var(--blue-fg);">${totalLaitCampagne} L</div>
-        </div>
-      </div>
-      <label>Ajouter le relevé du jour</label>
-      <div class="row">
-        <input type="date" id="f-lait-date" value="${dateDuJour}" style="flex:1;">
-        <input type="number" step="0.1" id="f-lait-qte" placeholder="Litres" value="${laitIdxPourDateDuJour !== -1 ? DB.laitTank[laitIdxPourDateDuJour].quantite : ''}" style="flex:1;">
-      </div>
-      <div id="lait-doublon-note" class="${laitIdxPourDateDuJour === -1 ? 'hidden' : ''}" style="font-size:12px;color:var(--warning);margin-top:6px;">${laitIdxPourDateDuJour !== -1 ? `Une saisie existe déjà pour le ${formatDateFr(dateDuJour)} (${DB.laitTank[laitIdxPourDateDuJour].quantite} L) — elle sera mise à jour.` : ''}</div>
-
-      <label class="row" style="align-items:center;gap:10px;cursor:pointer;margin:10px 0 4px;">
-        <input type="checkbox" id="q-checkbox" style="width:19px;height:19px;margin:0;flex-shrink:0;">
-        <span style="font-size:14.5px;font-weight:600;">Prélèvement qualité ce jour</span>
-      </label>
-      <div id="q-doublon-note" class="note-warn hidden"></div>
-      <div id="q-panel" class="hidden" style="border-top:1px dashed var(--border);padding-top:14px;margin-bottom:14px;">
-        <div class="row">
-          <div style="flex:1;"><label>TB (g/L)</label><input type="number" step="0.1" id="q-tb"></div>
-          <div style="flex:1;"><label>TP (g/L)</label><input type="number" step="0.1" id="q-tp"></div>
-        </div>
-        <div class="msu-box">
-          <span class="msu-label">MSU (calculé = TB + TP)</span>
-          <span class="msu-value" id="q-msu">—</span>
-        </div>
-        <label>Cellules (cellules/mL)</label>
-        <input type="number" id="q-cellules">
-        <label>Flore totale (UFC/mL)</label>
-        <input type="number" id="q-flore">
-        <div class="row">
-          <div style="flex:1;"><label>Coliformes (milliers/mL)</label><input type="number" id="q-colif"></div>
-          <div style="flex:1;"><label>Butyriques (spores/L)</label><input type="number" id="q-buty"></div>
-        </div>
-        <button type="button" class="disclosure-btn" id="q-disclosure"><span class="arrow">▸</span> Listériose, salmonelles</button>
-        <div class="optional-fields" id="q-optional">
-          <label>Listéria</label>
-          <div class="grid4" id="q-listeria" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px;">
-            <button type="button" class="opt-btn" data-val="negatif">Négatif</button>
-            <button type="button" class="opt-btn" data-val="positif">Positif</button>
-            <button type="button" class="opt-btn" data-val="non_analyse">Non analysé</button>
-          </div>
-          <label>Salmonelles</label>
-          <div class="grid4" id="q-salmonelles" style="grid-template-columns:repeat(3,1fr);margin-bottom:6px;">
-            <button type="button" class="opt-btn" data-val="negatif">Négatif</button>
-            <button type="button" class="opt-btn" data-val="positif">Positif</button>
-            <button type="button" class="opt-btn" data-val="non_analyse">Non analysé</button>
-          </div>
-          <div class="note-danger hidden" id="q-positif-warn">⚠️ Un résultat positif annule le bonus « Super A » de ce mois et déclenche une pénalité (barème à définir en phase 2).</div>
-        </div>
-      </div>
-
-      <div id="lait-err" class="error-box hidden"></div>
-      <div class="row" style="margin-top:8px;">
-        <button class="btn btn-secondary" id="btn-save-lait" style="flex:1;">Enregistrer</button>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <button type="button" class="btn btn-secondary" id="btn-export-tank-pdf" style="flex:1;">Export PDF</button>
-        <button type="button" class="btn btn-secondary" id="btn-export-tank-xlsx" style="flex:1;">Excel (.xlsx)</button>
-      </div>
-      ${DB.laitTank.length > 0 ? '<div style="font-size:12px;color:var(--text-muted);margin-top:12px;margin-bottom:6px;">Derniers relevés</div>' : ''}
-      <div>
-        ${[...DB.laitTank].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,4).map(l => {
-          const realIdx = DB.laitTank.indexOf(l);
-          const q = findPrelevementQualiteByDate(l.date);
-          // Un relevé litrage seul (pas de prélèvement qualité ce jour-là)
-          // garde l'affichage minimal existant -- rien de plus à montrer.
-          if (!q) {
-            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px;">
-              <span>${formatDateFr(l.date)} — ${l.quantite} L</span>
-              <button type="button" class="btn btn-secondary btn-del-lait" data-idx="${realIdx}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
-            </div>`;
-          }
-          const msu = (q.tb !== null && q.tp !== null) ? q.tb + q.tp : null;
-          const superA = superAPourMois(q.date.slice(0, 7));
-          return `<div style="padding:8px 0;border-top:1px solid var(--border);font-size:13px;">
-            <div style="font-weight:600;margin-bottom:4px;">${formatDateFr(l.date)} — ${l.quantite} L</div>
-            <div style="font-size:11.5px;color:var(--text-muted);line-height:1.6;margin-bottom:8px;">
-              TB ${fmtDecimal(q.tb, 2)} · TP ${fmtDecimal(q.tp, 2)} · MSU ${fmtDecimal(msu, 2)}<br>
-              Cellules ${fmtDecimal(q.cellules, 0)} · Flore ${fmtDecimal(q.floreTotale, 0)} · Colif. ${fmtDecimal(q.coliformes, 0)} · Butyr. ${fmtDecimal(q.butyriques, 0)}<br>
-              Listéria ${labelTriStateCourt(q.listeria)} · Salmonelles ${labelTriStateCourt(q.salmonelles)} · Super A ${superA ? 'Oui' : 'Non'}
-            </div>
-            <div class="row" style="display:flex;gap:8px;">
-              <button type="button" class="btn btn-secondary btn-edit-qualite-journal" data-date="${q.date}" style="flex:1;padding:7px 0;font-size:12px;">Modifier</button>
-              <button type="button" class="btn btn-secondary btn-del-lait" data-idx="${realIdx}" style="flex:1;padding:7px 0;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-    </div>
-  `;
-
-  // Chantier "Réorganisation Production laitière" : saisies d'abord, visu
-  // ensuite -- Pénalités bactério ("+ Nouvelle pénalité") et "+ Nouveau
-  // prélèvement qualité" (les 2 autres actions de SAISIE de l'écran, avec
-  // le relevé tank ci-dessus) remontées juste après le bloc tank, avant
-  // tout sélecteur/visualisation (campagne/mois, moyennes). Le reste
-  // (Prélèvements du mois, Moyennes de la campagne, export PDF) reste en
-  // fin d'écran, inchangé.
-  // Centrage desktop (même chantier) : PAS .fiche-desktop-grid ici (cette
-  // grille auto-fit ne centre bien que quand plusieurs .card se partagent
-  // une ligne, comme sur Paramètres -- avec seulement 2 cartes isolées
-  // (tank, pénalités) noyées parmi des sections pleine largeur, chaque
-  // carte se retrouvait collée à gauche de sa ligne, tout le vide à
-  // droite). Colonne unique centrée à 900px à la place -- même largeur que
-  // .list-table-contain, déjà utilisée ailleurs dans l'appli, plutôt
-  // qu'une valeur inventée. Mobile inchangé (aucun wrapper appliqué).
-  const qualiteBodyHtml = `
-    ${tankCardHtml}
-
-    <div class="card" id="qualite-penalites-card">
-      <div style="font-size:14px;font-weight:700;margin-bottom:10px;">🚫 Pénalités bactério</div>
-      <div id="qualite-penalites-list"></div>
-      <div id="qualite-penalites-empty" class="empty hidden" style="margin-bottom:0;">Aucune pénalité enregistrée ce mois-ci.</div>
-      <button type="button" class="btn btn-secondary" id="btn-penalite-add" style="margin-top:12px;">+ Nouvelle pénalité</button>
-    </div>
-
-    <button type="button" class="btn btn-secondary" id="btn-qualite-add" style="margin-bottom:16px;">+ Nouveau prélèvement qualité</button>
-
-    <div class="tab-bar" id="qualite-campagne-tabs">
-      ${campagnes.map(c => `<button type="button" class="tab-btn${c === state.campagne ? ' active' : ''}" data-campagne="${c}">Campagne ${c + 1}</button>`).join('')}
-    </div>
-    <div class="chip-list" id="qualite-months" style="flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;"></div>
-
-    <div id="qualite-banner" class="alert-banner hidden"></div>
-
-    <div class="stat-grid">
-      <div class="stat-card sc-blue"><div class="stat-card-label">TB moyen</div><div class="stat-card-value" id="qualite-stat-tb">—</div><div class="stat-card-sub">pondéré par le volume</div></div>
-      <div class="stat-card sc-blue"><div class="stat-card-label">TP moyen</div><div class="stat-card-value" id="qualite-stat-tp">—</div><div class="stat-card-sub">pondéré par le volume</div></div>
-      <div class="stat-card sc-blue"><div class="stat-card-label">MSU moyen</div><div class="stat-card-value" id="qualite-stat-msu">—</div><div class="stat-card-sub">TB + TP pondérés</div></div>
-      <div class="stat-card sc-blue"><div class="stat-card-label">Cellules moyennes</div><div class="stat-card-value" id="qualite-stat-cellules">—</div><div class="stat-card-sub">milliers/mL, moyenne simple</div></div>
-    </div>
-
-    <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Prélèvements du mois</div>
-    <div id="qualite-list"></div>
-    <div id="qualite-empty" class="empty hidden">Aucun prélèvement ce mois-ci.</div>
-
-    <div style="font-size:14px;font-weight:700;margin:24px 0 10px;">📊 Moyennes de la campagne</div>
-    <div class="stat-grid">
-      <div class="stat-card sc-green"><div class="stat-card-label">TB moyen</div><div class="stat-card-value" id="qc-stat-tb">—</div><div class="stat-card-sub">pondéré par le volume</div></div>
-      <div class="stat-card sc-green"><div class="stat-card-label">TP moyen</div><div class="stat-card-value" id="qc-stat-tp">—</div><div class="stat-card-sub">pondéré par le volume</div></div>
-      <div class="stat-card sc-green"><div class="stat-card-label">MSU moyen</div><div class="stat-card-value" id="qc-stat-msu">—</div><div class="stat-card-sub">TB + TP pondérés</div></div>
-      <div class="stat-card sc-green"><div class="stat-card-label">Production totale</div><div class="stat-card-value" id="qc-stat-production">—</div><div class="stat-card-sub">tank, toute la campagne</div></div>
-    </div>
-
-    <button type="button" class="btn btn-secondary" id="btn-qualite-print" style="margin-bottom:16px;">🖨️ Imprimer le récapitulatif (PDF)</button>
-  `;
-  app.innerHTML = isDesktopMode() ? `<div style="max-width:900px;margin:0 auto;">${qualiteBodyHtml}</div>` : qualiteBodyHtml;
-
-  // ---------- Wiring de la carte "Production laitière (tank)" (voir tankCardHtml ci-dessus) ----------
-  const laitDateInput = document.getElementById('f-lait-date');
-  const laitQteInput = document.getElementById('f-lait-qte');
-  const laitDoublonNote = document.getElementById('lait-doublon-note');
-  laitDateInput.addEventListener('input', () => {
-    const idx = DB.laitTank.findIndex(l => l.date === laitDateInput.value);
-    if (idx !== -1) {
-      laitQteInput.value = DB.laitTank[idx].quantite;
-      laitDoublonNote.textContent = `Une saisie existe déjà pour le ${formatDateFr(laitDateInput.value)} (${DB.laitTank[idx].quantite} L) — elle sera mise à jour.`;
-      laitDoublonNote.classList.remove('hidden');
-    } else {
-      laitQteInput.value = '';
-      laitDoublonNote.classList.add('hidden');
-    }
-  });
-
-  // ---------- Prélèvement qualité (case à cocher pendant la saisie tank) ----------
-  const qCheckbox = document.getElementById('q-checkbox');
-  const qPanel = document.getElementById('q-panel');
-  const qDoublonNote = document.getElementById('q-doublon-note');
-  const qTb = document.getElementById('q-tb'), qTp = document.getElementById('q-tp'), qMsu = document.getElementById('q-msu');
-  const qCellules = document.getElementById('q-cellules'), qFlore = document.getElementById('q-flore'), qColif = document.getElementById('q-colif'), qButy = document.getElementById('q-buty');
-  const qPositifWarn = document.getElementById('q-positif-warn');
-  const qListeriaState = wireTriState(document.getElementById('q-listeria'), null, checkQPositif);
-  const qSalmonellesState = wireTriState(document.getElementById('q-salmonelles'), null, checkQPositif);
-  function checkQPositif() {
-    qPositifWarn.classList.toggle('hidden', qListeriaState.get() !== 'positif' && qSalmonellesState.get() !== 'positif');
-  }
-  function recalcQMsu() {
-    const tb = parseFloat(qTb.value), tp = parseFloat(qTp.value);
-    qMsu.textContent = (isNaN(tb) || isNaN(tp)) ? '—' : fmtDecimal(tb + tp, 2) + ' g/L';
-  }
-  qTb.addEventListener('input', recalcQMsu);
-  qTp.addEventListener('input', recalcQMsu);
-  const qDisclosure = document.getElementById('q-disclosure'), qOptional = document.getElementById('q-optional');
-  qDisclosure.addEventListener('click', () => {
-    const open = qOptional.classList.toggle('open');
-    qDisclosure.classList.toggle('open', open);
-  });
-  function clearQFields() {
-    qTb.value = ''; qTp.value = ''; qCellules.value = ''; qFlore.value = ''; qColif.value = ''; qButy.value = '';
-    qListeriaState.set(null); qSalmonellesState.set(null);
-    checkQPositif();
-    recalcQMsu();
-    qOptional.classList.remove('open');
-    qDisclosure.classList.remove('open');
-  }
-  function fillQFieldsFrom(existing) {
-    if (!existing) { clearQFields(); return; }
-    qTb.value = valOrEmpty(existing.tb); qTp.value = valOrEmpty(existing.tp);
-    qCellules.value = valOrEmpty(existing.cellules); qFlore.value = valOrEmpty(existing.floreTotale);
-    qColif.value = valOrEmpty(existing.coliformes); qButy.value = valOrEmpty(existing.butyriques);
-    qListeriaState.set(existing.listeria || null);
-    qSalmonellesState.set(existing.salmonelles || null);
-    checkQPositif();
-    recalcQMsu();
-  }
-  function syncQDoublon() {
-    const existing = findPrelevementQualiteByDate(laitDateInput.value);
-    if (existing) {
-      const tbTxt = (existing.tb !== null && existing.tb !== undefined) ? existing.tb : '—';
-      const tpTxt = (existing.tp !== null && existing.tp !== undefined) ? existing.tp : '—';
-      qDoublonNote.textContent = `Un prélèvement qualité existe déjà pour le ${formatDateFr(existing.date)} (TB ${tbTxt} g/L, TP ${tpTxt} g/L) — cochez la case pour le compléter.`;
-      qDoublonNote.classList.remove('hidden');
-    } else {
-      qDoublonNote.classList.add('hidden');
-    }
-    if (qCheckbox.checked) fillQFieldsFrom(existing);
-  }
-  laitDateInput.addEventListener('input', syncQDoublon);
-  qCheckbox.addEventListener('change', () => {
-    qPanel.classList.toggle('hidden', !qCheckbox.checked);
-    if (qCheckbox.checked) fillQFieldsFrom(findPrelevementQualiteByDate(laitDateInput.value));
-    else clearQFields(); // décoché après saisie = tout est perdu, assumé (pas de garde-fou)
-  });
-  syncQDoublon();
-
-  document.getElementById('btn-save-lait').onclick = () => {
-    const err = document.getElementById('lait-err');
-    const qte = parseFloat(laitQteInput.value);
-    if (isNaN(qte) || qte < 0) {
-      err.textContent = "Saisis une quantité valide.";
-      err.classList.remove('hidden');
-      return;
-    }
-    err.classList.add('hidden');
-    if (qCheckbox.checked && !confirmerValeursQualiteInhabituelles({
-      tb: numOrNull(qTb), tp: numOrNull(qTp),
-      cellules: numOrNull(qCellules), floreTotale: numOrNull(qFlore),
-      coliformes: numOrNull(qColif), butyriques: numOrNull(qButy)
-    })) return;
-    const date = laitDateInput.value;
-    const quantite = Math.round(qte * 10) / 10;
-    // Anti-doublon : une saisie par date. Recalculé ici indépendamment de
-    // l'écouteur ci-dessus, pour garantir qu'aucune ligne en double ne peut
-    // être créée même si le champ date n'a pas déclenché son évènement.
-    const idx = DB.laitTank.findIndex(l => l.date === date);
-    if (idx !== -1) {
-      // Écrasement d'un relevé existant : confirm() explicite rappelant
-      // l'ancienne et la nouvelle valeur, pour ne jamais remplacer une
-      // quantité déjà saisie sans que l'éleveur l'ait vu (la note passive
-      // ci-dessus peut être manquée si le champ date n'a pas été retouché).
-      if (!confirm('Un relevé existe déjà pour le ' + formatDateFr(date) + ' (' + DB.laitTank[idx].quantite + ' L). Le remplacer par ' + quantite + ' L ?')) return;
-      DB.laitTank[idx].quantite = quantite;
-    } else {
-      DB.laitTank.push({ date, quantite });
-    }
-    // Le volume d'un prélèvement qualité est toujours une copie du relevé
-    // tank du même jour : si on vient de corriger un jour déjà utilisé par
-    // un prélèvement qualité, on le réaligne pour ne jamais laisser dériver
-    // les deux (voir resyncPrelevementQualiteVolume).
-    resyncPrelevementQualiteVolume(date, quantite);
-    if (qCheckbox.checked) {
-      const existing = findPrelevementQualiteByDate(date);
-      const rec = existing || { id: Date.now().toString() + Math.random().toString(36).slice(2, 6), date };
-      rec.volumeLait = quantite;
-      rec.tb = numOrNull(qTb); rec.tp = numOrNull(qTp);
-      rec.cellules = numOrNull(qCellules); rec.floreTotale = numOrNull(qFlore);
-      rec.coliformes = numOrNull(qColif); rec.butyriques = numOrNull(qButy);
-      rec.listeria = qListeriaState.get(); rec.salmonelles = qSalmonellesState.get();
-      rec.campagne = campagneAnneeDebutPourDate(date);
-      if (!existing) DB.prelevementsQualite.push(rec);
-    }
-    saveData(DB);
-    render('qualite');
-  };
-  document.querySelectorAll('.btn-del-lait').forEach(btn => {
-    btn.onclick = () => {
-      if (!confirm('Supprimer ce relevé ?')) return;
-      DB.laitTank.splice(parseInt(btn.dataset.idx, 10), 1);
-      saveData(DB);
-      render('qualite');
-    };
-  });
-  // Réutilise tel quel le formulaire d'édition (mêmes règles de
-  // validation, rien de dupliqué) -- openQualiteSheet referme toujours sur
-  // 'qualite', qu'on l'ouvre depuis ici ou depuis "Prélèvements du mois".
-  document.querySelectorAll('.btn-edit-qualite-journal').forEach(btn => {
-    btn.onclick = () => {
-      const record = findPrelevementQualiteByDate(btn.dataset.date);
-      if (record) openQualiteSheet(record);
-    };
-  });
-  // Export du calendrier COMPLET des relevés tank (tous, pas seulement les 4
-  // derniers affichés ci-dessus) -- symétrique de l'import CSV, qui existait
-  // déjà sans export en retour.
-  document.getElementById('btn-export-tank-pdf').onclick = () => {
-    const btn = document.getElementById('btn-export-tank-pdf');
-    const original = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Export...';
-    Promise.resolve(exportLaitTankPdf()).finally(() => { btn.disabled = false; btn.textContent = original; });
-  };
-  document.getElementById('btn-export-tank-xlsx').onclick = () => {
-    const btn = document.getElementById('btn-export-tank-xlsx');
-    const original = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Export...';
-    exportLaitTankXlsx().finally(() => { btn.disabled = false; btn.textContent = original; });
-  };
-
-  function moisKeyFromDate(dateStr) { return dateStr.slice(0, 7); }
-
-  function renderMonths() {
-    const row = document.getElementById('qualite-months');
-    row.innerHTML = '';
-    let firstWithData = null;
-    for (let i = 0; i < 12; i++) {
-      const info = moisInfoPourIndex(state.campagne, i);
-      const hasData = DB.prelevementsQualite.some(p => moisKeyFromDate(p.date) === info.key);
-      if (hasData && firstWithData === null) firstWithData = info.key;
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip' + (hasData ? '' : ' chip-empty');
-      chip.style.flexShrink = '0';
-      chip.textContent = info.label;
-      chip.dataset.key = info.key;
-      if (hasData) chip.onclick = () => { state.mois = info.key; renderAll(); };
-      row.appendChild(chip);
-    }
-    if (state.mois === null || !DB.prelevementsQualite.some(p => moisKeyFromDate(p.date) === state.mois)) {
-      state.mois = firstWithData;
-    }
-    Array.from(row.children).forEach(chip => chip.classList.toggle('selected', chip.dataset.key === state.mois));
-  }
-
-  // Le détail financier "Prix du lait" (grades, Super A, pénalités, total
-  // du mois) ainsi que le réglage du coefficient MSU ont été déplacés dans
-  // Bilan économique (chantier "Refonte desktop" bis) -- voir
-  // prixLaitMoisDetailHtml et bilanEconomiqueHtml. Production laitière ne
-  // garde plus que les moyennes techniques mensuelles (renderStatsAndList
-  // ci-dessous) et les prélèvements bruts du mois.
-
-  function renderStatsAndList() {
-    const list = state.mois ? DB.prelevementsQualite.filter(p => moisKeyFromDate(p.date) === state.mois) : [];
-    const penalitesMois = state.mois ? penalitesPourMois(state.mois) : [];
-    const m = moyennesQualitePonderees(list);
-    document.getElementById('qualite-stat-tb').textContent = m.tb === null ? '—' : fmtDecimal(m.tb, 2) + ' g/L';
-    document.getElementById('qualite-stat-tp').textContent = m.tp === null ? '—' : fmtDecimal(m.tp, 2) + ' g/L';
-    document.getElementById('qualite-stat-msu').textContent = m.msu === null ? '—' : fmtDecimal(m.msu, 2) + ' g/L';
-    document.getElementById('qualite-stat-cellules').textContent = m.cellules === null ? '—' : fmtDecimal(m.cellules, 0);
-    renderPenalites(penalitesMois);
-
-    const positifDates = [];
-    const positifs = [];
-    list.forEach(p => {
-      if (p.listeria === 'positif') { positifs.push('Listéria (' + formatDateFr(p.date) + ')'); positifDates.push(p.date); }
-      if (p.salmonelles === 'positif') { positifs.push('Salmonelles (' + formatDateFr(p.date) + ')'); if (!positifDates.includes(p.date)) positifDates.push(p.date); }
-    });
-    const banner = document.getElementById('qualite-banner');
-    if (positifs.length > 0) {
-      const montantPenalitesMois = penalitesMois.reduce((s, p) => s + montantPenaliteBacterio(p), 0);
-      const lignePenalite = penalitesMois.length > 0
-        ? '<span style="color:var(--coral-fg);font-weight:600;display:block;margin-top:4px;">' + penalitesMois.length + ' pénalité(s) enregistrée(s) : -' + fmtEuro(montantPenalitesMois) + '</span>'
-        : '<span style="display:block;margin-top:4px;">Si la laiterie applique une pénalité, renseigne-la dans le bloc « Pénalités bactério » ci-dessous.</span>';
-      banner.innerHTML = '<span>⚠️</span><span><b>Résultat positif ce mois : ' + positifs.join(', ') + '</b>Bonus « Super A » annulé pour ce mois.' + lignePenalite + '<span class="see-link">Voir le(s) prélèvement(s) concerné(s) ↓</span></span>';
-      banner.classList.remove('hidden');
-      banner.classList.add('clickable');
-      banner.onclick = () => highlightRows(positifDates);
-    } else {
-      banner.classList.add('hidden');
-      banner.classList.remove('clickable');
-      banner.onclick = null;
-    }
-
-    const listEl = document.getElementById('qualite-list'), emptyEl = document.getElementById('qualite-empty');
-    listEl.innerHTML = '';
-    emptyEl.classList.toggle('hidden', list.length > 0);
-    [...list].sort((a, b) => b.date.localeCompare(a.date)).forEach(p => {
-      const flagged = p.listeria === 'positif' || p.salmonelles === 'positif';
-      const row = document.createElement('div');
-      row.className = 'qualite-row';
-      row.dataset.date = p.date;
-      row.innerHTML = `
-        <div><div style="font-weight:600;">${formatDateFr(p.date)}${flagged ? '<span class="flag-dot" title="Résultat positif"></span>' : ''}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${p.volumeLait} L</div></div>
-        <div style="display:flex;align-items:center;">
-          <div class="metrics">TB ${fmtDecimal(p.tb, 2)} · TP ${fmtDecimal(p.tp, 2)}<br>Cellules ${fmtDecimal(p.cellules, 0)}</div>
-          <span style="color:var(--text-muted);margin-left:8px;">›</span>
-        </div>`;
-      row.onclick = () => openQualiteSheet(p);
-      listEl.appendChild(row);
-    });
-  }
-
-  // Carte "Pénalités bactério" -- indépendante des prélèvements qualité
-  // (DB.penalitesBacterio est une collection à part, voir migrateData) :
-  // une pénalité peut exister sans prélèvement positif ce mois-là (résultat
-  // transmis directement par la laiterie) et inversement.
-  function renderPenalites(penalitesMois) {
-    const listEl = document.getElementById('qualite-penalites-list'), emptyEl = document.getElementById('qualite-penalites-empty');
-    listEl.innerHTML = '';
-    emptyEl.classList.toggle('hidden', penalitesMois.length > 0);
-    [...penalitesMois].sort((a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '')).forEach(p => {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--border);cursor:pointer;';
-      const periode = p.dateFin && p.dateFin !== p.dateDebut ? formatDateFr(p.dateDebut) + ' → ' + formatDateFr(p.dateFin) : formatDateFr(p.dateDebut);
-      const causeLabel = p.cause === 'listeria' ? 'Listéria' : p.cause === 'salmonelles' ? 'Salmonelles' : 'Autre';
-      row.innerHTML = `
-        <div>
-          <div style="font-weight:600;font-size:13px;">${periode}</div>
-          <div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${causeLabel} · ${p.litrageL} L${p.commentaire ? ' · « ' + p.commentaire + ' »' : ''}</div>
-        </div>
-        <span style="font-weight:700;color:var(--coral-fg);">-${fmtEuro(montantPenaliteBacterio(p))}</span>
-      `;
-      row.onclick = () => openPenaliteSheet(p);
-      listEl.appendChild(row);
-    });
-  }
-
-  function highlightRows(dates) {
-    const rows = Array.from(document.querySelectorAll('#qualite-list .qualite-row')).filter(r => dates.includes(r.dataset.date));
-    if (rows.length === 0) return;
-    rows[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-    rows.forEach(r => {
-      r.classList.add('flash-highlight');
-      setTimeout(() => r.classList.remove('flash-highlight'), 1600);
-    });
-  }
-
-  // Bloc "Moyennes / Bilan financier de la campagne" -- indépendant du mois
-  // sélectionné (state.mois), recalculé uniquement quand la campagne change.
-  // Chantier "Refonte desktop" (étape Bilan de campagne) : le bloc "Bilan
-  // financier de la campagne" (prix moyens, montants, gain, Super A,
-  // pénalités) a été coupé de cet écran -- il ne vit plus que dans
-  // l'onglet Bilan économique (bilanEconomiqueHtml, même fonction
-  // bilanCampagneQualite, jamais recalculé). Ne reste ici que TB/TP/MSU/
-  // Production, qui restent affichés sur Production laitière.
-  function renderCampagneBilan() {
-    const bilan = bilanCampagneQualite(state.campagne);
-    document.getElementById('qc-stat-tb').textContent = bilan.tb === null ? '—' : fmtDecimal(bilan.tb, 2) + ' g/L';
-    document.getElementById('qc-stat-tp').textContent = bilan.tp === null ? '—' : fmtDecimal(bilan.tp, 2) + ' g/L';
-    document.getElementById('qc-stat-msu').textContent = bilan.msu === null ? '—' : fmtDecimal(bilan.msu, 2) + ' g/L';
-    document.getElementById('qc-stat-production').textContent = fmtDecimal(bilan.productionTotaleL, 0) + ' L';
-  }
-
-  function renderAll() { renderMonths(); renderStatsAndList(); renderCampagneBilan(); }
-
-  document.querySelectorAll('#qualite-campagne-tabs .tab-btn').forEach(btn => {
-    btn.onclick = () => {
-      document.querySelectorAll('#qualite-campagne-tabs .tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.campagne = parseInt(btn.dataset.campagne, 10);
-      state.mois = null;
-      renderAll();
-    };
-  });
-
-  document.getElementById('btn-qualite-add').onclick = () => openQualiteSheet(null);
-  document.getElementById('btn-penalite-add').onclick = () => openPenaliteSheet(null, state.mois);
-
-  document.getElementById('btn-qualite-print').onclick = () => {
-    const btn = document.getElementById('btn-qualite-print');
-    const original = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Génération...';
-    Promise.resolve(exportQualiteCampagnePdf(state.campagne)).finally(() => { btn.disabled = false; btn.textContent = original; });
-  };
-
-  renderAll();
+  const corps = `<div class="tab-bar" id="pl-onglets"><button type="button" class="tab-btn${plOnglet === 'tank' ? ' active' : ''}" data-onglet="tank">Tank</button><button type="button" class="tab-btn${plOnglet === 'qualite' ? ' active' : ''}" data-onglet="qualite">Qualité</button></div>`
+    + (plOnglet === 'qualite' ? plQualiteHtml() : plTankHtml());
+  app.innerHTML = isDesktopMode() ? `<div style="max-width:900px;margin:0 auto;">${corps}</div>` : corps;
+  document.querySelectorAll('#pl-onglets .tab-btn').forEach(b => { b.onclick = () => { plOnglet = b.dataset.onglet; render('qualite'); }; });
+  if (plOnglet === 'qualite') plQualiteBrancher(); else plTankBrancher();
 }
 
 /* Fiche en feuille remontant du bas, à la fois pour créer un nouveau
@@ -21629,41 +21391,7 @@ function labelTriStateCourt(v) {
    calculerSuperA). "Oui"/"Non" plutôt qu'un symbole : les caractères hors
    Latin-1 ne passent pas dans l'encodage WinAnsi du PDF (voir
    pdfTextBytes) et seraient remplacés par un '?'. */
-async function exportQualiteCampagnePdf(campagne) {
-  const bilan = bilanCampagneQualite(campagne);
-  const list = [...DB.prelevementsQualite]
-    .filter(p => campagneAnneeDebutPourDate(p.date) === campagne)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const columns = [
-    { label: 'Date', x: 0 }, { label: 'Volume', x: 55 },
-    { label: 'TB', x: 105 }, { label: 'TP', x: 140 }, { label: 'MSU', x: 175 },
-    { label: 'Cellules', x: 215 }, { label: 'Flore', x: 260 }, { label: 'Colif.', x: 300 }, { label: 'Butyr.', x: 340 },
-    { label: 'Listéria', x: 380 }, { label: 'Salmonelles', x: 450 }, { label: 'Super A', x: 525 }
-  ];
-  const rows = list.map(p => [
-    formatDateFr(p.date), p.volumeLait + ' L',
-    fmtDecimal(p.tb, 2), fmtDecimal(p.tp, 2), fmtDecimal(p.tb !== null && p.tp !== null ? p.tb + p.tp : null, 2),
-    fmtDecimal(p.cellules, 0), fmtDecimal(p.floreTotale, 0), fmtDecimal(p.coliformes, 0), fmtDecimal(p.butyriques, 0),
-    labelTriStateCourt(p.listeria), labelTriStateCourt(p.salmonelles),
-    bilan.superAParMois[p.date.slice(0, 7)] ? 'Oui' : 'Non'
-  ]);
-  const bytes = buildPdfTable({
-    title: 'Qualité du lait — Récapitulatif',
-    subtitle: 'Campagne ' + (campagne + 1) + ' · ' + list.length + ' prélèvement(s)',
-    columns, rows, landscape: true
-  });
-  const filename = 'qualite-lait_campagne-' + (campagne + 1) + '_' + jourAujourdhuiISO() + '.pdf';
-  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
-}
-
-/* ---------- Rapport de campagne (PDF, recto/verso) ----------
-   Distinct du récapitulatif "1 ligne par prélèvement" ci-dessus : un
-   document de synthèse en 2 pages paysage fixes, pensé comme le ferait un
-   organisme technique (moyennes + bilans financiers), pas une liste brute.
-   Assemblé directement avec les primitives bas niveau de buildPdfTable
-   (pdfTextOp, PDF_MARGIN...) plutôt qu'avec buildPdfTable lui-même : la
-   mise en page mélange plusieurs blocs (KPI, tableau, texte libre) sur
-   chaque page, pas un simple tableau paginé automatiquement. */
+/* ---------- Primitives PDF de tracé (contours, lignes, découpe de texte) -- le Rapport de campagne PDF est construit plus bas avec pdfProdDoc ---------- */
 // Trace un rectangle non rempli (contour seul) -- (x, y) = coin BAS-GAUCHE
 // en coordonnées PDF (origine en bas de page), comme l'exige l'opérateur
 // PDF natif `re`.
@@ -22824,46 +22552,6 @@ async function exportControleLaitierXlsx(filtered) {
   }];
   const bytes = await buildXlsxWorkbook(sheets);
   const filename = 'controle-laitier_' + jourAujourdhuiISO() + '.xlsx';
-  await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-}
-
-/* Calendrier du lait : export de la TOTALITÉ de DB.laitTank (aucun filtre --
-   contrairement au Contrôle laitier, cet écran n'a pas de sélection/lot en
-   cours), triée chronologiquement du plus ancien au plus récent -- ordre
-   "calendrier", à l'inverse de la liste "Derniers relevés" de l'écran
-   Qualité qui affiche les plus récents en premier. Un relevé = une ligne
-   (date + quantité), sans sous-totaux mensuels/campagne (déjà disponibles
-   ailleurs sur l'écran Qualité et dans le Rapport de campagne PDF -- ce
-   chantier ne couvre que le détail jour par jour qui, lui, n'était nulle
-   part exportable). */
-function laitTankPourExport() {
-  return [...DB.laitTank].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-}
-
-async function exportLaitTankPdf() {
-  const rows = laitTankPourExport();
-  const columns = [{ label: 'Date', x: 0 }, { label: 'Quantité (L)', x: 150 }];
-  const bytes = buildPdfTable({
-    title: 'Calendrier du lait — relevés tank',
-    subtitle: rows.length + ' relevé(s) — ' + formatDateFr(jourAujourdhuiISO()),
-    columns,
-    rows: rows.map(l => [formatDateFr(l.date), fmtDecimal(l.quantite, 1)])
-  });
-  const filename = 'calendrier-lait_' + jourAujourdhuiISO() + '.pdf';
-  await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
-}
-
-async function exportLaitTankXlsx() {
-  const rows = laitTankPourExport();
-  const sheets = [{
-    name: 'Calendrier du lait',
-    rows: [
-      ['Date', 'Quantité (L)'],
-      ...rows.map(l => [formatDateFr(l.date), l.quantite])
-    ]
-  }];
-  const bytes = await buildXlsxWorkbook(sheets);
-  const filename = 'calendrier-lait_' + jourAujourdhuiISO() + '.xlsx';
   await saveOrShareBinaryFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
