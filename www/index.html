@@ -9110,6 +9110,37 @@ function filtrerMouvementsPassesMv(rows, f) {
     && (!f.acheteur || r.acheteur === f.acheteur)
     && (!q || r.numero.toLowerCase().includes(q) || r.court.toLowerCase().includes(q) || cleanEid(r.eid || '').toLowerCase().includes(q)));
 }
+// ----- Briques partagées par la page PC et l'écran mobile « Mouvements d'animaux » (une seule logique : textes de confirmation, retour d'annulation, ouverture de la modification) -----
+// Texte de confirmation d'annulation d'UN mouvement (l'animal retrouve son statut précédent)
+function texteConfirmationAnnulationMv(r) {
+  const apres = statutApresRetraitMv(r);
+  return 'Annuler ce mouvement ?\n\n' + r.categorie + ' n°' + (r.court || r.numero) + ' · ' + r.type + (r.detail ? ' · ' + r.detail : '') + ' · ' + formatDateFr(r.date) + '\n\nLe mouvement est retiré ; l\'animal repasse « ' + (apres === 'active' || apres === 'actif' ? 'active' : apres) + ' ».';
+}
+function messageAnnulationMv(r) { return '<b>Annulé</b> : ' + r.type + ' · ' + r.categorie + ' n°' + (r.court || r.numero) + '.'; }
+// Annulation d'un LOT : { restaures, archives, cat, e, pl } (accord féminin : brebis / agnelles) ; restaures <= 0 = rien à annuler
+function infoAnnulationLotMv(lot) {
+  const archives = membresArchivesLot(lot), restaures = (lot.membres || []).length - archives.length;
+  const cat = lot.categorie || 'brebis', e = (cat === 'brebis' || cat === 'agnelles') ? 'e' : '', pl = n => n > 1 ? 's' : '';
+  return { archives, restaures, cat, e, pl };
+}
+const MESSAGE_LOT_TOUT_ARCHIVE_MV = 'Tous les animaux de ce lot sont déjà archivés au registre : annulation impossible.';
+function texteConfirmationAnnulationLotMv(lot, info) {
+  const { archives, restaures, cat, e, pl } = info;
+  const lib = libAnimauxCat(restaures, cat);
+  return (estLotSystemeMv(lot) ? 'Annuler cette « Mise à jour inventaire » ?\n\n' : 'Annuler ce lot ?\n\n') + libelleLotMv(lot) + '\n\n' + lib + ' restauré' + e + pl(restaures) + ' : ' + (restaures > 1 ? (e ? 'chacune' : 'chacun') + ' retrouve' : (e ? 'elle' : 'il') + ' retrouve') + ' son statut précédent (« active » sans autre sortie).'
+    + (archives.length ? '\n' + libAnimauxCat(archives.length, cat) + ' déjà archivé' + e + pl(archives.length) + ' au registre : non restaurable' + pl(archives.length) + ' (le lot est conservé pour ' + (archives.length > 1 ? (e ? 'elles' : 'eux') : (e ? 'elle' : 'lui')) + ').' : '');
+}
+function messageLotAnnuleMv(lot, res) {
+  const cat = lot.categorie || 'brebis', e = (cat === 'brebis' || cat === 'agnelles') ? 'e' : '', pl = n => n > 1 ? 's' : '';
+  return '<b>Lot annulé</b> : ' + libAnimauxCat(res.restaures, cat) + ' restauré' + e + pl(res.restaures) + (res.archives ? ' ; ' + res.archives + ' déjà archivé' + e + pl(res.archives) + ' non restaurable' + pl(res.archives) : '') + '.';
+}
+// Ouvre l'écran de modification d'un mouvement (animaux vivants seulement : brebis, béliers, agneaux)
+function ouvrirModificationMouvementMv(r) {
+  const idx = r.animal.mouvements.indexOf(r.mvt);
+  if (r.cle === 'brebis') { detailOrigin = 'inventaire'; previousDetailId = null; currentSheepId = r.animal.id; editContext = { kind: 'mouvements', idx }; render('add-mouvement', r.animal.id); }
+  else if (r.cle === 'beliers') { belierDetailOrigin = 'inventaire'; currentBelierId = r.animal.id; editBelierContext = { kind: 'mouvements', idx }; render('add-mouvement-belier'); }
+  else if (r.cle === 'agneaux') { agneauDetailOrigin = 'inventaire'; currentAgneauEid = r.animal.eid; editAgneauContext = { kind: 'mouvements', idx }; render('add-mouvement-agneau'); }
+}
 function mouvementsPassesPcHtml(conteneur) {
   const F = mvPassesEtat;
   const toutes = mouvementsPassesPc();
@@ -9160,32 +9191,24 @@ function mouvementsPassesPcHtml(conteneur) {
   const trouver = b => liste.find(r => r.cle === b.dataset.cle && r.eid === b.dataset.eid && r.vivant && r.animal.mouvements.indexOf(r.mvt) === parseInt(b.dataset.i, 10));
   conteneur.querySelectorAll('.mv-modifier').forEach(b => { b.onclick = () => {
     const r = trouver(b) || liste.find(x => x.eid === b.dataset.eid && x.vivant); if (!r) return;
-    const idx = r.animal.mouvements.indexOf(r.mvt);
-    if (r.cle === 'brebis') { detailOrigin = 'inventaire'; previousDetailId = null; currentSheepId = r.animal.id; editContext = { kind: 'mouvements', idx }; render('add-mouvement', r.animal.id); }
-    else if (r.cle === 'beliers') { belierDetailOrigin = 'inventaire'; currentBelierId = r.animal.id; editBelierContext = { kind: 'mouvements', idx }; render('add-mouvement-belier'); }
-    else if (r.cle === 'agneaux') { agneauDetailOrigin = 'inventaire'; currentAgneauEid = r.animal.eid; editAgneauContext = { kind: 'mouvements', idx }; render('add-mouvement-agneau'); }
+    ouvrirModificationMouvementMv(r);
   }; });
   conteneur.querySelectorAll('.mv-annuler').forEach(b => { b.onclick = () => {
     const r = trouver(b); if (!r) return;
-    const apres = statutApresRetraitMv(r);
-    if (!confirm('Annuler ce mouvement ?\n\n' + r.categorie + ' n°' + (r.court || r.numero) + ' · ' + r.type + (r.detail ? ' · ' + r.detail : '') + ' · ' + formatDateFr(r.date) + '\n\nLe mouvement est retiré ; l\'animal repasse « ' + (apres === 'active' || apres === 'actif' ? 'active' : apres) + ' ».')) return;
+    if (!confirm(texteConfirmationAnnulationMv(r))) return;
     annulerMouvementMv(r);
     mvPcEtat = mvPcEtat || mvPcEtatInitial();
-    mvPcEtat.message = '<b>Annulé</b> : ' + r.type + ' · ' + r.categorie + ' n°' + (r.court || r.numero) + '.';
+    mvPcEtat.message = messageAnnulationMv(r);
     renderMouvementsPc();
   }; });
   conteneur.querySelectorAll('.mv-annuler-lot').forEach(b => { b.onclick = () => {
     const lot = (DB.mouvementsCollectifs || []).find(x => x.id === b.dataset.id); if (!lot) return;
-    const archives = membresArchivesLot(lot), restaures = (lot.membres || []).length - archives.length;
-    if (restaures <= 0) { alert('Tous les animaux de ce lot sont déjà archivés au registre : annulation impossible.'); return; }
-    const cat = lot.categorie || 'brebis', e = (cat === 'brebis' || cat === 'agnelles') ? 'e' : '', pl = n => n > 1 ? 's' : '';   // accord : brebis/agnelles féminins, béliers/agneaux masculins
-    const lib = libAnimauxCat(restaures, cat);
-    const msg = (estLotSystemeMv(lot) ? 'Annuler cette « Mise à jour inventaire » ?\n\n' : 'Annuler ce lot ?\n\n') + libelleLotMv(lot) + '\n\n' + lib + ' restauré' + e + pl(restaures) + ' : ' + (restaures > 1 ? (e ? 'chacune' : 'chacun') + ' retrouve' : (e ? 'elle' : 'il') + ' retrouve') + ' son statut précédent (« active » sans autre sortie).'
-      + (archives.length ? '\n' + libAnimauxCat(archives.length, cat) + ' déjà archivé' + e + pl(archives.length) + ' au registre : non restaurable' + pl(archives.length) + ' (le lot est conservé pour ' + (archives.length > 1 ? (e ? 'elles' : 'eux') : (e ? 'elle' : 'lui')) + ').' : '');
-    if (!confirm(msg)) return;
+    const info = infoAnnulationLotMv(lot);
+    if (info.restaures <= 0) { alert(MESSAGE_LOT_TOUT_ARCHIVE_MV); return; }
+    if (!confirm(texteConfirmationAnnulationLotMv(lot, info))) return;
     const res = annulerLotMv(lot);
     mvPcEtat = mvPcEtat || mvPcEtatInitial();
-    mvPcEtat.message = '<b>Lot annulé</b> : ' + libAnimauxCat(res.restaures, cat) + ' restauré' + e + pl(res.restaures) + (res.archives ? ' ; ' + res.archives + ' déjà archivé' + e + pl(res.archives) + ' non restaurable' + pl(res.archives) : '') + '.';
+    mvPcEtat.message = messageLotAnnuleMv(lot, res);
     renderMouvementsPc();
   }; });
 }
