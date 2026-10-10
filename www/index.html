@@ -801,6 +801,19 @@
   .al-pastilles { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   .al-pastilles .reg-pastille { white-space: nowrap; }
   .al-ligne .bc-chev { flex: none; color: var(--ch-icone); }
+  /* Agneaux mobile (charte) : segmenté, cartes, boutons pilule Vendu / Mort */
+  .ag-onglets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ag-liste { display: flex; flex-direction: column; gap: 10px; }
+  .ag-carte { margin: 0; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
+  .ag-top { display: flex; align-items: center; gap: 8px; }
+  .ag-sexe { font-size: 16px; color: var(--ch-texte2); }
+  .ag-statut { margin-left: auto; }
+  .ag-top .bc-chev { flex: none; color: var(--ch-icone); }
+  .ag-sortie { font-size: 13px; color: var(--ch-texte); }
+  .ag-acts { display: flex; gap: 8px; border-top: 1px solid var(--ch-separateur); padding-top: 10px; margin-top: 2px; }
+  button.ag-act { flex: 1; width: auto; height: 44px; margin: 0; padding: 0 8px; border-radius: 999px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid var(--ch-bord-champ); background: var(--ch-carte); color: var(--ch-texte); }
+  button.ag-act.vendu { background: var(--ch-bleu); border-color: var(--ch-bleu); color: var(--ch-carte); }
+  button.ag-act.mort { background: var(--ch-rouge); border-color: var(--ch-rouge); color: var(--ch-carte); }
   .bc-carte { padding: 14px 16px 0; margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
   .bc-tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .bc-titre { font-size: 15px; font-weight: 700; }
@@ -10049,8 +10062,93 @@ function getAgneauxActifsInventaire() {
   return items;
 }
 
+/* Onglet affiché de la liste Agneaux mobile (charte) : 'attente' | 'vendus' | 'morts'. */
+let agneauxMobileTab = 'attente';
+const AGNEAUX_ONGLETS = [['attente', 'En attente'], ['vendus', 'Vendus'], ['morts', 'Morts']];
+function agneauOnglet(lamb) { return lamb.statutFinal === 'vendu' ? 'vendus' : lamb.statutFinal === 'mort' ? 'morts' : 'attente'; }
+
+/* Liste Agneaux mobile (charte) : segmenté En attente / Vendus / Morts avec effectifs, une carte par agneau
+   (n° + sexe, pastille de statut, « Né le … · mère n°… »), boutons Vendu / Mort ou « Annuler cette sortie »,
+   ligne « Vendu le … · acheteur » / « Mort le … · cause » pour les sorties. Toucher la carte ouvre la fiche
+   (le lien vers la mère est dans la fiche, onglet Généalogie). Mêmes données et mêmes écritures qu'avant. */
+function renderAgneauxMobile(items) {
+  // Arrivée depuis « Agneaux adoptés » : on bascule d'abord sur l'onglet de l'agneau ciblé.
+  let cibleIdx = -1;
+  if (pendingHighlightLambEid) {
+    cibleIdx = items.findIndex(it => cleanEid(it.lamb.eid) === cleanEid(pendingHighlightLambEid));
+    pendingHighlightLambEid = null;
+    if (cibleIdx !== -1) agneauxMobileTab = agneauOnglet(items[cibleIdx].lamb);
+  }
+  const effectifs = { attente: 0, vendus: 0, morts: 0 };
+  items.forEach(it => { effectifs[agneauOnglet(it.lamb)]++; });
+  const onglets = `<div class="tab-bar bc-onglets ag-onglets">${AGNEAUX_ONGLETS.map(([k, l]) =>
+    `<button type="button" class="tab-btn${agneauxMobileTab === k ? ' active' : ''}" data-tab="${k}">${l} (${effectifs[k]})</button>`).join('')}</div>`;
+  const vides = { attente: 'Aucun agneau en attente de devenir.', vendus: 'Aucun agneau vendu.', morts: 'Aucun agneau mort.' };
+  const cartes = items.map((it, i) => ({ it, i })).filter(({ it }) => agneauOnglet(it.lamb) === agneauxMobileTab).map(({ it, i }) => {
+    const l = it.lamb;
+    const sortie = l.statutFinal === 'vendu' || l.statutFinal === 'mort';
+    const mv = sortie ? (l.mouvements || []).slice().reverse().find(m => m.type === (l.statutFinal === 'vendu' ? 'Vendu' : 'Mort')) : null;
+    const ligneSortie = !sortie ? '' : l.statutFinal === 'vendu'
+      ? `Vendu${mv && mv.date ? ' le ' + dateCourteMobile(mv.date) : ''}${mv && mv.acheteur ? ' · ' + mv.acheteur : ''}`
+      : `Mort${mv && mv.date ? ' le ' + dateCourteMobile(mv.date) : ''}${mv && mv.cause && mv.cause !== 'Mort' ? ' · ' + mv.cause : ''}`;
+    const pastille = l.statutFinal === 'vendu' ? '<span class="reg-pastille bleu">Vendu</span>' : l.statutFinal === 'mort' ? '<span class="reg-pastille rouge">Mort</span>' : '<span class="reg-pastille ambre">En attente</span>';
+    return `<div class="card ag-carte" id="agneau-item-${i}" data-i="${i}">
+      <div class="ag-top">
+        <span class="al-num">n°${numeroVisuel(l.eid)}</span>
+        <span class="ag-sexe" title="${l.sexe}">${l.sexe === 'Mâle' ? '♂' : '♀'}</span>
+        <span class="ag-statut">${pastille}</span>
+        ${BC_CHEVRON}
+      </div>
+      <div class="al-age">Né le ${dateCourteMobile(it.date)} · mère n°${numeroVisuel(it.mereEid)}</div>
+      ${ligneSortie ? `<div class="ag-sortie">${ligneSortie}</div>` : ''}
+      <div class="ag-acts">
+        ${sortie
+          ? `<button type="button" class="ag-act annuler btn-agneau-annuler" data-i="${i}">Annuler cette sortie</button>`
+          : `<button type="button" class="ag-act vendu btn-agneau-vendu" data-i="${i}">Vendu</button><button type="button" class="ag-act mort btn-agneau-mort" data-i="${i}">Mort</button>`}
+      </div>
+    </div>`;
+  }).join('');
+  app.innerHTML = `<div class="al-haut">${champScanMobileHtml('scan-open-agneau', 'scan-open-agneau-err')}</div>`
+    + (items.length === 0 ? '<div class="empty">Aucun agneau bouclé pour l\'instant.</div>'
+      : onglets + `<div class="ag-liste">${cartes || `<div class="empty">${vides[agneauxMobileTab]}</div>`}</div>`);
+
+  const scanEl = document.getElementById('scan-open-agneau');
+  setActiveScanTarget(scanEl);
+  wireEidLookupField(scanEl, {
+    pool: items,
+    getEid: it => it.lamb.eid,
+    feedbackEl: document.getElementById('scan-open-agneau-err'),
+    notFoundMessage: "Aucun agneau trouvé avec cet EID dans l'inventaire.",
+    clearBeforeResolve: false,
+    onFound: (it) => {                           // bascule sur l'onglet de l'agneau, puis le surligne
+      const idx = items.indexOf(it);
+      if (agneauOnglet(it.lamb) !== agneauxMobileTab) { agneauxMobileTab = agneauOnglet(it.lamb); render('agneaux'); }
+      surlignerCarteAgneau(idx);
+    }
+  });
+  document.querySelectorAll('.ag-onglets .tab-btn').forEach(btn => { btn.onclick = () => { agneauxMobileTab = btn.dataset.tab; render('agneaux'); }; });
+  document.querySelectorAll('.ag-carte').forEach(card => {
+    card.onclick = () => { currentAgneauEid = items[parseInt(card.dataset.i, 10)].lamb.eid; agneauDetailOrigin = 'agneaux'; render('agneau-detail'); };
+  });
+  const agir = (sel, fn) => document.querySelectorAll(sel).forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); fn(items[parseInt(btn.dataset.i, 10)].lamb); };
+  });
+  agir('.btn-agneau-vendu', lamb => showLambSortieModal(lamb, 'vendu', () => render('agneaux')));
+  agir('.btn-agneau-mort', lamb => showLambSortieModal(lamb, 'mort', () => render('agneaux')));
+  agir('.btn-agneau-annuler', lamb => annulerSortieLamb(lamb, () => render('agneaux')));
+  if (cibleIdx !== -1) surlignerCarteAgneau(cibleIdx);
+}
+function surlignerCarteAgneau(idx) {
+  const card = document.getElementById('agneau-item-' + idx);
+  if (!card) return;
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.add('scan-highlight');
+  setTimeout(() => card.classList.remove('scan-highlight'), 2500);
+}
+
 function renderAgneaux() {
   const items = getAgneauxInventaire();
+  if (!isDesktopMode()) { pageTitle.textContent = 'Agneaux (' + items.length + ')'; return renderAgneauxMobile(items); }
   const enAttente = items.filter(it => !isLambResolved(it.lamb)).length;
   pageTitle.textContent = 'Agneaux (' + items.length + ')';
 
