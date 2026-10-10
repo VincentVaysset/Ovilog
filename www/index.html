@@ -834,6 +834,23 @@
   .bc-lot-age-t { font-weight: 700; } .bc-lot-age-t span { font-weight: 400; font-size: 11px; color: var(--ch-texte2); margin-left: 6px; }
   .bc-lot-age-l { display: flex; justify-content: space-between; } .bc-lot-age-l span:last-child { color: var(--ch-texte2); }
   .bc-lot-corps .btn { margin: 4px 0 0; height: 44px; }
+  /* Mouvements d'animaux mobile (maquette mobile) : cartes de mouvements, collectif en une carte, pastilles de type */
+  .mm-page { display: flex; flex-direction: column; gap: 14px; }
+  .mm-page .btn, .mm-page .tab-bar, .mm-page .bc-filtres { margin: 0; }
+  .mm-msg { padding: 10px 14px; border-radius: 14px; border-left: 5px solid var(--ch-vert-fonce); background: var(--ch-vert-pastel); color: var(--ch-vert-texte); font-size: 13px; }
+  #mm-liste { display: flex; flex-direction: column; gap: 10px; }
+  .mm-carte { background: var(--ch-carte); border: 1px solid var(--ch-bord); border-radius: 18px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .mm-top { display: flex; align-items: center; gap: 10px; }
+  .mm-nm { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: var(--ch-vert-fonce); font-variant-numeric: tabular-nums; }
+  .mm-dt, .mm-sub { font-size: 13px; color: var(--ch-texte2); overflow-wrap: anywhere; }
+  .mm-acts { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--ch-separateur); padding-top: 8px; }
+  button.mm-act { flex: 1; width: auto; height: 40px; margin: 0; padding: 0 8px; border: 1px solid var(--ch-bord-champ); border-radius: 999px; background: var(--ch-carte); color: var(--ch-texte); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+  button.mm-act.del { color: var(--ch-rouge); border-color: var(--ch-rouge); }
+  .mm-mention { font-size: 12px; color: var(--ch-texte2); }
+  .mm-membres { border-top: 1px solid var(--ch-separateur); }
+  .mm-membre { min-height: 44px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--ch-separateur); }
+  .mm-membre:last-child { border-bottom: 0; }
+  button.mm-lien { width: auto; margin: 0; padding: 8px 4px; border: 0; background: none; color: var(--ch-bleu); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
   .table-desktop { border: 1px solid var(--border); border-radius: var(--radius); }
   .table-desktop th { background: #f0efe9; border-bottom: 2px solid var(--border); border-right: 1px solid var(--border); }
   .table-desktop th:last-child { border-right: none; }
@@ -9220,47 +9237,123 @@ async function exporterMouvementsPassesXlsx(liste) {
   await saveOrShareBinaryFile('mouvements-animaux_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 
+/* ---------- Écran mobile « Mouvements d'animaux » : liste (maquette « Mouvements d'animaux mobile ») ----------
+   Mêmes données et mêmes fonctions que la page PC (mouvementsPassesPc, filtrerMouvementsPassesMv, textes d'annulation partagés) : sorties seulement, toutes catégories,
+   animaux vivants ET archivés. Un segmenté par catégorie, recherche par n° + filtre de type, cartes du plus récent au plus ancien ; un mouvement collectif = UNE carte
+   (« Voir les animaux », « Annuler » = annulation du lot, avec la même confirmation que sur PC). Campagne en cours d'abord, 20 cartes à la fois, puis les campagnes précédentes.
+   Export Excel = la liste filtrée à l'écran (mêmes colonnes que le PC). Lecture seule tant qu'une annulation n'est pas confirmée. */
+const MV_CATEGORIES_MOBILE = [['brebis', 'Brebis'], ['beliers', 'Béliers'], ['agneaux', 'Agneaux'], ['agnelles', 'Agnelles']];
+const TON_PASTILLE_MV = { danger: 'rouge', info: 'bleu', ok: 'vert', neutral: 'gris', warn: 'ambre' };
+let mvMobEtat = { cat: 'brebis', type: '', q: '', nb: 20, etendu: false, ouverts: new Set(), message: '' };
+// Cartes de la liste : une par mouvement individuel, une par lot (membres = lignes du lot qui passent les filtres), dans l'ordre des lignes (date décroissante)
+function cartesMouvementsMobile(rows) {
+  const cartes = [], parLot = new Map();
+  rows.forEach(r => {
+    if (r.collectifId && r.lot) {
+      let c = parLot.get(r.collectifId);
+      if (!c) { c = { lot: r.lot, rows: [] }; parLot.set(r.collectifId, c); cartes.push(c); }
+      c.rows.push(r);
+    } else cartes.push({ lot: null, rows: [r] });
+  });
+  return cartes;
+}
+function renderMouvementsMobile() {
+  pageTitle.textContent = "Mouvements d'animaux";
+  const E = mvMobEtat;
+  const toutes = mouvementsPassesPc();
+  const delaCat = toutes.filter(r => r.cle === E.cat);
+  const types = Array.from(new Set(delaCat.map(r => r.type)));
+  if (E.type && !types.includes(E.type)) E.type = '';
+  const filtres = periode => ({ cats: { [E.cat]: true }, type: E.type, periode, acheteur: '', q: E.q });
+  const rowsCourante = filtrerMouvementsPassesMv(toutes, filtres('courante'));
+  const rowsToutes = filtrerMouvementsPassesMv(toutes, filtres('toutes'));
+  const rows = E.etendu ? rowsToutes : rowsCourante;
+  const cartes = cartesMouvementsMobile(rows);
+  const montrees = cartes.slice(0, E.nb);
+  const resteCartes = cartes.length - montrees.length;
+  const plusAnciens = resteCartes > 0 || (!E.etendu && rowsToutes.length > rowsCourante.length);
+  const refs = [];
+  const ligneMembre = (r) => { const k = refs.push(r) - 1; return `<div class="mm-membre"><span class="mm-nm">n°${r.court || r.numero}</span>${r.vivant ? `<button type="button" class="mm-lien mm-modifier" data-k="${k}">Modifier</button>` : '<span class="mm-mention">archivé</span>'}</div>`; };
+  const carteHtml = (c, i) => {
+    const r0 = c.rows[0], ton = TON_PASTILLE_MV[PILL_TYPE_MV(r0.type)] || 'gris';
+    if (c.lot) {
+      const lot = c.lot, n = (lot.membres || []).length, cat = lot.categorie || 'brebis';
+      const nums = c.rows.slice(0, 3).map(r => r.court || r.numero).join(', ') + (c.rows.length > 3 ? ' et ' + (c.rows.length - 3) + ' autre' + (c.rows.length - 3 > 1 ? 's' : '') : '');
+      const vivant = c.rows.some(r => r.vivant), ouvert = E.ouverts.has(lot.id);
+      const action = !vivant ? `<span class="mm-mention">${r0.cle === 'agnelles' ? 'agnelles archivées : ni modification ni annulation' : 'animaux archivés au registre'}</span>`
+        : !lot.annulable ? '<span class="mm-mention">lot non annulable automatiquement</span>'
+        : `<button type="button" class="mm-act del mm-annuler-lot" data-id="${lot.id}">Annuler</button>`;
+      return `<div class="mm-carte mm-lot" data-lot="${lot.id}">
+        <div class="mm-top"><span class="mm-nm">${r0.type} · ${libAnimauxCat(n, cat)}</span><span class="reg-pastille ${ton}">${r0.type}</span></div>
+        <div class="mm-dt">${formatDateFr(r0.date)}${r0.detail ? ' · ' + r0.detail : ''}</div>
+        <div class="mm-sub">n°${nums}</div>
+        <div class="mm-acts"><button type="button" class="mm-act mm-voir" data-lot="${lot.id}" aria-expanded="${ouvert}">${ouvert ? 'Masquer les animaux' : 'Voir les animaux'}</button>${action}</div>
+        <div class="mm-membres${ouvert ? '' : ' hidden'}">${c.rows.map(ligneMembre).join('')}</div>
+      </div>`;
+    }
+    const r = r0, k = refs.push(r) - 1;
+    const acts = !r.vivant ? `<span class="mm-mention">${r.cle === 'agnelles' ? 'agnelle archivée : ni modification ni annulation' : 'animal archivé au registre'}</span>`
+      : `<button type="button" class="mm-act mm-modifier" data-k="${k}">Modifier</button><button type="button" class="mm-act del mm-annuler" data-k="${k}">Annuler</button>`;
+    return `<div class="mm-carte">
+      <div class="mm-top"><span class="mm-nm">n°${r.court || r.numero}</span><span class="reg-pastille ${ton}">${r.type}</span></div>
+      <div class="mm-dt">${formatDateFr(r.date)}${r.detail ? ' · ' + r.detail : ''}</div>
+      ${r.collectifId ? '<div class="mm-sub">Lot introuvable</div>' : ''}
+      <div class="mm-acts">${acts}</div>
+    </div>`;
+  };
+  app.innerHTML = `<div class="mm-page">
+    ${E.message ? `<div class="mm-msg" id="mm-message">${E.message}</div>` : ''}
+    <button type="button" class="btn btn-primary" id="mm-nouveau">+ Nouveau mouvement</button>
+    <div class="tab-bar bc-onglets" id="mm-cats">${MV_CATEGORIES_MOBILE.map(([k, l]) => `<button type="button" class="tab-btn${E.cat === k ? ' active' : ''}" data-cat="${k}">${l}</button>`).join('')}</div>
+    <div class="bc-filtres">
+      <input type="text" id="mm-q" placeholder="Rechercher un n°" inputmode="numeric" autocomplete="off" value="${E.q.replace(/"/g, '&quot;')}">
+      <select id="mm-type"><option value="">Tous types</option>${types.map(t => `<option value="${t}"${E.type === t ? ' selected' : ''}>${t}</option>`).join('')}</select>
+    </div>
+    <div class="reg-info" id="mm-info">${E.etendu ? 'Toutes les campagnes' : 'Campagne en cours'}, du plus récent au plus ancien. Un mouvement groupé s'ouvre pour voir ses animaux.</div>
+    <div id="mm-liste">${montrees.map(carteHtml).join('') || '<div class="mm-carte"><div class="reg-info">Aucun mouvement ne correspond.</div></div>'}</div>
+    ${plusAnciens ? '<button type="button" class="reg-voir mm-plus" id="mm-plus">Voir les mouvements plus anciens</button>' : ''}
+    <button type="button" class="btn btn-secondary" id="mm-export">Exporter les mouvements (Excel)</button>
+  </div>`;
+  const $ = id => document.getElementById(id);
+  E.message = '';
+  $('mm-nouveau').onclick = () => render('mouvement-groupe');
+  document.querySelectorAll('#mm-cats .tab-btn').forEach(b => { b.onclick = () => { E.cat = b.dataset.cat; E.type = ''; E.nb = 20; renderMouvementsMobile(); }; });
+  $('mm-type').onchange = ev => { E.type = ev.target.value; E.nb = 20; renderMouvementsMobile(); };
+  $('mm-q').addEventListener('input', ev => { E.q = ev.target.value; E.nb = 20; const pos = ev.target.selectionStart; renderMouvementsMobile(); const n = $('mm-q'); n.focus(); n.setSelectionRange(pos, pos); });
+  if ($('mm-plus')) $('mm-plus').onclick = () => {
+    if (resteCartes > 0) E.nb += 20; else { E.etendu = true; E.nb += 20; }
+    renderMouvementsMobile();
+  };
+  $('mm-export').onclick = () => exporterMouvementsPassesXlsx(rows);
+  document.querySelectorAll('.mm-voir').forEach(b => { b.onclick = () => {
+    const id = b.dataset.lot, corps = b.closest('.mm-lot').querySelector('.mm-membres');
+    const ouvert = corps.classList.toggle('hidden') === false;
+    if (ouvert) E.ouverts.add(id); else E.ouverts.delete(id);
+    b.textContent = ouvert ? 'Masquer les animaux' : 'Voir les animaux'; b.setAttribute('aria-expanded', String(ouvert));
+  }; });
+  document.querySelectorAll('.mm-modifier').forEach(b => { b.onclick = () => ouvrirModificationMouvementMv(refs[parseInt(b.dataset.k, 10)]); });
+  document.querySelectorAll('.mm-annuler').forEach(b => { b.onclick = () => {
+    const r = refs[parseInt(b.dataset.k, 10)];
+    if (!confirm(texteConfirmationAnnulationMv(r))) return;
+    annulerMouvementMv(r);
+    E.message = messageAnnulationMv(r);
+    renderMouvementsMobile();
+  }; });
+  document.querySelectorAll('.mm-annuler-lot').forEach(b => { b.onclick = () => {
+    const lot = (DB.mouvementsCollectifs || []).find(x => x.id === b.dataset.id); if (!lot) return;
+    const info = infoAnnulationLotMv(lot);
+    if (info.restaures <= 0) { alert(MESSAGE_LOT_TOUT_ARCHIVE_MV); return; }
+    if (!confirm(texteConfirmationAnnulationLotMv(lot, info))) return;
+    const res = annulerLotMv(lot);
+    E.ouverts.delete(lot.id);
+    E.message = messageLotAnnuleMv(lot, res);
+    renderMouvementsMobile();
+  }; });
+}
+
 function renderInventaire() {
   if (isDesktopMode()) { renderMouvementsPc(); return; }
-  pageTitle.textContent = "Mouvements d'animaux";
-  const tabs = [
-    { key: 'brebis', label: 'Brebis' },
-    { key: 'beliers', label: 'Béliers' },
-    { key: 'agnelles', label: 'Agnelles' },
-    { key: 'agneaux', label: 'Agneaux' }
-  ];
-  const tabBarHtml = `<div class="tab-bar">${tabs.map(t =>
-    `<button type="button" class="tab-btn${inventaireTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</button>`
-  ).join('')}</div>`;
-
-  const bodyHtml = inventaireTab === 'brebis' ? inventaireBrebisHtml()
-    : inventaireTab === 'beliers' ? inventaireBeliersHtml()
-    : inventaireTab === 'agnelles' ? inventaireAgnellesHtml()
-    : inventaireAgneauxHtml();
-
-  // Le bouton est placé AU-DESSUS des onglets Brebis/Béliers/Agnelles/Agneaux
-  // et affiché quel que soit l'onglet actif : le mouvement collectif choisit
-  // sa propre catégorie à l'intérieur de son propre écran (voir
-  // renderMouvementGroupe), donc les onglets de l'Inventaire — qui ne
-  // gouvernent que la liste des sorties affichée ci-dessous — n'ont aucun
-  // effet sur lui. Les montrer juste au-dessus du bouton laissait croire
-  // le contraire.
-  app.innerHTML = `
-    <button class="btn btn-secondary" id="btn-mouvement-groupe" style="border-color:var(--danger);color:var(--danger);margin-bottom:10px;">Mouvement collectif (vente / sortie multiple)</button>
-    <button class="btn btn-secondary" id="btn-historique-mouvement-groupe" style="margin-bottom:14px;">Gérer / annuler un mouvement collectif</button>
-    ${tabBarHtml}
-    ${bodyHtml}
-  `;
-
-  document.getElementById('btn-mouvement-groupe').onclick = () => render('mouvement-groupe');
-  document.getElementById('btn-historique-mouvement-groupe').onclick = () => render('mouvements-collectifs');
-  document.querySelectorAll('.tab-bar .tab-btn').forEach(btn => {
-    btn.onclick = () => { inventaireTab = btn.dataset.tab; render('inventaire'); };
-  });
-
-  if (inventaireTab === 'brebis') wireInventaireBrebis();
-  else if (inventaireTab === 'beliers') wireInventaireBeliers();
-  else if (inventaireTab === 'agneaux') wireInventaireAgneaux();
+  renderMouvementsMobile();
 }
 
 /* ---------- Inventaire (actifs) : Brebis/Agnelles/Béliers/Agneaux actifs,
