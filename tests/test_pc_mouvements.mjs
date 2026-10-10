@@ -182,15 +182,16 @@ await page.selectOption('#mv-cause', '__ajouter__'); await page.click('#liste-aj
 check(await page.evaluate(() => DB.causesMortalite.includes('Météorite') && document.getElementById('mv-cause').value === 'Météorite'), 'cause ajoutée à la liste et sélectionnée');
 console.log('OK 8 répertoires : acheteur et cause ajoutables depuis la page.');
 
-// ================================================================ 9. routes : PC redirigé vers la page, mobile inchangé
+// ================================================================ 9. routes : PC redirigé vers la page, mobile = nouvelle liste + « Nouveau mouvement »
 await jeu();
 const routes = await page.evaluate(() => { const r = {}; render('mouvement-groupe'); r.groupePC = !!document.getElementById('pc-mouvements'); render('mouvements-collectifs'); r.histoPC = !!document.getElementById('pc-mouvements');
   window.electronAPI.isDesktop = false;
-  render('inventaire'); r.invMobile = !document.getElementById('pc-mouvements') && /Mouvement collectif \(vente \/ sortie multiple\)/.test(document.getElementById('app').textContent);
-  render('mouvement-groupe'); r.groupeMobile = /Quels animaux sont concernés/.test(document.getElementById('app').textContent) && !document.getElementById('pc-mouvements');
+  render('inventaire'); r.invMobile = !document.getElementById('pc-mouvements') && !!document.getElementById('mm-nouveau');
+  render('mouvement-groupe'); r.groupeMobile = !!document.getElementById('mn-valider') && !document.getElementById('pc-mouvements');
+  render('mouvements-collectifs'); r.histoMobile = !!document.getElementById('mm-nouveau') && !document.getElementById('pc-mouvements');
   window.electronAPI.isDesktop = true; return r; });
-check(routes.groupePC && routes.histoPC && routes.invMobile && routes.groupeMobile, 'routes : PC → la page ; mobile → écrans d\'origine : ' + JSON.stringify(routes));
-console.log('OK 9 routes : mouvement-groupe et mouvements-collectifs redirigent vers la page sur PC ; mobile inchangé.');
+check(routes.groupePC && routes.histoPC && routes.invMobile && routes.groupeMobile && routes.histoMobile, 'routes : PC → la page ; mobile → liste et écran « Nouveau mouvement » (l\'ancien historique des collectifs renvoie à la liste) : ' + JSON.stringify(routes));
+console.log('OK 9 routes : mouvement-groupe et mouvements-collectifs redirigent vers la page sur PC ; mobile : liste, « Nouveau mouvement », ancien historique renvoyé à la liste.');
 
 // ================================================================ 10. mouvements passés : tableau unique, colonnes, période par défaut
 await jeu(); await ouvrir();

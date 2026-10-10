@@ -173,8 +173,8 @@ const mob = await page.evaluate(() => {
   r.disparaitLe30 = !document.getElementById('zone-alerte-vente-delai');
   currentSheepId = 'B'; render('add-mouvement'); vente('2026-10-10');
   r.zoneSansAlerte = !!document.getElementById('zone-alerte-vente-delai');      // animal sans soin : aucune zone créée
-  window.__mouvementGroupeSelected = { brebis: new Set(['C']), beliers: new Set(), agnelles: new Set(), agneaux: new Set() };
-  render('mouvement-groupe'); document.querySelector('.cat-mc-opt[data-val="brebis"]').click(); vente('2026-10-10');
+  mvMobEtat.cat = 'brebis'; render('mouvement-groupe'); mvMobNouveau.selections.brebis.add('C'); renderNouveauMouvementMobile();
+  document.querySelector('#mn-types [data-val="Vente"]').click(); document.getElementById('mn-date').value = '2026-10-10'; document.getElementById('mn-date').dispatchEvent(new Event('input'));
   r.collectif = !!document.getElementById('alerte-vente-delai');
   showLambSortieModal(DB.brebis[1].agnelages[0].lambs[0], 'vendu', () => {});
   r.agneau = !!document.querySelector('.modal-overlay #alerte-vente-delai') && /Séléphérol/.test(document.querySelector('.modal-overlay').textContent);   // fiche Séléphérol créée en 4 : délai viande de l'injection de naissance

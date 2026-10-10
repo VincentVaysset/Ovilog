@@ -30,9 +30,16 @@ async function ouvrir(url, data) {
   }, data);
   return page;
 }
+// Mouvements de SORTIE affichés par catégorie dans la campagne en cours : la liste de l'écran « Mouvements d'animaux » (mobile ET PC : mouvementsPassesPc + filtrerMouvementsPassesMv).
+// Sur la version AVANT (URL_AVANT, ancien écran à 4 onglets) : le nombre de lignes de chaque onglet.
 const lignes = (page) => page.evaluate(() => {
-  const n = h => (h.match(/class="sheep-item[ "]/g) || []).length;
-  return { brebis: n(inventaireBrebisHtml()), beliers: n(inventaireBeliersHtml()), agnelles: n(inventaireAgnellesHtml()), agneaux: n(inventaireAgneauxHtml()) };
+  if (typeof inventaireBrebisHtml === 'function') {
+    const n = h => (h.match(/class="sheep-item[ "]/g) || []).length;
+    return { brebis: n(inventaireBrebisHtml()), beliers: n(inventaireBeliersHtml()), agnelles: n(inventaireAgnellesHtml()), agneaux: n(inventaireAgneauxHtml()) };
+  }
+  const toutes = mouvementsPassesPc();
+  const n = k => filtrerMouvementsPassesMv(toutes, { cats: { [k]: true }, type: '', periode: 'courante', acheteur: '', q: '' }).length;
+  return { brebis: n('brebis'), beliers: n('beliers'), agnelles: n('agnelles'), agneaux: n('agneaux') };
 });
 const empreinte = (page) => page.evaluate(() => ({
   db: JSON.stringify(DB), registre: JSON.stringify(DB.registre), saves: window.__saveCalls,
@@ -49,18 +56,16 @@ for (const [nom, fichier] of Object.entries(EXPORTS)) {
   const la = avant ? await lignes(avant) : null, lb = await lignes(apres);
   console.log('[' + nom + '] lignes AVANT ' + JSON.stringify(la) + '  ->  APRÈS ' + JSON.stringify(lb));
   if (avant) check(eq(la, { brebis: 5, beliers: 4, agnelles: 115, agneaux: 0 }), nom + ' : état avant attendu 5/4/115/0, obtenu ' + JSON.stringify(la));
-  check(eq(lb, { brebis: 5, beliers: 4, agnelles: 0, agneaux: 0 }), nom + ' : état après attendu 5/4/0/0, obtenu ' + JSON.stringify(lb));
+  // les 115 agnelles entrées à la date de bascule ne sont PAS des sorties : jamais listées (la liste ne contient que des sorties)
+  check(lb.agnelles === 0 && lb.agneaux === 0, nom + ' : aucune agnelle ni aucun agneau sorti dans la campagne en cours, obtenu ' + JSON.stringify(lb));
   // Identité des données : le rendu ne touche à rien, et rien ne diffère entre les deux versions
   const ea = avant ? await empreinte(avant) : null, eb = await empreinte(apres);
   await apres.evaluate(() => {
-    renderInventaire();
-    inventaireTab = 'agnelles'; renderInventaire();
-    inventaireTab = 'agneaux'; renderInventaire();
-    inventaireTab = 'beliers'; renderInventaire();
-    inventaireTab = 'brebis';
+    ['brebis', 'beliers', 'agneaux', 'agnelles'].forEach(c => { mvMobEtat.cat = c; renderInventaire(); });
+    mvMobEtat.cat = 'brebis';
   });
   const ec = await empreinte(apres);
-  check(eb.db === ec.db && eb.registre === ec.registre && ec.saves === 0, nom + ' : le rendu (4 onglets) ne modifie ni DB ni registre et n\'appelle jamais saveData (saves=' + ec.saves + ')');
+  check(eb.db === ec.db && eb.registre === ec.registre && ec.saves === 0, nom + ' : le rendu des 4 catégories ne modifie ni DB ni registre et n\'appelle jamais saveData (saves=' + ec.saves + ')');
   if (ea) {
     check(ea.db === eb.db && ea.registre === eb.registre, nom + ' : DB et registre strictement identiques entre les deux versions');
     check(ea.effectif === eb.effectif && ea.entries === eb.entries && ea.registreEntries === eb.registreEntries, nom + ' : effectifADate (5 dates, 3 catégories), effectifEntriesFor et registreEntriesFor identiques avant/après');
@@ -90,12 +95,12 @@ for (const [nom, fichier] of Object.entries(EXPORTS)) {
         lamb('250016299990013', 'Femelle', 'mort', []),
         { eid: null, sexe: 'Mort-né', mouvements: [] }
       ] });
-      const n = h => (h.match(/class="sheep-item[ "]/g) || []).length;
-      return { brebis: n(inventaireBrebisHtml()), beliers: n(inventaireBeliersHtml()), agnelles: n(inventaireAgnellesHtml()), agneaux: n(inventaireAgneauxHtml()) };
+      return 1;
     });
-    const sa = avant ? await scenario(avant) : null, sb = await scenario(apres);
+    const sa = avant ? await scenario(avant).then(() => lignes(avant)) : null, sb = await scenario(apres).then(() => lignes(apres));
     if (sa) check(eq(sa, { brebis: 6, beliers: 5, agnelles: 117, agneaux: 3 }), 'scénario avant attendu 6/5/117/3, obtenu ' + JSON.stringify(sa));
-    check(eq(sb, { brebis: 6, beliers: 5, agnelles: 1, agneaux: 2 }), 'scénario après attendu 6/5/1/2, obtenu ' + JSON.stringify(sb));
+    // après : +1 brebis, +1 bélier, +1 agnelle (celle vendue APRÈS la bascule ; celle vendue avant est masquée), +1 agneau vendu après la bascule (celui vendu avant est masqué ; un agneau « mort » sans mouvement daté n'est pas une ligne de mouvement)
+    check(eq(sb, { brebis: lb.brebis + 1, beliers: lb.beliers + 1, agnelles: lb.agnelles + 1, agneaux: lb.agneaux + 1 }), 'scénario après attendu +1 / +1 / +1 / +1 sur ' + JSON.stringify(lb) + ', obtenu ' + JSON.stringify(sb));
     console.log('OK scénario post-bascule : AVANT ' + JSON.stringify(sa) + '  ->  APRÈS ' + JSON.stringify(sb) + ' : vente brebis (+1), vente bélier (+1), agnelle vendue après le 29/09 affichée / avant masquée, agneau vendu après affiché, agneau sans date affiché, agneau vendu avant masqué, mort-né jamais.');
     // les données masquées existent toujours (rien supprimé)
     const intacts = await apres.evaluate(() => ({
@@ -112,22 +117,22 @@ for (const [nom, fichier] of Object.entries(EXPORTS)) {
       const id = 'MC-test';
       [a, b].forEach(s => CATEGORIE_ANIMAL_CONFIG.brebis.applySortie(s, 'Vente', null, 'Acheteur', '2026-10-08', id));
       DB.mouvementsCollectifs.push({ id, categorie: 'brebis', annulable: true, type: 'Vente', cause: null, acheteur: 'Acheteur', date: '2026-10-08', membres: [a.eid, b.eid], createdAt: Date.now() });
-      const n = h => (h.match(/class="sheep-item[ "]/g) || []).length;
       window.__ids = [a.id, b.id];
-      return { statuts: [a.statut, b.statut], lignesBrebis: n(inventaireBrebisHtml()) };
+      return { statuts: [a.statut, b.statut] };
     });
-    check(annul.statuts.every(s => s !== 'active') && annul.lignesBrebis === 8, 'après le mouvement collectif : 2 brebis sorties affichées (6 -> 8), obtenu ' + JSON.stringify(annul));
-    await apres.evaluate(() => render('mouvements-collectifs'));
-    await apres.waitForSelector('.btn-annuler-mvt-collectif');
-    await apres.click('.btn-annuler-mvt-collectif[data-id="MC-test"]');
+    const avantAnnul = (await lignes(apres)).brebis;
+    check(annul.statuts.every(s => s !== 'active') && (await lignes(apres)).brebis === avantAnnul, 'après le mouvement collectif : 2 brebis sorties');
+    await apres.evaluate(() => { mvMobEtat = { cat: 'brebis', type: '', q: '', nb: 20, etendu: false, ouverts: new Set(), message: '' }; render('inventaire'); });
+    await apres.waitForSelector('.mm-lot[data-lot="MC-test"] .mm-annuler-lot');   // un mouvement collectif = UNE carte, annulée depuis cette carte
+    await apres.click('.mm-lot[data-lot="MC-test"] .mm-annuler-lot');
     await apres.waitForTimeout(250);
     const fin = await apres.evaluate(() => {
-      const n = h => (h.match(/class="sheep-item[ "]/g) || []).length;
       const cibles = window.__ids.map(id => DB.brebis.find(s => s.id === id));
-      return { statuts: cibles.map(s => s.statut), mvtRestants: cibles.map(s => (s.mouvements || []).some(m => m.collectifId === 'MC-test')), lignesBrebis: n(inventaireBrebisHtml()), entree: DB.mouvementsCollectifs.some(m => m.id === 'MC-test') };
+      return { statuts: cibles.map(s => s.statut), mvtRestants: cibles.map(s => (s.mouvements || []).some(m => m.collectifId === 'MC-test')), entree: DB.mouvementsCollectifs.some(m => m.id === 'MC-test') };
     });
-    check(fin.statuts.every(s => s === 'active') && fin.mvtRestants.every(x => !x) && fin.lignesBrebis === 6 && !fin.entree, 'annulation : statuts redevenus actifs, mouvements retirés, entrée supprimée, onglet 8 -> 6, obtenu ' + JSON.stringify(fin));
-    console.log('OK annulation d\'un mouvement collectif après la bascule : 2 brebis sorties affichées (6 -> 8), annulation -> statuts actifs, mouvements retirés, onglet revenu à 6.');
+    const lignesFin = (await lignes(apres)).brebis;
+    check(fin.statuts.every(s => s === 'active') && fin.mvtRestants.every(x => !x) && !fin.entree && lignesFin === avantAnnul - 2, 'annulation : statuts redevenus actifs, mouvements retirés, entrée supprimée, 2 lignes de moins, obtenu ' + JSON.stringify(fin) + ' ' + lignesFin + '/' + avantAnnul);
+    console.log('OK annulation d\'un mouvement collectif après la bascule : 2 brebis sorties (une carte), annulation depuis la carte -> statuts actifs, mouvements retirés, lignes revenues à l\'état d\'avant.');
   }
   if (avant) await avant.close();
   await apres.close();

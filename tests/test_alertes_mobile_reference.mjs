@@ -1,7 +1,7 @@
 /* Référence « mobile identique » des écrans touchés par les alertes du carnet sanitaire : mouvement individuel (brebis) avec
    type Vente et date choisis, mouvement collectif (formulaire), fenêtre de vente d'un agneau, fenêtre « Vendre » d'une agnelle,
    écrans d'import du contrôle laitier (modèle Ovilog et SIEOL avant fichier) : HTML comparé octet pour octet à
-   tests/ref/alertes_mobile.json, pris AVANT les alertes de vente sur mobile (jeu SYNTHÉTIQUE sans délai viande en cours : l'alerte n'a rien à signaler, la zone d'alerte n'est donc PAS créée et les écrans restent identiques ; horloge figée, mobile = pas d'electronAPI.isDesktop).
+   tests/ref/alertes_mobile.json, pris AVANT les alertes de vente sur mobile (la clé « mouvement_collectif » est régénérée pour le nouvel écran « Nouveau mouvement ») (jeu SYNTHÉTIQUE sans délai viande en cours : l'alerte n'a rien à signaler, la zone d'alerte n'est donc PAS créée et les écrans restent identiques ; horloge figée, mobile = pas d'electronAPI.isDesktop).
    Régénérer volontairement : OVILOG_MAJ_REF=1 node test_alertes_mobile_reference.mjs */
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -33,10 +33,9 @@ const res = await page.evaluate(() => {
   document.querySelector('.type-opt[data-val="Vente"]').click();
   document.getElementById('f-date').value = '2026-10-10'; document.getElementById('f-date').dispatchEvent(new Event('input')); document.getElementById('f-date').dispatchEvent(new Event('change'));
   R.mouvement_individuel = app();
-  window.__mouvementGroupeSelected = { brebis: new Set(['A']), beliers: new Set(), agnelles: new Set(), agneaux: new Set() };
-  render('mouvement-groupe'); document.querySelector('.cat-mc-opt[data-val="brebis"]').click();
-  document.querySelector('.type-opt[data-val="Vente"]').click();
-  document.getElementById('f-date').value = '2026-10-10'; document.getElementById('f-date').dispatchEvent(new Event('input'));
+  mvMobEtat.cat = 'brebis'; render('mouvement-groupe'); mvMobNouveau.selections.brebis.add('A'); renderNouveauMouvementMobile();
+  document.querySelector('#mn-types [data-val="Vente"]').click();
+  document.getElementById('mn-date').value = '2026-10-10'; document.getElementById('mn-date').dispatchEvent(new Event('input'));
   R.mouvement_collectif = app();
   showLambSortieModal(DB.brebis[1].agnelages[0].lambs[0], 'vendu', () => {}); R.modale_agneau = document.querySelector('.modal-overlay').outerHTML; document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
   showVendreAgnelleModal(DB.agnelles[0], () => {}); R.modale_agnelle = document.querySelector('.modal-overlay').outerHTML; document.querySelectorAll('.modal-overlay').forEach(o => o.remove());

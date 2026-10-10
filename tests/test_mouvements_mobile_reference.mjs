@@ -1,6 +1,6 @@
-/* Référence « mobile identique » de l'onglet « Mouvements d'animaux » : les 4 onglets (Brebis / Béliers / Agnelles / Agneaux), l'écran de choix de
-   catégorie du mouvement collectif, son formulaire (sélecteur clic / bip en série, type choisi) et l'écran « Gérer / annuler un mouvement
-   collectif » : HTML comparé octet pour octet à tests/ref/mouvements_mobile.json, pris AVANT la refonte PC (jeu SYNTHÉTIQUE, horloge figée,
+/* Référence « mobile identique » de l'écran « Mouvements d'animaux » MOBILE (maquette « Mouvements d'animaux mobile », régénérée volontairement lors de la refonte) :
+   la liste de chaque catégorie (cartes), la liste « toutes campagnes » avec un lot ouvert, l'écran « Nouveau mouvement » (vide, type Vente, agneaux) et l'ancien
+   historique des collectifs (renvoyé à la liste) : HTML comparé octet pour octet à tests/ref/mouvements_mobile.json (jeu SYNTHÉTIQUE, horloge figée,
    mobile = pas d'electronAPI.isDesktop). Régénérer volontairement : OVILOG_MAJ_REF=1 node test_mouvements_mobile_reference.mjs */
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -36,12 +36,14 @@ const res = await page.evaluate(() => {
     { id: 'MC-test2', categorie: 'agnelles', annulable: false, type: 'Vente', cause: null, acheteur: 'Acheteur A', date: '2026-10-02', membres: [eid(5, 40)], createdAt: 2 }];
   const app = () => document.getElementById('app').innerHTML;
   const R = {};
-  ['brebis', 'beliers', 'agnelles', 'agneaux'].forEach(t => { inventaireTab = t; render('inventaire'); R['onglet_' + t] = app(); });
-  render('mouvement-groupe'); R.choix_categorie = app();
-  document.querySelector('.cat-mc-opt[data-val="brebis"]').click(); R.formulaire_brebis_clic = app();
-  document.querySelector('.type-opt[data-val="Vente"]').click(); R.formulaire_brebis_vente = app();
-  render('mouvement-groupe'); document.querySelector('.cat-mc-opt[data-val="agneaux"]').click(); R.formulaire_agneaux = app();
-  render('mouvements-collectifs'); R.historique_collectif = app();
+  // écrans refaits (maquette « Mouvements d'animaux mobile ») : liste par catégorie, « Nouveau mouvement » vide, avec un type, agneaux, ancien historique renvoyé à la liste
+  ['brebis', 'beliers', 'agneaux', 'agnelles'].forEach(c => { mvMobEtat = { cat: c, type: '', q: '', nb: 20, etendu: false, ouverts: new Set(), message: '' }; render('inventaire'); R['liste_' + c] = app(); });
+  mvMobEtat = { cat: 'brebis', type: '', q: '', nb: 20, etendu: true, ouverts: new Set(['MC-test1']), message: '' }; render('inventaire'); R.liste_brebis_toutes_lot_ouvert = app();
+  mvMobEtat.etendu = false; mvMobEtat.cat = 'brebis';
+  render('mouvement-groupe'); R.nouveau_vide = app();
+  document.querySelector('#mn-types [data-val="Vente"]').click(); R.nouveau_vente = app();
+  render('mouvement-groupe'); document.querySelector('#mn-categories [data-cat="agneaux"]').click(); R.nouveau_agneaux = app();
+  render('mouvements-collectifs'); R.ancien_historique_collectif = app();
   return R;
 });
 await browser.close();

@@ -55,18 +55,16 @@ for (const [route, input, ambig, nom] of [['echo-rapide', '#scan-echo', '#echo-a
 }
 // --- mouvement collectif (bip en série du sélecteur) ---
 await preparer();
-await page.evaluate(() => render('mouvement-groupe'));
-await page.waitForSelector('.cat-mc-opt');
-await page.click('.cat-mc-opt[data-val="brebis"]');
-await page.waitForSelector('#groupe-picker .sp-mode-btn[data-mode="bip"]');
-await page.click('#groupe-picker .sp-mode-btn[data-mode="bip"]');
-await page.waitForSelector('#groupe-picker .sp-scan');
-await saisir('#groupe-picker .sp-scan', '30001');
-let m = await page.evaluate(() => ({ chips: document.querySelectorAll('#groupe-picker .eid-candidate-chip').length, compteur: document.querySelector('#groupe-picker .sp-counter').textContent }));
-check(m.chips === 2 && /^0 sélectionnée/.test(m.compteur), 'mouvement collectif : collision -> 2 candidats, rien de sélectionné, obtenu ' + JSON.stringify(m));
-await saisir('#groupe-picker .sp-scan', '777');
-m = await page.evaluate(() => document.querySelector('#groupe-picker .sp-counter').textContent);
-check(/^1 sélectionnée/.test(m), 'mouvement collectif : SIEOL unique -> 1 sélectionnée, obtenu ' + m);
+await page.evaluate(() => { mvMobEtat.cat = 'brebis'; render('mouvement-groupe'); });
+await page.waitForSelector('label.mn-bip');
+await page.click('label.mn-bip');
+await page.waitForSelector('#mn-scan');
+await saisir('#mn-scan', '30001');
+let m = await page.evaluate(() => ({ chips: document.querySelectorAll('.mn-carte .eid-candidate-chip').length, compteur: document.getElementById('mn-compte').textContent }));
+check(m.chips === 2 && /^0 sélectionné/.test(m.compteur), 'mouvement collectif : collision -> 2 candidats, rien de sélectionné, obtenu ' + JSON.stringify(m));
+await saisir('#mn-scan', '777');
+m = await page.evaluate(() => document.getElementById('mn-compte').textContent);
+check(/^1 sélectionné/.test(m), 'mouvement collectif : SIEOL unique -> 1 sélectionnée, obtenu ' + m);
 console.log('OK mouvement collectif : collision "30001" -> 2 candidats, aucune sélection automatique ; SIEOL "777" -> 1 sélectionnée.');
 console.log('\nNON-RÉGRESSION DU RÉSOLVEUR PARTAGÉ OK sur écho rapide, mise bas rapide, mouvement collectif (' + BASE + ')');
 await browser.close();

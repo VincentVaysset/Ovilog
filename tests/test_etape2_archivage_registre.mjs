@@ -289,15 +289,13 @@ for (const eid of eidsAArchiver) {
 }
 await d2.page.evaluate(() => saveData(DB));
 
-await d2.page.evaluate(() => { parametresTab = undefined; render('mouvements-collectifs'); });
+await d2.page.evaluate(() => { parametresTab = undefined; mvMobEtat = { cat: 'brebis', type: '', q: '', nb: 20, etendu: true, ouverts: new Set(), message: '' }; render('inventaire'); });
 await d2.page.waitForTimeout(150);
-const boutonPartiel = await d2.page.$('.btn-annuler-mvt-collectif');
-if (!boutonPartiel) throw new Error('FAIL point 4: le bouton "Annuler" (partiel) doit rester affiché tant qu\'il reste des membres restaurables.');
-const texteBouton = await d2.page.textContent('.btn-annuler-mvt-collectif');
-if (!texteBouton.includes('partiel')) throw new Error('FAIL point 4: le bouton doit signaler "(partiel)", obtenu "' + texteBouton + '"');
-console.log('OK point 4: le mouvement collectif partiellement archivé (2/4) affiche encore "Annuler ce mouvement collectif (partiel)".');
+const boutonPartiel = await d2.page.$('.mm-lot .mm-annuler-lot');
+if (!boutonPartiel) throw new Error('FAIL point 4: le bouton "Annuler" de la carte du lot doit rester affiché tant qu\'il reste des membres restaurables.');
+console.log('OK point 4: le mouvement collectif partiellement archivé (2/4) affiche encore "Annuler" sur sa carte (la confirmation annonce les animaux déjà archivés).');
 
-await d2.page.click('.btn-annuler-mvt-collectif');
+await d2.page.click('.mm-lot .mm-annuler-lot');
 await d2.page.waitForTimeout(200);
 const etatApresAnnulationPartielle = await d2.page.evaluate(() => ({
   membresRestants: DB.brebis.filter(s => s.statut === 'active').map(s => s.eid),
@@ -312,15 +310,15 @@ if (JSON.stringify(etatApresAnnulationPartielle.mouvementCollectif.membres.slice
 }
 console.log('OK point 4: "Annuler" restaure bien les 2 membres encore vivants (statut actif recalculé), et l\'entrée est conservée avec uniquement les 2 EID archivés non restaurables.');
 
-await d2.page.evaluate(() => render('mouvements-collectifs'));
+await d2.page.evaluate(() => { mvMobEtat.etendu = true; render('inventaire'); });
 await d2.page.waitForTimeout(150);
-const boutonApres = await d2.page.$('.btn-annuler-mvt-collectif');
+const boutonApres = await d2.page.$('.mm-lot .mm-annuler-lot');
 if (boutonApres) throw new Error('FAIL point 4: plus aucun bouton "Annuler" ne doit apparaître une fois tous les membres restants archivés.');
 const texteEcran = await d2.page.textContent('#app');
-if (!texteEcran.includes('Déjà archivé, non annulable')) {
-  throw new Error('FAIL point 4: le message "Déjà archivé, non annulable" doit apparaître une fois tous les membres restants archivés.');
+if (!texteEcran.includes('archivés au registre')) {
+  throw new Error('FAIL point 4: la mention "archivés au registre" doit apparaître une fois tous les membres restants archivés.');
 }
-console.log('OK point 4: une fois tous les membres restants archivés, l\'entrée affiche "Déjà archivé, non annulable" sans bouton, sans avoir jamais disparu de l\'écran.');
+console.log('OK point 4: une fois tous les membres restants archivés, la carte du lot affiche "animaux archivés au registre" sans bouton, sans avoir jamais disparu de l\'écran.');
 
 await d2.ctx.close();
 cleanup();
