@@ -786,6 +786,21 @@
   .bc-barre { display: flex; height: 10px; border-radius: 999px; overflow: hidden; }
   .reg-tuile.gris { background: var(--ch-onglets); border-color: var(--ch-texte2); } .reg-tuile.gris .reg-tuile-v { color: var(--ch-texte2); }
   .reg-pastille.gris { background: var(--ch-onglets); color: var(--ch-texte2); }
+  /* Listes mobiles Brebis / Béliers (charte) : champ de scan nu, ligne d'info, lignes compactes dans une carte */
+  .al-haut { margin-bottom: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .al-haut .error-box { margin: 0; }
+  .al-scan { position: relative; }
+  .al-scan input { margin: 0; width: 100%; height: 48px; padding: 0 14px 0 46px; font-size: 15px; border-radius: 12px; border-color: var(--ch-bord-champ); }
+  .al-scan .al-scan-ic { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--ch-icone); pointer-events: none; }
+  .al-carte { padding: 0 16px; margin-bottom: 14px; }
+  .al-ligne { border-top: 1px solid var(--ch-separateur); min-height: 56px; padding: 10px 0; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .al-ligne:first-child { border-top: 0; }
+  .al-id { flex: 1; min-width: 0; }
+  .al-num { font-size: 15px; font-weight: 700; color: var(--ch-vert-fonce); font-variant-numeric: tabular-nums; }
+  .al-age { font-size: 13px; color: var(--ch-texte2); }
+  .al-pastilles { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .al-pastilles .reg-pastille { white-space: nowrap; }
+  .al-ligne .bc-chev { flex: none; color: var(--ch-icone); }
   .bc-carte { padding: 14px 16px 0; margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
   .bc-tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .bc-titre { font-size: 15px; font-weight: 700; }
@@ -6772,17 +6787,35 @@ function renderHome() {
    Inventaire pur : uniquement la liste des brebis actives, sans les cadres
    de stats (déplacés sur l'écran d'accueil, voir renderHome ci-dessus) —
    même logique que les onglets Béliers/Agneaux. */
+// Date courte des listes mobiles : « 10/11 », avec l'année quand ce n'est pas l'année en cours.
+function dateCourteMobile(iso) {
+  if (!iso) return '';
+  const [y, m, d] = String(iso).slice(0, 10).split('-');
+  return d + '/' + m + (parseInt(y, 10) === new Date().getFullYear() ? '' : '/' + y);
+}
+// Champ de scan « nu » des listes mobiles (icône + texte d'aide visible dans le champ).
+const ICON_SCAN_CHAMP = '<svg class="al-scan-ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 011-1h3M16 4h3a1 1 0 011 1v3M20 16v3a1 1 0 01-1 1h-3M8 20H5a1 1 0 01-1-1v-3M4 12h16"/></svg>';
+function champScanMobileHtml(id, idErr) {
+  return `<div class="al-scan">${ICON_SCAN_CHAMP}<input type="text" id="${id}" placeholder="Scanner ou saisir l'EID" autofocus></div><div id="${idErr}" class="error-box hidden"></div>`;
+}
+
 function renderList() {
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   pageTitle.textContent = 'Brebis (' + actives.length + ')';
 
   const scanCard = document.createElement('div');
-  scanCard.className = 'card';
-  scanCard.innerHTML = `
+  if (isDesktopMode()) {
+    scanCard.className = 'card';
+    scanCard.innerHTML = `
     <label>Scanner une brebis pour ouvrir sa fiche</label>
     <input type="text" id="scan-open" placeholder="Scanner ou saisir l'EID" autofocus>
     <div id="scan-open-err" class="error-box hidden"></div>
   `;
+  } else {
+    // Mobile (charte) : champ nu avec icône, ligne d'info dessous ; mêmes ids que sur PC.
+    scanCard.className = 'al-haut';
+    scanCard.innerHTML = champScanMobileHtml('scan-open', 'scan-open-err') + (actives.length ? '<div class="reg-info al-info">Du plus âgé au plus jeune. Touche une brebis pour ouvrir sa fiche.</div>' : '');
+  }
   app.appendChild(scanCard);
   const scanOpen = document.getElementById('scan-open');
   setActiveScanTarget(scanOpen);
@@ -6824,7 +6857,18 @@ function renderList() {
       : repro === 'Pseudogestation' ? `<span class="badge badge-indigo">Pseudogestation</span>`
       : repro === 'Gestante (en cours)' ? `<span class="badge badge-green">Gestante</span>`
       : '';
-    return { badgeHtml, reproBadgeHtml };
+    // Pastilles mobile (charte) : mise bas en ambre (ou grise), statut repro ; « Attendue à la traite » reste bleue.
+    const pastilles = (isAttendueTraite(sheep, DB.brebis)
+      ? '<span class="reg-pastille bleu">Attendue à la traite</span>'
+      : lastAgnelage
+        ? `<span class="reg-pastille ambre">${dateCourteMobile(lastAgnelage.date)} · ${lastAgnelage.lambs.length} agn.</span>`
+        : '<span class="reg-pastille gris">Aucun agnelage</span>')
+      + (repro === 'Vide confirmée' ? '<span class="reg-pastille gris">Vide confirmée</span>'
+        : repro === 'Avortée' ? '<span class="reg-pastille rouge">Avortée</span>'
+        : repro === 'Pseudogestation' ? '<span class="reg-pastille bleu">Pseudogestation</span>'
+        : repro === 'Gestante (en cours)' ? '<span class="reg-pastille vert">Gestante</span>'
+        : '');
+    return { badgeHtml, reproBadgeHtml, pastilles };
   }
 
   // Sur desktop (chantier "Refonte desktop", mockup validé) : liste en
@@ -6870,23 +6914,24 @@ function renderList() {
     return;
   }
 
-  sorted.forEach(sheep => {
-    const { badgeHtml, reproBadgeHtml } = statutRepro(sheep);
-    const div = document.createElement('div');
-    div.className = 'sheep-item';
-    div.innerHTML = `
-      <div class="sheep-item-left">
-        ${iconCircle(ICON_SHEEP, 'green')}
-        <div>
-          <div class="num">Brebis n°${numeroVisuel(sheep.eid)} ${sieolTravailBadgeHtml(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol)}</div>
-          <div class="sub">${age(sheep.eid) !== null ? age(sheep.eid) + ' an(s)' : 'âge inconnu'}</div>
-        </div>
+  // Mobile (charte) : lignes compactes dans une seule carte blanche.
+  const carte = document.createElement('div');
+  carte.className = 'card al-carte';
+  carte.innerHTML = sorted.map((sheep, i) => {
+    const { pastilles } = statutRepro(sheep);
+    return `<div class="al-ligne" data-i="${i}">
+      <div class="al-id">
+        <div class="al-num">n°${numeroVisuel(sheep.eid)} ${sieolTravailBadgeHtml(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol)}</div>
+        <div class="al-age">${age(sheep.eid) !== null ? age(sheep.eid) + ' an(s)' : 'âge inconnu'}</div>
       </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">${badgeHtml}${reproBadgeHtml}</div>
-    `;
-    div.onclick = () => { detailOrigin = 'list'; previousDetailId = null; render('detail', sheep.id); };
-    app.appendChild(div);
+      <div class="al-pastilles">${pastilles}</div>
+      ${BC_CHEVRON}
+    </div>`;
+  }).join('');
+  carte.querySelectorAll('.al-ligne').forEach(row => {
+    row.onclick = () => { detailOrigin = 'list'; previousDetailId = null; render('detail', sorted[parseInt(row.dataset.i, 10)].id); };
   });
+  app.appendChild(carte);
 }
 
 /* ---------- Bilan de campagne ----------
@@ -14952,13 +14997,13 @@ function renderBeliers() {
   DB.beliers = DB.beliers || [];
   pageTitle.textContent = 'Béliers (' + DB.beliers.filter(b => (b.statut||'actif')==='actif').length + ')';
 
-  const scanHtml = `
+  const scanHtml = isDesktopMode() ? `
     <div class="card">
       <label>Scanner un bélier pour ouvrir sa fiche</label>
       <input type="text" id="scan-open-belier" placeholder="Scanner ou saisir l'EID" autofocus>
       <div id="scan-open-belier-err" class="error-box hidden"></div>
     </div>
-  `;
+  ` : `<div class="al-haut">${champScanMobileHtml('scan-open-belier', 'scan-open-belier-err')}${DB.beliers.length ? '<div class="reg-info al-info">Du plus âgé au plus jeune. Touche un bélier pour ouvrir sa fiche.</div>' : ''}</div>`;
 
   // Sur desktop (chantier "Refonte desktop", mockup validé) : même liste
   // en lignes que Brebis -- pas de colonne mise-bas/repro ici (un bélier ne
@@ -14983,18 +15028,17 @@ function renderBeliers() {
         <div style="display:flex;align-items:center;"><span class="badge ${(b.statut && b.statut!=='actif') ? 'badge-muted' : 'badge-indigo'}">${(b.statut && b.statut!=='actif') ? b.statut : 'Actif'}</span><span class="list-row-chevron">→</span></div>
       </div>`).join('')}
     </div></div>`
-    : sortedBeliers.map(b => `
-      <div class="sheep-item" data-id="${b.id}" style="${(b.statut && b.statut!=='actif') ? 'opacity:0.6;' : ''}">
-        <div class="sheep-item-left">
-          ${iconCircle(ICON_RAM, 'indigo')}
-          <div>
-            <div class="num">Bélier n°${numeroVisuel(b.eid)} ${sieolTravailBadgeHtml(null, null, b.numeroTravailSieol)}</div>
-            <div class="sub">${age(b.eid) !== null ? age(b.eid) + ' an(s)' : 'âge inconnu'}</div>
-          </div>
+    : `<div class="card al-carte">${sortedBeliers.map(b => {
+      const actif = !(b.statut && b.statut !== 'actif');
+      return `<div class="al-ligne" data-id="${b.id}" style="${actif ? '' : 'opacity:0.6;'}">
+        <div class="al-id">
+          <div class="al-num">n°${numeroVisuel(b.eid)} ${sieolTravailBadgeHtml(null, null, b.numeroTravailSieol)}</div>
+          <div class="al-age">${age(b.eid) !== null ? age(b.eid) + ' an(s)' : 'âge inconnu'}</div>
         </div>
-        <span class="badge ${(b.statut && b.statut!=='actif') ? 'badge-muted' : 'badge-indigo'}">${(b.statut && b.statut!=='actif') ? b.statut : 'Actif'}</span>
-      </div>
-    `).join('');
+        <div class="al-pastilles"><span class="reg-pastille ${actif ? 'vert' : 'gris'}">${actif ? 'Actif' : b.statut}</span></div>
+        ${BC_CHEVRON}
+      </div>`;
+    }).join('')}</div>`;
 
   app.innerHTML = scanHtml + listHtml + '<button class="btn btn-primary" id="btn-add-belier" style="margin-top:14px;">+ Ajouter un bélier</button>';
 
@@ -15012,7 +15056,7 @@ function renderBeliers() {
     }
   });
 
-  document.querySelectorAll('.sheep-item').forEach(el => {
+  document.querySelectorAll('.sheep-item, .al-ligne').forEach(el => {
     el.onclick = () => { currentBelierId = el.dataset.id; belierDetailOrigin = 'beliers'; render('belier-detail'); };
   });
   document.getElementById('btn-add-belier').onclick = () => render('add-belier');
