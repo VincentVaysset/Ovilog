@@ -2406,6 +2406,7 @@ function wireEidLookupField(inputEl, opts) {
     const r = trouverUnParEidOuNumero(pool, val, getEid);
     if (r.statut === 'ambigu') {
       playBeepAmbigu();
+      if (opts.onAmbigu) { opts.onAmbigu(r.candidats, val); return; }   // facultatif : l'écran affiche lui-même les candidats (liste filtrée) ; sans lui, boutons de choix comme avant
       renderCandidatsEidChips(r.candidats, feedbackEl, (item) => resoudre(cleanEid(getEid(item))), getEid);
       feedbackEl.classList.remove('hidden');
       return;
@@ -6808,50 +6809,39 @@ function dateCourteMobile(iso) {
 }
 // Champ de scan « nu » des listes mobiles (icône + texte d'aide visible dans le champ).
 const ICON_SCAN_CHAMP = '<svg class="al-scan-ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 011-1h3M16 4h3a1 1 0 011 1v3M20 16v3a1 1 0 01-1 1h-3M8 20H5a1 1 0 01-1-1v-3M4 12h16"/></svg>';
-function champScanMobileHtml(id, idErr) {
-  return `<div class="al-scan">${ICON_SCAN_CHAMP}<input type="text" id="${id}" placeholder="Scanner ou saisir l'EID" autofocus></div><div id="${idErr}" class="error-box hidden"></div>`;
+function champScanMobileHtml(id, idErr, placeholder) {
+  return `<div class="al-scan">${ICON_SCAN_CHAMP}<input type="text" id="${id}" placeholder="${placeholder || "Scanner ou saisir l'EID"}" autofocus></div><div id="${idErr}" class="error-box hidden"></div>`;
 }
 
 function renderList() {
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   pageTitle.textContent = 'Brebis (' + actives.length + ')';
+  const bureau = isDesktopMode();
+  const TEXTE_CHAMP = 'Scanner ou saisir un n°';
 
   const scanCard = document.createElement('div');
-  if (isDesktopMode()) {
+  if (bureau) {
     scanCard.className = 'card';
     scanCard.innerHTML = `
-    <label>Scanner une brebis pour ouvrir sa fiche</label>
-    <input type="text" id="scan-open" placeholder="Scanner ou saisir l'EID" autofocus>
+    <label>Scanner une brebis ou taper un n° pour filtrer la liste</label>
+    <input type="text" id="scan-open" placeholder="${TEXTE_CHAMP}" autofocus>
     <div id="scan-open-err" class="error-box hidden"></div>
+    <div id="brebis-compte" class="reg-info hidden" style="margin-top:6px;"></div>
   `;
   } else {
     // Mobile (charte) : champ nu avec icône, ligne d'info dessous ; mêmes ids que sur PC.
     scanCard.className = 'al-haut';
-    scanCard.innerHTML = champScanMobileHtml('scan-open', 'scan-open-err') + (actives.length ? '<div class="reg-info al-info">Du plus âgé au plus jeune. Touche une brebis pour ouvrir sa fiche.</div>' : '');
+    scanCard.innerHTML = champScanMobileHtml('scan-open', 'scan-open-err', TEXTE_CHAMP) + (actives.length ? '<div id="brebis-compte" class="reg-info al-info"></div>' : '');
   }
   app.appendChild(scanCard);
   const scanOpen = document.getElementById('scan-open');
+  const feedback = document.getElementById('scan-open-err');
   setActiveScanTarget(scanOpen);
-  wireEidLookupField(scanOpen, {
-    pool: DB.brebis,
-    feedbackEl: document.getElementById('scan-open-err'),
-    notFoundMessage: "Aucune brebis trouvée avec cet EID.",
-    clearBeforeResolve: false,
-    onFound: (sheep) => {
-      detailOrigin = 'list';
-      previousDetailId = null;
-      render('detail', sheep.id);
-    }
-  });
 
-  if (actives.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty';
-    empty.innerHTML = 'Aucune brebis active pour l\'instant.<br>Appuie sur le bouton + pour en ajouter une.';
-    app.appendChild(empty);
-    return;
-  }
   const sorted = sortByAge(actives);
+  const listeEl = document.createElement('div');
+  listeEl.id = 'brebis-liste';
+  let recherche = '';            // filtre en direct : jamais conservé en quittant l'écran
 
   // badgeHtml (mise-bas de la campagne) et reproBadgeHtml (statut repro,
   // affiché seulement quand il apporte une info nouvelle) : logique
@@ -6884,67 +6874,91 @@ function renderList() {
     return { badgeHtml, reproBadgeHtml, pastilles };
   }
 
-  // Sur desktop (chantier "Refonte desktop", mockup validé) : liste en
-  // lignes plutôt que le tableau façon registre -- icône par brebis,
-  // badges de couleur déjà utilisés partout ailleurs (mise-bas en ambre,
-  // statut repro en vert/gris/corail/indigo), contenu centré/plafonné
-  // (.list-table-contain) au lieu d'être étiré sur toute la largeur.
-  // Bandeau vert et sidebar volontairement non touchés.
-  if (isDesktopMode()) {
-    const rowsHtml = sorted.map((sheep, i) => {
-      const { badgeHtml, reproBadgeHtml } = statutRepro(sheep);
-      return `
+
+  // N° affiché en gras : n° court SIEOL s'il existe (comme Contrôle laitier), sinon n° d'ordre ; l'étiquette SIEOL suit quand un numéro SIEOL est renseigné.
+  const numeroGras = (sheep) => sheep.numeroCourtTravailSieol || ('n°' + numeroVisuel(sheep.eid));
+  const tagSieol = (sheep) => sieolTravailBadgeHtml(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol);
+  const ouvrirFiche = (sheep) => { detailOrigin = 'list'; previousDetailId = null; render('detail', sheep.id); };
+
+  function dessinerListe() {
+    const visibles = brebisCorrespondantA(sorted, recherche);
+    const compte = document.getElementById('brebis-compte');
+    if (compte) {
+      const filtre = rechercheNumeroNormalisee(recherche) !== '';
+      if (bureau) { compte.classList.toggle('hidden', !filtre); compte.textContent = filtre ? visibles.length + ' brebis sur ' + sorted.length : ''; }
+      else compte.textContent = filtre ? visibles.length + ' brebis sur ' + sorted.length : 'Tape un n° pour filtrer, du plus âgé au plus jeune. Touche une brebis pour ouvrir sa fiche.';
+    }
+    if (visibles.length === 0) {
+      listeEl.innerHTML = '<div class="empty">Aucune brebis ne correspond à « ' + recherche.replace(/[<>&"]/g, '') + ' ».</div>';
+      return;
+    }
+    if (bureau) {
+      // Desktop (chantier "Refonte desktop", mockup validé) : liste en lignes, badges de couleur, contenu centré/plafonné (.list-table-contain).
+      listeEl.innerHTML = `<div class="list-table-contain"><div class="list-table-wrap">
+      <div class="list-table-head" style="grid-template-columns:2.1fr 0.9fr 1.6fr 1.4fr;">
+        <span>Brebis</span><span>Âge</span><span>Mise-bas campagne</span><span>Statut repro</span>
+      </div>
+      ${visibles.map((sheep, i) => {
+        const { badgeHtml, reproBadgeHtml } = statutRepro(sheep);
+        return `
       <div class="list-table-row" data-i="${i}" style="grid-template-columns:2.1fr 0.9fr 1.6fr 1.4fr;">
         <div class="list-row-ident">
           ${iconCircle(ICON_SHEEP, 'green', 'sm')}
           <div>
-            <div class="num">n°${numeroVisuel(sheep.eid)}</div>
-            ${sieolTravailBadgeHtml(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol) ? `<div class="sub">${sieolTravailBadgeHtml(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol)}</div>` : ''}
+            <div class="num">${numeroGras(sheep)}</div>
+            ${tagSieol(sheep) ? `<div class="sub">${tagSieol(sheep)}</div>` : ''}
           </div>
         </div>
         <div class="list-row-age">${age(sheep.eid) !== null ? age(sheep.eid) + ' an(s)' : 'âge inconnu'}</div>
         <div>${badgeHtml}</div>
         <div style="display:flex;align-items:center;">${reproBadgeHtml || '<span style="color:var(--text-muted);">—</span>'}<span class="list-row-chevron">→</span></div>
       </div>`;
-    }).join('');
-    const wrap = document.createElement('div');
-    wrap.className = 'list-table-contain';
-    wrap.innerHTML = `<div class="list-table-wrap">
-      <div class="list-table-head" style="grid-template-columns:2.1fr 0.9fr 1.6fr 1.4fr;">
-        <span>Brebis</span><span>Âge</span><span>Mise-bas campagne</span><span>Statut repro</span>
-      </div>
-      ${rowsHtml}
-    </div>`;
-    app.appendChild(wrap);
-    wrap.querySelectorAll('.list-table-row').forEach(row => {
-      row.onclick = () => {
-        const sheep = sorted[parseInt(row.dataset.i, 10)];
-        detailOrigin = 'list';
-        previousDetailId = null;
-        render('detail', sheep.id);
-      };
-    });
-    return;
-  }
-
-  // Mobile (charte) : lignes compactes dans une seule carte blanche.
-  const carte = document.createElement('div');
-  carte.className = 'card al-carte';
-  carte.innerHTML = sorted.map((sheep, i) => {
-    const { pastilles } = statutRepro(sheep);
-    return `<div class="al-ligne" data-i="${i}">
+      }).join('')}
+    </div></div>`;
+      listeEl.querySelectorAll('.list-table-row').forEach(row => { row.onclick = () => ouvrirFiche(visibles[parseInt(row.dataset.i, 10)]); });
+      return;
+    }
+    // Mobile (charte) : lignes compactes dans une seule carte blanche.
+    listeEl.innerHTML = '<div class="card al-carte">' + visibles.map((sheep, i) => {
+      const { pastilles } = statutRepro(sheep);
+      return `<div class="al-ligne" data-i="${i}">
       <div class="al-id">
-        <div class="al-num">n°${numeroVisuel(sheep.eid)} ${sieolTravailBadgeHtml(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol)}</div>
+        <div class="al-num">${numeroGras(sheep)} ${tagSieol(sheep)}</div>
         <div class="al-age">${age(sheep.eid) !== null ? age(sheep.eid) + ' an(s)' : 'âge inconnu'}</div>
       </div>
       <div class="al-pastilles">${pastilles}</div>
       ${BC_CHEVRON}
     </div>`;
-  }).join('');
-  carte.querySelectorAll('.al-ligne').forEach(row => {
-    row.onclick = () => { detailOrigin = 'list'; previousDetailId = null; render('detail', sorted[parseInt(row.dataset.i, 10)].id); };
+    }).join('') + '</div>';
+    listeEl.querySelectorAll('.al-ligne').forEach(row => { row.onclick = () => ouvrirFiche(visibles[parseInt(row.dataset.i, 10)]); });
+  }
+
+  // Entrée / scan : EID complet ou n° à un seul résultat -> fiche ; plusieurs résultats -> jamais d'ouverture automatique, la liste reste filtrée sur les candidats.
+  wireEidLookupField(scanOpen, {
+    pool: DB.brebis,
+    feedbackEl: feedback,
+    notFoundMessage: (val) => "Aucune brebis trouvée pour « " + val.replace(/[<>&"]/g, '') + " ».",
+    clearBeforeResolve: false,
+    onAmbigu: (candidats) => {
+      recherche = scanOpen.value; dessinerListe();
+      feedback.textContent = candidats.length + ' animaux correspondent à ce numéro : précise-le, ou touche la bonne ligne.';
+      feedback.style.color = 'var(--warning)'; feedback.classList.remove('hidden');
+    },
+    onFound: ouvrirFiche
   });
-  app.appendChild(carte);
+  scanOpen.addEventListener('input', () => {      // filtre en direct, sans reconstruire le champ (le focus et le clavier restent)
+    recherche = scanOpen.value; feedback.classList.add('hidden'); dessinerListe();
+  });
+
+  if (actives.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.innerHTML = 'Aucune brebis active pour l\'instant.<br>Appuie sur le bouton + pour en ajouter une.';
+    app.appendChild(empty);
+    return;
+  }
+  app.appendChild(listeEl);
+  dessinerListe();
 }
 
 /* ---------- Bilan de campagne ----------
@@ -9359,16 +9373,26 @@ function buildInventairePdfBytes(key, items, recherche) {
   return doc.fin();
 }
 
-/* Numéros d'un animal de l'inventaire (tous ceux de son onglet + EID complet) : la recherche porte sur chacun, sans tenir compte des espaces ni de la casse. */
-function inventaireActifsNumeros(key, it) {
-  const nums = inventaireActifsColumns(key).map(c => c.value(it));
+/* Correspondance par numéro, PARTAGÉE (Inventaire, liste Brebis) : la recherche porte sur chacun des numéros de l'animal — `valeursColonnes` (n° court / long / officiel de son onglet) + EID complet, n° d'ordre (5 derniers chiffres), n° court, long et de travail SIEOL —, sans tenir compte des espaces ni de la casse, en correspondance partielle. */
+function rechercheNumeroNormalisee(q) { return String(q || '').replace(/\s+/g, '').toLowerCase(); }
+function numerosRechercheAnimal(it, valeursColonnes) {
+  const nums = (valeursColonnes || []).slice();
   nums.push(it.eid || '', cleanEid(it.eid || ''), numeroVisuel(it.eid || ''), it.numeroCourtTravailSieol || '', it.numeroLongTravailSieol || '', it.numeroTravailSieol || '');
   return nums.filter(Boolean).map(n => String(n).replace(/\s+/g, '').toLowerCase());
 }
+/* Numéros d'un animal de l'inventaire (tous ceux de son onglet + EID complet) : la recherche porte sur chacun, sans tenir compte des espaces ni de la casse. */
+function inventaireActifsNumeros(key, it) {
+  return numerosRechercheAnimal(it, inventaireActifsColumns(key).map(c => c.value(it)));
+}
 function inventaireActifsFiltres(key, recherche) {
   const items = inventaireActifsItems(key);
-  const q = String(recherche || '').replace(/\s+/g, '').toLowerCase();
+  const q = rechercheNumeroNormalisee(recherche);
   return q ? items.filter(it => inventaireActifsNumeros(key, it).some(n => n.includes(q))) : items;
+}
+/* Brebis dont un numéro contient la recherche (liste Brebis) : même correspondance que l'Inventaire, l'ordre de `liste` est conservé. */
+function brebisCorrespondantA(liste, recherche) {
+  const q = rechercheNumeroNormalisee(recherche);
+  return q ? liste.filter(it => numerosRechercheAnimal(it, inventaireActifsColumns('brebis').map(c => c.value(it))).some(n => n.includes(q))) : liste;
 }
 
 function renderInventaireActifs() {

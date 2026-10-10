@@ -1,4 +1,4 @@
-/* Listes MOBILES Brebis et Béliers (charte) : un champ de scan nu avec icône (texte « Scanner ou saisir l'EID » visible, mêmes ids qu'avant), la ligne d'info, UNE carte blanche
+/* Listes MOBILES Brebis et Béliers (charte) : un champ de scan nu avec icône (texte visible, mêmes ids qu'avant ; Brebis : « Scanner ou saisir un n° », voir test_recherche_brebis), la ligne d'info, UNE carte blanche
    en lignes compactes (n° vert foncé gras + étiquette SIEOL, âge dessous, pastilles à droite, chevron), du plus âgé au plus jeune, ni filtres ni tuiles ; Béliers : « Actif » vert, autres statuts
    gris et atténués ; dates courtes avec l'année quand ce n'est pas l'année en cours. Toucher une ligne ou scanner un EID ouvre la fiche. Le PC garde son tableau (en-tête vert charte).
    Jeu SYNTHÉTIQUE, aucune écriture, aucune donnée réelle. */
@@ -47,16 +47,16 @@ const br = await mob.evaluate(() => ({
   ancien: document.querySelectorAll('.sheep-item').length, filtres: document.querySelectorAll('#app select, .reg-tuile, .bc-filtres').length, fab: !!document.getElementById('fab-add') && !document.getElementById('fab-add').classList.contains('hidden'),
   chev: document.querySelectorAll('.al-ligne .bc-chev').length, debord: document.documentElement.scrollWidth > 390,
   ordre: [...document.querySelectorAll('.al-ligne .al-num')].map(x => x.firstChild.textContent.trim()),
-  attendu: sortByAge(DB.brebis.filter(s => (s.statut || 'active') === 'active')).map(s => 'n°' + numeroVisuel(s.eid)),
+  attendu: sortByAge(DB.brebis.filter(s => (s.statut || 'active') === 'active')).map(s => s.numeroCourtTravailSieol || 'n°' + numeroVisuel(s.eid)),
   ages: [...document.querySelectorAll('.al-ligne .al-age')].map(x => x.textContent),
   pastilles: [...document.querySelectorAll('.al-ligne')].map(l => [...l.querySelectorAll('.reg-pastille')].map(p => p.className.replace('reg-pastille ', '') + ':' + p.textContent)),
   sieol: [...document.querySelectorAll('.al-ligne')].map(l => !!l.querySelector('.compact-tag')),
   numCouleur: getComputedStyle(document.querySelector('.al-num')).color, numPoids: getComputedStyle(document.querySelector('.al-num')).fontWeight
 }));
 check(br.champ && br.icone && br.erreur, 'champ de scan nu avec icône, ids conservés (#scan-open, #scan-open-err) : ' + JSON.stringify(br));
-eq(br.placeholder, "Scanner ou saisir l'EID", 'texte du champ visible');
+eq(br.placeholder, 'Scanner ou saisir un n°', 'texte du champ visible');
 check(!br.ancienLabel, 'plus de libellé au-dessus du champ');
-eq(br.info, 'Du plus âgé au plus jeune. Touche une brebis pour ouvrir sa fiche.', 'ligne d\'info');
+eq(br.info, 'Tape un n° pour filtrer, du plus âgé au plus jeune. Touche une brebis pour ouvrir sa fiche.', 'ligne d\'info');
 check(br.cartes === 1 && br.lignes === 4 && br.ancien === 0, 'une seule carte, 4 lignes (brebis actives), plus de cartes par animal : ' + JSON.stringify([br.cartes, br.lignes, br.ancien]));
 check(br.filtres === 0, 'ni filtres ni tuiles');
 check(br.fab, 'bouton « + » conservé');
@@ -110,7 +110,7 @@ console.log('OK 4 aucune écriture.');
 // ================================================================ 5. PC : tableau conservé, en-tête vert charte
 const pc = await ouvrir(true);
 await pc.evaluate(() => render('list'));
-const p1 = await pc.evaluate(() => ({ tete: getComputedStyle(document.querySelector('.list-table-head')).backgroundColor, texte: getComputedStyle(document.querySelector('.list-table-head')).color, lignes: document.querySelectorAll('.list-table-row').length, mobile: document.querySelectorAll('.al-carte, .al-scan').length, label: /Scanner une brebis pour ouvrir/.test(document.getElementById('app').textContent) }));
+const p1 = await pc.evaluate(() => ({ tete: getComputedStyle(document.querySelector('.list-table-head')).backgroundColor, texte: getComputedStyle(document.querySelector('.list-table-head')).color, lignes: document.querySelectorAll('.list-table-row').length, mobile: document.querySelectorAll('.al-carte, .al-scan').length, label: /Scanner une brebis ou taper un n°/.test(document.getElementById('app').textContent) }));
 eq(p1, { tete: 'rgb(53, 127, 75)', texte: 'rgb(255, 255, 255)', lignes: 4, mobile: 0, label: true }, 'PC Brebis : tableau, en-tête vert charte, carte de scan inchangée');
 await pc.evaluate(() => render('beliers'));
 const p2 = await pc.evaluate(() => ({ tete: getComputedStyle(document.querySelector('.list-table-head')).backgroundColor, lignes: document.querySelectorAll('.list-table-row').length, mobile: document.querySelectorAll('.al-carte, .al-scan').length }));
