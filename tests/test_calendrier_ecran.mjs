@@ -50,7 +50,7 @@ async function ouvrir(bureau, largeur) {
   eq(await cell('2026-10-15'), { etiq: ['Tonte', 'Vermifuge collectif'], plus: '+1', point: false }, 'case du 15 (3 évènements) : 2 noms puis +1');
   eq((await cell('2026-10-20')).etiq, ['Lutte IA — Lot IA octobre(auto)'], 'évènement automatique : étiquette ambrée');
   eq(await cell('2026-10-01'), { etiq: [], plus: null, point: false }, 'jour sans évènement : rien');
-  check(await page.evaluate(() => getComputedStyle(document.querySelector('.cal-etiq')).backgroundColor === 'rgb(225, 243, 230)'), 'étiquette verte');
+  check(await page.evaluate(() => getComputedStyle(document.querySelector('.cal-etiq')).backgroundColor === 'rgb(227, 243, 230)'), 'étiquette verte');
   // ---- 3. liste du mois
   const lignes = await page.evaluate(() => [...document.querySelectorAll('#cal-liste .cal-ev')].map(r => [r.querySelector('.cal-ev-date').textContent, r.querySelector('b').textContent, (r.querySelector('.cal-ev-note') || r.querySelector('.cal-badge-auto')).textContent, r.tagName]));
   const attendu = [['07-10', 'Visite vétérinaire', 'sans note', 'BUTTON'], ['15-10', 'Tonte', 'lot des agnelles de 2025', 'BUTTON'], ['15-10', 'Vermifuge collectif', 'sans note', 'BUTTON'], ['15-10', 'Lutte', 'x', 'BUTTON']];

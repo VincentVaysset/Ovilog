@@ -46,6 +46,19 @@ const rendu = await page.evaluate(() => {
 eq(rendu.primary, '#357f4b', '--primary = vert de la charte');
 eq(rendu.header, 'rgb(53, 127, 75)', 'en-tête vert #357f4b');
 eq([rendu.th, rendu.tuileFond, rendu.tuileBord], ['rgb(53, 127, 75)', 'rgb(227, 243, 230)', 'rgb(47, 110, 68)'], 'tableau et tuile de l\'Inventaire : couleurs de la charte via les variables');
+
+// socle des fiches et listes animaux : onglets #efe9da, texte secondaire #5e5b47, rouge unique #a33a31, badges et étiquettes aux tons de la charte, en-têtes verts
+const socle = await page.evaluate(() => {
+  const mesure = (cls, extra) => { const e = document.createElement('span'); e.className = cls; document.body.appendChild(e); const c = getComputedStyle(e); const r = { bg: c.backgroundColor, color: c.color }; e.remove(); return r; };
+  return { badgeMuted: mesure('badge badge-muted'), tagGray: mesure('compact-tag compact-tag-gray'), icGray: mesure('icon-circle ic-gray'),
+    campagne: mesure('campaign-head') };
+});
+eq(await page.evaluate(() => { const t = document.createElement('div'); t.style.color = 'var(--text-muted)'; document.body.appendChild(t); const c = getComputedStyle(t).color; t.style.color = 'var(--danger)'; const d = getComputedStyle(t).color; t.style.color = 'var(--coral-fg)'; const e = getComputedStyle(t).color; t.remove(); return [c, d, e]; }),
+  ['rgb(94, 91, 71)', 'rgb(163, 58, 49)', 'rgb(163, 58, 49)'], 'texte secondaire #5e5b47 ; un seul rouge #a33a31 (--danger = --coral-fg)');
+eq([socle.badgeMuted.bg, socle.tagGray.bg, socle.icGray.bg], ['rgb(239, 233, 218)', 'rgb(239, 233, 218)', 'rgb(239, 233, 218)'], 'badge-muted, compact-tag-gray, ic-gray : fond onglets #efe9da');
+eq(socle.campagne.bg, 'rgb(53, 127, 75)', 'en-tête « campagne » de Carrière : vert charte');
+check(!/#f0efe9|#f0eee6|#f7f5ee|#f6f3ea/i.test(sansDefs), 'plus aucun ancien gris (#f0efe9, #f0eee6, #f7f5ee, #f6f3ea)');
+console.log('OK 3bis socle des fiches et listes : onglets, texte secondaire, rouge unique, badges, en-tête campagne.');
 await browser.close();
 console.log('OK 3 rendu : --primary et en-tête = #357f4b ; tableau et tuiles lisent les variables.');
 console.log('\nTOUS LES TESTS DE LA CHARTE GRAPHIQUE SONT PASSÉS');
