@@ -102,5 +102,91 @@ eq(lignes.find(l => l[0] === 'N'), ['N', 'sans', false, null], 'N : aucune écho
 eq(lignes.find(l => l[0] === 'TIE')[1], 'pleine', 'TIE : à date égale la dernière saisie (stade Fin) l\'emporte sur le constat Vide');
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'aucune écriture');
 console.log('OK 5 détail : Avant mise bas, date égale, aucune écriture.');
+// ================================================================ 6. aiguillage PC : consultation seule, la saisie n'existe plus (mobile inchangé)
+await pc.evaluate(() => { echosPcEtat.onglet = 'historique'; render('echo-rapide'); });
+const a1 = await pc.evaluate(() => ({ vue: currentView, ecran: !!document.getElementById('pc-echographies'), on: document.querySelector('#ep-onglets .on').textContent,
+  saisie: ['#scan-echo', '#f-echo-session-combo', '#btn-start-echo-session', '#f-dernier-echo'].map(q => document.querySelectorAll(q).length), bulles: document.querySelectorAll('#app .info-bulle-btn').length, titre: pageTitle.textContent }));
+eq(a1, { vue: 'echo-rapide', ecran: true, on: 'Résultats', saisie: [0, 0, 0, 0], bulles: 0, titre: 'Échographies' }, 'PC : l\'entrée du menu ouvre l\'onglet Résultats ; plus de session, de scan, de combinaison ni de case « dernière échographie » ; aucune bulle « ? »');
+await pc.evaluate(() => render('historique-echo'));
+eq(await pc.evaluate(() => [currentView, document.querySelector('#ep-onglets .on').textContent]), ['echo-rapide', 'Historique'], 'PC : « historique-echo » ouvre l\'onglet Historique de la même page');
+const mob = await ouvrir(false);
+await mob.evaluate(() => { resetEchoRapideSession(); render('echo-rapide'); });
+eq(await mob.evaluate(() => ['#f-echo-session-combo', '#btn-start-echo-session', '#pc-echographies'].map(q => document.querySelectorAll(q).length)), [1, 1, 0], 'mobile : la saisie par session est inchangée');
+await mob.evaluate(() => { currentSheepId = 'P1'; detailOrigin = 'list'; ficheBrebisTab = 'repro'; ficheBrebisTabSheepId = 'P1'; render('detail', 'P1'); });
+eq(await mob.evaluate(() => document.querySelectorAll('#btn-add-echo').length), 1, 'mobile : le bouton « + Échographie » de la fiche reste');
+await pc.evaluate(() => { currentSheepId = 'P1'; detailOrigin = 'list'; ficheBrebisTab = 'repro'; ficheBrebisTabSheepId = 'P1'; render('detail', 'P1'); });
+eq(await pc.evaluate(() => [document.querySelectorAll('#btn-add-echo').length, !!document.getElementById('btn-add-agnelage')]), [0, true], 'PC : plus de bouton « + Échographie » sur la fiche d\'une brebis (« + Agnelage » reste)');
+console.log('OK 6 PC : consultation seule, saisie retirée, mobile inchangé.');
+
+// ================================================================ 7. onglet Résultats : tuiles, anneau, stades, comptage, par lot, semaines
+await pc.evaluate(() => { echosPcEtat = { onglet: 'resultats', F: echoFiltresPcVides(), q: '', fRes: '', fCompt: '', nb: 20, histoDate: '' }; render('echo-rapide'); });
+const T = await pc.evaluate(() => ({
+  tuiles: [...document.querySelectorAll('.ep-tuile')].map(t => [t.querySelector('.reg-tuile-l').textContent, t.querySelector('.reg-tuile-v').textContent, t.querySelector('.ep-ts').textContent, getComputedStyle(t).borderLeftColor]),
+  anneau: [...document.querySelectorAll('.ep-lg div')].map(d => d.childNodes[1].textContent + ' ' + d.querySelector('b').textContent), centre: [...document.querySelectorAll('.ep-dn svg text')].map(t => t.textContent), cercles: document.querySelectorAll('.ep-dn svg circle').length,
+  stades: [...document.querySelectorAll('.ep-g3 .ep-carte:nth-child(2) .ep-rp')].map(r => r.querySelector('span').textContent + ' ' + r.querySelector('b').textContent),
+  comptage: [...document.querySelectorAll('.ep-g3 .ep-carte:nth-child(3) .ep-rp')].map(r => r.querySelector('span').textContent + ' ' + r.querySelector('b').textContent),
+  lots: [...document.querySelectorAll('.ep-g2 table tbody tr')].map(r => [...r.children].slice(0, 6).map(c => c.textContent.trim()).join('|') + (r.classList.contains('ep-pied') ? ' (pied)' : '')),
+  semaines: [...document.querySelectorAll('.ep-cl span')].map(x => x.textContent), colonnes: [...document.querySelectorAll('.ep-cols div')].map(d => d.firstChild.textContent),
+  onglets: [...document.querySelectorAll('#ep-onglets button')].map(b => b.textContent), thFond: getComputedStyle(document.querySelector('table.ep-table th')).backgroundColor, thTexte: getComputedStyle(document.querySelector('table.ep-table th')).color,
+  alt: [...document.querySelectorAll('.ep-g2 table tbody tr')].map(r => getComputedStyle(r.children[1]).backgroundColor) }));
+eq(T.tuiles.map(t => t.slice(0, 3)), [['Pleines', '9', '60 % des brebis'], ['Vides', '1', 'à repasser à l\'écho'], ['Vides définitives', '1', 'campagne 2027'], ['Avortées / pseudo.', '2', 'cas particuliers'], ['Sans échographie', '2', 'sur 15 brebis']], 'cinq tuiles = chiffres de l\'accueil');
+eq(T.tuiles.map(t => t[3]), ['rgb(47, 110, 68)', 'rgb(163, 58, 49)', 'rgb(163, 58, 49)', 'rgb(181, 112, 28)', 'rgb(94, 91, 71)'], 'filets des tuiles : vert, rouge, rouge, ambre, gris');
+eq(T.anneau, ['Pleine 9 · 60 %', 'Vide 1 · 7 %', 'Vide définitive 1 · 7 %', 'Avortée / pseudo. 2 · 13 %', 'Sans échographie 2 · 13 %'], 'légende de l\'anneau');
+eq([T.centre, T.cercles], [['15', 'brebis'], 5], 'anneau SVG : total au centre, 5 segments');
+eq(T.stades, ['Début 1', 'Milieu 2', 'Fin 3', 'IA 1', 'Retour 1 0', 'Retour 2 0', 'Tardive 0', 'Stade non précisé 2'], 'pleines par stade');
+eq(T.comptage, ['1 agneau 3 (33 %)', '2 agneaux 2 (22 %)', '3 agneaux et + 2 (22 %)', 'Sans comptage 2 (22 %)'], 'pleines par comptage (1, 2, 3 et +, sans comptage)');
+eq(T.lots, ['Monte naturelle|Naturelle|9|5|0|56 %', 'IA septembre|IA|4|3|1|75 %', 'Éponge août|Éponge|3|2|0|67 %', 'Brebis uniques||15|9|1|60 % (pied)'], 'Par lot : monte naturelle, lots IA / Éponge, brebis dans deux lots, Brebis uniques en pied');
+eq([T.semaines, T.colonnes], [['S27', 'S28', 'S29', 'S30', 'S31'], ['2', '0', '0', '0', '15']], 'histogramme Échos par semaine');
+eq([T.onglets, T.thFond, T.thTexte], [['Résultats', 'Historique'], 'rgb(53, 127, 75)', 'rgb(255, 255, 255)'], 'segmenté charte ; tableaux : en-tête vert, texte blanc');
+check(T.alt[0] !== T.alt[1], 'lignes alternées');
+console.log('OK 7 Résultats : tuiles, anneau, stades, comptage, par lot, échos par semaine, tableaux à en-tête vert.');
+
+// ================================================================ 8. filtres de l'écran (champs réels) et détail par brebis
+await pc.selectOption('#ep-f-lot', 'EP1');
+eq(await pc.evaluate(() => [document.querySelector('.ep-tuile .reg-tuile-v').textContent, document.querySelectorAll('#ep-detail-corps tbody tr').length]), ['2', 3], 'filtre Lot : Éponge août (3 brebis, 2 pleines)');
+await pc.selectOption('#ep-f-lot', 'mn');
+eq(await pc.evaluate(() => document.querySelectorAll('#ep-detail-corps tbody tr').length), 9, 'filtre Lot : Monte naturelle');
+await pc.click('#ep-reinit');
+await pc.selectOption('#ep-f-campagne', '2027');
+eq(await pc.evaluate(() => [...document.querySelectorAll('.ep-tuile .reg-tuile-v')].map(x => x.textContent)), ['0', '0', '0', '0', '15'], 'filtre Campagne 2028 (2027 en interne) : aucune écho -> tout « Sans échographie »');
+await pc.click('#ep-reinit');
+await pc.selectOption('#ep-f-type', 'constat');
+eq(await pc.evaluate(() => [...document.querySelectorAll('.ep-tuile .reg-tuile-v')].map(x => x.textContent)), ['3', '2', '1', '0', '9'], 'filtre Type Constat');
+await pc.click('#ep-reinit');
+await pc.fill('#ep-f-du', '2026-08-02'); await pc.dispatchEvent('#ep-f-du', 'change');
+eq(await pc.evaluate(() => [...document.querySelectorAll('.ep-tuile .reg-tuile-v')].map(x => x.textContent)), ['0', '0', '1', '0', '14'], 'filtre Du 02/08 : plus aucune écho candidate (la vide définitive reste séparée)');
+await pc.click('#ep-reinit');
+// détail : recherche, filtres résultat / comptage, étiquette « Avant mise bas »
+await pc.selectOption('#ep-f-res', 'sans');
+const sansRows = await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => [...r.children].map(c => c.textContent.replace(/\s+/g, ' ').trim()).slice(0, 8).join('|')));
+eq(sansRows.length, 2, 'filtre « Sans échographie » : 2 brebis');
+check(sansRows.some(r => /Avant mise bas/.test(r) && /01-08-2026/.test(r)), '« Avant mise bas » : la brebis qui a mis bas depuis son écho est listée avec son écho d\'avant en grisé : ' + JSON.stringify(sansRows));
+await pc.selectOption('#ep-f-res', '');
+await pc.selectOption('#ep-f-compt', 'troisEtPlus');
+eq(await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => [r.children[0].textContent, r.children[5].textContent])), [['n°00004', '3 et +'], ['8003', '3 et +']], 'filtre comptage « 3 et + »');
+await pc.selectOption('#ep-f-compt', '');
+await pc.fill('#ep-q', '8002');
+eq(await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => [r.children[0].textContent, r.children[5].textContent, r.children[7].textContent])), [['8002', '2 et +', 'IA septembre, Éponge août']], 'recherche par n° court ; Double = « 2 et + » ; brebis dans deux lots : les deux lots listés');
+check(await pc.evaluate(() => document.activeElement.id === 'ep-q'), 'la frappe garde le focus dans le champ de recherche');
+await pc.fill('#ep-q', '');
+console.log('OK 8 filtres de l\'écran, détail : recherche, résultat, comptage, Avant mise bas, lots multiples.');
+
+// ================================================================ 9. pagination par 20 ; Modifier / Suppr. ; aucune écriture à l'affichage
+await pc.evaluate(() => {
+  const eid = (n) => '2500162999800' + String(n).padStart(3, '0') + '0';
+  for (let i = 0; i < 12; i++) DB.brebis.push({ id: 'Z' + i, eid: eid(300 + i), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] });
+  window.__avant = JSON.stringify(DB); window.__saves = 0; render('echo-rapide');
+});
+eq(await pc.evaluate(() => [document.querySelectorAll('#ep-detail-corps tbody tr').length, document.querySelector('.ep-ft').textContent.replace(/\s+/g, ' ').trim()]), [20, '1 à 20 sur 27Voir les 20 suivantes'], 'détail paginé par 20');
+await pc.click('#ep-plus');
+eq(await pc.evaluate(() => [document.querySelectorAll('#ep-detail-corps tbody tr').length, !!document.getElementById('ep-plus')]), [27, false], '« Voir les 20 suivantes »');
+check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'l\'affichage et les filtres n\'écrivent rien');
+await pc.fill('#ep-q', '8001');
+await pc.click('#ep-detail-corps .ep-edit');
+eq(await pc.evaluate(() => [currentView, currentSheepId]), ['add-echo', 'P1'], '« Modifier » ouvre l\'écran de modification existant de l\'écho');
+await pc.evaluate(() => { echosPcEtat.q = '8001'; render('echo-rapide'); });
+await pc.click('#ep-detail-corps .ep-del');
+eq(await pc.evaluate(() => [DB.brebis.find(s => s.id === 'P1').echographies.length, window.__saves]), [0, 1], '« Suppr. » retire l\'écho (une écriture, confirmée)');
+console.log('OK 9 pagination, Modifier, Suppr., aucune écriture à l\'affichage.');
 await browser.close();
 console.log('\nTOUS LES TESTS DES CALCULS DE L\'ÉCRAN PC ÉCHOGRAPHIES SONT PASSÉS.');
