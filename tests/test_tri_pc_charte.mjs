@@ -2,6 +2,7 @@
    puces de filtre blanches à contour #d9cfb8 (actives : vert pastel #e3f3e6, texte #24613a), tableaux à en-tête vert (voir test_tableaux_pc), police Roboto en premier. Structure et fonctions inchangées :
    les boutons gardent leurs ids, classes .opt-btn / .selected et leurs gestionnaires. Jeu SYNTHÉTIQUE, saveData REMPLACÉ, aucune écriture. */
 import { chromium } from 'playwright';
+import { readFileSync } from 'fs';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
 import { jeuPcEcrans } from './lib/jeu_pc_ecrans.mjs';
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
@@ -71,6 +72,17 @@ for (const [nom, code] of [['Chantier de tri (Lots)', 'lotsPcEtat=null;render("l
   check(/^Roboto,\s*(-apple-system|"Segoe UI")/.test(F.pile) && /sans-serif$/.test(F.pile), nom + ' : pile de repli conservée (' + F.pile + ')');
 }
 console.log('OK 3 police : Roboto en premier dans la pile (corps, boutons, champs), repli -apple-system / Segoe UI / sans-serif conservé.');
+
+// ================================================================ 4. Roboto embarquée (sous-ensemble latin 400, 500, 700 en woff2, moins de 150 Ko en base64)
+const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
+const blocs = [...html.matchAll(/@font-face\s*\{\s*font-family:\s*'Roboto';[^}]*?font-weight:\s*(\d+);[^}]*?src:\s*url\(data:font\/woff2;base64,([A-Za-z0-9+/=]+)\)/g)];
+eq(blocs.map(m => m[1]), ['400', '500', '700'], 'Roboto embarquée : 3 graisses (400, 500, 700)');
+const kb = blocs.reduce((n, m) => n + m[2].length, 0) / 1024;
+check(kb < 150, 'Roboto embarquée : ' + Math.round(kb) + ' Ko en base64 (limite 150 Ko)');
+check(blocs.every(m => Buffer.from(m[2], 'base64').subarray(0, 4).toString() === 'wOF2'), 'Roboto embarquée : fichiers woff2 valides');
+const chargees = await pc.evaluate(async () => { const r = []; for (const w of [400, 500, 700]) { const f = await document.fonts.load(w + ' 16px Roboto', 'Éé'); r.push([w, f.length, f[0] && f[0].status]); } return r; });
+eq(chargees, [[400, 1, 'loaded'], [500, 1, 'loaded'], [700, 1, 'loaded']], 'Roboto embarquée : les 3 graisses se chargent depuis le fichier');
+console.log('OK 4 Roboto embarquée : 400, 500 et 700 (latin, woff2), ' + Math.round(kb) + ' Ko en base64, chargées sans réseau.');
 
 await browser.close();
 console.log('\nTOUS LES TESTS « CHANTIER DE TRI PC EN CHARTE » SONT PASSÉS.');
