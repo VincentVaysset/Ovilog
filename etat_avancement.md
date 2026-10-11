@@ -56,7 +56,7 @@
   - Déclenché via case à cocher "Ceci est la dernière échographie de la campagne" dans le module de saisie en série Échographies, + bouton individuel de secours sur la fiche brebis
   - Formules corrigées : Troupeau à mettre bas = actives − vides définitives ; Mises bas restantes attendues = troupeau à mettre bas − mises bas réalisées
   - Écran "Bilan de campagne" restructuré en deux sous-onglets cliquables : "Incohérences fin de campagne" (Non suivies / Ont mis bas / Vides définitives + alerte séparée pour le cas contradictoire vide définitive+mise bas, jamais corrigé automatiquement) et "Bilan de reproduction" (taux de réussite global, tableau transposé prolificité/taux de mises bas par groupe Agnelles 1 an / Brebis 2 ans et plus, mises bas restantes attendues, nombre de vides définitives)
-  - Les 4 statuts transitoires (Gestante, Vide confirmée, Avortée, Pseudogestation) ont été volontairement retirés du Bilan de campagne — ils restent visibles sur la fiche individuelle de chaque brebis et dans l'onglet Brebis
+  - Les 4 statuts transitoires (Gestante, Vide, Avortée, Pseudogestation) ont été volontairement retirés du Bilan de campagne — ils restent visibles sur la fiche individuelle de chaque brebis et dans l'onglet Brebis
   - Population de référence pour "Bilan de reproduction" : "brebis présentes depuis le début de la campagne"
   - Validé avec de vrais chiffres
 
