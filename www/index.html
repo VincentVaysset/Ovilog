@@ -6387,18 +6387,29 @@ function classementEchoBrebis(sheep, F) {
   r.comptage = comptageCleEcho(e);
   return r;
 }
+// Brebis PRÉSENTE = statut « active » (les vendues, mortes, perdues, autoconsommées ne le sont plus). Règle « résultat figé » : le résultat de la dernière écho se calcule sur les échos
+// enregistrées quel que soit le statut actuel de la brebis ; seule la liste « À repasser à l'écho » (R.videAPasser) et « Sans échographie » ne concernent que les brebis présentes.
+function estBrebisPresente(s) { return (s.statut || 'active') === 'active'; }
+const LIBELLE_STATUT_SORTIE = { morte: 'Morte', vendue: 'Vendue', 'vendue reproduction': 'Vendue repro.', perdue: 'Perdue', 'autoconsommée': 'Autoconsommée' };
+function libelleStatutBrebis(s) { const st = s.statut || 'active'; return LIBELLE_STATUT_SORTIE[st] || (st.charAt(0).toUpperCase() + st.slice(1)); }
 function echoRepartitionVide() {
-  return { total: 0, pleine: 0, stades: { 'Début': 0, 'Milieu': 0, 'Fin': 0, 'IA': 0, 'Retour 1': 0, 'Retour 2': 0, 'Tardive': 0, nonPrecise: 0 },
+  return { total: 0, videAPasser: 0, derniereDate: '', pleine: 0, stades: { 'Début': 0, 'Milieu': 0, 'Fin': 0, 'IA': 0, 'Retour 1': 0, 'Retour 2': 0, 'Tardive': 0, nonPrecise: 0 },
     vide: 0, videDefinitive: 0, cas: 0, sans: 0, comptage: { un: 0, deux: 0, troisEtPlus: 0, sans: 0 } };
 }
-function echoAjouterAuRepartition(R, c) {
+function echoAjouterAuRepartition(R, c, present) {
+  if (c.cat === 'sans' && present === false) return false;   // une brebis sortie sans écho retenue n'est comptée nulle part
   R.total++;
+  if (c.cat === 'vide' && present !== false) R.videAPasser++;
+  if (c.cat !== 'sans' && c.echo && c.echo.date && c.echo.date > R.derniereDate) R.derniereDate = c.echo.date;
   if (c.cat === 'videDef') R.videDefinitive++; else if (c.cat === 'sans') R.sans++; else if (c.cat === 'cas') R.cas++; else if (c.cat === 'vide') R.vide++;
   else { R.pleine++; R.stades[c.stade]++; R.comptage[c.comptage]++; }
+  return true;
 }
+// Réussite = pleines ÷ (pleines + vides) : les vides définitives, avortées / pseudogestations et « sans écho » n'y entrent pas.
+function echoReussite(R) { const b = R.pleine + R.vide; return b > 0 ? Math.round(R.pleine / b * 1000) / 10 : null; }
 function repartitionEchoAccueil() {
   const R = echoRepartitionVide();
-  DB.brebis.filter(s => (s.statut || 'active') === 'active').forEach(s => echoAjouterAuRepartition(R, classementEchoBrebis(s)));
+  DB.brebis.forEach(s => echoAjouterAuRepartition(R, classementEchoBrebis(s), estBrebisPresente(s)));
   return R;
 }
 /* Écran PC « Échographies » : données (lecture seule). Lots = lots de REPRODUCTION (IA, Éponge) dont la campagne de mises bas est la campagne en cours ou à venir (comme dernierModeReproValide) ;
@@ -6422,15 +6433,15 @@ function lundiPrecedent(lundi) { const [y, m, d] = lundi.split('-').map(Number);
 function donneesEchosPc(filtres) {
   const F = Object.assign(echoFiltresPcVides(), filtres || {});
   const lots = lotsReproEchoPc();
-  let pop = DB.brebis.filter(s => (s.statut || 'active') === 'active').map(s => ({ s, lots: lots.filter(l => l.eids.has(cleanEid(s.eid))) }));
+  let pop = DB.brebis.map(s => ({ s, lots: lots.filter(l => l.eids.has(cleanEid(s.eid))) }));
   if (F.lot === 'mn') pop = pop.filter(x => x.lots.length === 0);
   else if (F.lot) pop = pop.filter(x => x.lots.some(l => l.id === F.lot));
   const R = echoRepartitionVide();
   const lignes = pop.map(({ s, lots: ls }) => {
-    const c = classementEchoBrebis(s, F);
-    echoAjouterAuRepartition(R, c);
-    return Object.assign({ sheep: s, id: s.id, eid: s.eid, numero: numeroVisuel(s.eid), court: s.numeroCourtTravailSieol || '', age: age(s.eid), millesime: anneeNaissance(s.eid), lots: ls.map(l => l.nom), lotsIds: ls.map(l => l.id), derniereMB: derniereMiseBasBrebis(s) }, c);
-  }).sort(comparerAnimauxAgeNumero);
+    const c = classementEchoBrebis(s, F), present = estBrebisPresente(s);
+    if (!echoAjouterAuRepartition(R, c, present)) return null;
+    return Object.assign({ sheep: s, id: s.id, eid: s.eid, numero: numeroVisuel(s.eid), court: s.numeroCourtTravailSieol || '', age: age(s.eid), millesime: anneeNaissance(s.eid), lots: ls.map(l => l.nom), lotsIds: ls.map(l => l.id), derniereMB: derniereMiseBasBrebis(s), present, statutLib: present ? '' : libelleStatutBrebis(s) }, c);
+  }).filter(Boolean).sort(comparerAnimauxAgeNumero);
   const groupe = (cle, nom, mode, pred) => {
     const g = { cle, nom, mode, brebis: 0, pleine: 0, vide: 0, videDef: 0, cas: 0, sans: 0 };
     lignes.filter(pred).forEach(r => { g.brebis++; g[r.cat]++; });
@@ -6440,7 +6451,8 @@ function donneesEchosPc(filtres) {
   const parLot = [groupe('mn', 'Monte naturelle', 'Naturelle', r => r.lotsIds.length === 0)].concat(lots.map(l => groupe(l.id, l.nom, l.mode, r => r.lotsIds.includes(l.id)))).filter(g => g.brebis > 0);
   // Échos par semaine : toutes les échos candidates (après filtres) de la population, par semaine ISO, sur au plus 12 semaines consécutives finissant à la dernière semaine avec échos
   const parSemaine = {};
-  pop.forEach(({ s }) => echosCandidatesEchoPc(s, F).forEach(e => { if (e.date) { const l = lundiSemaineIso(e.date); parSemaine[l] = (parSemaine[l] || 0) + 1; } }));
+  const comptees = new Set(lignes.map(r => r.id));
+  pop.filter(({ s }) => comptees.has(s.id)).forEach(({ s }) => echosCandidatesEchoPc(s, F).forEach(e => { if (e.date) { const l = lundiSemaineIso(e.date); parSemaine[l] = (parSemaine[l] || 0) + 1; } }));
   const lundis = Object.keys(parSemaine).sort(), semaines = [];
   if (lundis.length) { let cur = lundis[lundis.length - 1]; for (let k = 0; k < 12 && cur >= lundis[0]; k++) { semaines.unshift({ lundi: cur, num: numeroSemaineIso(cur), nb: parSemaine[cur] || 0 }); cur = lundiPrecedent(cur); } }
   return { F, R, lignes, parLot, semaines, lots, nbEchos: lundis.reduce((n, l) => n + parSemaine[l], 0) };
@@ -12553,7 +12565,7 @@ function echoDetailTableauHtml(D) {
   const corps = vues.length === 0 ? '<tr><td colspan="9" style="text-align:center;color:var(--ch-texte2);height:60px;">Aucune brebis ne correspond.</td></tr>' : vues.map(r => {
     const e = r.echo, idx = e ? r.sheep.echographies.indexOf(e) : -1;
     return `<tr data-id="${r.id}">
-      <td>${numeroAffichageEcho(r.sheep)}</td><td>${r.millesime === null ? '—' : r.millesime + ' · ' + r.age + ' an' + (r.age > 1 ? 's' : '')}</td>
+      <td>${numeroAffichageEcho(r.sheep)}${r.present ? '' : ' <span class="reg-pastille gris">' + r.statutLib + '</span>'}</td><td>${r.millesime === null ? '—' : r.millesime + ' · ' + r.age + ' an' + (r.age > 1 ? 's' : '')}</td>
       <td>${e && e.date ? formatDateFr(e.date) : '—'}</td><td>${e ? echoTypeLibelle(e) : '—'}</td><td>${echoPastilleResultat(r)}</td>
       <td>${r.cat === 'pleine' ? libelleComptageEcho(e) : '—'}</td><td>${r.cat === 'sans' && !e ? '—' : echoLibelleCasEcho(e)}</td><td>${r.lots.length ? r.lots.map(echoHtml).join(', ') : 'Monte naturelle'}</td>
       <td style="white-space:nowrap;">${idx >= 0 ? `<button type="button" class="ep-btn ep-edit" data-id="${r.id}" data-idx="${idx}">Modifier</button> <button type="button" class="ep-btn ep-del" data-id="${r.id}" data-idx="${idx}">Suppr.</button>` : ''}</td></tr>`;
@@ -12595,7 +12607,7 @@ function renderEchosPc() {
       <button type="button" class="ep-btn" id="ep-reinit">Réinitialiser</button></div>`;
     const campVD = F.campagne !== '' ? Number(F.campagne) : S;
     const tuile = (cls, lib, n, sous) => `<div class="reg-tuile ${cls} ep-tuile"><div class="reg-tuile-l">${lib}</div><div class="reg-tuile-v">${n}</div><div class="ep-ts">${sous}</div></div>`;
-    const tuiles = `<div class="ep-tuiles">${tuile('vert', 'Pleines', R.pleine, echoPct(R.pleine, R.total) + ' % des brebis')}${tuile('rouge', 'Vides', R.vide, 'à repasser à l\'écho')}${tuile('rouge', 'Vides définitives', R.videDefinitive, 'campagne ' + libCampagneAffichee(campVD))}${tuile('ambre', 'Avortées / pseudo.', R.cas, 'cas particuliers')}${tuile('gris', 'Sans échographie', R.sans, 'sur ' + R.total + ' brebis')}</div>`;
+    const tuiles = `<div class="ep-tuiles">${tuile('vert', 'Pleines', R.pleine, echoPct(R.pleine, R.total) + ' % des brebis')}${tuile('rouge', 'Vides', R.vide, R.videAPasser + ' à repasser à l\'écho')}${tuile('rouge', 'Vides définitives', R.videDefinitive, 'campagne ' + libCampagneAffichee(campVD))}${tuile('ambre', 'Avortées / pseudo.', R.cas, 'cas particuliers')}${tuile('gris', 'Sans échographie', R.sans, 'sur ' + R.total + ' brebis')}</div>`;
     const st = R.stades, vert = 'background:var(--ch-vert);opacity:.6', bleu = 'background:var(--ch-bleu)', gris = 'background:var(--ch-icone)';
     const stades = ['Début', 'Milieu', 'Fin'].map(k => echoLigneBarrePc(k, st[k], R.total, vert)).join('') + ['IA', 'Retour 1', 'Retour 2', 'Tardive'].map(k => echoLigneBarrePc(k, st[k], R.total, bleu)).join('') + echoLigneBarrePc('Stade non précisé', st.nonPrecise, R.total, gris);
     const c = R.comptage, vv = 'background:var(--ch-vert)';
@@ -12611,7 +12623,7 @@ function renderEchosPc() {
       ${sel('ep-f-res', E.fRes, [['', 'Tous résultats'], ['pleine', 'Pleine'], ['vide', 'Vide'], ['videDef', 'Vide définitive'], ['cas', 'Avortée / pseudogestation'], ['sans', 'Sans échographie']])}
       ${sel('ep-f-compt', E.fCompt, [['', 'Tous comptages'], ['un', '1'], ['deux', '2'], ['troisEtPlus', '3 et +'], ['sans', 'Sans comptage']])}</div>
       <div id="ep-detail-corps">${echoDetailTableauHtml(D)}</div></div>`;
-    corps = `${filtres}<div class="ep-info">Pour chaque brebis, on retient sa dernière écho postérieure à sa dernière mise bas. Le lot vient de l'appartenance de la brebis à un lot de reproduction (IA, Éponge) ; sans lot, monte naturelle. Les filtres de campagne, de période et de type choisissent les échos prises en compte.</div>
+    corps = `${filtres}<div class="ep-info">Pour chaque brebis, on retient sa dernière écho postérieure à sa dernière mise bas ; ce résultat est figé : une brebis vendue ou morte ensuite reste comptée (pastille de statut dans le détail), seule la liste « à repasser » ne garde que les brebis présentes. Le lot vient de l'appartenance de la brebis à un lot de reproduction (IA, Éponge) ; sans lot, monte naturelle. Les filtres de campagne, de période et de type choisissent les échos prises en compte.</div>
       ${tuiles}
       <div class="ep-g3"><div class="ep-carte"><h3>Résultat</h3>${echoAnneauHtml(R)}</div><div class="ep-carte"><h3>Pleines par stade</h3>${stades}</div><div class="ep-carte"><h3>Pleines par comptage</h3>${comptage}</div></div>
       <div class="ep-g2"><div class="ep-carte"><h3>Par lot</h3>${parLot}</div><div class="ep-carte"><h3>Échos par semaine</h3>${histo}</div></div>
@@ -12654,24 +12666,24 @@ const ECHO_LIBELLE_CAT = { pleine: 'Pleine', vide: 'Vide', videDef: 'Vide défin
 function echosPcSections(D) {
   const R = D.R, st = R.stades, c = R.comptage, p = n => echoPct(n, R.total);
   return {
-    tuiles: [['Pleines', R.pleine, p(R.pleine) + ' % des brebis'], ['Vides', R.vide, 'à repasser à l\'écho'], ['Vides définitives', R.videDefinitive, 'campagne ' + libCampagneAffichee(echosPcEtat.F.campagne !== '' ? Number(echosPcEtat.F.campagne) : DB.campagneDebut)], ['Avortées / pseudo.', R.cas, 'cas particuliers'], ['Sans échographie', R.sans, 'sur ' + R.total + ' brebis']],
+    tuiles: [['Pleines', R.pleine, p(R.pleine) + ' % des brebis'], ['Vides', R.vide, R.videAPasser + ' à repasser à l\'écho'], ['Vides définitives', R.videDefinitive, 'campagne ' + libCampagneAffichee(echosPcEtat.F.campagne !== '' ? Number(echosPcEtat.F.campagne) : DB.campagneDebut)], ['Avortées / pseudo.', R.cas, 'cas particuliers'], ['Sans échographie', R.sans, 'sur ' + R.total + ' brebis']],
     resultat: [['Pleine', R.pleine], ['Vide', R.vide], ['Vide définitive', R.videDefinitive], ['Avortée / pseudogestation', R.cas], ['Sans échographie', R.sans]].map(([l, n]) => [l, n, p(n) + ' %']),
     stades: [['Début', st['Début']], ['Milieu', st['Milieu']], ['Fin', st['Fin']], ['IA', st['IA']], ['Retour 1', st['Retour 1']], ['Retour 2', st['Retour 2']], ['Tardive', st['Tardive']], ['Stade non précisé', st.nonPrecise]].map(([l, n]) => [l, n, p(n) + ' %']),
     comptage: [['1 agneau', c.un], ['2 agneaux', c.deux], ['3 agneaux et +', c.troisEtPlus], ['Sans comptage', c.sans]].map(([l, n]) => [l, n, echoPct(n, R.pleine) + ' %']),
     parLot: D.parLot.map(g => [g.nom, g.mode, g.brebis, g.pleine, g.vide, g.videDef, g.cas, g.sans, g.pctPleines + ' %']).concat([['Brebis uniques', '', R.total, R.pleine, R.vide, R.videDefinitive, R.cas, R.sans, echoPct(R.pleine, R.total) + ' %']]),
     semaines: D.semaines.map(w => ['S' + w.num, 'semaine du ' + formatDateFr(w.lundi), w.nb]),
     detail: echoRangeesDetailPc(D).map(r => { const e = r.echo; return [numeroAffichageEcho(r.sheep), r.millesime === null ? '' : r.millesime, r.age === null ? '' : r.age, ECHO_LIBELLE_CAT[r.cat], e && e.date ? formatDateFr(e.date) : '', e ? echoTypeLibelle(e) : '',
-      e ? (e.special || e.stade || '') : '', r.cat === 'pleine' ? libelleComptageEcho(e) : '', e ? (echoLibelleCasEcho(e) === '—' ? '' : echoLibelleCasEcho(e)) : '', r.lots.length ? r.lots.join(', ') : 'Monte naturelle', r.avantMiseBas ? 'Avant mise bas' : '']; })
+      e ? (e.special || e.stade || '') : '', r.cat === 'pleine' ? libelleComptageEcho(e) : '', e ? (echoLibelleCasEcho(e) === '—' ? '' : echoLibelleCasEcho(e)) : '', r.lots.length ? r.lots.join(', ') : 'Monte naturelle', r.avantMiseBas ? 'Avant mise bas' : '', r.present ? 'Présente' : r.statutLib]; })
   };
 }
 async function exporterEchosPcXlsx(D) {
   const X = echosPcSections(D);
-  const resume = [['Échographies · résultats'], ['Édité le ' + formatDateFr(jourAujourdhuiISO())], ['Filtres', echosPcFiltresTexte()], ['Brebis actives', D.R.total], [],
+  const resume = [['Échographies · résultats'], ['Édité le ' + formatDateFr(jourAujourdhuiISO())], ['Filtres', echosPcFiltresTexte()], ['Brebis comptées (résultat figé, sorties comprises)', D.R.total], [],
     ['Tuiles'], ...X.tuiles.map(t => [t[0], t[1], t[2]]), [],
     ['Résultat', 'Brebis', '%'], ...X.resultat, [], ['Pleines par stade', 'Brebis', '% des brebis'], ...X.stades, [], ['Pleines par comptage', 'Brebis', '% des pleines'], ...X.comptage, [],
     ['Par lot', 'Mode', 'Brebis', 'Pleines', 'Vides', 'Vides définitives', 'Avortées / pseudo.', 'Sans écho', '% pleines'], ...X.parLot, [], ['Échos par semaine', 'Période', 'Échos'], ...X.semaines];
-  const detail = [['N° court', 'Millésime', 'Âge', 'Résultat', 'Dernière écho', 'Type', 'Stade / cas', 'Comptage', 'Cas particulier', 'Lots', 'Avant mise bas'], ...X.detail];
-  const bytes = await buildXlsxWorkbook([{ name: 'Résumé', colWidths: [30, 24, 12, 12, 12, 16, 18, 12, 12], rows: resume }, { name: 'Détail', colWidths: [12, 10, 6, 24, 14, 10, 18, 10, 16, 30, 16], rows: detail }]);
+  const detail = [['N° court', 'Millésime', 'Âge', 'Résultat', 'Dernière écho', 'Type', 'Stade / cas', 'Comptage', 'Cas particulier', 'Lots', 'Avant mise bas', 'Statut'], ...X.detail];
+  const bytes = await buildXlsxWorkbook([{ name: 'Résumé', colWidths: [30, 24, 12, 12, 12, 16, 18, 12, 12], rows: resume }, { name: 'Détail', colWidths: [12, 10, 6, 24, 14, 10, 18, 10, 16, 30, 16, 14], rows: detail }]);
   await saveOrShareBinaryFile('echographies_resultats_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 function buildEchosPcPdfBytes(D) {
@@ -12686,7 +12698,7 @@ function buildEchosPcPdfBytes(D) {
     const f = LARG / larg.reduce((n, v) => n + v, 0);
     doc.tableauCharte({ colonnes: cols.map((k, i) => ({ l: k[0], w: larg[i] * f })), lignes, entete, alterne, premiere, taille: t, hLigne: 15, hEntete: 18, vide: '' });
   };
-  doc.page('Échographies · résultats', echosPcFiltresTexte() + ' · ' + D.R.total + ' brebis actives', 'Ovilog · Échographies · résultats · Avant MB : dernière écho antérieure à la dernière mise bas (brebis comptée « Sans échographie »)');
+  doc.page('Échographies · résultats', echosPcFiltresTexte() + ' · ' + D.R.total + ' brebis comptées (résultat figé)', 'Ovilog · Échographies · résultats · Avant MB : dernière écho antérieure à la dernière mise bas (brebis comptée « Sans échographie »)');
   const teintes = ['vert', 'rouge', 'rouge', 'ambre'];
   doc.tuiles(X.tuiles.map((t, i) => teintes[i] ? pdfTuile(teintes[i], t[0], t[1], t[2]) : { label: t[0], valeur: String(t[1]), sous: t[2], fond: PDF_COULEURS.fond, couleur: PDF_PL_COUL.gris, lisere: PDF_PL_COUL.gris, tailleValeur: 20 }));
   doc.section('Résultat'); tableau([['Résultat'], ['Brebis'], ['%']], X.resultat);
@@ -12694,7 +12706,7 @@ function buildEchosPcPdfBytes(D) {
   doc.section('Pleines par comptage'); tableau([['Comptage'], ['Brebis'], ['% des pleines']], X.comptage);
   doc.section('Par lot'); tableau([['Lot'], ['Mode'], ['Brebis'], ['Pleines'], ['Vides'], ['Vides déf.'], ['Avortées'], ['Sans écho'], ['% pleines']], X.parLot);
   doc.section('Échos par semaine'); tableau([['Semaine'], ['Période'], ['Échos']], X.semaines);
-  doc.section('Détail par brebis', X.detail.length + ' brebis'); tableau([['N° court'], ['Millésime'], ['Âge'], ['Résultat'], ['Dernière écho'], ['Type'], ['Stade / cas'], ['Comptage'], ['Cas particulier'], ['Lots', 130], ['Avant MB']], X.detail.map(r => r.slice(0, 10).concat([r[10] === 'Avant mise bas' ? 'Avant MB' : ''])), 8);
+  doc.section('Détail par brebis', X.detail.length + ' brebis'); tableau([['N° court'], ['Millésime'], ['Âge'], ['Résultat'], ['Dernière écho'], ['Type'], ['Stade / cas'], ['Comptage'], ['Cas particulier'], ['Lots', 130], ['Avant MB']], X.detail.map(r => [r[0] + (r[11] === 'Présente' ? '' : ' (' + r[11].toLowerCase() + ')')].concat(r.slice(1, 10), [r[10] === 'Avant mise bas' ? 'Avant MB' : ''])), 8);
   return doc.fin();
 }
 // Onglet Historique : journal de TOUTES les échos (toutes brebis, toutes campagnes) : n° court (n° d'ordre à défaut), date, campagne (« — » pour les anciennes échos sans campagne), résultat avec comptage

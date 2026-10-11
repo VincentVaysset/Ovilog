@@ -63,16 +63,16 @@ const calc = (F) => pc.evaluate(F => { const d = donneesEchosPc(F); return { R: 
 const accueil = await pc.evaluate(() => JSON.stringify(repartitionEchoAccueil()));
 const sans = await calc({});
 eq(JSON.stringify(sans.R), accueil, 'sans filtre, le PC donne EXACTEMENT les chiffres de la carte de l\'accueil');
-eq([sans.R.total, sans.R.pleine, sans.R.vide, sans.R.videDefinitive, sans.R.cas, sans.R.sans], [15, 9, 1, 1, 2, 2], 'répartition : 15 brebis actives (la vendue n\'est pas comptée)');
-eq(sans.R.stades, { 'Début': 1, 'Milieu': 2, 'Fin': 3, 'IA': 1, 'Retour 1': 0, 'Retour 2': 0, 'Tardive': 0, nonPrecise: 2 }, 'stades des pleines');
-eq(sans.R.comptage, { un: 3, deux: 2, troisEtPlus: 2, sans: 2 }, 'comptage des pleines : 2 = 2 + Double ; 3 et + = 3 + « 4 et plus »');
+eq([sans.R.total, sans.R.pleine, sans.R.vide, sans.R.videDefinitive, sans.R.cas, sans.R.sans], [16, 10, 1, 1, 2, 2], 'répartition : 16 brebis (la brebis vendue X garde son résultat figé : Pleine ; une brebis sortie sans écho n\'est pas comptée)');
+eq(sans.R.stades, { 'Début': 1, 'Milieu': 2, 'Fin': 3, 'IA': 1, 'Retour 1': 0, 'Retour 2': 0, 'Tardive': 0, nonPrecise: 3 }, 'stades des pleines');
+eq(sans.R.comptage, { un: 3, deux: 2, troisEtPlus: 2, sans: 3 }, 'comptage des pleines : 2 = 2 + Double ; 3 et + = 3 + « 4 et plus »');
 console.log('OK 1 noyau commun : parité avec l\'accueil, règle écho postérieure à la mise bas, Vide définitive séparée.');
 
 // ================================================================ 2. « Par lot » : monte naturelle, deux lots, brebis dans deux lots, lots de recherche et anciens exclus, Brebis uniques
-eq(sans.parLot, [['Monte naturelle', 'Naturelle', 9, 5, 0, 1, 2, 1, 56], ['IA septembre', 'IA', 4, 3, 1, 0, 0, 0, 75], ['Éponge août', 'Éponge', 3, 2, 0, 0, 0, 1, 67]],
+eq(sans.parLot, [['Monte naturelle', 'Naturelle', 10, 6, 0, 1, 2, 1, 60], ['IA septembre', 'IA', 4, 3, 1, 0, 0, 0, 75], ['Éponge août', 'Éponge', 3, 2, 0, 0, 0, 1, 67]],
   'Par lot : P2 est dans IA septembre ET Éponge août (comptée dans chacun) ; le lot de recherche et le lot de 2024 n\'apparaissent pas');
-check(sans.parLot.reduce((n, g) => n + g[2], 0) === 16 && sans.R.total === 15, 'somme des lots (16) > brebis uniques (15) : une brebis dans deux lots');
-eq((await calc({ lot: 'mn' })).n, 9, 'filtre Lot « Monte naturelle » : les brebis dans aucun lot de reproduction');
+check(sans.parLot.reduce((n, g) => n + g[2], 0) === 17 && sans.R.total === 16, 'somme des lots (17) > brebis uniques (16) : une brebis dans deux lots');
+eq((await calc({ lot: 'mn' })).n, 10, 'filtre Lot « Monte naturelle » : les brebis dans aucun lot de reproduction');
 eq((await calc({ lot: 'IA1' })).R.total, 4, 'filtre Lot : les brebis du lot');
 eq((await calc({ lot: 'EP1' })).R.total, 3, 'filtre Lot : une brebis qui est aussi dans un autre lot est retenue');
 console.log('OK 2 Par lot : monte naturelle, lots IA / Éponge, brebis dans deux lots, Brebis uniques.');
@@ -87,14 +87,14 @@ eq([apres.R.total, apres.R.sans, apres.R.videDefinitive], [15, 14, 1], 'période
 const juillet = await calc({ au: '2026-07-31' });
 eq([juillet.R.pleine, juillet.R.videDefinitive, juillet.R.sans, juillet.R.stades.Milieu, juillet.R.stades.nonPrecise], [2, 1, 12, 1, 1], 'période jusqu\'au 31/07 : seules les échos de juillet (T1, T2)');
 const constat = await calc({ type: 'constat' });
-eq([constat.R.pleine, constat.R.vide, constat.R.videDefinitive, constat.R.sans], [3, 2, 1, 9], 'type Constat : seules les échos de constat sont candidates');
+eq([constat.R.pleine, constat.R.vide, constat.R.videDefinitive, constat.R.sans], [4, 2, 1, 9], 'type Constat : seules les échos de constat sont candidates');
 const stades = await calc({ type: 'stades' });
 eq(stades.R.total, 15, 'type Stades : population inchangée');
 console.log('OK 3 filtres campagne, période, type.');
 
 // ================================================================ 4. échos par semaine : semaine ISO, consécutives, jusqu'à la dernière avec échos
-eq(sans.semaines, [[27, 2], [28, 0], [29, 0], [30, 0], [31, 15]], 'échos par semaine (S27 à S31)');
-eq(sans.nbEchos, 17, 'nombre d\'échos');
+eq(sans.semaines, [[27, 2], [28, 0], [29, 0], [30, 0], [31, 16]], 'échos par semaine (S27 à S31)');
+eq(sans.nbEchos, 18, 'nombre d\'échos');
 eq(await pc.evaluate(() => [lundiSemaineIso('2026-08-01'), numeroSemaineIso('2026-07-27'), lundiSemaineIso('2026-01-01'), numeroSemaineIso(lundiSemaineIso('2026-01-01')), lundiSemaineIso('2027-01-03'), numeroSemaineIso(lundiSemaineIso('2027-01-03'))]),
   ['2026-07-27', 31, '2025-12-29', 1, '2026-12-28', 53], 'semaines ISO (dont le passage d\'année)');
 console.log('OK 4 échos par semaine.');
@@ -133,14 +133,14 @@ const T = await pc.evaluate(() => ({
   semaines: [...document.querySelectorAll('.ep-cl span')].map(x => x.textContent), colonnes: [...document.querySelectorAll('.ep-cols div')].map(d => d.firstChild.textContent),
   onglets: [...document.querySelectorAll('#ep-onglets button')].map(b => b.textContent), thFond: getComputedStyle(document.querySelector('table.ep-table th')).backgroundColor, thTexte: getComputedStyle(document.querySelector('table.ep-table th')).color,
   alt: [...document.querySelectorAll('.ep-g2 table tbody tr')].map(r => getComputedStyle(r.children[1]).backgroundColor) }));
-eq(T.tuiles.map(t => t.slice(0, 3)), [['Pleines', '9', '60 % des brebis'], ['Vides', '1', 'à repasser à l\'écho'], ['Vides définitives', '1', 'campagne 2027'], ['Avortées / pseudo.', '2', 'cas particuliers'], ['Sans échographie', '2', 'sur 15 brebis']], 'cinq tuiles = chiffres de l\'accueil');
+eq(T.tuiles.map(t => t.slice(0, 3)), [['Pleines', '10', '63 % des brebis'], ['Vides', '1', '1 à repasser à l\'écho'], ['Vides définitives', '1', 'campagne 2027'], ['Avortées / pseudo.', '2', 'cas particuliers'], ['Sans échographie', '2', 'sur 16 brebis']], 'cinq tuiles = chiffres de l\'accueil');
 eq(T.tuiles.map(t => t[3]), ['rgb(47, 110, 68)', 'rgb(163, 58, 49)', 'rgb(163, 58, 49)', 'rgb(181, 112, 28)', 'rgb(94, 91, 71)'], 'filets des tuiles : vert, rouge, rouge, ambre, gris');
-eq(T.anneau, ['Pleine 9 · 60 %', 'Vide 1 · 7 %', 'Vide définitive 1 · 7 %', 'Avortée / pseudo. 2 · 13 %', 'Sans échographie 2 · 13 %'], 'légende de l\'anneau');
-eq([T.centre, T.cercles], [['15', 'brebis'], 5], 'anneau SVG : total au centre, 5 segments');
-eq(T.stades, ['Début 1', 'Milieu 2', 'Fin 3', 'IA 1', 'Retour 1 0', 'Retour 2 0', 'Tardive 0', 'Stade non précisé 2'], 'pleines par stade');
-eq(T.comptage, ['1 agneau 3 (33 %)', '2 agneaux 2 (22 %)', '3 agneaux et + 2 (22 %)', 'Sans comptage 2 (22 %)'], 'pleines par comptage (1, 2, 3 et +, sans comptage)');
-eq(T.lots, ['Monte naturelle|Naturelle|9|5|0|56 %', 'IA septembre|IA|4|3|1|75 %', 'Éponge août|Éponge|3|2|0|67 %', 'Brebis uniques||15|9|1|60 % (pied)'], 'Par lot : monte naturelle, lots IA / Éponge, brebis dans deux lots, Brebis uniques en pied');
-eq([T.semaines, T.colonnes], [['S27', 'S28', 'S29', 'S30', 'S31'], ['2', '0', '0', '0', '15']], 'histogramme Échos par semaine');
+eq(T.anneau, ['Pleine 10 · 63 %', 'Vide 1 · 6 %', 'Vide définitive 1 · 6 %', 'Avortée / pseudo. 2 · 13 %', 'Sans échographie 2 · 13 %'], 'légende de l\'anneau');
+eq([T.centre, T.cercles], [['16', 'brebis'], 5], 'anneau SVG : total au centre, 5 segments');
+eq(T.stades, ['Début 1', 'Milieu 2', 'Fin 3', 'IA 1', 'Retour 1 0', 'Retour 2 0', 'Tardive 0', 'Stade non précisé 3'], 'pleines par stade');
+eq(T.comptage, ['1 agneau 3 (30 %)', '2 agneaux 2 (20 %)', '3 agneaux et + 2 (20 %)', 'Sans comptage 3 (30 %)'], 'pleines par comptage (1, 2, 3 et +, sans comptage)');
+eq(T.lots, ['Monte naturelle|Naturelle|10|6|0|60 %', 'IA septembre|IA|4|3|1|75 %', 'Éponge août|Éponge|3|2|0|67 %', 'Brebis uniques||16|10|1|63 % (pied)'], 'Par lot : monte naturelle, lots IA / Éponge, brebis dans deux lots, Brebis uniques en pied');
+eq([T.semaines, T.colonnes], [['S27', 'S28', 'S29', 'S30', 'S31'], ['2', '0', '0', '0', '16']], 'histogramme Échos par semaine');
 eq([T.onglets, T.thFond, T.thTexte], [['Résultats', 'Historique'], 'rgb(53, 127, 75)', 'rgb(255, 255, 255)'], 'segmenté charte ; tableaux : en-tête vert, texte blanc');
 check(T.alt[0] !== T.alt[1], 'lignes alternées');
 // mise en page (retouches) : noms de lot sur une ligne sans rien couper dans « Par lot » ; cartes du haut alignées en haut, non étirées
@@ -165,13 +165,13 @@ console.log('OK 7 Résultats : tuiles, anneau, stades, comptage, par lot, échos
 await pc.selectOption('#ep-f-lot', 'EP1');
 eq(await pc.evaluate(() => [document.querySelector('.ep-tuile .reg-tuile-v').textContent, document.querySelectorAll('#ep-detail-corps tbody tr').length]), ['2', 3], 'filtre Lot : Éponge août (3 brebis, 2 pleines)');
 await pc.selectOption('#ep-f-lot', 'mn');
-eq(await pc.evaluate(() => document.querySelectorAll('#ep-detail-corps tbody tr').length), 9, 'filtre Lot : Monte naturelle');
+eq(await pc.evaluate(() => document.querySelectorAll('#ep-detail-corps tbody tr').length), 10, 'filtre Lot : Monte naturelle');
 await pc.click('#ep-reinit');
 await pc.selectOption('#ep-f-campagne', '2027');
 eq(await pc.evaluate(() => [...document.querySelectorAll('.ep-tuile .reg-tuile-v')].map(x => x.textContent)), ['0', '0', '0', '0', '15'], 'filtre Campagne 2028 (2027 en interne) : aucune écho -> tout « Sans échographie »');
 await pc.click('#ep-reinit');
 await pc.selectOption('#ep-f-type', 'constat');
-eq(await pc.evaluate(() => [...document.querySelectorAll('.ep-tuile .reg-tuile-v')].map(x => x.textContent)), ['3', '2', '1', '0', '9'], 'filtre Type Constat');
+eq(await pc.evaluate(() => [...document.querySelectorAll('.ep-tuile .reg-tuile-v')].map(x => x.textContent)), ['4', '2', '1', '0', '9'], 'filtre Type Constat');
 await pc.click('#ep-reinit');
 await pc.fill('#ep-f-du', '2026-08-02'); await pc.dispatchEvent('#ep-f-du', 'change');
 eq(await pc.evaluate(() => [...document.querySelectorAll('.ep-tuile .reg-tuile-v')].map(x => x.textContent)), ['0', '0', '1', '0', '14'], 'filtre Du 02/08 : plus aucune écho candidate (la vide définitive reste séparée)');
@@ -202,9 +202,9 @@ await pc.evaluate(() => {
   for (let i = 0; i < 12; i++) DB.brebis.push({ id: 'Z' + i, eid: eid(300 + i), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] });
   window.__avant = JSON.stringify(DB); window.__saves = 0; render('echo-rapide');
 });
-eq(await pc.evaluate(() => [document.querySelectorAll('#ep-detail-corps tbody tr').length, document.querySelector('.ep-ft').textContent.replace(/\s+/g, ' ').trim()]), [20, '1 à 20 sur 27Voir les 20 suivantes'], 'détail paginé par 20');
+eq(await pc.evaluate(() => [document.querySelectorAll('#ep-detail-corps tbody tr').length, document.querySelector('.ep-ft').textContent.replace(/\s+/g, ' ').trim()]), [20, '1 à 20 sur 28Voir les 20 suivantes'], 'détail paginé par 20');
 await pc.click('#ep-plus');
-eq(await pc.evaluate(() => [document.querySelectorAll('#ep-detail-corps tbody tr').length, !!document.getElementById('ep-plus')]), [27, false], '« Voir les 20 suivantes »');
+eq(await pc.evaluate(() => [document.querySelectorAll('#ep-detail-corps tbody tr').length, !!document.getElementById('ep-plus')]), [28, false], '« Voir les 20 suivantes »');
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'l\'affichage et les filtres n\'écrivent rien');
 await pc.fill('#ep-q', '8001');
 await pc.click('#ep-detail-corps .ep-edit');
@@ -260,14 +260,14 @@ await pc.evaluate(() => {
 await pc.click('#ep-export-xlsx'); await pc.waitForTimeout(100);
 const xl = await pc.evaluate(() => window.__xlsx[0]);
 eq(xl.map(f => f.name), ['Résumé', 'Détail'], 'Excel : deux feuilles');
-eq(xl[1].rows[0], ['N° court', 'Millésime', 'Âge', 'Résultat', 'Dernière écho', 'Type', 'Stade / cas', 'Comptage', 'Cas particulier', 'Lots', 'Avant mise bas'], 'Excel Détail : colonnes d\'écho (date, type, résultat, comptage, cas particulier, lots)');
-eq(xl[1].rows.length, 16, 'Excel Détail : toutes les brebis de la vue (15 + en-tête), pas seulement 20 lignes');
+eq(xl[1].rows[0], ['N° court', 'Millésime', 'Âge', 'Résultat', 'Dernière écho', 'Type', 'Stade / cas', 'Comptage', 'Cas particulier', 'Lots', 'Avant mise bas', 'Statut'], 'Excel Détail : colonnes d\'écho (date, type, résultat, comptage, cas particulier, lots)');
+eq(xl[1].rows.length, 17, 'Excel Détail : toutes les brebis de la vue (16 + en-tête), pas seulement 20 lignes');
 const l8002 = xl[1].rows.find(r => r[0] === '8002'), lMB = xl[1].rows.find(r => r[3] === 'Sans échographie' && r[10] === 'Avant mise bas'), l8003 = xl[1].rows.find(r => r[0] === '8003');
-eq(l8002, ['8002', 2018, 8, 'Pleine', '01-08-2026', 'Stades', 'Milieu', '2 et +', '', 'IA septembre, Éponge août', ''], 'Excel : ligne d\'une brebis dans deux lots, Double = « 2 et + »');
+eq(l8002, ['8002', 2018, 8, 'Pleine', '01-08-2026', 'Stades', 'Milieu', '2 et +', '', 'IA septembre, Éponge août', '', 'Présente'], 'Excel : ligne d\'une brebis dans deux lots, Double = « 2 et + »');
 eq([l8003[7], l8003[8]], ['3 et +', 'Parasitisme'], 'Excel : « 3 et + » et cas particulier');
 check(!!lMB && lMB[4] === '01-08-2026', 'Excel : « Avant mise bas » avec la date de l\'écho d\'avant');
 const txt = xl[0].rows.map(r => r.join(' | '));
-check(txt.some(r => /^Filtres \| Campagne : toutes/.test(r)) && txt.some(r => /^Pleine \| 9 \| 60 %/.test(r)) && txt.some(r => /^Brebis uniques \| {2}\| 15 \| 9/.test(r)) && txt.some(r => /^S31 \| semaine du 27-07-2026 \| 15/.test(r)) && txt.some(r => /^Début \| 1 \| 7 %/.test(r)) && txt.some(r => /^3 agneaux et \+ \| 2 \| 22 %/.test(r)), 'Excel Résumé : filtres, répartitions, par lot (Brebis uniques), échos par semaine : ' + txt.slice(0, 12).join(' / '));
+check(txt.some(r => /^Filtres \| Campagne : toutes/.test(r)) && txt.some(r => /^Pleine \| 10 \| 63 %/.test(r)) && txt.some(r => /^Brebis uniques \| {2}\| 16 \| 10/.test(r)) && txt.some(r => /^S31 \| semaine du 27-07-2026 \| 16/.test(r)) && txt.some(r => /^Début \| 1 \| 6 %/.test(r)) && txt.some(r => /^3 agneaux et \+ \| 2 \| 20 %/.test(r)), 'Excel Résumé : filtres, répartitions, par lot (Brebis uniques), échos par semaine : ' + txt.slice(0, 12).join(' / '));
 // la vue filtrée (lot + recherche du détail) est exportée
 await pc.selectOption('#ep-f-lot', 'EP1'); await pc.fill('#ep-q', '8002');
 await pc.evaluate(() => { window.__xlsx = []; });
@@ -306,7 +306,7 @@ const r = spawnSync('python3', ['-I', '-c', PY, f], { encoding: 'utf8' });
 check(r.status === 0, 'lecture du PDF : ' + r.stderr);
 const P = JSON.parse(r.stdout), TXT = P.txt.join('\n');
 check(P.pages >= 2 && P.verts >= 6, 'PDF : plusieurs pages, en-têtes de tableau verts #357f4b (' + P.verts + ' éléments)');
-for (const motif of ['Échographies · résultats', 'Campagne : toutes · 15 brebis actives', 'Pleines', 'Vides définitives', 'Sans échographie', 'Résultat', 'Pleines par stade', 'Pleines par comptage', 'Par lot', 'Brebis uniques', 'Échos par semaine', 'Détail par brebis', 'Avant MB : dernière écho antérieure à la dernière mise bas', 'IA septembre, Éponge août', 'Page 1/' + P.pages, 'Page ' + P.pages + '/' + P.pages, 'Ovilog · Échographies · résultats'])
+for (const motif of ['Échographies · résultats', 'Campagne : toutes · 16 brebis comptées (résultat figé)', 'Pleines', 'Vides définitives', 'Sans échographie', 'Résultat', 'Pleines par stade', 'Pleines par comptage', 'Par lot', 'Brebis uniques', 'Échos par semaine', 'Détail par brebis', 'Avant MB : dernière écho antérieure à la dernière mise bas', 'IA septembre, Éponge août', 'Page 1/' + P.pages, 'Page ' + P.pages + '/' + P.pages, 'Ovilog · Échographies · résultats'])
   check(TXT.includes(motif), 'PDF contient « ' + motif + ' »');
 // page du détail : en-têtes complets (aucune troncature « … »), « Comptage » en entier, dernière colonne « Avant MB » + note en pied de page
 check(!TXT.includes('…') && !TXT.includes('...'), 'PDF : aucune troncature (« … ») dans le texte');
