@@ -4,6 +4,7 @@
 import { chromium } from 'playwright';
 import { readFileSync } from 'fs';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
+const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + ' : ' + JSON.stringify(a) + ' attendu ' + JSON.stringify(b));
 const browser = await chromium.launch(LAUNCH);
@@ -114,6 +115,21 @@ await page.waitForFunction(() => document.getElementById('app').textContent.incl
   check(await page.evaluate(() => { const t = [...document.querySelectorAll('#app div')].find(d => /^Conflits à trancher \(\d+\)$/.test(d.textContent.trim()) && d.children.length === 0); return !!t && t.nextElementSibling && t.nextElementSibling.classList.contains('info'); }), 'Conflits à trancher : la ligne suit immédiatement le titre'); }
 check(await page.evaluate(() => window.__saves === 0), 'groupe 5 : aucune écriture');
 console.log('OK groupe 5 : première configuration (texte sous le champ), sept écrans d\'import sans bulle, conflits d\'import (ligne d\'information).');
+
+// ================================================================ groupe 6 : lecteur Bluetooth (Changer de lecteur, Diagnostic) et nettoyage final
+await page.evaluate(() => {
+  window.Capacitor = { Plugins: { BluetoothSerial: new Proxy({}, { get: () => async () => ({ devices: [], connected: false, granted: true }) }) } };
+  ouvrirChangerLecteur();
+});
+check(await page.evaluate(() => !!document.getElementById('overlay-changer-lecteur') && document.getElementById('overlay-changer-lecteur').textContent.includes('Changer de lecteur') && !document.querySelector('#overlay-changer-lecteur .info-bulle-btn') && !document.getElementById('overlay-changer-lecteur').textContent.includes('❔')), 'Changer de lecteur : fenêtre ouverte, sans bulle « ? »');
+await page.evaluate(() => { document.getElementById('overlay-changer-lecteur').remove(); btDiag.frames = [{ t: 1, hex: '0A', ascii: 'a' }]; btDiag.paired = [{ name: 'Allflex', address: 'AA:BB' }]; render('diag-bluetooth'); });
+{ const e = await sansBulle('Diagnostic Bluetooth'); eq(e.infos, [], 'Diagnostic Bluetooth : aucune ligne d\'information'); }
+check(await page.evaluate(() => document.getElementById('app').textContent.includes('Trames reçues (1)')), 'Diagnostic Bluetooth : le titre « Trames reçues » reste, sans bulle');
+// nettoyage final : plus aucune bulle dans le code
+check(!/infoBulleHtml|INFO_BULLE_TEXTES|wireInfoBulles|afficherInfoBulle|info-bulle-btn|❔/.test(html), 'le code n\'a plus aucun infoBulleHtml, ni registre de textes, ni pictogramme « ❔ »');
+check(await page.evaluate(() => typeof infoBulleHtml === 'undefined' && typeof wireInfoBulles === 'undefined' && typeof infoLigneHtml === 'function'), 'infoBulleHtml et wireInfoBulles n\'existent plus ; infoLigneHtml reste');
+check(await page.evaluate(() => window.__saves === 0), 'groupe 6 : aucune écriture');
+console.log('OK groupe 6 : lecteur Bluetooth sans bulle ; le code n\'a plus aucune bulle « ? ».');
 
 await browser.close();
 console.log('\nTOUS LES TESTS « BULLES ? » SONT PASSÉS.');

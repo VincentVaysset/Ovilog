@@ -1,6 +1,6 @@
 # Écrans à migrer vers la charte graphique
 
-Relevé en lecture seule (aucun écran modifié) des endroits qui utilisent encore l'ancien style gris, un tableau « tableur » de l'ancien gabarit, une bulle d'aide « ? » ou des couleurs écrites en dur hors de la charte (voir la section « Charte graphique » de `CLAUDE.md`). Méthode : analyse de chaque fonction de rendu de `www/index.html` (couleurs `#rrggbb` absentes de la charte, gabarits `REGISTRE_TH/TD` et `table-desktop`, `infoBulleHtml`, fonds gris `#f0efe9`, `#f7f5ee`, `#f6f3ea`, `--gray-bg`).
+Relevé en lecture seule (aucun écran modifié) des endroits qui utilisent encore l'ancien style gris, un tableau « tableur » de l'ancien gabarit, une bulle d'aide « ? » (toutes supprimées, voir la section 4) ou des couleurs écrites en dur hors de la charte (voir la section « Charte graphique » de `CLAUDE.md`). Méthode : analyse de chaque fonction de rendu de `www/index.html` (couleurs `#rrggbb` absentes de la charte, gabarits `REGISTRE_TH/TD` et `table-desktop`, `infoBulleHtml`, fonds gris `#f0efe9`, `#f7f5ee`, `#f6f3ea`, `--gray-bg`).
 
 Les écrans déjà conformes (non listés) : Production laitière (Tank, Qualité, Bilan économique), Paramètres, Déclaration annuelle, Calendrier, Inventaire (PC, mobile, PDF), Registre d'élevage (PC, mobile, PDF), Contrôle laitier (mobile), Bilan de campagne mobile (Brebis à régulariser, Bilan de reproduction), Mouvements d'animaux (mobile : liste et « Nouveau mouvement ») et tous les PDF.
 
@@ -23,8 +23,9 @@ Reste à faire : `.table-desktop` (en-tête gris-beige `#efe9da` au lieu du vert
 ## 3. Écrans avec tableau de l'ancien gabarit (à passer en cartes sur mobile, tableau charte sur PC)
 `REGISTRE_TH` / `REGISTRE_TD` et `table-desktop` : Historique des échographies (8 usages), Ordonnances, Sous délai d'attente, Mise bas rapide (PC), Mouvements passés / traitements collectifs (historiques), tableau du carnet sanitaire.
 
-## 4. Bulles d'aide « ? » (`infoBulleHtml`) à remplacer par une ligne d'information
-Ajout d'agnelage, Échographie rapide, Historique des échos, Mise bas rapide, Liste en série, Agnelles, Lot de recherche, Lot de réforme, critères d'échographies mobile, Mises à jour d'inventaire (bipage), Contrôle de lot (délai), Gérer les produits, Ordonnances, Sous délai d'attente, Mouvements collectifs (historique, 2), Traitements collectifs (historique, 2), Première configuration, Changer de lecteur, Diagnostic Bluetooth (2), Bilan de lactation mobile, Import contrôle laitier SIEOL (4), Import correspondance SIEOL, Import nouveaux animaux, Import lactation modèle, Import contrôle laitier modèle, Import bilan lactation, options de campagne des échographies.
+## 4. Bulles d'aide « ? » : terminé
+Les 31 bulles « ? » (`infoBulleHtml`) ont été supprimées de tous les écrans ; la fonction, son registre de textes et la fenêtre d'aide n'existent plus (vérifié par `test_info_bulles`). Chaque texte est conservé tel quel, écran par écran, dans `docs/manuel_aides_ecrans.md` (futur manuel d'utilisation), avec la décision prise pour lui.
+Reste à l'écran, seulement quand elle évite une erreur de saisie, un effet inattendu ou une perte de données, une ligne d'information courte (`infoLigneHtml`, classe `.info`, 13 px, `#5e5b47`) : Campagne concernée (ajout d'écho et saisie rapide), critères d'échographie des lots, recherche en bergerie, Sous délai d'attente, Contrôle de lot, Traitements collectifs (suppression), Conflits à trancher (import SIEOL) ; et un texte sous le champ « Type de suivi laitier » (Première configuration).
 
 ## 5. En-tête et PDF
 - Le vert de l'en-tête et du bouton principal (`--primary`) est aligné sur la charte (`#357f4b`) ; l'ancienne valeur était `#3c8a55`.
