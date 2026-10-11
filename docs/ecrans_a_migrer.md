@@ -5,6 +5,7 @@
 ## 1. Déjà à la charte
 
 - **Socle global** : onglets `.tab-bar` / `.fiche-tabs` / pistes de barres / badges neutres en `#efe9da`, texte secondaire `#5e5b47`, rouge unique `#a33a31`, variables sémantiques alignées sur `--ch-*`, vert d'en-tête et bouton principal `#357f4b`.
+- **Gabarit PC commun** : champs, boutons, lignes de tableau, titres de section, titre unique dans le bandeau, pleine largeur (24 px), exports « Export Excel » / « Export PDF », menu sur une ligne (`test_gabarit_pc`) ; **Accueil PC** refait d'après la maquette (`test_accueil_pc`).
 - **Tableaux PC** (un seul bloc CSS pour `.pc-t`, `.table-desktop`, `.brd-t`, `.rs-t`, plus `.inv-table` et `.ep-table`) : en-tête vert `#357f4b` à texte blanc gras, lignes alternées blanc / `#f6f1e4`, 1re colonne en vert foncé gras, coins arrondis, survol vert pastel. 34 tableaux sur 19 écrans PC vérifiés : Tri des agnelles, Lots, Chantier de tri (étape 2, lot de reproduction), Mouvements d'animaux et Mouvements passés, Carnet sanitaire, Produits et délais, Ordonnances, Sous délai d'attente, Contrôle laitier, Registre, Inventaire, Échographies, Mise bas rapide, Bilan de campagne, Paramètres › Imports.
 - **Chantier de tri PC** : onglets (Lots / Tri des agnelles, onglets de critères) en pastille blanche sur fond `#efe9da` ; bandeau d'étapes en pastilles de la charte ; puces de filtre blanches à contour `#d9cfb8`, actives en vert pastel `#e3f3e6` à texte `#24613a` (variantes ambre, rouge, bleu, gris aux tons pastel) ; tableaux en en-tête vert.
 - **Police** : Roboto en premier dans la pile (corps, boutons, champs), sur toute l'application ; Roboto est déjà la police native d'Android. Roboto est embarquée dans le fichier (sous-ensemble latin 400, 500, 700 en woff2, 86 Ko en base64), donc identique sur PC sans réseau.
@@ -13,18 +14,8 @@
 
 ## 2. Reste à faire, classé par effort
 
-### XS — couleurs en dur et résidus (chantier « XS + PDF », à venir)
-| Où | Couleurs hors charte |
-|---|---|
-| Accueil PC (`accueilDesktopHtml`) | `#c7dcea` |
-| Barres des pages PC (`pcBarres`) | `#cfe3d5`, `#eb6834` |
-| Bilan de lactation PC (`bilanLactationDesktopHtml`) | `#cfe3d5` |
-| Carte Tank (`plTankHtml`) | `#b9d4ea` |
-| Brebis à régulariser PC (`bilanARegulariserDesktopHtml`) | `#6c8ebf`, `#e8b38f`, `#eb6834` |
-| Contrôle laitier mobile (`renderControleLaitier`, `carteSansControleLaitierHtml`) | `#a9cdb8`, `#eb6834`, `#e8c88a`, `#f4f4f4`, `#fbe3df` |
-| Ajout d'échographie (`renderAddEcho`) | `#add` |
-| Ancien Bilan économique PC (`bilanEconomiqueDesktopHtml`) | `#a9cdb8` (code probablement mort, remplacé par Production laitière : à supprimer après vérification) |
-| CSS résiduel | `#faf8f2` (×2), `#fbf1de`, `#e8c88a`, `#8fc4a4`, `#eee`, `#f6c9c1`, `#cfc9b5`, `#8f8b78` |
+### XS — couleurs en dur : terminé (hors PDF)
+Toutes les couleurs hexadécimales hors `:root` et constantes PDF ont été remplacées par les variables `--ch-*` (voir `test_charte_graphique`, section 4). Les graphiques `pcBarres` utilisent `var(--ch-vert-pastel)` / `var(--ch-ambre)`, l'Accueil PC dessine son contrôle laitier en SVG.
 
 **PDF** (même chantier) : le filet vert et les titres de section (`PDF_COULEURS.vert`, `PDF_PL_COUL.vertTitre`) sont encore en `#3c8a55` au lieu de `#357f4b` ; régénération volontaire des PDF de référence.
 
@@ -43,7 +34,7 @@
 - Écrans techniques à faible priorité : Première configuration, connexion, Bluetooth.
 
 ## 3. Prochains chantiers proposés
-1. **XS + PDF** : couleurs en dur et résidus de la section 2 (XS), puis `#357f4b` dans les PDF avec régénération volontaire des références.
+1. **XS + PDF** : `#357f4b` dans les PDF (filet et titres) avec régénération volontaire des références (la partie XS hors PDF est faite).
 2. Tableaux mobiles en cartes (M), puis refontes mobiles (L), dans l'ordre choisi par le propriétaire du projet.
 
 ## 4. Roboto embarquée : terminé
