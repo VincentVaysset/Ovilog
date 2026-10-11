@@ -881,6 +881,7 @@
   table.ep-sm td { height: 40px; } table.ep-table tr.ep-pied td { font-weight: 700; border-top: 2px solid var(--ch-bord); }
   .ep-ft { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--ch-texte2); }
   .ep-tag { font-size: 11px; font-weight: 500; color: var(--ch-texte2); background: var(--ch-onglets); border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
+  .ep-out { height: 44px; border: 1px solid var(--ch-bord-champ); border-radius: 999px; padding: 0 20px; background: var(--ch-carte); font: inherit; font-size: 14px; font-weight: 500; color: var(--ch-texte); cursor: pointer; width: auto; margin: 0; }
   .reg-pastille.rouge-clair { background: var(--ch-rouge-pastel); color: var(--ch-rouge); }
   .ac-cnt.gris { background: var(--ch-onglets); color: var(--ch-texte2); } .ac-cnt.bleu { background: var(--ch-bleu-pastel); color: var(--ch-bleu); } .ac-cnt.rouge { background: var(--ch-rouge-pastel); color: var(--ch-rouge); }
   /* Agneaux mobile (charte) : segmenté, cartes, boutons pilule Vendu / Mort */
@@ -12620,7 +12621,8 @@ function renderEchosPc() {
   } else {
     corps = echoHistoriquePcHtml();
   }
-  app.innerHTML = `<div class="ep" id="pc-echographies"><div class="ep-tb">${onglets}<span class="ep-sp"></span></div>${corps}</div>`;
+  const exports = E.onglet === 'resultats' ? '<button type="button" class="ep-out" id="ep-export-xlsx">Exporter (Excel)</button><button type="button" class="ep-out" id="ep-export-pdf">Exporter (PDF)</button>' : '';
+  app.innerHTML = `<div class="ep" id="pc-echographies"><div class="ep-tb">${onglets}<span class="ep-sp"></span>${exports}</div>${corps}</div>`;
   document.querySelectorAll('#ep-onglets button').forEach(b => { b.onclick = () => { E.onglet = b.dataset.o; renderEchosPc(); }; });
   if (E.onglet === 'resultats') {
     const F = E.F, maj = (cle, v) => { F[cle] = v; E.nb = 20; renderEchosPc(); };
@@ -12635,7 +12637,59 @@ function renderEchosPc() {
     document.getElementById('ep-f-res').onchange = ev => { E.fRes = ev.target.value; redessinerDetail(); };
     document.getElementById('ep-f-compt').onchange = ev => { E.fCompt = ev.target.value; redessinerDetail(); };
     brancherDetailEchosPc(D);
+    document.getElementById('ep-export-xlsx').onclick = () => exporterEchosPcXlsx(D);
+    document.getElementById('ep-export-pdf').onclick = () => saveOrShareBinaryFile('echographies_resultats_' + jourAujourdhuiISO() + '.pdf', buildEchosPcPdfBytes(D), 'application/pdf');
   } else brancherHistoriqueEchosPc();
+}
+/* Exports de l'écran PC « Échographies » (onglet Résultats) : ils portent sur la VUE FILTRÉE (filtres campagne / période / type / lot ; le détail suit aussi la recherche et les filtres résultat et comptage), toutes les lignes
+   et non la page de 20 affichée. Excel : feuille « Résumé » (filtres, tuiles, répartitions, par lot, échos par semaine) et feuille « Détail » (colonnes d'écho : date, type, résultat, comptage, cas particulier, lots).
+   PDF : charte colorée (logo, tuiles, tableaux à en-tête vert et lignes alternées, pied « Page X/Y »). Aucune écriture. */
+function echosPcFiltresTexte() {
+  const F = echosPcEtat.F, S = DB.campagneDebut, lots = lotsReproEchoPc();
+  const parts = ['Campagne : ' + (F.campagne === '' ? 'toutes' : libCampagneAffichee(Number(F.campagne)) + (Number(F.campagne) === S ? ' (en cours)' : Number(F.campagne) === S + 1 ? ' (à venir)' : ''))];
+  if (F.du || F.au) parts.push('Du ' + (F.du ? formatDateFr(F.du) : '…') + ' au ' + (F.au ? formatDateFr(F.au) : '…'));
+  if (F.type !== 'toutes') parts.push('Type : ' + (F.type === 'constat' ? 'Constat' : 'Stades'));
+  if (F.lot) parts.push('Lot : ' + (F.lot === 'mn' ? 'Monte naturelle' : ((lots.find(l => l.id === F.lot) || {}).nom || F.lot)));
+  return parts.join(' · ');
+}
+const ECHO_LIBELLE_CAT = { pleine: 'Pleine', vide: 'Vide', videDef: 'Vide définitive', cas: 'Avortée / pseudogestation', sans: 'Sans échographie' };
+function echosPcSections(D) {
+  const R = D.R, st = R.stades, c = R.comptage, p = n => echoPct(n, R.total);
+  return {
+    tuiles: [['Pleines', R.pleine, p(R.pleine) + ' % des brebis'], ['Vides', R.vide, 'à repasser à l\'écho'], ['Vides définitives', R.videDefinitive, 'campagne ' + libCampagneAffichee(echosPcEtat.F.campagne !== '' ? Number(echosPcEtat.F.campagne) : DB.campagneDebut)], ['Avortées / pseudo.', R.cas, 'cas particuliers'], ['Sans échographie', R.sans, 'sur ' + R.total + ' brebis']],
+    resultat: [['Pleine', R.pleine], ['Vide', R.vide], ['Vide définitive', R.videDefinitive], ['Avortée / pseudogestation', R.cas], ['Sans échographie', R.sans]].map(([l, n]) => [l, n, p(n) + ' %']),
+    stades: [['Début', st['Début']], ['Milieu', st['Milieu']], ['Fin', st['Fin']], ['IA', st['IA']], ['Retour 1', st['Retour 1']], ['Retour 2', st['Retour 2']], ['Tardive', st['Tardive']], ['Stade non précisé', st.nonPrecise]].map(([l, n]) => [l, n, p(n) + ' %']),
+    comptage: [['1 agneau', c.un], ['2 agneaux', c.deux], ['3 agneaux et +', c.troisEtPlus], ['Sans comptage', c.sans]].map(([l, n]) => [l, n, echoPct(n, R.pleine) + ' %']),
+    parLot: D.parLot.map(g => [g.nom, g.mode, g.brebis, g.pleine, g.vide, g.videDef, g.cas, g.sans, g.pctPleines + ' %']).concat([['Brebis uniques', '', R.total, R.pleine, R.vide, R.videDefinitive, R.cas, R.sans, echoPct(R.pleine, R.total) + ' %']]),
+    semaines: D.semaines.map(w => ['S' + w.num, 'semaine du ' + formatDateFr(w.lundi), w.nb]),
+    detail: echoRangeesDetailPc(D).map(r => { const e = r.echo; return [numeroAffichageEcho(r.sheep), r.millesime === null ? '' : r.millesime, r.age === null ? '' : r.age, ECHO_LIBELLE_CAT[r.cat], e && e.date ? formatDateFr(e.date) : '', e ? echoTypeLibelle(e) : '',
+      e ? (e.special || e.stade || '') : '', r.cat === 'pleine' ? libelleComptageEcho(e) : '', e ? (echoLibelleCasEcho(e) === '—' ? '' : echoLibelleCasEcho(e)) : '', r.lots.length ? r.lots.join(', ') : 'Monte naturelle', r.avantMiseBas ? 'Avant mise bas' : '']; })
+  };
+}
+async function exporterEchosPcXlsx(D) {
+  const X = echosPcSections(D);
+  const resume = [['Échographies · résultats'], ['Édité le ' + formatDateFr(jourAujourdhuiISO())], ['Filtres', echosPcFiltresTexte()], ['Brebis actives', D.R.total], [],
+    ['Tuiles'], ...X.tuiles.map(t => [t[0], t[1], t[2]]), [],
+    ['Résultat', 'Brebis', '%'], ...X.resultat, [], ['Pleines par stade', 'Brebis', '% des brebis'], ...X.stades, [], ['Pleines par comptage', 'Brebis', '% des pleines'], ...X.comptage, [],
+    ['Par lot', 'Mode', 'Brebis', 'Pleines', 'Vides', 'Vides définitives', 'Avortées / pseudo.', 'Sans écho', '% pleines'], ...X.parLot, [], ['Échos par semaine', 'Période', 'Échos'], ...X.semaines];
+  const detail = [['N° court', 'Millésime', 'Âge', 'Résultat', 'Dernière écho', 'Type', 'Stade / cas', 'Comptage', 'Cas particulier', 'Lots', 'Avant mise bas'], ...X.detail];
+  const bytes = await buildXlsxWorkbook([{ name: 'Résumé', colWidths: [30, 24, 12, 12, 12, 16, 18, 12, 12], rows: resume }, { name: 'Détail', colWidths: [12, 10, 6, 24, 14, 10, 18, 10, 16, 30, 16], rows: detail }]);
+  await saveOrShareBinaryFile('echographies_resultats_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+function buildEchosPcPdfBytes(D) {
+  const X = echosPcSections(D), doc = pdfProdDoc({ paysage: true }), LARG = 842 - 72;
+  const entete = { fond: pdfHexCouleur(PDF_CHARTE.vert), texte: PDF_COULEURS.blanc }, alterne = [pdfHexCouleur(PDF_CHARTE.ligneAlt), PDF_COULEURS.blanc], premiere = { col: pdfHexCouleur(PDF_CHARTE.vertFonce), gras: true };
+  const tableau = (cols, lignes, taille) => { const somme = cols.reduce((n, k) => n + k[1], 0); doc.tableauCharte({ colonnes: cols.map(k => ({ l: k[0], w: k[1] / somme * LARG })), lignes, entete, alterne, premiere, taille: taille || 9, hLigne: 15, hEntete: 18, vide: '' }); };
+  doc.page('Échographies · résultats', echosPcFiltresTexte() + ' · ' + D.R.total + ' brebis actives', 'Ovilog · Échographies · résultats');
+  const teintes = ['vert', 'rouge', 'rouge', 'ambre'];
+  doc.tuiles(X.tuiles.map((t, i) => teintes[i] ? pdfTuile(teintes[i], t[0], t[1], t[2]) : { label: t[0], valeur: String(t[1]), sous: t[2], fond: PDF_COULEURS.fond, couleur: PDF_PL_COUL.gris, lisere: PDF_PL_COUL.gris, tailleValeur: 20 }));
+  doc.section('Résultat'); tableau([['Résultat', 3], ['Brebis', 1], ['%', 1]], X.resultat);
+  doc.section('Pleines par stade'); tableau([['Stade', 3], ['Brebis', 1], ['% des brebis', 1]], X.stades);
+  doc.section('Pleines par comptage'); tableau([['Comptage', 3], ['Brebis', 1], ['% des pleines', 1]], X.comptage);
+  doc.section('Par lot'); tableau([['Lot', 3], ['Mode', 1.4], ['Brebis', 1], ['Pleines', 1], ['Vides', 1], ['Vides déf.', 1.2], ['Avortées', 1.2], ['Sans écho', 1.2], ['% pleines', 1.2]], X.parLot);
+  doc.section('Échos par semaine'); tableau([['Semaine', 1], ['Période', 3], ['Échos', 1]], X.semaines);
+  doc.section('Détail par brebis', X.detail.length + ' brebis'); tableau([['N° court', 1.1], ['Millésime', 1], ['Âge', 0.7], ['Résultat', 2.3], ['Dernière écho', 1.4], ['Type', 1], ['Stade / cas', 1.5], ['Comptage', 1.3], ['Cas particulier', 1.5], ['Lots', 2.4], ['Avant mise bas', 1.8]], X.detail, 8);
+  return doc.fin();
 }
 // Onglet Historique : journal de TOUTES les échos (toutes brebis, toutes campagnes) : n° court (n° d'ordre à défaut), date, campagne (« — » pour les anciennes échos sans campagne), résultat avec comptage
 // (1, « 2 et + », « 3 et + »), cas particulier, et pastille « Vide définitive » sur la DERNIÈRE écho Vide de la campagne d'une brebis marquée vide définitive pour cette campagne.

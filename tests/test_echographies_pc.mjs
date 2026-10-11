@@ -2,6 +2,10 @@
    égale la dernière saisie, Vide définitive séparée de Vide, Avortée / pseudogestation à part), filtres (campagne, période, type, lot), « Par lot » (brebis dans deux lots, monte naturelle, lots de recherche
    et de réforme exclus, « Brebis uniques »), échos par semaine ; puis l'écran, l'historique, les exports et l'absence de saisie sur PC. Jeu SYNTHÉTIQUE, saveData REMPLACÉ, aucune donnée réelle. */
 import { chromium } from 'playwright';
+import { spawnSync } from 'child_process';
+import { writeFileSync, mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + ' : ' + JSON.stringify(a) + ' attendu ' + JSON.stringify(b));
@@ -224,5 +228,58 @@ await pc.evaluate(() => { render('historique-echo'); });
 await pc.click('#ep-histo-table .ep-del >> nth=0');
 eq(await pc.evaluate(() => [DB.brebis.reduce((n, s) => n + (s.echographies || []).length, 0), window.__saves]), [19, 1], '« Suppr. » retire une écho (une écriture)');
 console.log('OK 10 Historique : n° d\'ordre, campagne, comptage, pastille Vide définitive, filtre par date, Modifier / Suppr.');
+// ================================================================ 11. exports Excel et PDF des résultats (vue filtrée, charte, colonnes d'écho)
+await pc.evaluate(jeu);
+await pc.evaluate(() => {
+  window.__xlsx = []; window.__fich = [];
+  buildXlsxWorkbook = async feuilles => { window.__xlsx.push(feuilles); return new Uint8Array([1, 2, 3]); };
+  saveOrShareBinaryFile = async (nom, bytes, mime) => { let s = ''; for (const x of bytes) s += String.fromCharCode(x); window.__fich.push({ nom, mime, b64: btoa(s) }); };
+  echosPcEtat = { onglet: 'resultats', F: echoFiltresPcVides(), q: '', fRes: '', fCompt: '', nb: 20, histoDate: '' }; render('echo-rapide'); window.__avant = JSON.stringify(DB); window.__saves = 0;
+});
+await pc.click('#ep-export-xlsx'); await pc.waitForTimeout(100);
+const xl = await pc.evaluate(() => window.__xlsx[0]);
+eq(xl.map(f => f.name), ['Résumé', 'Détail'], 'Excel : deux feuilles');
+eq(xl[1].rows[0], ['N° court', 'Millésime', 'Âge', 'Résultat', 'Dernière écho', 'Type', 'Stade / cas', 'Comptage', 'Cas particulier', 'Lots', 'Avant mise bas'], 'Excel Détail : colonnes d\'écho (date, type, résultat, comptage, cas particulier, lots)');
+eq(xl[1].rows.length, 16, 'Excel Détail : toutes les brebis de la vue (15 + en-tête), pas seulement 20 lignes');
+const l8002 = xl[1].rows.find(r => r[0] === '8002'), lMB = xl[1].rows.find(r => r[3] === 'Sans échographie' && r[10] === 'Avant mise bas'), l8003 = xl[1].rows.find(r => r[0] === '8003');
+eq(l8002, ['8002', 2018, 8, 'Pleine', '01-08-2026', 'Stades', 'Milieu', '2 et +', '', 'IA septembre, Éponge août', ''], 'Excel : ligne d\'une brebis dans deux lots, Double = « 2 et + »');
+eq([l8003[7], l8003[8]], ['3 et +', 'Parasitisme'], 'Excel : « 3 et + » et cas particulier');
+check(!!lMB && lMB[4] === '01-08-2026', 'Excel : « Avant mise bas » avec la date de l\'écho d\'avant');
+const txt = xl[0].rows.map(r => r.join(' | '));
+check(txt.some(r => /^Filtres \| Campagne : toutes/.test(r)) && txt.some(r => /^Pleine \| 9 \| 60 %/.test(r)) && txt.some(r => /^Brebis uniques \| {2}\| 15 \| 9/.test(r)) && txt.some(r => /^S31 \| semaine du 27-07-2026 \| 15/.test(r)) && txt.some(r => /^Début \| 1 \| 7 %/.test(r)) && txt.some(r => /^3 agneaux et \+ \| 2 \| 22 %/.test(r)), 'Excel Résumé : filtres, répartitions, par lot (Brebis uniques), échos par semaine : ' + txt.slice(0, 12).join(' / '));
+// la vue filtrée (lot + recherche du détail) est exportée
+await pc.selectOption('#ep-f-lot', 'EP1'); await pc.fill('#ep-q', '8002');
+await pc.evaluate(() => { window.__xlsx = []; });
+await pc.click('#ep-export-xlsx'); await pc.waitForTimeout(100);
+const xl2 = await pc.evaluate(() => window.__xlsx[0]);
+check(/Lot : Éponge août/.test(xl2[0].rows.map(r => r.join(' ')).join(' ')), 'Excel : le filtre Lot figure dans le résumé');
+eq(xl2[1].rows.slice(1).map(r => r[0]).sort(), ['8002'], 'Excel Détail : suit le filtre Lot et la recherche');
+await pc.click('#ep-reinit');
+// PDF : charte colorée, relu avec PyMuPDF
+await pc.evaluate(() => { window.__fich = []; });
+await pc.click('#ep-export-pdf'); await pc.waitForTimeout(300);
+const pdf = await pc.evaluate(() => window.__fich[0]);
+eq([pdf.nom, pdf.mime], ['echographies_resultats_2026-10-03.pdf', 'application/pdf'], 'PDF : nom et type');
+const dir = mkdtempSync(path.join(tmpdir(), 'ovilog-echos-')), f = path.join(dir, 'echos.pdf');
+writeFileSync(f, Buffer.from(pdf.b64, 'base64'));
+const PY = `
+import sys, json, pymupdf
+d = pymupdf.open(sys.argv[1])
+txt = [p.get_text() for p in d]
+verts = 0
+for p in d:
+    for dr in p.get_drawings():
+        c = dr.get('fill')
+        if c and abs(c[0]-53/255) < .01 and abs(c[1]-127/255) < .01 and abs(c[2]-75/255) < .01: verts += 1
+print(json.dumps({ 'pages': len(d), 'txt': txt, 'verts': verts }))
+`;
+const r = spawnSync('python3', ['-I', '-c', PY, f], { encoding: 'utf8' });
+check(r.status === 0, 'lecture du PDF : ' + r.stderr);
+const P = JSON.parse(r.stdout), TXT = P.txt.join('\n');
+check(P.pages >= 2 && P.verts >= 6, 'PDF : plusieurs pages, en-têtes de tableau verts #357f4b (' + P.verts + ' éléments)');
+for (const motif of ['Échographies · résultats', 'Campagne : toutes · 15 brebis actives', 'Pleines', 'Vides définitives', 'Sans échographie', 'Résultat', 'Pleines par stade', 'Pleines par comptage', 'Par lot', 'Brebis uniques', 'Échos par semaine', 'Détail par brebis', 'Avant mise bas', 'IA septembre, Éponge août', 'Page 1/' + P.pages, 'Page ' + P.pages + '/' + P.pages, 'Ovilog · Échographies · résultats'])
+  check(TXT.includes(motif), 'PDF contient « ' + motif + ' »');
+check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'les exports n\'écrivent rien');
+console.log('OK 11 Exports : Excel (Résumé + Détail, colonnes d\'écho, vue filtrée), PDF charte colorée (tuiles, tableaux verts, Page X/Y), aucune écriture.');
 await browser.close();
 console.log('\nTOUS LES TESTS DES CALCULS DE L\'ÉCRAN PC ÉCHOGRAPHIES SONT PASSÉS.');
