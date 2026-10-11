@@ -12637,11 +12637,47 @@ function renderEchosPc() {
     brancherDetailEchosPc(D);
   } else brancherHistoriqueEchosPc();
 }
-// Onglet Historique : journal de toutes les échos (version initiale, complétée à l'étape suivante)
+// Onglet Historique : journal de TOUTES les échos (toutes brebis, toutes campagnes) : n° court (n° d'ordre à défaut), date, campagne (« — » pour les anciennes échos sans campagne), résultat avec comptage
+// (1, « 2 et + », « 3 et + »), cas particulier, et pastille « Vide définitive » sur la DERNIÈRE écho Vide de la campagne d'une brebis marquée vide définitive pour cette campagne.
+function historiquePcLignes() {
+  const lignes = [];
+  DB.brebis.forEach(sheep => {
+    const echos = sheep.echographies || [];
+    // dernière écho Vide (date, puis dernière saisie) par campagne
+    const derniereVide = {};
+    echos.forEach((e, idx) => {
+      if (e && e.stade === 'Vide' && e.campagne !== undefined && e.campagne !== null) {
+        const k = String(e.campagne), cur = derniereVide[k];
+        if (cur === undefined || (e.date || '') >= (echos[cur].date || '')) derniereVide[k] = idx;
+      }
+    });
+    echos.forEach((e, idx) => {
+      if (!e) return;
+      const vd = e.stade === 'Vide' && derniereVide[String(e.campagne)] === idx ? (sheep.videesDefinitives || []).find(v => v && v.campagne === e.campagne) : null;
+      lignes.push({ sheepId: sheep.id, sheep, idx, echo: e, date: e.date || '', vd });
+    });
+  });
+  lignes.sort((x, y) => y.date.localeCompare(x.date) || numeroVisuel(x.sheep.eid).localeCompare(numeroVisuel(y.sheep.eid)));
+  return lignes;
+}
+function historiquePcResultatHtml(r) {
+  const e = r.echo;
+  let pill;
+  if (e.special) pill = `<span class="reg-pastille ambre">${echoHtml(e.special)}</span>`;
+  else if (e.stade === 'Vide') pill = '<span class="reg-pastille rouge-clair">Vide</span>';
+  else if (e.stade === 'Pleine' || !e.stade) pill = `<span class="reg-pastille ${e.stade ? 'vert' : 'gris'}">${e.stade || 'Non précisé'}</span>`;
+  else pill = `<span class="reg-pastille vert">${echoHtml(e.stade)}</span>`;
+  const comptage = !e.special && e.stade !== 'Vide' ? libelleComptageEcho(e) : '—';
+  return pill + (comptage !== '—' ? ` <span class="ep-tag">${comptage}</span>` : '') + (e.parasitisme ? ' <span class="reg-pastille ambre">Parasitisme</span>' : '')
+    + (r.vd ? ` <span class="reg-pastille rouge">Vide définitive · ${libCampagneAffichee(r.vd.campagne)} · ${formatDateFr(r.vd.date)}</span>` : '');
+}
 function echoHistoriquePcHtml() {
-  const E = echosPcEtat, rows = historiqueEchoRows().filter(r => !E.histoDate || r.date === E.histoDate);
-  return `<div class="ep-tb"><input type="date" id="ep-histo-date" class="ep-fld" value="${E.histoDate}" aria-label="Filtrer par date"><button type="button" class="ep-btn" id="ep-histo-toutes">Toutes</button></div>
-    <div class="ep-carte"><div class="ep-tw"><table class="ep-table"><thead><tr><th>N° court</th><th>Date</th><th>Résultat</th><th></th></tr></thead><tbody>${rows.length ? rows.map(r => `<tr><td>${r.courtSieol}</td><td>${formatDateFr(r.date)}</td><td>${r.resultLabel}</td><td><button type="button" class="ep-btn ep-edit" data-id="${r.sheepId}" data-idx="${r.idx}">Modifier</button> <button type="button" class="ep-btn ep-del" data-id="${r.sheepId}" data-idx="${r.idx}">Suppr.</button></td></tr>`).join('') : '<tr><td colspan="4">Aucune échographie ne correspond.</td></tr>'}</tbody></table></div></div>`;
+  const E = echosPcEtat, rows = historiquePcLignes().filter(r => !E.histoDate || r.date === E.histoDate);
+  const corps = rows.length ? rows.map(r => `<tr><td>${numeroAffichageEcho(r.sheep)}</td><td>${r.date ? formatDateFr(r.date) : '—'}</td><td>${r.echo.campagne !== undefined && r.echo.campagne !== null ? libCampagneAffichee(r.echo.campagne) : '—'}</td><td>${historiquePcResultatHtml(r)}</td>
+    <td style="white-space:nowrap;"><button type="button" class="ep-btn ep-edit" data-id="${r.sheepId}" data-idx="${r.idx}">Modifier</button> <button type="button" class="ep-btn ep-del" data-id="${r.sheepId}" data-idx="${r.idx}">Suppr.</button></td></tr>`).join('')
+    : '<tr><td colspan="5" style="text-align:center;color:var(--ch-texte2);height:60px;">Aucune échographie ne correspond.</td></tr>';
+  return `<div class="ep-tb"><input type="date" id="ep-histo-date" class="ep-fld" value="${E.histoDate}" aria-label="Filtrer par date"><button type="button" class="ep-btn" id="ep-histo-toutes">Toutes</button><span class="ep-info" id="ep-histo-compte">${rows.length} échographie${rows.length > 1 ? 's' : ''}</span></div>
+    <div class="ep-tw"><table class="ep-table" id="ep-histo-table"><thead><tr><th>N° court</th><th>Date</th><th>Campagne</th><th>Résultat</th><th></th></tr></thead><tbody>${corps}</tbody></table></div>`;
 }
 function brancherHistoriqueEchosPc() {
   const E = echosPcEtat;

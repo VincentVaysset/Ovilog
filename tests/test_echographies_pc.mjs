@@ -188,5 +188,41 @@ await pc.evaluate(() => { echosPcEtat.q = '8001'; render('echo-rapide'); });
 await pc.click('#ep-detail-corps .ep-del');
 eq(await pc.evaluate(() => [DB.brebis.find(s => s.id === 'P1').echographies.length, window.__saves]), [0, 1], '« Suppr. » retire l\'écho (une écriture, confirmée)');
 console.log('OK 9 pagination, Modifier, Suppr., aucune écriture à l\'affichage.');
+// ================================================================ 10. onglet Historique : n° d'ordre de repli, campagne, comptage, pastille Vide définitive, filtre par date
+await pc.evaluate(jeu);
+await pc.evaluate(() => {
+  const vd = DB.brebis.find(s => s.id === 'VD');
+  vd.echographies.unshift({ date: '2026-06-01', type: 'constat', stade: 'Vide', campagne: 2026 });              // une écho Vide plus ancienne : sans pastille
+  DB.brebis.find(s => s.id === 'N').echographies.push({ date: '2025-05-05', type: 'constat', stade: 'Pleine' });    // ancienne écho sans campagne : « — »
+  window.__avant = JSON.stringify(DB); window.__saves = 0;
+  echosPcEtat = { onglet: 'historique', F: echoFiltresPcVides(), q: '', fRes: '', fCompt: '', nb: 20, histoDate: '' }; render('historique-echo');
+});
+const H = await pc.evaluate(() => ({
+  compte: document.getElementById('ep-histo-compte').textContent, cols: [...document.querySelectorAll('#ep-histo-table th')].map(t => t.textContent),
+  lignes: [...document.querySelectorAll('#ep-histo-table tbody tr')].map(r => [...r.children].slice(0, 4).map(c => c.textContent.replace(/\s+/g, ' ').trim())),
+  thFond: getComputedStyle(document.querySelector('#ep-histo-table th')).backgroundColor, bulles: document.querySelectorAll('#app .info-bulle-btn').length }));
+eq(H.cols, ['N° court', 'Date', 'Campagne', 'Résultat', ''], 'colonnes de l\'historique (avec Campagne)');
+eq(H.compte, '20 échographies', 'toutes les échos de toutes les brebis (la vendue comprise)');
+const ligne = (num, date) => H.lignes.filter(l => l[0] === num && l[1] === date);
+check(ligne('8001', '01-08-2026')[0][3] === 'Début 1' && ligne('8002', '01-08-2026')[0][3] === 'Milieu 2 et +' && ligne('8003', '01-08-2026')[0][3] === 'Fin 3 et + Parasitisme', 'comptage : 1, « 2 et + » (Double), « 3 et + » : ' + JSON.stringify(H.lignes.slice(0, 3)));
+check(H.lignes.some(l => /^n°\d{5}$/.test(l[0])), 'n° d\'ordre à la place d\'un n° court absent (plus de cellule vide) : ' + JSON.stringify(H.lignes.map(l => l[0])));
+check(H.lignes.every(l => l[0] !== ''), 'aucune cellule N° vide');
+eq(H.lignes.filter(l => l[1] === '05-05-2025').map(l => l[2]), ['—'], 'ancienne écho sans campagne : « — »');
+eq(H.lignes.filter(l => l[1] === '01-08-2026')[0][2], '2027', 'campagne de l\'écho (2026 en interne = campagne 2027)');
+const vdl = H.lignes.filter(l => /Vide définitive/.test(l[3]));
+eq(vdl.length, 1, 'pastille « Vide définitive » sur UNE seule ligne : la dernière écho Vide de la campagne');
+check(/Vide Vide définitive · 2027 · 01-10-2026/.test(vdl[0][3]) && vdl[0][1] === '01-08-2026', 'pastille avec campagne et date de marquage, sur l\'écho du 01/08 (pas sur celle du 01/06) : ' + vdl[0].join(' | '));
+check(H.lignes.filter(l => l[1] === '01-06-2026')[0][3] === 'Vide', 'l\'écho Vide plus ancienne n\'a pas la pastille');
+eq([H.thFond, H.bulles], ['rgb(53, 127, 75)', 0], 'tableau charte (en-tête vert), aucune bulle « ? »');
+await pc.fill('#ep-histo-date', '2026-07-01'); await pc.dispatchEvent('#ep-histo-date', 'change');
+eq(await pc.evaluate(() => [document.getElementById('ep-histo-compte').textContent, document.querySelectorAll('#ep-histo-table tbody tr').length]), ['2 échographies', 2], 'filtre par date');
+await pc.click('#ep-histo-toutes');
+eq(await pc.evaluate(() => document.querySelectorAll('#ep-histo-table tbody tr').length), 20, '« Toutes »');
+await pc.click('#ep-histo-table .ep-edit >> nth=0');
+eq(await pc.evaluate(() => currentView), 'add-echo', '« Modifier » ouvre l\'écran de modification existant');
+await pc.evaluate(() => { render('historique-echo'); });
+await pc.click('#ep-histo-table .ep-del >> nth=0');
+eq(await pc.evaluate(() => [DB.brebis.reduce((n, s) => n + (s.echographies || []).length, 0), window.__saves]), [19, 1], '« Suppr. » retire une écho (une écriture)');
+console.log('OK 10 Historique : n° d\'ordre, campagne, comptage, pastille Vide définitive, filtre par date, Modifier / Suppr.');
 await browser.close();
 console.log('\nTOUS LES TESTS DES CALCULS DE L\'ÉCRAN PC ÉCHOGRAPHIES SONT PASSÉS.');
