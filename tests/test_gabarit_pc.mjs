@@ -1,4 +1,4 @@
-/* Gabarit PC commun (CLAUDE.md, « Charte graphique ») : sur les écrans PC, mêmes hauteurs et rayons partout. Section 3 : exports (« Export Excel » en blanc, « Export PDF » en vert, Excel avant PDF, jamais « Exporter … (.xlsx) »). Section 2 : titre unique (le titre de l'écran n'est écrit que dans le bandeau vert, jamais répété dans la page) et contenu pleine largeur (marge de 24 px, plus de colonne plafonnée à 900 / 420 / 520 px). Section 1 (socle) : champs 44 px / rayon 12 ; boutons .btn en pastille ≥ 44 px (32 px dans une cellule de tableau) ; lignes de tableau 48 px (40 px pour les tableaux de synthèse) ; titres de section .pc-sec en 12 px majuscules gris. Jeu SYNTHÉTIQUE (jeuPcEcrans), saveData neutralisé. */
+/* Gabarit PC commun (CLAUDE.md, « Charte graphique ») : sur les écrans PC, mêmes hauteurs et rayons partout. Section 4 : Mouvements d'animaux (pas de bandeau rose : barre neutre, puces en vert pastel, bouton « Valider » vert, ligne ambre pour les sorties définitives Morte / Perte / Autoconsommation). Section 3 : exports (« Export Excel » en blanc, « Export PDF » en vert, Excel avant PDF, jamais « Exporter … (.xlsx) »). Section 2 : titre unique (le titre de l'écran n'est écrit que dans le bandeau vert, jamais répété dans la page) et contenu pleine largeur (marge de 24 px, plus de colonne plafonnée à 900 / 420 / 520 px). Section 1 (socle) : champs 44 px / rayon 12 ; boutons .btn en pastille ≥ 44 px (32 px dans une cellule de tableau) ; lignes de tableau 48 px (40 px pour les tableaux de synthèse) ; titres de section .pc-sec en 12 px majuscules gris. Jeu SYNTHÉTIQUE (jeuPcEcrans), saveData neutralisé. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
 import { jeuPcEcrans } from './lib/jeu_pc_ecrans.mjs';
@@ -70,6 +70,23 @@ for (const [nom, code] of VUES_EXPORTS) {
   if (xl && pdf && Math.abs(xl.y - pdf.y) < 20) check(xl.x < pdf.x, nom + ' : « Export Excel » doit être à gauche de « Export PDF »');
 }
 console.log('OK gabarit PC, exports : ' + nExp + ' boutons d\'export (Excel blanc, PDF vert, Excel avant PDF).');
+// Section 4 : Mouvements d'animaux
+{
+  const lire = () => pc.evaluate(() => { const cs = e => getComputedStyle(e), b = document.getElementById('mv-barre'), amb = document.getElementById('mv-ambre'), v = document.getElementById('mv-valider'), cat = document.querySelector('.mv-cat.selected'), typ = document.querySelector('.mv-type.on');
+    return { barre: cs(b).backgroundColor, bord: cs(b).borderTopWidth, ambreVisible: amb.getBoundingClientRect().height > 0, ambreTxt: amb.textContent, ambreBg: cs(amb).backgroundColor, vertBg: cs(v).backgroundColor, cat: cs(cat).backgroundColor, typ: typ ? cs(typ).backgroundColor : null, rouges: [...document.querySelectorAll('#pc-mouvements *')].filter(e => e.getBoundingClientRect().width > 150 && ['rgb(251, 227, 224)', 'rgb(163, 58, 49)'].includes(cs(e).backgroundColor)).length }; });
+  const VERT = 'rgb(53, 127, 75)', PASTEL = 'rgb(227, 243, 230)', BLANC = 'rgb(255, 255, 255)', AMBRE = 'rgb(251, 238, 215)';
+  for (const [type, ambre] of [['Vente', false], ['Morte', true], ['Perte', true], ['Autoconsommation', true]]) {
+    await pc.evaluate(t => { mvPcEtat = mvPcEtatInitial(); mvPcEtat.type = t; render('mouvement-groupe'); }, type); await pc.waitForTimeout(120);
+    const m = await lire();
+    check(m.barre === BLANC && m.bord === '1px', type + ' : barre de validation neutre (blanc à bord) : ' + m.barre);
+    check(m.vertBg === VERT, type + ' : bouton « Valider » vert : ' + m.vertBg);
+    check(m.cat === PASTEL && m.typ === PASTEL, type + ' : puces catégorie / type en vert pastel : ' + m.cat + ' / ' + m.typ);
+    check(m.rouges === 0, type + ' : plus aucun grand bloc rose ou rouge (' + m.rouges + ')');
+    check(m.ambreVisible === ambre, type + ' : ligne ambre ' + (ambre ? 'visible' : 'absente'));
+    if (ambre) check(m.ambreBg === AMBRE && /Sortie définitive/.test(m.ambreTxt), type + ' : ligne ambre « Sortie définitive » : ' + m.ambreBg + ' / ' + m.ambreTxt);
+  }
+  console.log('OK gabarit PC, Mouvements d\'animaux : barre neutre, puces vert pastel, « Valider » vert, ligne ambre pour Morte / Perte / Autoconsommation seulement.');
+}
 console.log('OK gabarit PC, socle : ' + nChamps + ' champs, ' + nBoutons + ' boutons, ' + nLignes + ' tableaux, ' + nSec + ' titres de section sur ' + VUES_GABARIT.length + ' écrans.');
 await browser.close();
 console.log('\nTOUS LES TESTS « GABARIT PC » SONT PASSÉS.');
