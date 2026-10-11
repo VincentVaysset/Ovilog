@@ -1,36 +1,50 @@
 # Écrans à migrer vers la charte graphique
 
-Relevé en lecture seule (aucun écran modifié) des endroits qui utilisent encore l'ancien style gris, un tableau « tableur » de l'ancien gabarit, une bulle d'aide « ? » (toutes supprimées, voir la section 4) ou des couleurs écrites en dur hors de la charte (voir la section « Charte graphique » de `CLAUDE.md`). Méthode : analyse de chaque fonction de rendu de `www/index.html` (couleurs `#rrggbb` absentes de la charte, gabarits `REGISTRE_TH/TD` et `table-desktop`, `infoBulleHtml`, fonds gris `#f0efe9`, `#f7f5ee`, `#f6f3ea`, `--gray-bg`).
+État de la migration vers la charte (section « Charte graphique » de `CLAUDE.md`), relevé par analyse du code de `www/index.html` et mesure du style réel des écrans PC avec des données synthétiques (`tests/test_tableaux_pc.mjs`, `tests/test_tri_pc_charte.mjs`, `tests/test_charte_graphique.mjs`). Les efforts sont des estimations : XS moins d'une heure, S une demi-journée, M environ un jour, L plusieurs jours. Les écrans mobiles n'ont pas tous été revus un par un à l'écran : leur effort est estimé d'après le code (tableaux, couleurs en dur, formulaires).
 
-Les écrans déjà conformes (non listés) : Production laitière (Tank, Qualité, Bilan économique), Paramètres, Déclaration annuelle, Calendrier, Inventaire (PC, mobile, PDF), Registre d'élevage (PC, mobile, PDF), Contrôle laitier (mobile), Bilan de campagne mobile (Brebis à régulariser, Bilan de reproduction), Mouvements d'animaux (mobile : liste et « Nouveau mouvement ») et tous les PDF.
+## 1. Déjà à la charte
 
-## 1. Styles globaux (CSS)
-Socle aligné sur la charte (chantier « listes Brebis / Béliers / Agneaux / Agnelles ») : fond des onglets (`.tab-bar`, `.fiche-tabs`, pistes de barres, `.badge-muted`, `.pc-pill.neutral`) en `#efe9da` ; lignes alternées / survol en `#f6f1e4` ; `--gray-bg` / `--gray-fg`, `--text-muted` (`#5e5b47`), `--danger` et `--coral-*` (rouge unique `#a33a31`), `--green-*`, `--amber-*`, `--blue-*`, `--indigo-*` (= bleu charte) pointent vers les variables `--ch-*`. Plus aucun ancien gris (`#f0efe9`, `#f0eee6`, `#f7f5ee`, `#f6f3ea`, `#eceae3`) dans le code (vérifié par `test_charte_graphique`).
-Reste à faire : `.table-desktop` (en-tête gris-beige `#efe9da` au lieu du vert `#357f4b` avec texte blanc) pour Mouvements passés, Mise bas rapide, Ordonnances, Sous délai d'attente, tableaux des fiches.
+- **Socle global** : onglets `.tab-bar` / `.fiche-tabs` / pistes de barres / badges neutres en `#efe9da`, texte secondaire `#5e5b47`, rouge unique `#a33a31`, variables sémantiques alignées sur `--ch-*`, vert d'en-tête et bouton principal `#357f4b`.
+- **Tableaux PC** (un seul bloc CSS pour `.pc-t`, `.table-desktop`, `.brd-t`, `.rs-t`, plus `.inv-table` et `.ep-table`) : en-tête vert `#357f4b` à texte blanc gras, lignes alternées blanc / `#f6f1e4`, 1re colonne en vert foncé gras, coins arrondis, survol vert pastel. 34 tableaux sur 19 écrans PC vérifiés : Tri des agnelles, Lots, Chantier de tri (étape 2, lot de reproduction), Mouvements d'animaux et Mouvements passés, Carnet sanitaire, Produits et délais, Ordonnances, Sous délai d'attente, Contrôle laitier, Registre, Inventaire, Échographies, Mise bas rapide, Bilan de campagne, Paramètres › Imports.
+- **Chantier de tri PC** : onglets (Lots / Tri des agnelles, onglets de critères) en pastille blanche sur fond `#efe9da` ; bandeau d'étapes en pastilles de la charte ; puces de filtre blanches à contour `#d9cfb8`, actives en vert pastel `#e3f3e6` à texte `#24613a` (variantes ambre, rouge, bleu, gris aux tons pastel) ; tableaux en en-tête vert.
+- **Police** : Roboto en premier dans la pile (corps, boutons, champs), sur toute l'application ; Roboto est déjà la police native d'Android. Sur un PC sans Roboto installée, la police de repli (Segoe UI) s'affiche tant que Roboto n'est pas embarquée (voir la section 4).
+- **Bulles d'aide « ? »** : les 31 bulles sont supprimées, leurs textes conservés dans `docs/manuel_aides_ecrans.md` ; 7 lignes d'information courtes (`infoLigneHtml`, classe `.info`, 13 px, `#5e5b47`) et un texte sous le champ « Type de suivi laitier » là où elles évitent une erreur ou une perte de données.
+- **Écrans entièrement migrés** : Production laitière (Tank, Qualité, Bilan économique), Paramètres, Déclaration annuelle, Calendrier, Inventaire (PC, mobile, PDF), Registre d'élevage (PC, mobile, PDF), Contrôle laitier (mobile et PC), Bilan de campagne mobile (Brebis à régulariser, Bilan de reproduction), Mouvements d'animaux (mobile : liste et « Nouveau mouvement »), Accueil mobile « Mon troupeau », listes mobiles Brebis / Béliers / Agneaux (Agnelles : couleurs seulement), fiches Brebis / Béliers / Agnelles / Agneaux (PC et mobile), écran PC « Échographies » (consultation), tous les PDF (forme).
 
-## 2. Écrans avec couleurs écrites en dur hors charte
-| Écran (fonction) | Couleurs hors charte | Remarque |
-|---|---|---|
-| Accueil PC (`accueilDesktopHtml`), tuiles du tableau de bord (`dashboardKpiHtml`) | `#c7dcea`, `#eee` | |
-| Bilan de lactation PC (`bilanLactationDesktopHtml`) | `#cfe3d5` | |
-| Bilan économique PC, ancienne version (`bilanEconomiqueDesktopHtml`) | `#a9cdb8`, `#f0efe9` | remplacé par la page Production laitière |
-| Barres des pages PC (`pcBarres`) | `#cfe3d5`, `#eb6834` | |
-| Brebis à régulariser PC (`bilanARegulariserDesktopHtml`) | `#6c8ebf`, `#e8b38f`, `#eb6834` | |
-| Contrôle laitier (`renderControleLaitier`), carte « sans contrôle » (`carteSansControleLaitierHtml`) | `#a9cdb8`, `#eb6834`, `#e8c88a`, `#f4f4f4`, `#fbe3df` | |
-| Tank (carte de tableau de bord, `plTankHtml`) | `#b9d4ea` | |
-| Ajout d'échographie (`renderAddEcho`) | `#add` | |
+## 2. Reste à faire, classé par effort
 
-## 3. Écrans avec tableau de l'ancien gabarit (à passer en cartes sur mobile, tableau charte sur PC)
-`REGISTRE_TH` / `REGISTRE_TD` et `table-desktop` : Historique des échographies (8 usages), Ordonnances, Sous délai d'attente, Mise bas rapide (PC), Mouvements passés / traitements collectifs (historiques), tableau du carnet sanitaire.
+### XS — couleurs en dur et résidus (chantier « XS + PDF », à venir)
+| Où | Couleurs hors charte |
+|---|---|
+| Accueil PC (`accueilDesktopHtml`) | `#c7dcea` |
+| Barres des pages PC (`pcBarres`) | `#cfe3d5`, `#eb6834` |
+| Bilan de lactation PC (`bilanLactationDesktopHtml`) | `#cfe3d5` |
+| Carte Tank (`plTankHtml`) | `#b9d4ea` |
+| Brebis à régulariser PC (`bilanARegulariserDesktopHtml`) | `#6c8ebf`, `#e8b38f`, `#eb6834` |
+| Contrôle laitier mobile (`renderControleLaitier`, `carteSansControleLaitierHtml`) | `#a9cdb8`, `#eb6834`, `#e8c88a`, `#f4f4f4`, `#fbe3df` |
+| Ajout d'échographie (`renderAddEcho`) | `#add` |
+| Ancien Bilan économique PC (`bilanEconomiqueDesktopHtml`) | `#a9cdb8` (code probablement mort, remplacé par Production laitière : à supprimer après vérification) |
+| CSS résiduel | `#faf8f2` (×2), `#fbf1de`, `#e8c88a`, `#8fc4a4`, `#eee`, `#f6c9c1`, `#cfc9b5`, `#8f8b78` |
 
-## 4. Bulles d'aide « ? » : terminé
-Les 31 bulles « ? » (`infoBulleHtml`) ont été supprimées de tous les écrans ; la fonction, son registre de textes et la fenêtre d'aide n'existent plus (vérifié par `test_info_bulles`). Chaque texte est conservé tel quel, écran par écran, dans `docs/manuel_aides_ecrans.md` (futur manuel d'utilisation), avec la décision prise pour lui.
-Reste à l'écran, seulement quand elle évite une erreur de saisie, un effet inattendu ou une perte de données, une ligne d'information courte (`infoLigneHtml`, classe `.info`, 13 px, `#5e5b47`) : Campagne concernée (ajout d'écho et saisie rapide), critères d'échographie des lots, recherche en bergerie, Sous délai d'attente, Contrôle de lot, Traitements collectifs (suppression), Conflits à trancher (import SIEOL) ; et un texte sous le champ « Type de suivi laitier » (Première configuration).
+**PDF** (même chantier) : le filet vert et les titres de section (`PDF_COULEURS.vert`, `PDF_PL_COUL.vertTitre`) sont encore en `#3c8a55` au lieu de `#357f4b` ; régénération volontaire des PDF de référence.
 
-## 5. En-tête et PDF
-- Le vert de l'en-tête et du bouton principal (`--primary`) est aligné sur la charte (`#357f4b`) ; l'ancienne valeur était `#3c8a55`.
-- Dans les PDF, le filet vert et les titres de section (`PDF_COULEURS.vert`, `PDF_PL_COUL.vertTitre`) gardent l'ancienne teinte `#3c8a55` / `#2f6e44` : à aligner avec la prochaine passe PDF (les en-têtes de tableau et les tuiles utilisent déjà la charte via `PDF_CHARTE`).
-- Les anciennes variables sémantiques (`--text`, `--text-muted`, `--green-bg`, `--coral-fg`…) sont alignées sur les variables `--ch-*` (voir section 1).
-- Écran PC « Échographies » (Résultats + Historique) migré, en consultation seule ; sa saisie reste sur mobile (écran « Nouvelle session » et historique mobile à migrer plus tard : bulle « ? », tableau à l'ancien gabarit).
-- Accueil mobile « Mon troupeau » migré (tuiles, Mises bas, À surveiller, Dernière échographie, Contrôle laitier) ; plus aucun titre répété sous le bandeau vert sur mobile (audit de tous les écrans).
-- Listes mobiles migrées : Brebis, Béliers (lignes compactes dans une carte), Agneaux (segmenté + cartes) ; Agnelles : couleurs et styles de la charte seulement (cartes inchangées) ; fiches Brebis / Béliers / Agnelles / Agneaux (PC et mobile) à la charte, structure inchangée ; en-têtes verts des tableaux Brebis / Béliers PC et de l'en-tête « campagne » de Carrière.
+### S
+- Puces et boutons de choix `.opt-btn` des formulaires mobiles, avec le même composant que les puces PC.
+
+### M — tableaux mobiles à passer en cartes (aujourd'hui des tableaux coupés)
+- Historique des échographies, Ordonnances, Sous délai d'attente, Mise bas rapide, Mise à jour d'inventaire.
+- Carnet sanitaire et Produits et délais (les tableaux `.pc-t` s'affichent aussi sur mobile).
+
+### L — refontes d'écrans mobiles
+- Chantier de tri mobile : lots, détail d'un lot de reproduction, tri des agnelles, liste en série.
+- Saisies : agnelage, saisie rapide d'échos, mise bas rapide, mouvement individuel et collectif.
+- Carnet sanitaire mobile complet (formulaires de soin, traitements collectifs, soins sans bio, traitements 12 mois, contrôle de lot).
+- Journal.
+- Écrans techniques à faible priorité : Première configuration, connexion, Bluetooth.
+
+## 3. Prochains chantiers proposés
+1. **XS + PDF** : couleurs en dur et résidus de la section 2 (XS), puis `#357f4b` dans les PDF avec régénération volontaire des références.
+2. Tableaux mobiles en cartes (M), puis refontes mobiles (L), dans l'ordre choisi par le propriétaire du projet.
+
+## 4. Roboto embarquée
+Étape reportée en fin de chantier « tableaux et onglets PC en charte » : sous-ensemble latin (400, 500, 700) en woff2 dans le fichier ; abandonnée si le poids dépasse 150 Ko (voir `etat_avancement.md` pour son état).
