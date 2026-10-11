@@ -95,5 +95,25 @@ eq((await sansBulle('Bilan de lactation (mobile)')).infos, [], 'Bilan de lactati
 check(await page.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'groupe 4 : aucune écriture');
 console.log('OK groupe 4 : mise à jour d\'inventaire, liste en série, agnelles, bilan de lactation sans bulle.');
 
+// ================================================================ groupe 5 : imports et première configuration
+await page.evaluate(() => { render('premiere-configuration'); });
+{ const T = 'Non suivi, CLS (simplifié) ou CLO (officiel) — modifiable dans Paramètres > Exploitation.'; const e = await sansBulle('Première configuration'); eq(e.infos.map(i => i.t), [T], 'Première configuration : un texte sous le champ « Type de suivi laitier »'); uneInfo(e, T, 'Première configuration');
+  check(await page.evaluate(() => { const sel = document.getElementById('f-premconf-type-suivi'), t = document.querySelector('.info.sous-champ'); return !!sel && !!t && sel.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING; }), 'Première configuration : le texte est placé sous le champ'); }
+for (const [vue, champs] of [['import-bilan-lactation', ['Fichier CSV']], ['import-controle-laitier-sieol', ['Fichier résumé', 'Fichier cahier de contrôle']], ['import-correspondance-sieol', ['Fichier modèle Ovilog']], ['import-lactation-modele', ['Fichier modèle Ovilog']], ['import-nouveaux-animaux', ['Fichier modèle Ovilog']], ['import-controle-laitier-modele', ['Fichier modèle Ovilog']]]) {
+  await page.evaluate(v => render(v), vue);
+  eq((await sansBulle('Import ' + vue)).infos, [], vue + ' : aucune ligne d\'information (format du fichier : texte dans le manuel)');
+  check(await page.evaluate(ch => ch.every(c => [...document.querySelectorAll('#app label')].some(l => l.textContent.trim() === c)), champs), vue + ' : les champs « ' + champs.join(' », « ') + ' » restent, sans bulle');
+}
+// conflits d'import : une ligne d'information sous le titre « Conflits à trancher » ; « Valeurs à vérifier » sans bulle
+await page.evaluate(() => { DB.resumeControleLaitier = [{ campagne: 2026, controle: 1 }]; window.__avant = JSON.stringify(DB); render('import-controle-laitier-sieol'); });
+await page.selectOption('#import-cl-campagne', '2026');
+await page.click('.cl-controle-opt[data-controle="1"]');
+await page.setInputFiles('#import-cl-resume-file', { name: 'resume.csv', mimeType: 'text/csv', buffer: Buffer.from('num_controle;date_controle;lait_total;nb_brebis\n1;20/01/2027;1500;10\n') });
+await page.waitForFunction(() => document.getElementById('app').textContent.includes('Conflits à trancher'), null, { timeout: 5000 });
+{ const T = 'Rien n\'est écrasé sans ton choix ; sans réponse, la valeur actuelle est conservée.'; const e = await sansBulle('Import SIEOL : conflits'); eq(e.infos.map(i => i.t), [T], 'Conflits à trancher : une seule ligne d\'information'); uneInfo(e, T, 'Conflits à trancher');
+  check(await page.evaluate(() => { const t = [...document.querySelectorAll('#app div')].find(d => /^Conflits à trancher \(\d+\)$/.test(d.textContent.trim()) && d.children.length === 0); return !!t && t.nextElementSibling && t.nextElementSibling.classList.contains('info'); }), 'Conflits à trancher : la ligne suit immédiatement le titre'); }
+check(await page.evaluate(() => window.__saves === 0), 'groupe 5 : aucune écriture');
+console.log('OK groupe 5 : première configuration (texte sous le champ), sept écrans d\'import sans bulle, conflits d\'import (ligne d\'information).');
+
 await browser.close();
 console.log('\nTOUS LES TESTS « BULLES ? » SONT PASSÉS.');
