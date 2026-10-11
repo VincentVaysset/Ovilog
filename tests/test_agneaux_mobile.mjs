@@ -128,7 +128,7 @@ console.log('OK 6 aucune écriture en consultation.');
 // ================================================================ 7. PC inchangé
 const pc = await ouvrir(true);
 await pc.evaluate(() => render('agneaux'));
-const p = await pc.evaluate(() => ({ onglets: document.querySelectorAll('.ag-onglets').length, cartes: document.querySelectorAll('.ag-carte').length, voir: document.querySelectorAll('.btn-voir-fiche-agneau').length, mere: document.querySelectorAll('.btn-voir-mere-agneau').length, label: /Scanner un agneau pour le retrouver/.test(document.getElementById('app').textContent) }));
+const p = await pc.evaluate(() => ({ onglets: document.querySelectorAll('.ag-onglets').length, cartes: document.querySelectorAll('.ag-carte').length, voir: document.querySelectorAll('.btn-voir-fiche-agneau').length, mere: document.querySelectorAll('.btn-voir-mere-agneau').length, label: /Saisir le n° d'un agneau pour le retrouver/.test(document.getElementById('app').textContent) && !/Scanner/.test(document.getElementById('app').textContent) }));
 eq(p, { onglets: 0, cartes: 0, voir: 5, mere: 5, label: true }, 'PC : liste Agneaux d\'avant (cartes complètes, boutons Voir la fiche)');
 console.log('OK 7 PC inchangé.');
 await browser.close();

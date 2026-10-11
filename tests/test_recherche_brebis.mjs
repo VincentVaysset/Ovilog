@@ -62,7 +62,7 @@ for (const bureau of [false, true]) {
   check(Number(gras.poids) >= 600, nom + ' : n° en gras : ' + gras.poids);
   eq(gras.tags.filter(Boolean).length, 4, nom + ' : étiquette SIEOL sur les 4 brebis qui ont un n° SIEOL (pas sur les n°00059 et n°00777)');
   const champ = await p.evaluate(() => ({ ph: document.getElementById('scan-open').placeholder, err: !!document.getElementById('scan-open-err'), titre: pageTitle.textContent }));
-  eq(champ, { ph: 'Scanner ou saisir un n°', err: true, titre: 'Brebis (6)' }, nom + ' : champ, ids conservés, titre');
+  eq(champ, { ph: bureau ? 'Saisir un n° / EID' : 'Scanner ou saisir un n°', err: true, titre: 'Brebis (6)' }, nom + ' : champ (PC : sans scan), ids conservés, titre');
 
   // ---- 2. recherche par chaque type de numéro (correspondance partielle, sans espaces ni casse)
   const eidA = await p.evaluate(() => EID(8, 133));

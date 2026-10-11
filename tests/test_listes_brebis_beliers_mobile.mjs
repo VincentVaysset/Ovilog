@@ -110,8 +110,8 @@ console.log('OK 4 aucune écriture.');
 // ================================================================ 5. PC : tableau conservé, en-tête vert charte
 const pc = await ouvrir(true);
 await pc.evaluate(() => render('list'));
-const p1 = await pc.evaluate(() => ({ tete: getComputedStyle(document.querySelector('.list-table-head')).backgroundColor, texte: getComputedStyle(document.querySelector('.list-table-head')).color, lignes: document.querySelectorAll('.list-table-row').length, mobile: document.querySelectorAll('.al-carte, .al-scan').length, label: /Scanner une brebis ou taper un n°/.test(document.getElementById('app').textContent) }));
-eq(p1, { tete: 'rgb(53, 127, 75)', texte: 'rgb(255, 255, 255)', lignes: 4, mobile: 0, label: true }, 'PC Brebis : tableau, en-tête vert charte, carte de scan inchangée');
+const p1 = await pc.evaluate(() => ({ tete: getComputedStyle(document.querySelector('.list-table-head')).backgroundColor, texte: getComputedStyle(document.querySelector('.list-table-head')).color, lignes: document.querySelectorAll('.list-table-row').length, mobile: document.querySelectorAll('.al-carte, .al-scan').length, label: /Saisir un n° pour filtrer la liste/.test(document.getElementById('app').textContent) && !/Scanner/.test(document.getElementById('app').textContent) }));
+eq(p1, { tete: 'rgb(53, 127, 75)', texte: 'rgb(255, 255, 255)', lignes: 4, mobile: 0, label: true }, 'PC Brebis : tableau, en-tête vert charte, champ de saisie sans scan (Saisir un n°)');
 await pc.evaluate(() => render('beliers'));
 const p2 = await pc.evaluate(() => ({ tete: getComputedStyle(document.querySelector('.list-table-head')).backgroundColor, lignes: document.querySelectorAll('.list-table-row').length, mobile: document.querySelectorAll('.al-carte, .al-scan').length }));
 eq(p2, { tete: 'rgb(53, 127, 75)', lignes: 3, mobile: 0 }, 'PC Béliers : tableau, en-tête vert charte');
