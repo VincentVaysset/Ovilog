@@ -56,9 +56,9 @@ await ouvrir('lotsPcEtat=lotsPcEtatInitial();render("add-lot-repro")');
 await ouvrir('render("agnelles")');
 { const L = await puces('#app .pc-gc'); verifPuces(L, 'Tri des agnelles (À trier / Gardées / Écartées)'); }
 await ouvrir('render("mouvement-groupe")');
-{ const L = await puces('#app .pc-seg2 .opt-btn'); const act = L.filter(x => x.on), inact = L.filter(x => !x.on);   // variante « coral » des mouvements : rouge pastel #fbe3e0 / texte #a33a31
+{ const L = await puces('#app .pc-seg2 .opt-btn'); const act = L.filter(x => x.on), inact = L.filter(x => !x.on);   // puce active des mouvements : vert pastel / texte vert de la charte
   check(act.length === 1 && inact.length === 3, 'Mouvements (catégories) : une puce active, trois inactives');
-  eq([act[0].bg, act[0].c, act[0].bord, act[0].fw, act[0].ombre], ['rgb(251, 227, 224)', 'rgb(163, 58, 49)', 'rgb(251, 227, 224)', '700', 'none'], 'Mouvements : puce active en rouge pastel (variante coral de la charte)');
+  eq([act[0].bg, act[0].c, act[0].bord, act[0].fw, act[0].ombre], ['rgb(227, 243, 230)', 'rgb(36, 97, 58)', 'rgb(227, 243, 230)', '700', 'none'], 'Mouvements : puce active en vert pastel (la variante rouge est retirée, voir test_gabarit_pc)');
   for (const x of inact) eq([x.bg, x.bord, x.bw, x.pill], [BLANC, CHAMP, '1px', true], 'Mouvements : puce inactive « ' + x.t + ' » blanche à contour #d9cfb8'); }
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'partie 2 : aucune écriture');
 console.log('OK 2 puces de filtre : blanches à contour #d9cfb8, actives en vert pastel #e3f3e6 / texte #24613a ; clic inchangé.');

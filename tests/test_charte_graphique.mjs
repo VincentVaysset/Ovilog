@@ -61,4 +61,12 @@ check(!/#f0efe9|#f0eee6|#f7f5ee|#f6f3ea/i.test(sansDefs), 'plus aucun ancien gri
 console.log('OK 3bis socle des fiches et listes : onglets, texte secondaire, rouge unique, badges, en-tête campagne.');
 await browser.close();
 console.log('OK 3 rendu : --primary et en-tête = #357f4b ; tableau et tuiles lisent les variables.');
+// Plus aucune couleur hexadécimale écrite en dur hors du :root (variables), des constantes PDF (PDF_CHARTE, PDF_COULEURS, PDF_PL_COUL) et des identifiants (#add-special...) : le chantier « XS » (hors PDF) est terminé.
+{
+  const lignes = html.split('\n'); const finRacine = lignes.findIndex(l => /^\s*:root\s*\{/.test(l)) + 1; let fin = finRacine; while (fin < lignes.length && !/^\s*\}\s*$/.test(lignes[fin])) fin++;
+  const fautives = [];
+  lignes.forEach((l, i) => { if (i <= fin || /PDF_CHARTE|PDF_COULEURS|PDF_PL_COUL|const PDF_|#add\b/.test(l)) return; const m = l.match(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![\w-])/g); if (m && !/^\s*(\/\/|\/\*|\*)/.test(l)) fautives.push((i + 1) + ' ' + m.join(',')); });
+  check(fautives.length === 0, 'couleurs en dur restantes (hors PDF) : ' + fautives.slice(0, 8).join(' | '));
+  console.log('OK 4 plus aucune couleur en dur hors :root et constantes PDF.');
+}
 console.log('\nTOUS LES TESTS DE LA CHARTE GRAPHIQUE SONT PASSÉS');
