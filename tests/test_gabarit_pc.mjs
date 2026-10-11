@@ -1,4 +1,4 @@
-/* Gabarit PC commun (CLAUDE.md, « Charte graphique ») : sur les écrans PC, mêmes hauteurs et rayons partout. Section 4 : Mouvements d'animaux (pas de bandeau rose : barre neutre, puces en vert pastel, bouton « Valider » vert, ligne ambre pour les sorties définitives Morte / Perte / Autoconsommation). Section 3 : exports (« Export Excel » en blanc, « Export PDF » en vert, Excel avant PDF, jamais « Exporter … (.xlsx) »). Section 2 : titre unique (le titre de l'écran n'est écrit que dans le bandeau vert, jamais répété dans la page) et contenu pleine largeur (marge de 24 px, plus de colonne plafonnée à 900 / 420 / 520 px). Section 1 (socle) : champs 44 px / rayon 12 ; boutons .btn en pastille ≥ 44 px (32 px dans une cellule de tableau) ; lignes de tableau 48 px (40 px pour les tableaux de synthèse) ; titres de section .pc-sec en 12 px majuscules gris. Jeu SYNTHÉTIQUE (jeuPcEcrans), saveData neutralisé. */
+/* Gabarit PC commun (CLAUDE.md, « Charte graphique ») : sur les écrans PC, mêmes hauteurs et rayons partout. Section 5 : menu latéral (chaque entrée sur une seule ligne, y compris « Mouvements d'animaux »). Section 4 : Mouvements d'animaux (pas de bandeau rose : barre neutre, puces en vert pastel, bouton « Valider » vert, ligne ambre pour les sorties définitives Morte / Perte / Autoconsommation). Section 3 : exports (« Export Excel » en blanc, « Export PDF » en vert, Excel avant PDF, jamais « Exporter … (.xlsx) »). Section 2 : titre unique (le titre de l'écran n'est écrit que dans le bandeau vert, jamais répété dans la page) et contenu pleine largeur (marge de 24 px, plus de colonne plafonnée à 900 / 420 / 520 px). Section 1 (socle) : champs 44 px / rayon 12 ; boutons .btn en pastille ≥ 44 px (32 px dans une cellule de tableau) ; lignes de tableau 48 px (40 px pour les tableaux de synthèse) ; titres de section .pc-sec en 12 px majuscules gris. Jeu SYNTHÉTIQUE (jeuPcEcrans), saveData neutralisé. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
 import { jeuPcEcrans } from './lib/jeu_pc_ecrans.mjs';
@@ -86,6 +86,14 @@ console.log('OK gabarit PC, exports : ' + nExp + ' boutons d\'export (Excel blan
     if (ambre) check(m.ambreBg === AMBRE && /Sortie définitive/.test(m.ambreTxt), type + ' : ligne ambre « Sortie définitive » : ' + m.ambreBg + ' / ' + m.ambreTxt);
   }
   console.log('OK gabarit PC, Mouvements d\'animaux : barre neutre, puces vert pastel, « Valider » vert, ligne ambre pour Morte / Perte / Autoconsommation seulement.');
+}
+// Section 5 : menu latéral sur une seule ligne
+{
+  const items = await pc.evaluate(() => [...document.querySelectorAll('#nav-drawer-overlay .nav-item')].map(e => { const cs = getComputedStyle(e), lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2, t = e.querySelector('span:last-child') || e; const r = document.createRange(); r.selectNodeContents(t); return { t: e.textContent.trim(), lignes: r.getClientRects().length, debord: e.scrollWidth > e.clientWidth }; }));
+  check(items.length >= 10, 'menu latéral : ' + items.length + ' entrées');
+  check(items.some(i => /Mouvements d'animaux/.test(i.t)), 'menu latéral : entrée « Mouvements d\'animaux » présente');
+  for (const i of items) check(i.lignes <= 1 && !i.debord, 'menu latéral : « ' + i.t + ' » sur une seule ligne (' + i.lignes + ' lignes, débordement ' + i.debord + ')');
+  console.log('OK gabarit PC, menu : ' + items.length + ' entrées sur une seule ligne.');
 }
 console.log('OK gabarit PC, socle : ' + nChamps + ' champs, ' + nBoutons + ' boutons, ' + nLignes + ' tableaux, ' + nSec + ' titres de section sur ' + VUES_GABARIT.length + ' écrans.');
 await browser.close();
