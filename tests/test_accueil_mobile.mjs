@@ -125,12 +125,12 @@ function jeuEcho() {
 await m.evaluate(jeuEcho); await m.evaluate(() => { accueilEchoTab = 'resultat'; render('home'); });
 const lignesEcho = () => m.evaluate(() => [...document.querySelectorAll('#ac-echo .ac-echo-corps .rp, #ac-echo .ac-echo-corps .lbl, #ac-echo .ac-echo-corps .ac-detail-btn')].map(r => r.classList.contains('lbl') ? '# ' + r.textContent : r.classList.contains('ac-detail-btn') ? '> ' + r.textContent + ' [' + r.getAttribute('aria-expanded') + ']' : r.querySelector('.h span').textContent + ' = ' + r.querySelector('.h b').textContent.replace(/\s/g, ' ') + ' [' + r.querySelector('.tb2 i').className + ']'));
 eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo-seg button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : ''))), ['Résultat*', 'Comptage'], 'segmenté Résultat / Comptage, Résultat actif');
-eq(await lignesEcho(), ['Pleine = 9 (60 %) [vert]', '> Détail par stade ▾ [false]', 'Vide = 1 (7 %) [rouge]', 'Vide définitive = 1 (7 %) [rouge-clair]', 'Avortée / pseudogestation = 2 (13 %) [ambre]', 'Sans échographie = 2 (13 %) [gris]'],
+eq(await lignesEcho(), ['Pleine = 9 (60 %) [vert]', '> Détail par stade ▾ [false]', 'Vide = 1 (7 %) [rouge-clair]', 'Vide définitive = 1 (7 %) [rouge]', 'Avortée / pseudogestation = 2 (13 %) [ambre]', 'Sans échographie = 2 (13 %) [gris]'],
   'Résultat, détail replié par défaut : Pleine, « Détail par stade », Vide, Vide définitive et Avortée / pseudogestation (> 0), Sans échographie');
 eq(await m.evaluate(() => document.querySelectorAll('#ac-echo .ac-detail').length), 0, 'détail replié : aucune ligne de stade dans la page');
 await m.click('#ac-echo-detail-btn');
 eq(await lignesEcho(), ['Pleine = 9 (60 %) [vert]', '> Détail par stade ▴ [true]', '# Monte naturelle', 'Début = 1 (7 %) [vert]', 'Milieu = 2 (13 %) [vert]', 'Fin = 3 (20 %) [vert]', '# Lots IA / Éponge', 'IA = 1 (7 %) [vert]', 'Stade non précisé = 2 (13 %) [vert]',
-  'Vide = 1 (7 %) [rouge]', 'Vide définitive = 1 (7 %) [rouge-clair]', 'Avortée / pseudogestation = 2 (13 %) [ambre]', 'Sans échographie = 2 (13 %) [gris]'],
+  'Vide = 1 (7 %) [rouge-clair]', 'Vide définitive = 1 (7 %) [rouge]', 'Avortée / pseudogestation = 2 (13 %) [ambre]', 'Sans échographie = 2 (13 %) [gris]'],
   'détail déplié : groupes Monte naturelle et Lots IA / Éponge, lignes à 0 masquées (Retour 1, Retour 2, Tardive), « Stade non précisé » en dernier hors groupe');
 check(await m.evaluate(() => { const nonPrecis = [...document.querySelectorAll('#ac-echo .ac-detail .rp')].pop(); return nonPrecis.querySelector('.h span').textContent === 'Stade non précisé' && nonPrecis.parentElement.classList.contains('ac-detail') && nonPrecis.previousElementSibling.querySelector('.h span').textContent === 'IA'; }), '« Stade non précisé » est la dernière ligne du détail, après le groupe des lots');
 await m.click('#ac-echo-detail-btn');
@@ -155,12 +155,12 @@ await m.evaluate(() => {
   DB.lots = [{ id: 'IA1', nom: 'IA mars', type: 'reproduction', mode: 'IA', cible: 'Brebis', membres: [DB.brebis[0].eid, DB.brebis[3].eid] }, { id: 'IA2', nom: 'IA avril', type: 'reproduction', mode: 'IA', cible: 'Brebis', membres: [DB.brebis[1].eid] }, { id: 'EP1', nom: 'Éponge mai', type: 'reproduction', mode: 'EP', cible: 'Brebis', membres: [DB.brebis[2].eid, DB.brebis[4].eid] }];
   window.__avant = JSON.stringify(DB); window.__saves = 0; accueilEchoTab = 'resultat'; accueilEchoDetailOuvert = true; render('home');
 });
-eq(await lignesEcho(), ['Pleine = 6 (100 %) [vert]', '> Détail par stade ▴ [true]', '# Monte naturelle', 'Début = 1 (17 %) [vert]', '# Lots IA / Éponge', 'IA = 2 (33 %) [vert]', 'Retour 1 = 2 (33 %) [vert]', 'Tardive = 1 (17 %) [vert]', 'Vide = 0 (0 %) [rouge]', 'Sans échographie = 0 (0 %) [gris]'],
+eq(await lignesEcho(), ['Pleine = 6 (100 %) [vert]', '> Détail par stade ▴ [true]', '# Monte naturelle', 'Début = 1 (17 %) [vert]', '# Lots IA / Éponge', 'IA = 2 (33 %) [vert]', 'Retour 1 = 2 (33 %) [vert]', 'Tardive = 1 (17 %) [vert]', 'Vide = 0 (0 %) [rouge-clair]', 'Sans échographie = 0 (0 %) [gris]'],
   'plusieurs lots IA et un lot Éponge : les stades s\'additionnent (IA 2, Retour 1 2, Tardive 1) ; Retour 2, Stade non précisé, Vide définitive, Avortée / pseudogestation masqués à 0 ; Pleine, Vide, Sans échographie toujours visibles');
 await m.evaluate(() => { DB.brebis = DB.brebis.filter(s => s.id !== 'M1'); render('home'); });
 check((await lignesEcho()).every(l => l !== '# Monte naturelle') && (await lignesEcho()).includes('# Lots IA / Éponge'), 'groupe Monte naturelle masqué quand tous ses stades sont à 0');
 await m.evaluate(() => { DB.brebis.forEach(s => { s.echographies = []; }); render('home'); });
-eq(await lignesEcho(), ['Pleine = 0 (0 %) [vert]', 'Vide = 0 (0 %) [rouge]', 'Sans échographie = 5 (100 %) [gris]'], 'sans aucune brebis pleine : pas de « Détail par stade », 3 lignes seulement');
+eq(await lignesEcho(), ['Pleine = 0 (0 %) [vert]', 'Vide = 0 (0 %) [rouge-clair]', 'Sans échographie = 5 (100 %) [gris]'], 'sans aucune brebis pleine : pas de « Détail par stade », 3 lignes seulement');
 check(await m.evaluate(() => window.__saves === 0), 'aucune écriture');
 await m.evaluate(() => { accueilEchoDetailOuvert = false; });
 console.log('OK 5ter Détail par stade : replié par défaut, lots IA / Éponge additionnés, lignes et groupes à 0 masqués, Vide définitive et Avortée / pseudogestation seulement si > 0.');
