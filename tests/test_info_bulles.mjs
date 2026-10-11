@@ -14,7 +14,7 @@ function jeu() {
   const fiche = (id, e, o) => Object.assign({ id, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
   DB.brebis = [fiche('P1', eid(8, 1), { numeroCourtTravailSieol: '8001' }), fiche('P2', eid(8, 2), { numeroCourtTravailSieol: '8002' })];
-  DB.beliers = []; DB.agnelles = []; DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} }; DB.mouvementsCollectifs = [];
+  DB.beliers = []; DB.agnelles = []; DB.lots = [{ id: '1700000000001', nom: 'Brebis doubles', dateCreation: '2026-10-01', membres: [eid(8, 1), eid(8, 2)] }]; DB.registre = { brebis: {}, beliers: {}, agnelles: {} }; DB.mouvementsCollectifs = [];
   window.__avant = JSON.stringify(DB); window.__saves = 0;
 }
 const page = await (await browser.newContext({ viewport: { width: 390, height: 900 } })).newPage();
@@ -49,6 +49,17 @@ await sansBulle('Mise bas rapide');
 eq(await page.evaluate(() => document.querySelectorAll('.mortne-note-rapide').length), 0, 'Mise bas rapide : plus d\'encart « Mort-né »');
 check(await page.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'groupe 1 : aucune écriture');
 console.log('OK groupe 1 : agnelage, échos rapides, ajout d\'écho, historique des échos, mise bas rapide sans bulle ; une ligne d\'information (Campagne concernée).');
+
+// ================================================================ groupe 2 : lots et échos (Nouveau lot de recherche, Nouveau lot de réforme, Recherche en bergerie)
+const CRIT = 'Dans un groupe : « ou » ; entre groupes : « et ». Sans critère, aucune brebis n\'est présélectionnée.';
+await page.evaluate(() => render('add-lot'));
+{ const e = await sansBulle('Nouveau lot de recherche'); eq(e.infos.map(i => i.t), [CRIT], 'Nouveau lot de recherche : une seule ligne, sous « Critères d\'échographie »'); uneInfo(e, CRIT, 'Nouveau lot de recherche'); }
+await page.evaluate(() => render('add-lot-reforme'));
+{ const e = await sansBulle('Nouveau lot de réforme'); eq(e.infos.map(i => i.t), [CRIT], 'Nouveau lot de réforme : plus de bulle de tête, une seule ligne sous les critères'); }
+await page.evaluate(() => { currentLotId = '1700000000001'; render('lot-search'); });
+{ const e = await sansBulle('Recherche en bergerie'); eq(e.infos.map(i => i.t), ['Les coches restent sur cet appareil : elles ne sont pas synchronisées.'], 'Recherche en bergerie : une seule ligne'); uneInfo(e, 'Les coches restent sur cet appareil : elles ne sont pas synchronisées.', 'Recherche en bergerie'); }
+check(await page.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'groupe 2 : aucune écriture');
+console.log('OK groupe 2 : lots de recherche et de réforme, recherche en bergerie sans bulle ; lignes d\'information (critères, coches sur l\'appareil).');
 
 await browser.close();
 console.log('\nTOUS LES TESTS « BULLES ? » SONT PASSÉS.');

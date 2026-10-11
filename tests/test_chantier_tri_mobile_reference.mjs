@@ -55,6 +55,12 @@ res.lots = sansBoutonRepro(res.lots);
 Object.keys(res).forEach(k => { res[k] = norm(res[k]); });
 if (process.env.OVILOG_MAJ_REF_ECHOS === '1' || !existsSync(REF_ECHOS)) { writeFileSync(REF_ECHOS, JSON.stringify(Object.fromEntries(ECRANS_ECHOS.map(k => [k, res[k]])))); console.log('Référence « Nouveau lot » (critères d\'échographie) écrite : ' + REF_ECHOS); }
 if (process.env.OVILOG_MAJ_REF === '1' || !existsSync(REF)) { writeFileSync(REF, JSON.stringify(res)); console.log('Référence écrite : ' + REF + ' (' + Object.entries(res).map(([k, v]) => k + ' ' + v.length).join(', ') + ')'); process.exit(0); }
+// Mise à jour VOULUE d'écrans précis (chantier « bulles ? » : bulle « ? » retirée, ligne d'information à la place) : OVILOG_MAJ_REF_ECRANS=lot_search,liste_serie remplace seulement ces écrans dans la référence
+if (process.env.OVILOG_MAJ_REF_ECRANS) {
+  const ref = JSON.parse(readFileSync(REF, 'utf8'));
+  for (const k of process.env.OVILOG_MAJ_REF_ECRANS.split(',')) { if (!(k in res)) throw new Error('écran inconnu : ' + k); ref[k] = res[k]; }
+  writeFileSync(REF, JSON.stringify(ref)); console.log('Référence mise à jour pour : ' + process.env.OVILOG_MAJ_REF_ECRANS); process.exit(0);
+}
 const attendu = JSON.parse(readFileSync(REF, 'utf8'));
 attendu.lots = sansBoutonRepro(attendu.lots);
 ECRANS_ECHOS.forEach(k => { delete attendu[k]; });
