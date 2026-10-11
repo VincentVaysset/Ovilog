@@ -9,7 +9,7 @@ Convention : pour chaque bulle, le **titre** de la bulle, l'endroit de l'écran 
 ### Campagne concernée
 
 *Emplacement : Encart « Campagne concernée ».*  
-*Décision : Bulle remplacée par une ligne d'information à l'écran : « Premier constat avant le démarrage de la nouvelle campagne : choisis « à venir ». »*
+*Décision : Bulle remplacée par une ligne d'information à l'écran : « Constat avant le démarrage : choisis « à venir ». »*
 
 > À vérifier surtout pour un premier constat fait avant d'avoir démarré la nouvelle campagne dans l'appli.
 
