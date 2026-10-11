@@ -62,5 +62,15 @@ await ouvrir('render("mouvement-groupe")');
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'partie 2 : aucune écriture');
 console.log('OK 2 puces de filtre : blanches à contour #d9cfb8, actives en vert pastel #e3f3e6 / texte #24613a ; clic inchangé.');
 
+// ================================================================ 3. police : Roboto en premier choix sur toute l'application PC (déjà native sur Android)
+for (const [nom, code] of [['Chantier de tri (Lots)', 'lotsPcEtat=null;render("lots")'], ['Tri des agnelles', 'render("agnelles")'], ['Accueil PC', 'render("home")'], ['Carnet sanitaire', 'render("sanitaire")']]) {
+  await ouvrir(code);
+  const F = await pc.evaluate(() => { const prem = e => getComputedStyle(e).fontFamily.split(',')[0].trim().replace(/["']/g, ''), q = s => document.querySelector(s);
+    return { corps: prem(document.body), app: prem(q('#app')), bouton: prem(q('#app button') || q('button')), champ: q('#app input, #app select') ? prem(q('#app input, #app select')) : 'Roboto', pile: getComputedStyle(document.body).fontFamily }; });
+  eq([F.corps, F.app, F.bouton, F.champ], ['Roboto', 'Roboto', 'Roboto', 'Roboto'], nom + ' : Roboto en premier choix (corps, boutons, champs)');
+  check(/^Roboto,\s*(-apple-system|"Segoe UI")/.test(F.pile) && /sans-serif$/.test(F.pile), nom + ' : pile de repli conservée (' + F.pile + ')');
+}
+console.log('OK 3 police : Roboto en premier dans la pile (corps, boutons, champs), repli -apple-system / Segoe UI / sans-serif conservé.');
+
 await browser.close();
 console.log('\nTOUS LES TESTS « CHANTIER DE TRI PC EN CHARTE » SONT PASSÉS.');

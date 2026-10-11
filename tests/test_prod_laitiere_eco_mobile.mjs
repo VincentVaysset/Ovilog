@@ -38,7 +38,7 @@ const litresTxt = v => Math.round(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g,
 await jeu();
 const box = sel => page.evaluate(s => { const r = document.querySelector(s).getBoundingClientRect(); return { y: Math.round(r.top), h: Math.round(r.height) }; }, sel);
 const [bs, bc] = [await box('#bilan-eco-campagne-select'), await box('#btn-prix-coef')];
-check(Math.abs(bs.y - bc.y) <= 2, 'Campagne consultée et coefficient MSU sur la même ligne : ' + JSON.stringify([bs, bc]));
+check(Math.abs((bs.y + bs.h / 2) - (bc.y + bc.h / 2)) <= 2, 'Campagne consultée et coefficient MSU sur la même ligne : ' + JSON.stringify([bs, bc]));
 check(await page.evaluate(() => !document.querySelector('#app .stat-card') && !document.querySelector('#bilan-eco-mois') && !!document.getElementById('eco-synthese')), 'plus de tuiles colorées ni de pastilles de mois : un seul bloc de synthèse');
 check(!/[\u{1F300}-\u{1FAFF}]|[☀-⛿]|🖨/u.test(await $t('#app')), 'pas d\'emoji dans les titres');
 console.log('OK 1 mise en page : campagne + coefficient sur une ligne, bloc de synthèse unique, aucune tuile ni emoji.');

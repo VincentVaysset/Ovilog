@@ -131,8 +131,8 @@ console.log('OK 5 cas particuliers lus dynamiquement (+ valeurs présentes), cam
 
 // ================================================================ 6. SAISIE RÉELLE : dates et n°, caractère par caractère, focus conservé
 await page.click('#lt-reinit'); await att(100);
-await page.click('#lt-echo-du'); await page.keyboard.type('09012026', { delay: 40 });
-await page.click('#lt-echo-au'); await page.keyboard.type('09012026', { delay: 40 });          // clic dans le champ suivant juste après la frappe : il doit prendre le focus
+await page.click('#lt-echo-du', { position: { x: 14, y: 14 } }); await page.keyboard.type('09012026', { delay: 40 });   // clic sur le 1er segment du champ date (indépendant de la largeur de la police)
+await page.click('#lt-echo-au', { position: { x: 14, y: 14 } }); await page.keyboard.type('09012026', { delay: 40 });          // clic dans le champ suivant juste après la frappe : il doit prendre le focus
 await att(1500);                                                   // le redessin attend la fin de la frappe dans un champ date
 check(await page.evaluate(() => document.activeElement && document.activeElement.id) === 'lt-echo-au' && await page.evaluate(() => document.getElementById('lt-echo-du').value + '|' + document.getElementById('lt-echo-au').value) === '2026-09-01|2026-09-01', 'dates tapées au clavier, focus resté dans le 2e champ : ' + await page.evaluate(() => document.getElementById('lt-echo-du').value + '|' + document.getElementById('lt-echo-au').value));
 eq(await nums(), ['80001', '80002', '80003', '90004', '90005', '90006'], 'écho du 01/09 au 01/09 : la dernière écho de la brebis 90006 est du 01/09 (son Vide du 01/08 est ignoré)');
