@@ -38,6 +38,7 @@ async function ouvrir(bureau, mode) {
   page.on('pageerror', e => { throw new Error('PAGEERROR: ' + e.message); });
   page.on('dialog', d => d.accept());
   await page.goto(URL_APP, { waitUntil: 'load' }); await page.waitForTimeout(300);
+  await page.evaluate(`window.__jeu = ${jeu.toString()}`);
   await page.evaluate(jeu, mode || '');
   return page;
 }
@@ -95,10 +96,68 @@ eq(z.cnt, ['0:gris:rgb(239, 233, 218)', '0:gris:rgb(239, 233, 218)'], 'pastilles
 eq([z.prol, z.tuiles, z.pct], ['—', ['0', '0', '0'], '0 %'], 'prolificité « — » sans mise bas, tuiles à 0');
 console.log('OK 4 tout à 0 : pastilles grises, prolificité « — ».');
 
-// ================================================================ 5. PC : l'accueil PC ne change pas
+// ================================================================ 5. « Dernière échographie » : règle (écho postérieure à la dernière mise bas), Résultat / Comptage
+function jeuEcho() {
+  window.__jeu('zero');
+  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const fiche = (id, o) => Object.assign({ id, eid: eid(8, Number(id.replace(/\D/g, '')) || 1), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
+  const e = (date, o) => Object.assign({ date, campagne: 2026 }, o);
+  const mb = (date) => [{ date, campagne: 2026, lambs: [{ eid: eid(6, 999), sexe: 'Mâle', sanitaire: [], mouvements: [] }] }];
+  DB.brebis = [
+    fiche('P1', { echographies: [e('2026-08-01', { type: 'stade', stade: 'Début', agneaux: 'Simple' })] }),
+    fiche('P2', { echographies: [e('2026-08-01', { type: 'stade', stade: 'Milieu', agneaux: 'Double' })] }),
+    fiche('P3', { echographies: [e('2026-08-01', { type: 'stade', stade: 'Fin', nombreAgneaux: 3 })] }),
+    fiche('P4', { echographies: [e('2026-08-01', { type: 'stade', stade: 'IA', nombreAgneaux: 4 })] }),
+    fiche('P5', { echographies: [e('2026-08-01', { type: 'constat', stade: 'Pleine' })] }),
+    fiche('V1', { echographies: [e('2026-08-01', { type: 'constat', stade: 'Vide' })] }),
+    fiche('VD', { echographies: [e('2026-08-01', { type: 'constat', stade: 'Vide' })], videesDefinitives: [{ campagne: 2026, date: '2026-10-01' }] }),
+    fiche('AV', { echographies: [e('2026-08-01', { type: 'stade', special: 'Avortée' })] }),
+    fiche('PS', { echographies: [e('2026-08-01', { type: 'stade', special: 'Pseudogestation' })] }),
+    fiche('MB', { echographies: [e('2026-08-01', { type: 'constat', stade: 'Pleine' })], agnelages: mb('2026-09-25') }),                    // a mis bas depuis son écho : sans échographie
+    fiche('MB2', { echographies: [e('2026-08-01', { type: 'stade', stade: 'Milieu', nombreAgneaux: 2 })], agnelages: mb('2026-06-01') }),   // écho postérieure à la mise bas : retenue
+    fiche('TIE', { echographies: [e('2026-08-01', { type: 'constat', stade: 'Vide' }), e('2026-08-01', { type: 'stade', stade: 'Fin', agneaux: 'Simple' })] }),   // même date : la dernière saisie l'emporte
+    fiche('T1', { echographies: [e('2026-07-01', { type: 'stade', stade: 'Milieu', agneaux: 'Double' }), e('2026-08-01', { type: 'constat', stade: 'Pleine' })] }),   // deux types : le constat, plus récent, l'emporte
+    fiche('T2', { echographies: [e('2026-07-01', { type: 'constat', stade: 'Pleine' }), e('2026-08-01', { type: 'stade', stade: 'Fin', agneaux: 'Simple' })] }),
+    fiche('N'),
+    fiche('X', { statut: 'vendue', echographies: [e('2026-08-01', { type: 'constat', stade: 'Pleine' })] })];                                   // inactive : jamais comptée
+  window.__avant = JSON.stringify(DB); window.__saves = 0;
+}
+await m.evaluate(jeuEcho); await m.evaluate(() => { accueilEchoTab = 'resultat'; render('home'); });
+const lignesEcho = () => m.evaluate(() => [...document.querySelectorAll('#ac-echo .ac-echo-corps > *')].map(r => r.classList.contains('lbl') ? '# ' + r.textContent : r.querySelector('.h span').textContent + ' = ' + r.querySelector('.h b').textContent.replace(/\s/g, ' ') + ' [' + r.querySelector('.tb2 i').className + ']'));
+eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo-seg button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : ''))), ['Résultat*', 'Comptage'], 'segmenté Résultat / Comptage, Résultat actif');
+eq(await lignesEcho(), [
+  'Pleine = 9 (60 %) [vert]', '# Monte naturelle', 'Début = 1 (7 %) [vert]', 'Milieu = 2 (13 %) [vert]', 'Fin = 3 (20 %) [vert]', '# Lot IA / Éponge', 'IA = 1 (7 %) [vert]', 'Retour 1 = 0 (0 %) [vert]', 'Retour 2 = 0 (0 %) [vert]', 'Tardive = 0 (0 %) [vert]',
+  'Stade non précisé = 2 (13 %) [vert]', 'Vide = 1 (7 %) [rouge]', 'Vide définitive = 1 (7 %) [rouge-clair]', 'Avortée / pseudogestation = 2 (13 %) [ambre]', 'Sans échographie = 2 (13 %) [gris]'], 'Résultat : Pleine (Début, Milieu, Fin, lot IA, non précisé), Vide, Vide définitive, Avortée / pseudogestation, Sans échographie (15 brebis actives)');
+eq(await m.evaluate(() => document.querySelector('#ac-echo .reg-info').textContent), 'Dernière écho postérieure à la dernière mise bas, toutes sessions confondues (constat, stade, avec ou sans comptage). Une brebis qui a mis bas depuis sa dernière écho passe en « Sans échographie ». Vide : à repasser à l\'écho ou à classer en vide définitive.', 'phrase d\'info du Résultat');
+console.log('OK 5 Résultat : règle (écho postérieure à la dernière mise bas, date égale = dernière saisie, deux types = le plus récent), Vide définitive à part, Avortée / pseudogestation à part.');
+await m.click('#ac-echo-seg [data-tab="comptage"]');
+eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo-seg button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : ''))), ['Résultat', 'Comptage*'], 'Comptage actif');
+eq(await lignesEcho(), ['1 agneau (simple) = 3 (33 %) [vert]', '2 agneaux (double) = 2 (22 %) [vert]', '3 agneaux et + = 2 (22 %) [vert]', 'Sans comptage = 2 (22 %) [gris]'], 'Comptage : brebis pleines, « 2 » = 2 + Double, « 3 et + » = 3 + 4 et plus');
+eq(await m.evaluate(() => document.querySelector('#ac-echo .reg-info').textContent), 'Brebis pleines, selon le comptage de leur dernière échographie. « 2 » regroupe 2 et « 2 et plus » (Simple / Double) ; « 3 et + » regroupe 3 et « 4 et plus ».', 'phrase d\'info du Comptage');
+check(await m.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'le segmenté est un état d\'affichage : aucune écriture');
+eq(await m.evaluate(() => { const c = repartitionEchoAccueil(); return c.pleine + c.vide + c.videDefinitive + c.cas + c.sans === c.total; }), true, 'chaque brebis active est dans une seule ligne (somme = total)');
+await m.evaluate(() => { accueilEchoTab = 'resultat'; });
+console.log('OK 5bis Comptage : 1 / 2 / 3 et + / Sans comptage, aucune écriture.');
+// jeu vide : aucun calcul n'échoue
+await m.evaluate(jeu, 'zero'); await m.evaluate(() => { accueilEchoTab = 'resultat'; render('home'); });
+eq((await lignesEcho())[0], 'Pleine = 0 (0 %) [vert]', 'aucune brebis : Pleine 0 (0 %)');
+
+// ================================================================ 6. Contrôle laitier : moyenne et nombre de brebis par contrôle, plus de « relevés au total »
+await m.evaluate(jeu, ''); await m.evaluate(() => {
+  DB.resumeControleLaitier = [{ campagne: 2026, controle: 1, laitTroupeau: 2100, nbBrebis: 398 }, { campagne: 2026, controle: 2, laitTroupeau: 1800, nbBrebis: 391 }];
+  render('home');
+});
+const cl = await m.evaluate(() => ({ titre: document.querySelector('#ac-controle-laitier .ac-titre').textContent, cols: [...document.querySelectorAll('#ac-controle-laitier .ac-cl div')].map(d => [d.querySelector('span').textContent, d.querySelector('b').textContent, d.querySelector('small').textContent]), texte: document.getElementById('app').textContent }));
+eq(cl.titre, 'Contrôle laitier · moyenne par contrôle', 'titre');
+eq(cl.cols, [['1er contrôle', '2,10 L', '398 brebis'], ['2e contrôle', '1,80 L', '391 brebis'], ['3e contrôle', '—', '0 brebis']], 'moyenne et nombre de brebis par contrôle (« — » et « 0 brebis » sans résumé)');
+check(!/relevé\(s\) enregistré\(s\)/.test(cl.texte), 'plus de « relevés enregistrés au total »');
+check(await m.evaluate(() => !/Répartition par stade/.test(document.getElementById('app').textContent)), 'plus d\'ancienne carte « Répartition par stade »');
+console.log('OK 6 Contrôle laitier : moyenne et brebis par contrôle.');
+
+// ================================================================ 7. PC : l'accueil PC ne change pas
 const pc = await ouvrir(true);
 await pc.evaluate(() => render('home'));
 check(await pc.evaluate(() => document.querySelectorAll('.ac-tuile, .ac-carte, .ac-rw').length === 0 && !!document.getElementById('compteur-brebis-actives')), 'PC : l\'accueil PC garde son rendu');
-console.log('OK 5 PC inchangé.');
+console.log('OK 7 PC inchangé.');
 await browser.close();
-console.log('\nTOUS LES TESTS DE L\'ACCUEIL MOBILE (HAUT) SONT PASSÉS.');
+console.log('\nTOUS LES TESTS DE L\'ACCUEIL MOBILE SONT PASSÉS.');
