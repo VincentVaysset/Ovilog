@@ -80,5 +80,20 @@ await page.evaluate(() => render('traitements-collectifs'));
 check(await page.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'groupe 3 : aucune écriture');
 console.log('OK groupe 3 : ordonnances, sous délai, contrôle de lot, produits, traitements collectifs sans bulle ; lignes d\'information (sans délai, rien enregistré, suppression).');
 
+// ================================================================ groupe 4 : listes, scan et bilan (Mise à jour d'inventaire, Liste en série, Agnelles « À trier », Bilan de lactation)
+await page.evaluate(() => { render('maj-inventaire'); window.__avant = JSON.stringify(DB); });   // l'écran initialise sa session en mémoire (sans saveData) : la comparaison repart de là
+eq((await sansBulle('Mise à jour d\'inventaire')).infos, [], 'Mise à jour d\'inventaire : aucune ligne d\'information');
+check(await page.evaluate(() => !!document.getElementById('scan-maj-inventaire') && document.getElementById('app').textContent.includes('Scanner une brebis')), 'Mise à jour d\'inventaire : le champ « Scanner une brebis » reste');
+await page.evaluate(() => render('liste-serie'));
+eq((await sansBulle('Liste en série')).infos, [], 'Liste en série : aucune ligne d\'information');
+check(await page.evaluate(() => !!document.getElementById('scan-liste-serie') && document.getElementById('app').textContent.includes('Scanner un animal')), 'Liste en série : le champ « Scanner un animal » reste');
+await page.evaluate(() => render('agnelles'));
+eq((await sansBulle('Agnelles (tri)')).infos, [], 'Agnelles : aucune ligne d\'information');
+check(await page.evaluate(() => document.getElementById('app').textContent.includes('À trier (femelles nées sur l\'exploitation)')), 'Agnelles : le titre « À trier » reste, sans bulle');
+await page.evaluate(() => { bilanCampagneTab = 'lactation'; bilanLactationCampagneAffichee = 2026; render('bilan-campagne'); });
+eq((await sansBulle('Bilan de lactation (mobile)')).infos, [], 'Bilan de lactation : aucune ligne d\'information (texte dans le manuel)');
+check(await page.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'groupe 4 : aucune écriture');
+console.log('OK groupe 4 : mise à jour d\'inventaire, liste en série, agnelles, bilan de lactation sans bulle.');
+
 await browser.close();
 console.log('\nTOUS LES TESTS « BULLES ? » SONT PASSÉS.');

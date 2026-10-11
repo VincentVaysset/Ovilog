@@ -58,6 +58,12 @@ if (process.env.OVILOG_MAJ_REF === '1' || !existsSync(REF)) {
   console.log('Référence écrite : ' + REF + ' (' + Object.entries(res).map(([k, v]) => k + ' ' + v.length).join(', ') + ')');
   process.exit(0);
 }
+// Mise à jour VOULUE d'écrans précis (chantier « bulles ? ») : OVILOG_MAJ_REF_ECRANS=lactation remplace seulement cet écran dans la référence
+if (process.env.OVILOG_MAJ_REF_ECRANS) {
+  const ref = JSON.parse(readFileSync(REF, 'utf8'));
+  for (const k of process.env.OVILOG_MAJ_REF_ECRANS.split(',')) { if (!(k in res)) throw new Error('écran inconnu : ' + k); ref[k] = res[k]; }
+  writeFileSync(REF, JSON.stringify(ref, null, 1)); console.log('Référence mise à jour pour : ' + process.env.OVILOG_MAJ_REF_ECRANS); process.exit(0);
+}
 const attendu = JSON.parse(readFileSync(REF, 'utf8'));
 let ko = false;
 for (const k of Object.keys(attendu)) {
