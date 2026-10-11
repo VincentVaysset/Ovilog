@@ -55,7 +55,7 @@ const creerLot = async (type, extra) => {
 
 // ================================================================ 1. étape 1 : formulaire, valeurs par défaut, lot créé VIDE
 await jeu();
-check(await page.evaluate(() => !!document.getElementById('pc-lots')) && /Lots/.test(await $t('.pc-seg2')) && /Tri des agnelles/.test(await $t('.pc-seg2')), 'page à 2 onglets : Lots et Tri des agnelles');
+check(await page.evaluate(() => !!document.getElementById('pc-lots')) && /Lots/.test(await $t('.pc-onglets')) && /Tri des agnelles/.test(await $t('.pc-onglets')), 'page à 2 onglets : Lots et Tri des agnelles');
 check(!/Créer une liste/.test(await $t('#pc-lots')), 'pas d\'onglet « Créer une liste » sur PC');
 const f1 = await page.evaluate(() => ({ type: document.querySelector('#lt-type .selected').dataset.val, cible: document.querySelector('#lt-cible .selected').dataset.val, mode: document.querySelector('#lt-mode .selected').dataset.val, camp: document.querySelector('#lt-campagne .selected').dataset.val, nom: document.getElementById('lt-nom').value, date: document.getElementById('lt-date').value, camps: [...document.querySelectorAll('#lt-campagne .opt-btn')].map(b => b.textContent) }));
 check(f1.type === 'reproduction' && f1.cible === 'Brebis' && f1.mode === 'IA' && f1.camp === 'avenir' && f1.nom === 'IA du 03-10-2026' && f1.date === '2026-10-03', 'défauts : reproduction / Brebis / IA / campagne à venir / « IA du 03-10-2026 » : ' + JSON.stringify(f1));

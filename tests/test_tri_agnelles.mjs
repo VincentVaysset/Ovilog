@@ -54,7 +54,7 @@ console.log('OK 1 logique commune : blocs, compteur N/M (achetées, vendues hors
 await jeu();
 await page.evaluate(() => { triPcEtat = null; render('agnelles'); });
 await page.waitForSelector('#pc-tri-agnelles');
-check(/Tri des agnelles/.test(await $t('#pc-tri-agnelles .pc-seg2')) && await page.evaluate(() => !!document.getElementById('ta-compteur') && !!document.getElementById('ta-table-atrier') && !!document.getElementById('ta-table-gardees') && !!document.getElementById('ta-table-ecartees')), 'page PC : onglets, compteur, 3 blocs');
+check(/Tri des agnelles/.test(await $t('#pc-tri-agnelles .pc-onglets')) && await page.evaluate(() => !!document.getElementById('ta-compteur') && !!document.getElementById('ta-table-atrier') && !!document.getElementById('ta-table-gardees') && !!document.getElementById('ta-table-ecartees')), 'page PC : onglets, compteur, 3 blocs');
 check(/1 triées sur 4 femelles nées actives/.test(await $t('#ta-compteur')) && /À trier 2 · écartées 1 · achetées 1 en plus \(hors total\)/.test(await $t('#ta-compteur')), 'compteur PC : ' + await $t('#ta-compteur'));
 const th1 = await page.evaluate(() => [...document.querySelectorAll('#ta-table-atrier th')].map(x => x.textContent).join('|'));
 check(th1 === 'N°|Née le|Mère|Naissance|Classe mère|Lactation mère N-1 (2026)|Tri', 'colonnes À trier : ' + th1);
