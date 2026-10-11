@@ -1,4 +1,4 @@
-/* Gabarit PC commun (CLAUDE.md, « Charte graphique ») : sur les écrans PC, mêmes hauteurs et rayons partout. Section 1 (socle) : champs 44 px / rayon 12 ; boutons .btn en pastille ≥ 44 px (32 px dans une cellule de tableau) ; lignes de tableau 48 px (40 px pour les tableaux de synthèse) ; titres de section .pc-sec en 12 px majuscules gris. Jeu SYNTHÉTIQUE (jeuPcEcrans), saveData neutralisé. */
+/* Gabarit PC commun (CLAUDE.md, « Charte graphique ») : sur les écrans PC, mêmes hauteurs et rayons partout. Section 2 : titre unique (le titre de l'écran n'est écrit que dans le bandeau vert, jamais répété dans la page) et contenu pleine largeur (marge de 24 px, plus de colonne plafonnée à 900 / 420 / 520 px). Section 1 (socle) : champs 44 px / rayon 12 ; boutons .btn en pastille ≥ 44 px (32 px dans une cellule de tableau) ; lignes de tableau 48 px (40 px pour les tableaux de synthèse) ; titres de section .pc-sec en 12 px majuscules gris. Jeu SYNTHÉTIQUE (jeuPcEcrans), saveData neutralisé. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
 import { jeuPcEcrans } from './lib/jeu_pc_ecrans.mjs';
@@ -33,6 +33,23 @@ for (const [nom, code] of VUES_GABARIT) {
   for (const l of r.lignes) { check(l.h >= 40 && l.h <= 56, nom + ' : ligne de tableau ' + l.cls + ' à 40-56 px (obtenu ' + l.h + ')'); nLignes++; }
   for (const s of r.sec) { check(s[0] === '12px' && s[1] === '500' && s[2] === 'uppercase' && s[3] === 'rgb(94, 91, 71)', nom + ' : titre de section .pc-sec en 12 px / 500 / majuscules / gris : ' + JSON.stringify(s)); nSec++; }
 }
+// Section 2 : titre unique + pleine largeur
+let nTitres = 0, nLarges = 0;
+for (const [nom, code] of VUES_GABARIT.concat([['Agneaux', 'render("agneaux")'], ['Agnelles', 'render("agnelles-inventaire")'], ['Production laitière', 'render("qualite")'], ['Brebis', 'render("list")'], ['Béliers', 'render("beliers")']])) {
+  await pc.evaluate(code); await pc.waitForTimeout(120);
+  const r = await pc.evaluate(() => {
+    const vis = e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; }, a = document.getElementById('app'), R = a.getBoundingClientRect(), cs = getComputedStyle(a);
+    const banniere = document.getElementById('page-title').textContent.trim();
+    const titres = [...a.querySelectorAll('h1, h2, .brd-title')].filter(vis).map(e => e.textContent.trim());
+    const plafonnes = [...a.children].filter(vis).map(e => getComputedStyle(e).maxWidth).filter(m => /^(900|420|520)px$/.test(m));
+    const interne = [...a.querySelectorAll('.pc-onglets, .list-table-contain')].filter(vis).map(e => getComputedStyle(e).maxWidth).filter(m => m !== 'none');
+    return { banniere, titres, plafonnes, interne, gauche: Math.round(R.left), droite: Math.round(innerWidth - R.right), pad: [cs.paddingLeft, cs.paddingRight] };
+  });
+  check(!r.titres.includes(r.banniere), nom + ' : le titre « ' + r.banniere + ' » est répété dans la page (' + JSON.stringify(r.titres) + ')'); nTitres++;
+  check(r.plafonnes.length === 0 && r.interne.length === 0, nom + ' : bloc plafonné en largeur ' + JSON.stringify(r.plafonnes.concat(r.interne)));
+  check(r.gauche === 240 && r.droite === 0 && r.pad[0] === '24px' && r.pad[1] === '24px', nom + ' : contenu pleine largeur avec 24 px de marge (' + JSON.stringify(r) + ')'); nLarges++;
+}
+console.log('OK gabarit PC, titre unique : ' + nTitres + ' écrans sans titre répété ; pleine largeur : ' + nLarges + ' écrans (marge 24 px, aucun bloc plafonné).');
 console.log('OK gabarit PC, socle : ' + nChamps + ' champs, ' + nBoutons + ' boutons, ' + nLignes + ' tableaux, ' + nSec + ' titres de section sur ' + VUES_GABARIT.length + ' écrans.');
 await browser.close();
 console.log('\nTOUS LES TESTS « GABARIT PC » SONT PASSÉS.');
