@@ -123,12 +123,19 @@ function jeuEcho() {
   window.__avant = JSON.stringify(DB); window.__saves = 0;
 }
 await m.evaluate(jeuEcho); await m.evaluate(() => { accueilEchoTab = 'resultat'; render('home'); });
-const lignesEcho = () => m.evaluate(() => [...document.querySelectorAll('#ac-echo .ac-echo-corps > *')].map(r => r.classList.contains('lbl') ? '# ' + r.textContent : r.querySelector('.h span').textContent + ' = ' + r.querySelector('.h b').textContent.replace(/\s/g, ' ') + ' [' + r.querySelector('.tb2 i').className + ']'));
+const lignesEcho = () => m.evaluate(() => [...document.querySelectorAll('#ac-echo .ac-echo-corps .rp, #ac-echo .ac-echo-corps .lbl, #ac-echo .ac-echo-corps .ac-detail-btn')].map(r => r.classList.contains('lbl') ? '# ' + r.textContent : r.classList.contains('ac-detail-btn') ? '> ' + r.textContent + ' [' + r.getAttribute('aria-expanded') + ']' : r.querySelector('.h span').textContent + ' = ' + r.querySelector('.h b').textContent.replace(/\s/g, ' ') + ' [' + r.querySelector('.tb2 i').className + ']'));
 eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo-seg button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : ''))), ['Résultat*', 'Comptage'], 'segmenté Résultat / Comptage, Résultat actif');
-eq(await lignesEcho(), [
-  'Pleine = 9 (60 %) [vert]', '# Monte naturelle', 'Début = 1 (7 %) [vert]', 'Milieu = 2 (13 %) [vert]', 'Fin = 3 (20 %) [vert]', '# Lot IA / Éponge', 'IA = 1 (7 %) [vert]', 'Retour 1 = 0 (0 %) [vert]', 'Retour 2 = 0 (0 %) [vert]', 'Tardive = 0 (0 %) [vert]',
-  'Stade non précisé = 2 (13 %) [vert]', 'Vide = 1 (7 %) [rouge]', 'Vide définitive = 1 (7 %) [rouge-clair]', 'Avortée / pseudogestation = 2 (13 %) [ambre]', 'Sans échographie = 2 (13 %) [gris]'], 'Résultat : Pleine (Début, Milieu, Fin, lot IA, non précisé), Vide, Vide définitive, Avortée / pseudogestation, Sans échographie (15 brebis actives)');
-eq(await m.evaluate(() => document.querySelector('#ac-echo .reg-info').textContent), 'Dernière écho postérieure à la dernière mise bas, toutes sessions confondues (constat, stade, avec ou sans comptage). Une brebis qui a mis bas depuis sa dernière écho passe en « Sans échographie ». Vide : à repasser à l\'écho ou à classer en vide définitive.', 'phrase d\'info du Résultat');
+eq(await lignesEcho(), ['Pleine = 9 (60 %) [vert]', '> Détail par stade ▾ [false]', 'Vide = 1 (7 %) [rouge]', 'Vide définitive = 1 (7 %) [rouge-clair]', 'Avortée / pseudogestation = 2 (13 %) [ambre]', 'Sans échographie = 2 (13 %) [gris]'],
+  'Résultat, détail replié par défaut : Pleine, « Détail par stade », Vide, Vide définitive et Avortée / pseudogestation (> 0), Sans échographie');
+eq(await m.evaluate(() => document.querySelectorAll('#ac-echo .ac-detail').length), 0, 'détail replié : aucune ligne de stade dans la page');
+await m.click('#ac-echo-detail-btn');
+eq(await lignesEcho(), ['Pleine = 9 (60 %) [vert]', '> Détail par stade ▴ [true]', '# Monte naturelle', 'Début = 1 (7 %) [vert]', 'Milieu = 2 (13 %) [vert]', 'Fin = 3 (20 %) [vert]', '# Lots IA / Éponge', 'IA = 1 (7 %) [vert]', 'Stade non précisé = 2 (13 %) [vert]',
+  'Vide = 1 (7 %) [rouge]', 'Vide définitive = 1 (7 %) [rouge-clair]', 'Avortée / pseudogestation = 2 (13 %) [ambre]', 'Sans échographie = 2 (13 %) [gris]'],
+  'détail déplié : groupes Monte naturelle et Lots IA / Éponge, lignes à 0 masquées (Retour 1, Retour 2, Tardive), « Stade non précisé » en dernier hors groupe');
+check(await m.evaluate(() => { const nonPrecis = [...document.querySelectorAll('#ac-echo .ac-detail .rp')].pop(); return nonPrecis.querySelector('.h span').textContent === 'Stade non précisé' && nonPrecis.parentElement.classList.contains('ac-detail') && nonPrecis.previousElementSibling.querySelector('.h span').textContent === 'IA'; }), '« Stade non précisé » est la dernière ligne du détail, après le groupe des lots');
+await m.click('#ac-echo-detail-btn');
+eq((await lignesEcho())[1], '> Détail par stade ▾ [false]', 'le détail se replie');
+eq(await m.evaluate(() => document.querySelector('#ac-echo .reg-info').innerHTML), 'Vide : à repasser à l\'écho ou à classer en vide définitive.<br>Sans échographie : aucune écho depuis la dernière mise bas.', 'phrase d\'info : deux lignes');
 console.log('OK 5 Résultat : règle (écho postérieure à la dernière mise bas, date égale = dernière saisie, deux types = le plus récent), Vide définitive à part, Avortée / pseudogestation à part.');
 await m.click('#ac-echo-seg [data-tab="comptage"]');
 eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo-seg button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : ''))), ['Résultat', 'Comptage*'], 'Comptage actif');
@@ -138,6 +145,25 @@ check(await m.evaluate(() => JSON.stringify(DB) === window.__avant && window.__s
 eq(await m.evaluate(() => { const c = repartitionEchoAccueil(); return c.pleine + c.vide + c.videDefinitive + c.cas + c.sans === c.total; }), true, 'chaque brebis active est dans une seule ligne (somme = total)');
 await m.evaluate(() => { accueilEchoTab = 'resultat'; });
 console.log('OK 5bis Comptage : 1 / 2 / 3 et + / Sans comptage, aucune écriture.');
+// plusieurs lots IA / Éponge : leurs stades s'additionnent dans « Lots IA / Éponge » ; lignes à 0 masquées ; groupe vide masqué ; Vide définitive et Avortée / pseudogestation absentes à 0
+await m.evaluate(() => {
+  window.__jeu('zero');
+  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const e = (stade) => ({ date: '2026-08-01', campagne: 2026, type: 'stade', stade });
+  const b = (id, stade, lotId, mode) => ({ id, eid: eid(8, Number(id.replace(/\D/g, ''))), statut: 'active', createdAt: 1, echographies: [e(stade)], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: lotId ? [{ mode, lotId, date: '2026-07-01', campagne: 2026 }] : [] });
+  DB.brebis = [b('A1', 'IA', 'IA1', 'IA'), b('A2', 'IA', 'IA2', 'IA'), b('A3', 'Retour 1', 'EP1', 'EP'), b('A4', 'Retour 1', 'IA1', 'IA'), b('A5', 'Tardive', 'EP1', 'EP'), b('M1', 'Début', null)];
+  DB.lots = [{ id: 'IA1', nom: 'IA mars', type: 'reproduction', mode: 'IA', cible: 'Brebis', membres: [DB.brebis[0].eid, DB.brebis[3].eid] }, { id: 'IA2', nom: 'IA avril', type: 'reproduction', mode: 'IA', cible: 'Brebis', membres: [DB.brebis[1].eid] }, { id: 'EP1', nom: 'Éponge mai', type: 'reproduction', mode: 'EP', cible: 'Brebis', membres: [DB.brebis[2].eid, DB.brebis[4].eid] }];
+  window.__avant = JSON.stringify(DB); window.__saves = 0; accueilEchoTab = 'resultat'; accueilEchoDetailOuvert = true; render('home');
+});
+eq(await lignesEcho(), ['Pleine = 6 (100 %) [vert]', '> Détail par stade ▴ [true]', '# Monte naturelle', 'Début = 1 (17 %) [vert]', '# Lots IA / Éponge', 'IA = 2 (33 %) [vert]', 'Retour 1 = 2 (33 %) [vert]', 'Tardive = 1 (17 %) [vert]', 'Vide = 0 (0 %) [rouge]', 'Sans échographie = 0 (0 %) [gris]'],
+  'plusieurs lots IA et un lot Éponge : les stades s\'additionnent (IA 2, Retour 1 2, Tardive 1) ; Retour 2, Stade non précisé, Vide définitive, Avortée / pseudogestation masqués à 0 ; Pleine, Vide, Sans échographie toujours visibles');
+await m.evaluate(() => { DB.brebis = DB.brebis.filter(s => s.id !== 'M1'); render('home'); });
+check((await lignesEcho()).every(l => l !== '# Monte naturelle') && (await lignesEcho()).includes('# Lots IA / Éponge'), 'groupe Monte naturelle masqué quand tous ses stades sont à 0');
+await m.evaluate(() => { DB.brebis.forEach(s => { s.echographies = []; }); render('home'); });
+eq(await lignesEcho(), ['Pleine = 0 (0 %) [vert]', 'Vide = 0 (0 %) [rouge]', 'Sans échographie = 5 (100 %) [gris]'], 'sans aucune brebis pleine : pas de « Détail par stade », 3 lignes seulement');
+check(await m.evaluate(() => window.__saves === 0), 'aucune écriture');
+await m.evaluate(() => { accueilEchoDetailOuvert = false; });
+console.log('OK 5ter Détail par stade : replié par défaut, lots IA / Éponge additionnés, lignes et groupes à 0 masqués, Vide définitive et Avortée / pseudogestation seulement si > 0.');
 // jeu vide : aucun calcul n'échoue
 await m.evaluate(jeu, 'zero'); await m.evaluate(() => { accueilEchoTab = 'resultat'; render('home'); });
 eq((await lignesEcho())[0], 'Pleine = 0 (0 %) [vert]', 'aucune brebis : Pleine 0 (0 %)');
