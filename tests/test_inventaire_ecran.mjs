@@ -37,7 +37,7 @@ for (const bureau of [true, false]) {
 
   // ---- structure : boutons, champ, tableau
   eq(await page.evaluate(() => [document.getElementById('btn-export-inventaire-pdf').className, document.getElementById('btn-export-inventaire-xlsx').className]), ['btn btn-primary', 'btn btn-secondary'], nom + ' : Export PDF vert plein, Export Excel en contour');
-  eq(await page.evaluate(() => [document.getElementById('btn-export-inventaire-pdf').textContent, document.getElementById('btn-export-inventaire-xlsx').textContent]), ['Export PDF', 'Export Excel (.xlsx)'], nom + ' : libellés des boutons');
+  eq(await page.evaluate(() => [document.getElementById('btn-export-inventaire-pdf').textContent, document.getElementById('btn-export-inventaire-xlsx').textContent]), ['Export PDF', bureau ? 'Export Excel' : 'Export Excel (.xlsx)'], nom + ' : libellés des boutons');
   eq(await page.evaluate(() => getComputedStyle(document.getElementById('btn-export-inventaire-pdf')).backgroundColor !== getComputedStyle(document.getElementById('btn-export-inventaire-xlsx')).backgroundColor), true, nom + ' : fonds différents');
   check(await page.evaluate(() => !!document.querySelector('label[for="inventaire-recherche"]') && document.getElementById('inventaire-recherche').placeholder.length > 0), nom + ' : champ de recherche avec libellé');
   const yq = await page.evaluate(() => document.getElementById('inventaire-recherche').getBoundingClientRect().y), yt = await page.evaluate(() => document.querySelector('#inv-liste').getBoundingClientRect().y);

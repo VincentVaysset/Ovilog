@@ -1,4 +1,4 @@
-/* Refonte Calendrier / Déclaration annuelle, partie C0 : écran Déclaration annuelle. PC : en-tête « Déclaration <année> » avec choix de l'année et « Exporter (PDF) » vert en haut à droite ;
+/* Refonte Calendrier / Déclaration annuelle, partie C0 : écran Déclaration annuelle. PC : en-tête (titre « Déclaration <année> » masqué car déjà dans le bandeau) avec choix de l'année et « Export PDF » vert en haut à droite ;
    « Recensement au 1er janvier » : 4 tuiles sur une ligne ; « Ratio PAC (aide ovine) · année-1 » : 3 chiffres + ratio en vert avec sa formule (plus de ❔), 2 décimales à la française ;
    « Non disponible » conservé ; « Données insuffisantes » conservé. Mobile : mêmes cartes, tuiles sur 2 colonnes, bouton d'export vert en bas. Mêmes chiffres que
    declarationAnnuelleChiffres. Le PDF généré est vérifié dans test_declaration_pdf. saveData REMPLACÉ. */
@@ -30,7 +30,7 @@ for (const bureau of [true, false]) {
   eq(await page.evaluate(() => document.querySelector('.brd-title').textContent), 'Déclaration 2026', nom + ' : titre');
   check(await page.evaluate(() => document.getElementById('app').textContent.includes('Recensement au 1er janvier et ratio de l\'aide ovine')), nom + ' : sous-titre');
   check(!(await page.evaluate(() => document.getElementById('app').textContent.includes('❔'))), nom + ' : aucun ❔');
-  eq(await page.evaluate(() => document.getElementById('btn-export-declaration-pdf').textContent + '|' + document.getElementById('btn-export-declaration-pdf').classList.contains('btn-primary')), 'Exporter (PDF)|true', nom + ' : bouton vert « Exporter (PDF) »');
+  eq(await page.evaluate(() => document.getElementById('btn-export-declaration-pdf').textContent + '|' + document.getElementById('btn-export-declaration-pdf').classList.contains('btn-primary')), (bureau ? 'Export PDF' : 'Exporter (PDF)') + '|true', nom + ' : bouton vert « ' + (bureau ? 'Export PDF' : 'Exporter (PDF)') + ' »');
   const bExp = await box(page, '#btn-export-declaration-pdf'), bRec = await box(page, '#decl-recensement'), bSel = await box(page, '#declaration-annee');
   if (bureau) check(bExp.y < bRec.y && bExp.x > 900 && Math.abs((bExp.y + bExp.h / 2) - (bSel.y + bSel.h / 2)) < 8, 'PC : année et export en haut à droite, sur la même ligne');
   else check(bExp.y > (await box(page, '#decl-ratio')).y, 'mobile : bouton d\'export sous les cartes');
