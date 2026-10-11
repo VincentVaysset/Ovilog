@@ -143,6 +143,22 @@ eq(T.lots, ['Monte naturelle|Naturelle|9|5|0|56 %', 'IA septembre|IA|4|3|1|75 %'
 eq([T.semaines, T.colonnes], [['S27', 'S28', 'S29', 'S30', 'S31'], ['2', '0', '0', '0', '15']], 'histogramme Échos par semaine');
 eq([T.onglets, T.thFond, T.thTexte], [['Résultats', 'Historique'], 'rgb(53, 127, 75)', 'rgb(255, 255, 255)'], 'segmenté charte ; tableaux : en-tête vert, texte blanc');
 check(T.alt[0] !== T.alt[1], 'lignes alternées');
+// mise en page (retouches) : noms de lot sur une ligne sans rien couper dans « Par lot » ; cartes du haut alignées en haut, non étirées
+const MEP = await pc.evaluate(() => {
+  const lh = (el) => parseFloat(getComputedStyle(el).lineHeight) || parseFloat(getComputedStyle(el).fontSize) * 1.3;
+  const une = (el) => { const r = document.createRange(); r.selectNodeContents(el); return r.getClientRects().length === 1 || [...r.getClientRects()].every(q => Math.abs(q.top - r.getClientRects()[0].top) < 3); };
+  const tab = document.querySelector('.ep-g2 table'), tw = tab.parentElement;
+  const cartes = [...document.querySelectorAll('.ep-g3 .ep-carte')].map(c => c.getBoundingClientRect());
+  return { lots: [...tab.querySelectorAll('tbody td:first-child')].map(td => [td.textContent.trim(), getComputedStyle(td).whiteSpace, une(td), td.getBoundingClientRect().height <= lh(td) * 2.5]),
+    coupe: tw.scrollWidth > tw.clientWidth + 1, thRep: (() => { const th = [...tab.querySelectorAll('th')].pop(), q = th.getBoundingClientRect(), t = tw.getBoundingClientRect(); return [th.textContent, q.right <= t.right + 1]; })(),
+    largLot: tab.querySelector('th:first-child').getBoundingClientRect().width, largRep: [...tab.querySelectorAll('th')].pop().getBoundingClientRect().width,
+    hauts: cartes.map(q => Math.round(q.top)), h: cartes.map(q => Math.round(q.height)), alignItems: getComputedStyle(document.querySelector('.ep-g3')).alignItems };
+});
+check(MEP.lots.every(l => l[1] === 'nowrap' && l[2] && l[3]), 'Par lot : chaque nom de lot tient sur une seule ligne (white-space:nowrap) : ' + JSON.stringify(MEP.lots));
+check(!MEP.coupe && MEP.thRep[0] === 'Répartition' && MEP.thRep[1], 'Par lot : la colonne Répartition n\'est ni coupée ni rognée : ' + JSON.stringify(MEP));
+check(MEP.largLot > MEP.largRep, 'Par lot : la colonne Lot est plus large que la colonne Répartition (' + MEP.largLot + ' > ' + MEP.largRep + ')');
+check(MEP.alignItems === 'flex-start' || MEP.alignItems === 'start', 'cartes du haut : alignées en haut, non étirées (align-items ' + MEP.alignItems + ')');
+check(MEP.hauts.every(t => t === MEP.hauts[0]) && MEP.h[0] < MEP.h[1] && MEP.h[2] < MEP.h[1], 'cartes du haut : même ligne de départ, hauteur propre à leur contenu (Résultat et Comptage plus courtes que Pleines par stade) : ' + JSON.stringify(MEP.h));
 console.log('OK 7 Résultats : tuiles, anneau, stades, comptage, par lot, échos par semaine, tableaux à en-tête vert.');
 
 // ================================================================ 8. filtres de l'écran (champs réels) et détail par brebis
@@ -165,6 +181,11 @@ await pc.selectOption('#ep-f-res', 'sans');
 const sansRows = await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => [...r.children].map(c => c.textContent.replace(/\s+/g, ' ').trim()).slice(0, 8).join('|')));
 eq(sansRows.length, 2, 'filtre « Sans échographie » : 2 brebis');
 check(sansRows.some(r => /Avant mise bas/.test(r) && /01-08-2026/.test(r)), '« Avant mise bas » : la brebis qui a mis bas depuis son écho est listée avec son écho d\'avant en grisé : ' + JSON.stringify(sansRows));
+// détail : « Sans échographie » et l'étiquette « Avant mise bas » sur une seule ligne, sans coupure de la cellule Résultat
+const unique = await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(tr => { const td = tr.children[4], vis = [...td.querySelectorAll('*')].filter(e => e.getBoundingClientRect().width > 0), tops = vis.map(e => Math.round(e.getBoundingClientRect().top + e.getBoundingClientRect().height / 2)), tag = td.querySelector('.ep-tag');
+  return { txt: td.textContent.replace(/\s+/g, ' ').trim(), ws: getComputedStyle(td).whiteSpace, centres: tops, tag: !!tag, h: Math.round(td.getBoundingClientRect().height), debord: td.scrollWidth > td.clientWidth + 1 }; }));
+check(unique.length === 2 && unique.every(u => u.ws === 'nowrap' && !u.debord && Math.max(...u.centres) - Math.min(...u.centres) <= 4 && u.h <= 48), 'Détail : « Sans échographie » (+ étiquette « Avant mise bas ») sur une seule ligne, cellule Résultat non coupée : ' + JSON.stringify(unique));
+check(unique.some(u => u.tag && u.txt === 'Sans échographie Avant mise bas'), 'Détail : l\'étiquette « Avant mise bas » est en toutes lettres à l\'écran, à côté de « Sans échographie »');
 await pc.selectOption('#ep-f-res', '');
 await pc.selectOption('#ep-f-compt', 'troisEtPlus');
 eq(await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => [r.children[0].textContent, r.children[5].textContent])), [['n°00004', '3 et +'], ['8003', '3 et +']], 'filtre comptage « 3 et + »');
@@ -271,14 +292,32 @@ for p in d:
     for dr in p.get_drawings():
         c = dr.get('fill')
         if c and abs(c[0]-53/255) < .01 and abs(c[1]-127/255) < .01 and abs(c[2]-75/255) < .01: verts += 1
-print(json.dumps({ 'pages': len(d), 'txt': txt, 'verts': verts }))
+ent = []
+for p in d:
+    nc = [q for q in p.search_for('N° court') if p.get_textbox(q).strip() == 'N° court']
+    if not nc: continue
+    for w in ['N° court', 'Millésime', 'Âge', 'Résultat', 'Dernière écho', 'Type', 'Stade / cas', 'Comptage', 'Cas particulier', 'Lots', 'Avant MB']:
+        for q in p.search_for(w):
+            if p.get_textbox(q).strip() == w and abs(q.y0 - nc[0].y0) < 3:
+                ent.append([w, round(q.x1), round(p.rect.width)]); break
+print(json.dumps({ 'pages': len(d), 'txt': txt, 'verts': verts, 'ent': ent }))
 `;
 const r = spawnSync('python3', ['-I', '-c', PY, f], { encoding: 'utf8' });
 check(r.status === 0, 'lecture du PDF : ' + r.stderr);
 const P = JSON.parse(r.stdout), TXT = P.txt.join('\n');
 check(P.pages >= 2 && P.verts >= 6, 'PDF : plusieurs pages, en-têtes de tableau verts #357f4b (' + P.verts + ' éléments)');
-for (const motif of ['Échographies · résultats', 'Campagne : toutes · 15 brebis actives', 'Pleines', 'Vides définitives', 'Sans échographie', 'Résultat', 'Pleines par stade', 'Pleines par comptage', 'Par lot', 'Brebis uniques', 'Échos par semaine', 'Détail par brebis', 'Avant mise bas', 'IA septembre, Éponge août', 'Page 1/' + P.pages, 'Page ' + P.pages + '/' + P.pages, 'Ovilog · Échographies · résultats'])
+for (const motif of ['Échographies · résultats', 'Campagne : toutes · 15 brebis actives', 'Pleines', 'Vides définitives', 'Sans échographie', 'Résultat', 'Pleines par stade', 'Pleines par comptage', 'Par lot', 'Brebis uniques', 'Échos par semaine', 'Détail par brebis', 'Avant MB : dernière écho antérieure à la dernière mise bas', 'IA septembre, Éponge août', 'Page 1/' + P.pages, 'Page ' + P.pages + '/' + P.pages, 'Ovilog · Échographies · résultats'])
   check(TXT.includes(motif), 'PDF contient « ' + motif + ' »');
+// page du détail : en-têtes complets (aucune troncature « … »), « Comptage » en entier, dernière colonne « Avant MB » + note en pied de page
+check(!TXT.includes('…') && !TXT.includes('...'), 'PDF : aucune troncature (« … ») dans le texte');
+for (const h of ['Comptage', 'Cas particulier', 'Dernière écho', 'Stade / cas', 'Avant MB', 'Millésime'])
+  check(TXT.includes(h), 'PDF : en-tête « ' + h + ' » en entier');
+check(!/Avant mise b/.test(TXT.split('Détail par brebis')[1] || ''), 'PDF : « Avant mise bas » n\'est plus l\'en-tête de la dernière colonne (remplacé par « Avant MB »)');
+check(P.ent.length >= 22 && P.ent.length % 11 === 0, 'PDF : l\'en-tête du détail est répété à chaque page du détail, 11 colonnes complètes (' + P.ent.length + ')');
+eq(P.ent.slice(0, 11).map(e => e[0]), ['N° court', 'Millésime', 'Âge', 'Résultat', 'Dernière écho', 'Type', 'Stade / cas', 'Comptage', 'Cas particulier', 'Lots', 'Avant MB'], 'PDF : les 11 en-têtes du détail sont lisibles sur le bandeau vert, dans l\'ordre');
+check(P.ent.every(e => e[1] <= e[2] - 20), 'PDF : aucun en-tête ne dépasse la marge droite de la page');
+check(P.txt.slice(1).some(t => t.includes('Avant MB : dernière écho antérieure à la dernière mise bas (brebis comptée « Sans échographie »)')), 'PDF : la note « Avant MB » figure en pied de page du détail');
+check(Math.max(...P.ent.filter(e => e[0] === 'Lots').map(e => e[1])) > 0 && P.ent.find(e => e[0] === 'Lots')[1] < P.ent.find(e => e[0] === 'Avant MB')[1] - 30, 'PDF : la colonne Lots est réduite, « Avant MB » reste à sa droite');
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'les exports n\'écrivent rien');
 console.log('OK 11 Exports : Excel (Résumé + Détail, colonnes d\'écho, vue filtrée), PDF charte colorée (tuiles, tableaux verts, Page X/Y), aucune écriture.');
 await browser.close();
