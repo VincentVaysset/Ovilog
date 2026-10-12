@@ -167,7 +167,9 @@ let pairePourB = null;
   const sauvMigration = trace.sauv.find(s => s.prefixe === 'avant-migration-registre');
   const jr = await h.journal(uid), c10 = await h.clientId(d10);
   const ecrituresRegistre = jr.filter(e => e.ops.some(o => o.path.includes('/registre/'))).map(e => ({ n: e.n, par: e.clientId === c10 ? 'nouvel appareil' : 'autre appareil', nb: e.ops.length }));
-  check(!!sauvMigration, 'E : une sauvegarde « avant-migration-registre » a été faite avant la migration qui écrit (sauvegardes : ' + JSON.stringify(trace.sauv.map(s => s.prefixe)) + ' ; écritures du registre : ' + JSON.stringify(ecrituresRegistre) + ' ; envois du nouvel appareil : ' + JSON.stringify(trace.ecr.map(e => e.chemins.map(c => c.split('/').slice(-2).join('/')))) + ')');
+  const metaLog = await d10.page.evaluate(() => window.__metaLog);
+  const histo = jr.map(e => ({ n: e.n, par: e.clientId === c10 ? 'nouvel' : 'autre', ops: e.ops.map(o => o.type + ':' + o.path.split('/').slice(-2).join('/') + (o.drapeauMigration !== undefined ? ' drapeau=' + o.drapeauMigration : '')) }));
+  check(!!sauvMigration, 'E : une sauvegarde « avant-migration-registre » a été faite avant la migration qui écrit (sauvegardes : ' + JSON.stringify(trace.sauv.map(s => s.prefixe)) + ' ; écritures du registre : ' + JSON.stringify(ecrituresRegistre) + ' ; journal serveur : ' + JSON.stringify(histo) + ' ; meta reçues par le nouvel appareil : ' + JSON.stringify(metaLog) + ' ; envois du nouvel appareil : ' + JSON.stringify(trace.ecr.map(e => ({ chemins: e.chemins.map(c => c.split('/').slice(-2).join('/')), pile: e.pile }))) + ')');
   check(sauvMigration.t < premiereEcritureRegistre.t, 'E : la sauvegarde précède la première écriture du registre');
   await compteIntact(uid, 'E');
   // Compte déjà migré : aucune migration, aucune sauvegarde de migration, aucune écriture du registre par le nouvel appareil.

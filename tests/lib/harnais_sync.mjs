@@ -62,6 +62,16 @@ export async function demarrerHarnais() {
     }
     throw new Error('TIMEOUT côté serveur en attendant : ' + label);
   };
+  // Attend que le serveur ne reçoive plus rien d'aucun appareil pendant `calmeMs` (la synchro peut renvoyer un lot identique juste après un premier envoi :
+  // deux passes concurrentes calculent le même différentiel avant l'ack de la première -- sans conséquence, mais un test ne doit pas écrire « entre les deux »).
+  h.attendreCalme = async (uid, calmeMs = 1500) => {
+    let n = (await h.journal(uid)).length, depuis = Date.now();
+    while (Date.now() - depuis < calmeMs) {
+      await h.dormir(150);
+      const m = (await h.journal(uid)).length;
+      if (m !== n) { n = m; depuis = Date.now(); }
+    }
+  };
   h.serveur = async (uid, col) => (await fetch('http://127.0.0.1:' + port + '/snapshot?uid=' + uid + '&col=' + col)).json();
   h.journal = async uid => (await fetch('http://127.0.0.1:' + port + '/journal?uid=' + uid)).json();
   h.ecrireServeur = async (uid, ops) => { const r = await fetch('http://127.0.0.1:' + port + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops, clientId: 'test-direct' }) }); if (!r.ok) throw new Error('écriture serveur directe refusée : ' + r.status); };
@@ -90,4 +100,5 @@ export async function peuplerCompte(h, dev) {
   await h.attendreServeur(uid, 'meta', r => r.exists && r.data && (r.data.lots || []).some(l => l.id === 'LC') && (r.data.acheteurs || []).includes('Natera') && r.data.registreCollectionMigree20260930 === true, 'meta (lot LC, acheteurs, migration du registre terminée)');
   await h.attendreServeur(uid, 'brebis', r => Object.keys(r.docs).length === 3, '3 brebis sur le serveur');
   await h.attendreServeur(uid, 'evenementsLots', r => Object.keys(r.docs).length >= 1, 'journal du lot sur le serveur');
+  await h.attendreCalme(uid);
 }

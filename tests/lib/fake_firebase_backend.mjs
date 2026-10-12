@@ -130,6 +130,7 @@ const server = http.createServer(async (req, res) => {
       jr.push({ n: jr.length + 1, clientId: clientId || null, ops: ops.map(op => {
         const e = { type: op.type, path: op.path };
         if (op.data && Array.isArray(op.data.lots)) e.lots = op.data.lots.map(l => l && l.id);
+        if (op.data && 'registreCollectionMigree20260930' in op.data) e.drapeauMigration = op.data.registreCollectionMigree20260930;
         return e;
       }) });
       return json(res, 200, { ok: true });

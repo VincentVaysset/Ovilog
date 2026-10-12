@@ -79,7 +79,7 @@ let ecrituresTerminees = 0;
 async function ecrire(body) {
   await attendreReseau();
   // Trace côté page (heure d'ENVOI réel, après la file hors ligne) : les tests y comparent l'ordre « sauvegarde puis écriture ».
-  if (typeof window !== 'undefined') (window.__ecrituresLog = window.__ecrituresLog || []).push({ t: performance.now(), chemins: (body.ops || []).map(o => o.path) });
+  if (typeof window !== 'undefined') (window.__ecrituresLog = window.__ecrituresLog || []).push({ t: performance.now(), chemins: (body.ops || []).map(o => o.path), pile: (body.ops || []).some(o => o.path.includes('/registre/')) ? String(new Error().stack).split('\n').slice(2, 9).map(l => l.trim().replace(/^at /, '').slice(0, 90)).join(' < ') : undefined });
   try { return await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify(Object.assign({ clientId: clientId() }, body)) }); }
   finally { ecrituresTerminees++; }
 }
@@ -188,6 +188,7 @@ export function onSnapshot(ref, a, b, c) {
   let stopped = false;
   function livrer(data, fromCache) {
     const metadata = { fromCache, hasPendingWrites: false };
+    if (estMeta && typeof window !== 'undefined') (window.__metaLog = window.__metaLog || []).push({ t: Math.round(performance.now()), cache: fromCache, existe: data.exists, drapeau: data.data && data.data.registreCollectionMigree20260930, nReg: data.data && data.data.registre ? Object.keys(data.data.registre.brebis || {}).length : null });
     if (estMeta) onNext({ exists: () => data.exists, data: () => data.data, metadata });
     else {
       const docs = Object.keys(data.docs || {}).map(k => data.docs[k]);
