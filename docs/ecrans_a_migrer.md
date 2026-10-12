@@ -17,7 +17,7 @@
 ### XS — couleurs en dur : terminé (hors PDF)
 Toutes les couleurs hexadécimales hors `:root` et constantes PDF ont été remplacées par les variables `--ch-*` (voir `test_charte_graphique`, section 4). Les graphiques `pcBarres` utilisent `var(--ch-vert-pastel)` / `var(--ch-ambre)`, l'Accueil PC dessine son contrôle laitier en SVG.
 
-**PDF** (même chantier) : le filet vert et les titres de section (`PDF_COULEURS.vert`, `PDF_PL_COUL.vertTitre`) sont encore en `#3c8a55` au lieu de `#357f4b` ; régénération volontaire des PDF de référence.
+**PDF : terminé.** `PDF_COULEURS` et `PDF_PL_COUL` dérivent de `PDF_CHARTE` ; le filet d'en-tête est en `#357f4b`, les titres de section en vert foncé `#2f6e44` (texte et chiffres, comme dans la charte). Le Bilan de lactation PDF a les deux histogrammes mensuels de la page PC.
 
 ### S
 - Puces et boutons de choix `.opt-btn` des formulaires mobiles, avec le même composant que les puces PC.
@@ -34,8 +34,7 @@ Toutes les couleurs hexadécimales hors `:root` et constantes PDF ont été remp
 - Écrans techniques à faible priorité : Première configuration, connexion, Bluetooth.
 
 ## 3. Prochains chantiers proposés
-1. **XS + PDF** : `#357f4b` dans les PDF (filet et titres) avec régénération volontaire des références (la partie XS hors PDF est faite).
-2. Tableaux mobiles en cartes (M), puis refontes mobiles (L), dans l'ordre choisi par le propriétaire du projet.
+1. Tableaux mobiles en cartes (M), puis refontes mobiles (L), dans l'ordre choisi par le propriétaire du projet.
 
 ## 4. Roboto embarquée : terminé
 Sous-ensemble latin (400, 500, 700) en woff2 du paquet `@fontsource/roboto` 5.3.0 (licence SIL Open Font License 1.1), 86 Ko en base64 (limite fixée : 150 Ko), `@font-face` dans `www/index.html` ; vérifié par `test_tri_pc_charte` (section 4). Les glyphes hors latin (par exemple `→`, `✓`) restent rendus par la police de repli du système.
