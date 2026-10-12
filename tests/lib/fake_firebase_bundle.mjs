@@ -54,6 +54,16 @@ export function doc(refOrDb, ...segments) {
   return { path };
 }
 
+// Compteur d'écritures terminées (ack reçu) : onSnapshot jette toute réponse
+// de polling dont le vol a chevauché une écriture, puis relance aussitôt.
+// Sinon un instantané pris AVANT l'écriture pourrait être livré APRÈS son ack
+// (état périmé que le vrai SDK ne livre jamais).
+let ecrituresTerminees = 0;
+async function ecrire(body) {
+  try { return await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify(body) }); }
+  finally { ecrituresTerminees++; }
+}
+
 function parsePath(path) {
   const parts = path.split('/');
   return { uid: parts[1], col: parts[2], id: parts[3] };
@@ -61,15 +71,15 @@ function parsePath(path) {
 
 export async function setDoc(ref, data) {
   const { uid } = parsePath(ref.path);
-  await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops: [{ type: 'set', path: ref.path, data }] }) });
+  await ecrire({ uid, ops: [{ type: 'set', path: ref.path, data }] });
 }
 export async function updateDoc(ref, data) {
   const { uid } = parsePath(ref.path);
-  await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops: [{ type: 'update', path: ref.path, data }] }) });
+  await ecrire({ uid, ops: [{ type: 'update', path: ref.path, data }] });
 }
 export async function deleteDoc(ref) {
   const { uid } = parsePath(ref.path);
-  await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops: [{ type: 'delete', path: ref.path }] }) });
+  await ecrire({ uid, ops: [{ type: 'delete', path: ref.path }] });
 }
 export async function getDoc(ref) {
   const { uid, col, id } = parsePath(ref.path);
@@ -100,7 +110,7 @@ export function writeBatch(db) {
     async commit() {
       window.__testBatchCallCount = (window.__testBatchCallCount || 0) + 1;
       window.__testBatchOpsCount = (window.__testBatchOpsCount || 0) + ops.length;
-      const res = await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops }) });
+      const res = await ecrire({ uid, ops });
       if (!res.ok) {
         // Même contrat que le vrai SDK : commit() rejette sa promesse si le
         // batch échoue (ex: update() sur un document supprimé -- voir la
@@ -124,11 +134,13 @@ export function onSnapshot(ref, onNext, onError) {
   let stopped = false;
   async function poll() {
     if (stopped) return;
+    const ecritures = ecrituresTerminees;
     try {
       if (col === 'meta' && id) {
         // doc unique (meta/main) : traité comme la collection 'meta' côté backend
         const res = await fetch(BACKEND_URL + '/snapshot?uid=' + uid + '&col=meta');
         const data = await res.json();
+        if (ecrituresTerminees !== ecritures) return poll(); // écriture terminée pendant le vol : réponse périmée, on relance aussitôt
         if (data.version !== lastVersion) {
           lastVersion = data.version;
           onNext({ exists: () => data.exists, data: () => data.data });
@@ -136,6 +148,7 @@ export function onSnapshot(ref, onNext, onError) {
       } else {
         const res = await fetch(BACKEND_URL + '/snapshot?uid=' + uid + '&col=' + col);
         const data = await res.json();
+        if (ecrituresTerminees !== ecritures) return poll(); // écriture terminée pendant le vol : réponse périmée, on relance aussitôt
         if (data.version !== lastVersion) {
           lastVersion = data.version;
           const docs = Object.keys(data.docs).map(k => data.docs[k]);

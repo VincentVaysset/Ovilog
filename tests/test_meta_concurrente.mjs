@@ -1,5 +1,5 @@
 /* Teste explicitement demandé avant le build : 2 appareils modifient des
-   champs meta DIFFÉRENTS (laitTank, produits, causesMortalite, journal) au
+   champs meta DIFFÉRENTS (laitTank, acheteurs, causesMortalite, journal) au
    même moment -- aucun ne doit écraser l'autre. Ce scénario exerce
    directement la fusion champ par champ de meta (fusionnerEnregistrementDistant,
    voir le correctif de l'étape 2 du chantier "Compléter le changement de
@@ -51,30 +51,42 @@ async function waitFor(page, fn, { timeout = 20000, interval = 200, label = 'con
   }
   throw new Error('TIMEOUT en attendant : ' + label);
 }
+let uidCompte = null;
+async function serveurAttend(col, pred, label) {
+  const uid = uidCompte;
+  const start = Date.now();
+  while (Date.now() - start < 20000) {
+    const r = await (await fetch('http://127.0.0.1:' + fakePort + '/snapshot?uid=' + uid + '&col=' + col)).json();
+    if (pred(r)) return true;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error('TIMEOUT côté serveur en attendant : ' + label);
+}
 
 const email = 'meta-concurrente-' + Date.now() + '@ovilog-audit-jetable.test';
 const password = 'AuditTest12345!';
 
 const d1 = await newDevicePage();
+d1.page.on('response', async r => { if (r.url().endsWith('/auth/signup') && r.ok()) uidCompte = (await r.json()).uid; });
 await d1.page.evaluate(async ({ email, pw }) => { await window.OvilogSync.signup(email, pw); }, { email, pw: password });
 await waitFor(d1.page, () => window.OvilogSync.getState().loggedIn, { label: 'device 1 connecté' });
 await d1.page.evaluate(() => {
   DB.campagneDebut = 2026; DB.campagneInitialisee = true;
   DB.brebis = []; DB.beliers = []; DB.agnelles = [];
-  DB.laitTank = []; DB.produits = ['Dectomax']; DB.causesMortalite = ['Maladie']; DB.journal = [];
+  DB.laitTank = []; DB.acheteurs = ['Natera']; DB.causesMortalite = ['Maladie']; DB.journal = [];
   saveData(DB);
 });
-await d1.page.waitForTimeout(500);
+await serveurAttend('meta', r => r.exists && r.data && Array.isArray(r.data.acheteurs) && r.data.acheteurs.length === 1 && r.data.causesMortalite && r.data.causesMortalite.length === 1, 'le serveur reçoit l\'état meta initial');
 
 const d2 = await newDevicePage();
 await d2.page.evaluate(async ({ email, pw }) => { await window.OvilogSync.login(email, pw); }, { email, pw: password });
 await waitFor(d2.page, () => window.OvilogSync.getState().loggedIn, { label: 'device 2 connecté' });
-await waitFor(d2.page, () => DB.produits && DB.produits.length === 1, { label: 'device 2 reçoit l\'état initial' });
-console.log('OK (infra) : 2 appareils connectés, synchronisés sur l\'état meta initial (laitTank=[], produits=1, causesMortalite=1, journal=[]).');
+await waitFor(d2.page, () => DB.acheteurs && DB.acheteurs.length === 1, { label: 'device 2 reçoit l\'état initial' });
+console.log('OK (infra) : 2 appareils connectés, synchronisés sur l\'état meta initial (laitTank=[], acheteurs=1, causesMortalite=1, journal=[]).');
 
 // ============================================================
 // Les 2 appareils modifient, EN MÊME TEMPS, 4 champs meta DIFFÉRENTS :
-// device 1 -> laitTank + causesMortalite ; device 2 -> produits + journal.
+// device 1 -> laitTank + causesMortalite ; device 2 -> acheteurs + journal.
 // Aucune coordination entre les 2 appels (Promise.all).
 // ============================================================
 await Promise.all([
@@ -84,7 +96,7 @@ await Promise.all([
     saveData(DB);
   }),
   d2.page.evaluate(() => {
-    DB.produits.push('Cydectine');
+    DB.acheteurs.push('Bio Plus');
     DB.journal.push({ type: 'Tonte', date: '2026-01-15', note: 'Tonte du troupeau' });
     saveData(DB);
   })
@@ -95,14 +107,14 @@ await Promise.all([
 async function etatComplet(page) {
   return await page.evaluate(() => ({
     laitTank: DB.laitTank,
-    produits: DB.produits,
+    acheteurs: DB.acheteurs,
     causesMortalite: DB.causesMortalite,
     journal: DB.journal
   }));
 }
-await waitFor(d1.page, () => DB.laitTank.length === 1 && DB.produits.length === 2 && DB.causesMortalite.length === 2 && DB.journal.length === 1,
+await waitFor(d1.page, () => DB.laitTank.length === 1 && DB.acheteurs.length === 2 && DB.causesMortalite.length === 2 && DB.journal.length === 1,
   { timeout: 20000, label: 'device 1 converge vers les 4 champs modifiés' });
-await waitFor(d2.page, () => DB.laitTank.length === 1 && DB.produits.length === 2 && DB.causesMortalite.length === 2 && DB.journal.length === 1,
+await waitFor(d2.page, () => DB.laitTank.length === 1 && DB.acheteurs.length === 2 && DB.causesMortalite.length === 2 && DB.journal.length === 1,
   { timeout: 20000, label: 'device 2 converge vers les 4 champs modifiés' });
 
 const [etat1, etat2] = await Promise.all([etatComplet(d1.page), etatComplet(d2.page)]);
@@ -111,9 +123,9 @@ if (JSON.stringify(etat1) !== JSON.stringify(etat2)) {
 }
 if (etat1.laitTank.length !== 1 || etat1.laitTank[0].quantite !== 320.5) throw new Error('FAIL: laitTank (device 1) non préservé, obtenu ' + JSON.stringify(etat1.laitTank));
 if (etat1.causesMortalite.length !== 2 || !etat1.causesMortalite.includes('Piétin')) throw new Error('FAIL: causesMortalite (device 1) non préservé, obtenu ' + JSON.stringify(etat1.causesMortalite));
-if (etat1.produits.length !== 2 || !etat1.produits.includes('Cydectine')) throw new Error('FAIL: produits (device 2) non préservé, obtenu ' + JSON.stringify(etat1.produits));
+if (etat1.acheteurs.length !== 2 || !etat1.acheteurs.includes('Bio Plus')) throw new Error('FAIL: acheteurs (device 2) non préservé, obtenu ' + JSON.stringify(etat1.acheteurs));
 if (etat1.journal.length !== 1 || etat1.journal[0].type !== 'Tonte') throw new Error('FAIL: journal (device 2) non préservé, obtenu ' + JSON.stringify(etat1.journal));
-console.log('OK: les 4 champs meta modifiés simultanément par 2 appareils DIFFÉRENTS (laitTank+causesMortalite sur device 1, produits+journal sur device 2) coexistent tous, sans qu\'aucun n\'écrase l\'autre.');
+console.log('OK: les 4 champs meta modifiés simultanément par 2 appareils DIFFÉRENTS (laitTank+causesMortalite sur device 1, acheteurs+journal sur device 2) coexistent tous, sans qu\'aucun n\'écrase l\'autre.');
 
 // ============================================================
 // Cas plus dur : les 2 appareils modifient LE MÊME champ (causesMortalite)

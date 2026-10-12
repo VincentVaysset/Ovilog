@@ -51,6 +51,17 @@ async function waitFor(page, fn, { timeout = 20000, interval = 200, label = 'con
   throw new Error('TIMEOUT en attendant : ' + label);
 }
 
+let uidCompte = null;
+async function serveurAttend(col, pred, label) {
+  const uid = uidCompte;
+  const start = Date.now();
+  while (Date.now() - start < 20000) {
+    const r = await (await fetch('http://127.0.0.1:' + fakePort + '/snapshot?uid=' + uid + '&col=' + col)).json();
+    if (pred(r)) return true;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error('TIMEOUT côté serveur en attendant : ' + label);
+}
 
 const email = 'lots-concurrence-' + Date.now() + '@ovilog-audit-jetable.test';
 const password = 'AuditTest12345!';
@@ -60,6 +71,7 @@ const nEvenements = page => page.evaluate(() => DB.evenementsLots.filter(e => e.
 const attendu = ns => ns.map(n => eid(n)).sort().join(',');
 
 const d1 = await newDevicePage(true);          // PC
+d1.page.on('response', async r => { if (r.url().endsWith('/auth/signup') && r.ok()) uidCompte = (await r.json()).uid; });
 await d1.page.evaluate(async ({ email, pw }) => { await window.OvilogSync.signup(email, pw); }, { email, pw: password });
 await waitFor(d1.page, () => window.OvilogSync.getState().loggedIn, { label: 'PC connecté' });
 await d1.page.evaluate(() => {
@@ -67,9 +79,13 @@ await d1.page.evaluate(() => {
   creerLotReproductionJournalise({ id: 'LC', nom: 'IA du 15-06-2027', mode: 'IA', cible: 'Brebis', dateCreation: '2027-06-15', dateEvenement: '2027-06-15', campagneMisesBas: 2027 }, [1, 2, 3, 4, 5].map(n => '25001629919' + String(n).padStart(5, '0')));
   saveData(DB);
 });
-await d1.page.waitForTimeout(500);
+await serveurAttend('evenementsLots', r => Object.keys(r.docs).length === 1, 'le serveur reçoit l\'événement initial du lot');
+await serveurAttend('meta', r => r.exists && r.data && Array.isArray(r.data.lots) && r.data.lots.some(l => l.id === 'LC'), 'le serveur reçoit le lot (meta.lots)');
 
 const d2 = await newDevicePage(false);         // mobile
+// Le 2e appareil démarre « déjà migré » : sinon la migration du registre (saveData juste après la connexion) peut écrire ses valeurs par défaut sur le
+// compte AVANT que son premier instantané ne l'ait rempli (course connue de l'appli, hors sujet ici : ce test porte sur la concurrence, pas sur la 1re connexion).
+await d2.page.evaluate(() => { DB.registreCollectionMigree20260930 = true; });
 await d2.page.evaluate(async ({ email, pw }) => { await window.OvilogSync.login(email, pw); }, { email, pw: password });
 await waitFor(d2.page, () => window.OvilogSync.getState().loggedIn, { label: 'mobile connecté' });
 await waitFor(d2.page, () => DB.lots.some(l => l.id === 'LC') && DB.evenementsLots.length === 1, { label: 'le mobile reçoit le lot et son événement initial' });
@@ -97,7 +113,8 @@ await Promise.all([
 ]);
 await waitFor(d1.page, () => DB.evenementsLots.filter(e => e.lotId === 'LC').length === 8, { label: 'PC reçoit les événements du conflit' });
 await waitFor(d2.page, () => DB.evenementsLots.filter(e => e.lotId === 'LC').length === 8, { label: 'mobile reçoit les événements du conflit' });
-await d1.page.waitForTimeout(600);
+const memEgaux = async () => (await membresTries(d1.page)) === (await membresTries(d2.page));
+for (let i = 0; i < 100 && !(await memEgaux()); i++) await d1.page.waitForTimeout(100);
 const [c1, c2] = [await membresTries(d1.page), await membresTries(d2.page)];
 check(c1 === c2, 'conflit sur la même brebis (retrait / retrait puis ré-ajout) : résultat déterministe identique sur les 2 appareils : PC=' + c1 + ' mobile=' + c2);
 console.log('OK 2 conflit sur une même brebis : les 2 appareils rejouent le même journal, même résultat.');
