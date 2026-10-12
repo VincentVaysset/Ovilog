@@ -69,5 +69,20 @@ console.log('OK ' + noms.length + ' PDF : nom de l\'exploitation, pied unique «
 const V = await tous(pc, '');
 for (const nom of ['tank', 'bilan_complet', 'bilan_lactation', 'inventaire']) { const r = lire(V[nom], 'vide_' + nom); check(r.spans.some(s => s[7] === 0 && s[3] === 'Ovilog' && s[4] === 10.5), nom + ' : sans nom d\'exploitation, repli « Ovilog » en haut à droite'); }
 console.log('OK repli « Ovilog » quand le nom de l\'exploitation est vide (même fonction pour les deux moteurs PDF).');
+// (4) Production laitière à la charte des exports
+const VERT = '#357f4b', ALT = '#f6f1e4';
+for (const nom of ['tank', 'calendrier', 'rapport']) {
+  const r = resultats[nom];
+  const teintes = ['#e3f3e6', '#e6f0fa', '#fbeed7', '#fbe3e0'];
+  const tuiles = r.fills.filter(f => f[3] > 30 && f[4] > 35 && f[4] < 70 && teintes.some(t => proche(f, t, 2)));
+  if (nom !== 'calendrier') check(tuiles.length >= 3, nom + ' : tuiles colorées (pastel) à liseré, trouvées : ' + tuiles.length);
+  const lisere = r.fills.filter(f => Math.abs(f[3] - 4) < 0.6 && f[4] > 35 && f[4] < 70);
+  if (nom !== 'calendrier') check(lisere.length >= 3, nom + ' : liseré gauche de 4 pt sur les tuiles : ' + lisere.length);
+  check(r.fills.some(f => proche(f, VERT, 2) && f[3] > 300 && f[4] >= 14 && f[4] <= 28), nom + ' : en-tête de tableau vert ' + VERT + ' pleine largeur');
+  check(r.fills.filter(f => proche(f, ALT, 2) && f[3] > 300).length >= 3, nom + ' : lignes alternées ' + ALT);
+  check(!r.fills.some(f => f[0] === 246 && f[1] === 243 && f[2] === 234), nom + ' : plus de beige neutre ancien (#f6f3ea)');
+  check(!r.spans.some(s => /\.\.\.|…/.test(s[3])), nom + ' : aucun texte coupé (« ... ») : ' + JSON.stringify(r.spans.filter(s => /\.\.\.|…/.test(s[3])).map(s => s[3])));
+}
+console.log('OK Production laitière (Tank, Calendrier du tank, Rapport de campagne) : tuiles colorées à liseré, en-tête de tableau vert, lignes alternées.');
 await browser.close();
 console.log('\nTOUS LES TESTS « COHÉRENCE DES PDF » SONT PASSÉS.');

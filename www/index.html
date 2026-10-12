@@ -22090,44 +22090,52 @@ function pdfProdDoc(opts) {
       if (droite) txtD(R, y - 10, droite, 'F1', 8.5, X.gris);
       y -= 20;
     },
-    /* colonnes : [{ l, l2, w, a: 'g'|'d', bar }] ; lignes : [{ c: [texte | { t, col, b }], gris, b, total, fusion: { de, t, col } }] */
+    /* colonnes : [{ l, l2, w, a: 'g'|'d', bar }] ; lignes : [{ c: [texte | { t, col, b }], gris, b, total, fusion: { de, t, col } }]
+       Charte des exports : en-tête vert Ovilog (PDF_CHARTE.vert) à texte blanc gras (coins hauts arrondis), lignes alternées, 1re colonne en vert foncé gras, ligne de total en vert pastel (coins bas arrondis).
+       Les libellés d'en-tête ne sont jamais coupés : la police de l'en-tête diminue (jusqu'à 6 pt) pour qu'ils tiennent dans leur colonne. */
     tableau({ colonnes, lignes, hLigne = 16, taille = 9 }) {
-      const wTot = colonnes.reduce((s, k) => s + k.w, 0);
+      const wTot = colonnes.reduce((s, k) => s + k.w, 0), rayon = 5;
+      const deuxLignes = colonnes.some(k => k.l2), hE = deuxLignes ? 26 : 18;
+      let te = 8.5;
+      while (te > 6 && colonnes.some(k => [k.l, k.l2].some(t => t && pdfTextWidth(t, te, true) > k.w - 8))) te -= 0.25;
+      const vertEnt = pdfHexCouleur(PDF_CHARTE.vert), vertFonce = pdfHexCouleur(PDF_CHARTE.vertFonce), alt = [C.fond, C.blanc];
+      let rang = 0;
       const entete = () => {
-        const deuxLignes = colonnes.some(k => k.l2);
-        const hE = deuxLignes ? 24 : 15;
+        c += pdfRectArrondiOp(L, y - hE, wTot, hE, rayon, 0, vertEnt);
         let x = L;
         colonnes.forEach(k => {
-          if (k.l2) { txt0(x, y - 9, k.l, k); txt0(x, y - 19, k.l2, k, true); } else txt0(x, y - (deuxLignes ? 19 : 10), k.l, k);
+          const ecrire = (t, yy, tt) => { if (!t) return; if (k.a === 'd') txtD(x + k.w - 5, yy, t, 'FB', tt, C.blanc); else txt(x + 6, yy, t, 'FB', tt, C.blanc); };
+          if (k.l2) { ecrire(k.l, y - 10.5, te); ecrire(k.l2, y - 20, Math.min(te, 7.5)); } else ecrire(k.l, y - (deuxLignes ? 16 : 12), te);
           x += k.w;
         });
-        function txt0(xc, yy, t, col, second) {
-          const tt = pdfFit(t, second ? 7 : 8, false, col.w - 8);
-          if (col.a === 'd') txtD(xc + col.w - 4, yy, tt, 'F1', second ? 7 : 8, X.gris); else txt(xc + 4, yy, tt, 'F1', second ? 7 : 8, X.gris);
-        }
         y -= hE;
-        c += pdfFillRectOp(L, y - 0.6, wTot, 1.3, X.sombre);
       };
+      doc.assurer(hE + hLigne * 2);
       entete();
-      lignes.forEach(ln => {
-        if (y - hLigne < PL.BAS) { doc.suite(); entete(); }
-        const yb = y - hLigne;
-        if (ln.total) c += pdfFillRectOp(L, yb, wTot, hLigne, C.fond);
-        c += pdfFillRectOp(L, yb, wTot, 0.4, ln.total ? X.sombre : C.trait);
+      lignes.forEach((ln, idx) => {
+        if (y - hLigne < PL.BAS) { doc.suite(); entete(); rang = 0; }
+        const yb = y - hLigne, derniere = idx === lignes.length - 1 || (yb - hLigne < PL.BAS);
+        const fond = ln.total ? C.vertFond : alt[rang % 2];
+        c += derniere ? pdfRectArrondiOp(L, yb, wTot, hLigne, 0, rayon, fond) : pdfFillRectOp(L, yb, wTot, hLigne, fond);
+        rang++;
         let x = L;
         colonnes.forEach((k, i) => {
           const cell = ln.c[i];
           const o = (cell !== null && typeof cell === 'object') ? cell : { t: cell };
           if (!(ln.fusion && i > ln.fusion.de)) {
-            const bold = !!(ln.b || ln.total || o.b);
-            const col = o.col || (ln.gris ? X.gris : X.sombre);
+            const premiere = i === 0 && !ln.gris && !ln.total && !ln.fusion;
+            const bold = !!(ln.b || ln.total || o.b || premiere);
+            const col = o.col || (ln.gris ? X.gris : (premiere ? vertFonce : X.sombre));
             if (k.bar) {
               if (o.f > 0) c += pdfFillRectOp(x + 4, yb + 4.2, Math.max(1.5, (k.w - 10) * o.f), 7.6, X.barre);
             } else if (ln.fusion && i === ln.fusion.de) {
-              txt(x + 4, yb + 5, pdfFit(ln.fusion.t, taille, false, wTot - (x - L) - 8), 'F1', taille, ln.fusion.col || X.gris);
+              txt(x + 6, yb + 5, pdfFit(ln.fusion.t, taille, false, wTot - (x - L) - 10), 'F1', taille, ln.fusion.col || X.gris);
             } else {
-              const t = pdfFit(o.t === null || o.t === undefined ? '' : String(o.t), taille, bold, k.w - 8);
-              if (k.a === 'd') txtD(x + k.w - 4, yb + 5, t, bold ? 'FB' : 'F1', taille, t === '—' ? X.gris2 : col); else txt(x + 4, yb + 5, t, bold ? 'FB' : 'F1', taille, col);
+              const brut = o.t === null || o.t === undefined ? '' : String(o.t);
+              let tc = taille;
+              while (tc > 7 && pdfTextWidth(brut, tc, bold) > k.w - 10) tc -= 0.25;   // la police de la cellule diminue (jusqu'à 7 pt) avant toute coupure
+              const t = pdfFit(brut, tc, bold, k.w - 10);
+              if (k.a === 'd') txtD(x + k.w - 5, yb + 5, t, bold ? 'FB' : 'F1', tc, t === '—' ? X.gris2 : col); else txt(x + 6, yb + 5, t, bold ? 'FB' : 'F1', tc, col);
             }
           }
           x += k.w;
@@ -22319,30 +22327,31 @@ function buildCalendrierTankPdfBytes(campagne) {
     o.txtD(PDF_PL.R, doc.y + 4, tot, 'FB', 13, X.sombre);
     doc.y -= 8;
     if (!nb) { o.txt(L, doc.y - 12, 'Aucun relevé tank sur cette campagne.', 'F1', 10, X.gris); doc.y -= 24; return; }
-    // en-têtes : mois (deux lignes), puis 31 lignes de jours, puis ligne de total
-    o.ajouter(pdfFillRectOp(L, doc.y - 26, PDF_PL.LARG, 26, C.fond));
-    o.txt(L + 5, doc.y - 16, 'Jour', 'FB', 8, X.gris);
+    // en-tête vert (mois sur deux lignes, texte blanc gras), 31 lignes de jours alternées, ligne de total en vert pastel (coins arrondis haut et bas)
+    const vertEnt = pdfHexCouleur(PDF_CHARTE.vert), vertFonce = pdfHexCouleur(PDF_CHARTE.vertFonce), alt = [C.fond, C.blanc];
+    o.ajouter(pdfRectArrondiOp(L, doc.y - 26, PDF_PL.LARG, 26, 5, 0, vertEnt));
+    o.txt(L + 6, doc.y - 16, 'Jour', 'FB', 8, C.blanc);
     d.colonnes.forEach((col, i) => {
       const x = L + wJour + i * wCol, [a, m] = col.cle.split('-'), nomCourt = MOIS_COURTS_PDF[parseInt(m, 10) - 1];
-      o.txtD(x + wCol - 4, doc.y - 11, nomCourt, 'FB', 7.5, X.sombre);
-      o.txtD(x + wCol - 4, doc.y - 21, a, 'F1', 7, X.gris);
+      o.txtD(x + wCol - 5, doc.y - 11, nomCourt, 'FB', 7.5, C.blanc);
+      o.txtD(x + wCol - 5, doc.y - 21, a, 'F1', 7, C.blanc);
     });
     doc.y -= 26;
     for (let j = 0; j < 31; j++) {
       const yb = doc.y - h;
-      o.ajouter(pdfFillRectOp(L, yb, PDF_PL.LARG, 0.3, C.trait));
-      o.txt(L + 5, yb + 5.2, String(j + 1), 'FB', 8, X.gris);
+      o.ajouter(pdfFillRectOp(L, yb, PDF_PL.LARG, h, alt[j % 2]));
+      o.txt(L + 6, yb + 5.2, String(j + 1), 'FB', 8, vertFonce);
       d.colonnes.forEach((col, i) => {
         const x = L + wJour + i * wCol, cell = col.jours[j];
-        if (!cell.existe) { o.ajouter(pdfFillRectOp(x + 1, yb + 0.6, wCol - 2, h - 1.2, [0.93, 0.92, 0.89])); return; }
-        if (cell.litres !== null) o.txtD(x + wCol - 4, yb + 5.2, fmtLitres(cell.litres), 'F1', 8.2, X.sombre);
+        if (!cell.existe) { o.ajouter(pdfFillRectOp(x + 1, yb + 0.6, wCol - 2, h - 1.2, C.trait)); return; }
+        if (cell.litres !== null) o.txtD(x + wCol - 5, yb + 5.2, fmtLitres(cell.litres), 'F1', 8.2, X.sombre);
       });
       doc.y = yb;
     }
     const yb = doc.y - 19;
-    o.ajouter(pdfFillRectOp(L, yb, PDF_PL.LARG, 19, C.fond) + pdfFillRectOp(L, yb + 19, PDF_PL.LARG, 1.2, X.sombre));
-    o.txt(L + 5, yb + 6, 'Total saisi', 'FB', 8, X.sombre);
-    d.colonnes.forEach((col, i) => { const x = L + wJour + i * wCol; o.txtD(x + wCol - 4, yb + 6, fmtLitres(col.total), 'FB', 8.2, X.sombre); });
+    o.ajouter(pdfRectArrondiOp(L, yb, PDF_PL.LARG, 19, 0, 5, C.vertFond));
+    o.txt(L + 6, yb + 6, 'Total saisi', 'FB', 8, X.sombre);
+    d.colonnes.forEach((col, i) => { const x = L + wJour + i * wCol; o.txtD(x + wCol - 5, yb + 6, fmtLitres(col.total), 'FB', 8.2, X.sombre); });
     doc.y = yb - 8;
   });
   return doc.fin();
