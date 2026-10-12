@@ -87,7 +87,7 @@ export async function peuplerCompte(h, dev) {
     saveData(DB);
   });
   const uid = dev.uid;
-  await h.attendreServeur(uid, 'meta', r => r.exists && r.data && (r.data.lots || []).some(l => l.id === 'LC') && (r.data.acheteurs || []).includes('Natera'), 'meta (lot LC, acheteurs)');
+  await h.attendreServeur(uid, 'meta', r => r.exists && r.data && (r.data.lots || []).some(l => l.id === 'LC') && (r.data.acheteurs || []).includes('Natera') && r.data.registreCollectionMigree20260930 === true, 'meta (lot LC, acheteurs, migration du registre terminée)');
   await h.attendreServeur(uid, 'brebis', r => Object.keys(r.docs).length === 3, '3 brebis sur le serveur');
   await h.attendreServeur(uid, 'evenementsLots', r => Object.keys(r.docs).length >= 1, 'journal du lot sur le serveur');
 }

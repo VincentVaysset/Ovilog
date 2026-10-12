@@ -23,7 +23,9 @@ async function compteIntact(uid, qui) {
   const brebis = await h.serveur(uid, 'brebis');
   ['b1', 'b2', 'b3'].forEach(id => check(brebis.docs[id], qui + ' : brebis ' + id + ' toujours dans le compte'));
   const journal = await h.journal(uid);
-  const retraits = journal.filter(e => e.ops.some(o => o.lots && !o.lots.includes('LC')));
+  // (L'initialisation du compte, avant que le lot LC n'existe, écrit légitimement lots: [] : on ne juge que les écritures POSTÉRIEURES à la création du lot.)
+  const premiere = journal.findIndex(e => e.ops.some(o => o.lots && o.lots.includes('LC')));
+  const retraits = journal.slice(premiere < 0 ? journal.length : premiere).filter(e => e.ops.some(o => o.lots && !o.lots.includes('LC')));
   check(retraits.length === 0, qui + ' : aucune écriture reçue n\'a retiré le lot LC (écritures fautives : ' + JSON.stringify(retraits) + ')');
 }
 async function creerCompteExistant(tag) {
@@ -163,7 +165,9 @@ let pairePourB = null;
   const trace = await d10.page.evaluate(() => ({ sauv: window.__sauvegardes, ecr: window.__ecrituresLog }));
   const premiereEcritureRegistre = trace.ecr.find(e => e.chemins.some(c => c.includes('/registre/')));
   const sauvMigration = trace.sauv.find(s => s.prefixe === 'avant-migration-registre');
-  check(!!sauvMigration, 'E : une sauvegarde « avant-migration-registre » a été faite avant la migration qui écrit (sauvegardes : ' + JSON.stringify(trace.sauv.map(s => s.prefixe)) + ')');
+  const jr = await h.journal(uid), c10 = await h.clientId(d10);
+  const ecrituresRegistre = jr.filter(e => e.ops.some(o => o.path.includes('/registre/'))).map(e => ({ n: e.n, par: e.clientId === c10 ? 'nouvel appareil' : 'autre appareil', nb: e.ops.length }));
+  check(!!sauvMigration, 'E : une sauvegarde « avant-migration-registre » a été faite avant la migration qui écrit (sauvegardes : ' + JSON.stringify(trace.sauv.map(s => s.prefixe)) + ' ; écritures du registre : ' + JSON.stringify(ecrituresRegistre) + ' ; envois du nouvel appareil : ' + JSON.stringify(trace.ecr.map(e => e.chemins.map(c => c.split('/').slice(-2).join('/')))) + ')');
   check(sauvMigration.t < premiereEcritureRegistre.t, 'E : la sauvegarde précède la première écriture du registre');
   await compteIntact(uid, 'E');
   // Compte déjà migré : aucune migration, aucune sauvegarde de migration, aucune écriture du registre par le nouvel appareil.
