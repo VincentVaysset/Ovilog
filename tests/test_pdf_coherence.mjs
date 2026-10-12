@@ -59,8 +59,12 @@ for (const nom of noms) {
   const pieds = r.spans.filter(s => s[3].startsWith('Ovilog — ') && s[4] === 8);
   check(pieds.length === r.pages && pieds.every(s => PIED.test(s[3].trim())), nom + ' : pied de page « Ovilog — [export] · [campagne] » sur chaque page : ' + JSON.stringify(pieds.map(s => s[3])));
   for (let i = 1; i <= r.pages; i++) check(r.spans.some(s => s[7] === i - 1 && s[3].trim() === 'Page ' + i + '/' + r.pages), nom + ' : « Page ' + i + '/' + r.pages + ' »');
+  // (3) en-têtes de tableau : texte blanc sur fond vert, jamais tronqué
+  const blancs = r.spans.filter(s => s[0] >= 250 && s[1] >= 250 && s[2] >= 250 && s[3].trim());
+  const tronques = blancs.filter(s => /\.\.\.|…/.test(s[3]));
+  check(tronques.length === 0, nom + ' : en-tête(s) de tableau tronqué(s) : ' + JSON.stringify(tronques.map(s => s[3])));
 }
-console.log('OK ' + noms.length + ' PDF : nom de l\'exploitation, pied unique « Ovilog — [export] · [campagne] », « Page i/N », identiques sur PC et mobile.');
+console.log('OK ' + noms.length + ' PDF : nom de l\'exploitation, pied unique « Ovilog — [export] · [campagne] », « Page i/N », aucun en-tête tronqué, identiques sur PC et mobile.');
 // repli quand le nom est vide
 const V = await tous(pc, '');
 for (const nom of ['tank', 'bilan_complet', 'bilan_lactation', 'inventaire']) { const r = lire(V[nom], 'vide_' + nom); check(r.spans.some(s => s[7] === 0 && s[3] === 'Ovilog' && s[4] === 10.5), nom + ' : sans nom d\'exploitation, repli « Ovilog » en haut à droite'); }
