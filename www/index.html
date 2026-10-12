@@ -22181,6 +22181,26 @@ function pdfProdDoc(opts) {
     note(texte, taille = 8) {
       pdfWrapLines(texte, Math.floor(LARG / (taille * 0.5))).forEach(l => { doc.assurer(taille + 4); txt(L, y - taille, l, 'F1', taille, X.gris); y -= taille + 3.5; });
     },
+    /* Histogramme mensuel (mêmes barres que la page PC) : points [{ label, valeur, texte }], barre la plus haute en `couleurPic` (si donnée), trait pointillé ambre de moyenne en option ({ valeur }) ; le libellé de la moyenne se met dans `droite` */
+    barresMensuelles({ titre, droite, points, couleur, couleurPic, moyenne, hauteur = 92 }) {
+      doc.assurer(hauteur + 50);
+      doc.section(titre, droite);
+      const n = points.length, gap = 6, w = (LARG - gap * (n - 1)) / n, hMax = hauteur - 16, base = y - hauteur;
+      const max = Math.max(1e-9, ...points.map(q => q.valeur), moyenne ? moyenne.valeur : 0);
+      const iPic = couleurPic ? points.reduce((m, q, i) => q.valeur > points[m].valeur ? i : m, 0) : -1;
+      c += pdfFillRectOp(L, base - 0.5, LARG, 0.5, C.trait);
+      points.forEach((q, i) => {
+        const x = L + i * (w + gap), h = q.valeur > 0 ? Math.max(1, q.valeur / max * hMax) : 0;
+        if (h > 0) c += pdfFillRectOp(x, base, w, h, i === iPic ? couleurPic : couleur);
+        txt(x + (w - pdfTextWidth(q.texte, 7, false)) / 2, base + h + 3, q.texte, 'F1', 7, q.valeur > 0 ? X.sombre : X.gris2);
+        txt(x + (w - pdfTextWidth(q.label, 7, false)) / 2, base - 11, q.label, 'F1', 7, X.gris);
+      });
+      if (moyenne) {
+        const ym = base + moyenne.valeur / max * hMax;
+        c += pdfLineColorOp(L, ym, R, ym, C.ambre, 0.8, true);
+      }
+      y = base - 24;
+    },
     libre(fn) { fn({ txt, txtD, ajouter: s => { c += s; }, get y() { return y; }, set y(v) { y = v; } }); },
     fin() {
       pages.push({ contenu: c, pied });
@@ -22977,8 +22997,9 @@ function bilanLactationIndicateurs(campagne, opts) {
    l'export "conservé par campagne" demandé). */
 function buildBilanLactationPdfBytes(campagne) {
   // Charte colorée commune (pdfProdDoc) : MÊMES textes, lignes et chiffres que l'ancien PDF noir et blanc ; seule la mise en forme change.
-  const ind = bilanLactationIndicateurs(campagne, { avecResume: isDesktopMode() });
-  const indN1 = bilanLactationIndicateurs(campagne - 1, { avecResume: isDesktopMode() });
+  const ind = bilanLactationIndicateurs(campagne, { avecResume: true });   // mêmes chiffres que la page PC, sur PC comme sur mobile (le PDF est identique)
+  const indN1 = bilanLactationIndicateurs(campagne - 1, { avecResume: true });
+  const D = bilanLactationPcData(campagne);
   const txt = (v, suffix) => v !== null && v !== undefined ? fmtDecimal(v, 1) + (suffix || '') : '—';
   const txtInt = (v, suffix) => v !== null && v !== undefined ? v + (suffix || '') : '—';
   const doc = pdfProdDoc();
@@ -22997,6 +23018,12 @@ function buildBilanLactationPdfBytes(campagne) {
     colonnes: [{ l: '', w: 280 }, { l: 'Campagne ' + campagneLabel(campagne), w: 121.5 }, { l: 'Campagne ' + campagneLabel(campagne - 1), w: 121.5 }], lignes, vide: '', premiere: null,
     entete: { fond: pdfHexCouleur(PDF_CHARTE.vert), texte: PDF_COULEURS.blanc }, alterne: [pdfHexCouleur(PDF_CHARTE.ligneAlt), PDF_COULEURS.blanc]
   });
+  const maxL = Math.max(...D.mensuel.map(m => m.litres));
+  if (maxL > 0) doc.barresMensuelles({ titre: 'Litrage par mois', droite: 'Tank · octobre à septembre · en milliers de litres', points: D.mensuel.map(m => ({ label: m.label, valeur: m.litres, texte: m.litres > 0 ? fmtDecimal(m.litres / 1000, 1) : '0' })), couleur: PDF_COULEURS.vertPale, couleurPic: PDF_COULEURS.vert });
+  else { doc.section('Litrage par mois'); doc.note('Aucune saisie tank sur cette campagne.'); }
+  const moyEff = ind.moyennePresence !== null && ind.moyennePresence !== undefined ? ind.moyennePresence : D.moyenneEffectifCalculee;
+  if (D.mensuel.some(m => m.effectif > 0)) doc.barresMensuelles({ titre: 'Brebis présentes, moyenne mensuelle', droite: 'Effectif au premier jour de chaque mois · trait pointillé = moyenne ' + fmtDecimal(moyEff, 0), points: D.mensuel.map(m => ({ label: m.label, valeur: m.effectif, texte: String(m.effectif) })), couleur: PDF_COULEURS.vertPale, moyenne: moyEff > 0 ? { valeur: moyEff } : null });
+  else { doc.section('Brebis présentes, moyenne mensuelle'); doc.note('Aucun effectif connu sur cette campagne.'); }
   doc.note("Litrage total et brebis passées à la traite : calculés automatiquement (tank de Production laitière, contrôles laitiers), modifiables à la main si besoin. Moyenne de présence = moyenne mensuelle de l'effectif sur les 12 mois de la campagne (octobre à septembre), entrées et sorties incluses. Ratio traites / mises bas = brebis passées à la traite ÷ brebis ayant mis bas (donnée reprise du Bilan de reproduction troupeau) — un ratio supérieur à 100 % est possible (des brebis restées vides ou ayant avorté peuvent aussi être traites).", 8);
   return doc.fin();
 }
@@ -23012,8 +23039,8 @@ async function exportBilanLactationPdf(campagne) {
    pour l'éleveur qui voudrait ses propres calculs/graphiques d'une
    campagne à l'autre. */
 async function exportBilanLactationXlsx(campagne) {
-  const ind = bilanLactationIndicateurs(campagne, { avecResume: isDesktopMode() });
-  const indN1 = bilanLactationIndicateurs(campagne - 1, { avecResume: isDesktopMode() });
+  const ind = bilanLactationIndicateurs(campagne, { avecResume: true });   // même contenu que le PDF et que la page PC, sur PC comme sur mobile
+  const indN1 = bilanLactationIndicateurs(campagne - 1, { avecResume: true });
   const rows = [
     ['Indicateur', 'Campagne ' + campagneLabel(campagne), 'Campagne ' + campagneLabel(campagne - 1)],
     ['Litrage total produit (L)', ind.litrageTotal, indN1.litrageTotal],
