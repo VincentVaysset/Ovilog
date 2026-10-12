@@ -28,7 +28,7 @@ export {
 export {
   initializeFirestore, persistentLocalCache, persistentSingleTabManager,
   collection, doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, onSnapshot, arrayUnion,
-  writeBatch
+  writeBatch, runTransaction
 } from 'firebase/firestore';
 `;
 
