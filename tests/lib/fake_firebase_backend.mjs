@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto';
 const users = new Map(); // email -> { uid, password }
 const collections = new Map(); // uid -> { colName -> { docId -> data } }
 const metas = new Map(); // uid -> data
+const journaux = new Map(); // uid -> [{ n, clientId, ops: [{ type, path, lots? }] }] : toutes les écritures REÇUES, dans l'ordre (les tests y vérifient qui a écrit quoi, et quand)
 const versions = new Map(); // uid -> { colName|'meta' -> integer, bumped on every write }
 
 function ensureUser(uid) {
@@ -73,9 +74,16 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { uid: u.uid });
     }
     if (url.pathname === '/batch' && req.method === 'POST') {
-      const { uid, ops } = await readBody(req);
+      const { uid, ops, clientId } = await readBody(req);
       ensureUser(uid);
       const cols = collections.get(uid);
+      // « Créer seulement si absent » (runTransaction du faux SDK) : refuse TOUT le batch si le document existe déjà -- 409, comme une transaction abandonnée.
+      for (const op of ops) {
+        if (!op.onlyIfAbsent) continue;
+        const { colName, id } = parsePath(op.path);
+        const existe = colName === 'meta' ? metas.has(uid) : !!(cols[colName] && cols[colName][id] !== undefined);
+        if (existe) return json(res, 409, { error: 'already-exists', message: 'Document déjà présent : ' + op.path });
+      }
       // Précondition Firestore réelle (confirmée à l'utilisateur avant codage
       // du correctif audit "Changement de campagne", point 1 de la 3e
       // demande) : update() sur un document qui n'existe plus échoue, et fait
@@ -117,7 +125,17 @@ const server = http.createServer(async (req, res) => {
         touched.add(colName);
       }
       touched.forEach(k => bumpVersion(uid, k));
+      if (!journaux.has(uid)) journaux.set(uid, []);
+      const jr = journaux.get(uid);
+      jr.push({ n: jr.length + 1, clientId: clientId || null, ops: ops.map(op => {
+        const e = { type: op.type, path: op.path };
+        if (op.data && Array.isArray(op.data.lots)) e.lots = op.data.lots.map(l => l && l.id);
+        return e;
+      }) });
       return json(res, 200, { ok: true });
+    }
+    if (url.pathname === '/journal' && req.method === 'GET') {
+      return json(res, 200, journaux.get(url.searchParams.get('uid')) || []);
     }
     if (url.pathname === '/getdoc' && req.method === 'GET') {
       const uid = url.searchParams.get('uid');
