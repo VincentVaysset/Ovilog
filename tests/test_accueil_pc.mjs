@@ -23,7 +23,7 @@ function jeu(avecSousDelai) {
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true; DB.casParticuliers = ['Avortée', 'Pseudogestation'];
   DB.produitsInfo = { Intramicine: { posologie: null, delaiAttente: 7, delaiLait: 7, delaiViande: 28 } };
   DB.brebis = [
-    fiche('E1', { echographies: [e('constat', 'Pleine')], sanitaire: avecSousDelai ? [soin] : [] }), fiche('E2', { echographies: [e('constat', 'Pleine')] }), fiche('E3', { echographies: [e('constat', 'Pleine', '2026-08-20')] }),   // 3 pleines
+    fiche('E1', { echographies: [e('constat', 'Pleine')], sanitaire: avecSousDelai ? [soin] : [] }), fiche('E2', { echographies: [e('constat', 'Pleine')], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }, { type: 'Entrée', cause: 'Achat', date: '2026-11-26' }] }), fiche('E3', { echographies: [e('constat', 'Pleine', '2026-08-20')] }),   // 3 pleines
     fiche('E4', { echographies: [e('constat', 'Vide')] }), fiche('E5', Object.assign({ echographies: [e('constat', 'Vide')] }, vendueLot())),                                                            // 2 vides (une vendue : figée)
     fiche('E6', { echographies: [e('constat', 'Vide')], videesDefinitives: [{ campagne: 2026, date: '2026-09-01' }] }),                                                                                  // 1 vide définitive présente
     fiche('M1', { agnelages: ag([lvendu(1, '2026-11-25'), lmort(2, 'Femelle', '2026-11-22', 'Pneumonie')]) }),                                                                                           // attendue : agneau vendu
@@ -56,8 +56,10 @@ eq([D.brebis, D.beliers, D.agnelles, D.agneaux, D.sousDelai], [9, 1, 1, { total:
 eq(D.misesBas, { faites: 4, attendues: 8, restantes: 4, pct: 50, prolificite: 1.75, agneauxNes: 7, mortNes: 1, presentes: 9, videsDefinitivesPresentes: 1 }, 'mises bas : attendues = 9 présentes − 1 vide définitive présente ; restantes = 8 − 4');
 eq(D.repro, { date: '2026-08-20', pleines: 3, vides: 2, videsDefinitives: 1, reussite: 60 }, 'reproduction : écho figée (la vide vendue reste comptée), vide définitive à part, réussite 3 / (3 + 2)');
 eq(D.mouvements.map(m => [m.date, m.lot, m.nb, m.categorie, m.type, m.detail]), [
-  ['2026-11-28', true, 2, 'Brebis', 'Vente', 'Négociant'], ['2026-11-27', false, 1, 'Agneau', 'Vente', 'Natera'], ['2026-11-25', false, 1, 'Agneau', 'Vente', 'Natera'],
-  ['2026-11-24', false, 1, 'Agneau', 'Morte', 'Non renseignée'], ['2026-11-22', false, 1, 'Agneau', 'Morte', 'Pneumonie']], 'derniers mouvements : un lot = une ligne, brebis et agneaux, du plus récent au plus ancien, cause par défaut « Non renseignée »');
+  ['2026-11-28', true, 2, 'Brebis', 'Vente', 'Négociant'], ['2026-11-27', false, 1, 'Agneau', 'Vente', 'Natera'], ['2026-11-26', false, 1, 'Brebis', 'Entrée', 'Achat'], ['2026-11-25', false, 1, 'Agneau', 'Vente', 'Natera'],
+  ['2026-11-24', false, 1, 'Agneau', 'Morte', 'Non renseignée']], 'derniers mouvements : sorties ET entrées, un lot = une ligne, brebis et agneaux, 5 lignes du plus récent au plus ancien, cause par défaut « Non renseignée »');
+const toutes = await pc.evaluate(() => derniersMouvementsPcData(99));
+eq(toutes.filter(m => m.type === 'Entrée').map(m => [m.date, m.categorie, m.detail]).sort().map(l => l.join('|')), ['2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-26|Brebis|Achat'].sort(), 'entrées de la campagne : l\'achat du 26-11 et les 6 naissances bouclées (le mort-né n\'a pas d\'identifiant) (l\'achat de 2024 est hors campagne)');
 eq(D.lait.points.map(p => [p.libelle, p.actuel, p.precedent, p.nbBrebis]), [['1er contrôle', 2.28, 2.21, 396], ['2e contrôle', 2.19, 2.16, 388], ['3e contrôle', 1.8, 1.71, 371]], 'contrôle laitier : campagne en cours et précédente');
 eq([D.attendues.total, D.attendues.liste.map(a => [a.motif, a.date])], [3, [['Agneau vendu', '2026-11-27'], ['Agneau vendu', '2026-11-25'], ['Agneau mort', '2026-11-24']]], 'attendues à la traite : motif et date de la dernière sortie');
 eq(D.mortalite.brebis, { pertes: 3, presentes: 9, base: 12, causes: [['Mammite', 2], ['Non renseignée', 1]] }, 'mortalité brebis : base = présentes + pertes ; cause vide = « Non renseignée »');
@@ -82,7 +84,7 @@ eq(A.tuiles.map(t => t.bg), ['rgb(227, 243, 230)', 'rgb(230, 240, 250)', 'rgb(25
 check(A.tuiles.every(t => t.bord === '5px' && t.chev === 'rgb(138, 134, 112)'), 'tuiles : liseré gauche de 5 px et chevron gris');
 check(/4\s*brebis ont mis bas sur 8 attendues/.test(A.mb) && /50 %/.test(A.mb) && /4Restantes/.test(A.mb) && /1,75Prolificité/.test(A.mb) && /7Agneaux nés \(1 mort-né\)/.test(A.mb) && /8 attendues = 9 brebis présentes − 1 vide définitive\./.test(A.mb), 'carte Mises bas : ' + A.mb);
 check(/Écho du 20-08-2026 · figée/.test(A.rp) && /3Pleines/.test(A.rp) && /2Vides/.test(A.rp) && /1Vides définitives/.test(A.rp) && /60,0 %/.test(A.rp) && /5 brebis échographiées/.test(A.rp), 'carte Reproduction : ' + A.rp);
-check(/28-11-2026/.test(A.mv) && /2 brebis.?lot/.test(A.mv) && /Négociant/.test(A.mv) && /Non renseignée/.test(A.mv) && /Pneumonie/.test(A.mv), 'tableau des derniers mouvements : ' + A.mv);
+check(/28-11-2026/.test(A.mv) && /2 brebis.?lot/.test(A.mv) && /Négociant/.test(A.mv) && /Non renseignée/.test(A.mv) && /26-11-2026/.test(A.mv) && /Entrée/.test(A.mv) && /Achat/.test(A.mv), 'tableau des derniers mouvements : ' + A.mv);
 check(A.nbRect === 6 && /2,28 L/.test(A.lait) && /396 brebis/.test(A.lait) && /Campagne précédente/.test(A.lait), 'contrôle laitier : 6 barres SVG, moyennes et nombre de brebis : ' + A.nbRect);
 check(/3/.test(A.att) && /Agneau vendu/.test(A.att) && /Agneau mort/.test(A.att), 'attendues à la traite : ' + A.att);
 check(/3 pertes · 25,0 %/.test(A.mortB) && /Base : 9 brebis présentes \+ 3 pertes = 12\./.test(A.mortB) && /Mammite2/.test(A.mortB) && /Non renseignée1/.test(A.mortB), 'mortalité brebis : ' + A.mortB);
