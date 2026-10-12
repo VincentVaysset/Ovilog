@@ -34,7 +34,12 @@ Toutes les couleurs hexadécimales hors `:root` et constantes PDF ont été remp
 - Écrans techniques à faible priorité : Première configuration, connexion, Bluetooth.
 
 ## 3. Prochains chantiers proposés
-1. Tableaux mobiles en cartes (M), puis refontes mobiles (L), dans l'ordre choisi par le propriétaire du projet.
+Terminés : Gabarit PC, Accueil PC, PDF (couleurs en source unique, Bilan de lactation avec histogrammes) et « PDF cohérence » (nom d'exploitation, pied unique, en-têtes complets, Production laitière à la charte). Reste, dans l'ordre choisi par le propriétaire du projet :
+1. Tableaux mobiles à passer en cartes (M).
+2. Grands écrans de saisie (agnelage, saisie rapide d'échos, mise bas rapide, mouvements).
+3. Carnet sanitaire mobile complet.
+4. Journal.
+5. Écrans techniques (Première configuration, connexion, Bluetooth).
 
 ## 4. Roboto embarquée : terminé
 Sous-ensemble latin (400, 500, 700) en woff2 du paquet `@fontsource/roboto` 5.3.0 (licence SIL Open Font License 1.1), 86 Ko en base64 (limite fixée : 150 Ko), `@font-face` dans `www/index.html` ; vérifié par `test_tri_pc_charte` (section 4). Les glyphes hors latin (par exemple `→`, `✓`) restent rendus par la police de repli du système.
