@@ -152,15 +152,11 @@ let pairePourB = null;
 // ---------------- E. migration du registre : attend la lecture, sauvegarde avant d'écrire ----------------
 {
   const { mail, uid } = await creerCompteExistant('migr');
-  // Compte « à l'ancienne » : le drapeau de migration n'est pas encore posé dans le compte.
-  await h.ecrireServeur(uid, [{ type: 'update', path: 'users/' + uid + '/meta/main', data: { registreCollectionMigree20260930: false } }]);
+  // Compte « à l'ancienne » : le registre n'existe que dans meta.registre, le drapeau de migration n'est pas posé, aucune fiche dans la collection registre.
+  const entree = { sanitaire: [], agnelages: [], mouvements: [{ type: 'Entrée', date: '2020-01-01' }], echographies: [], controleLaitier: [], modesRepro: [], derniereMiseAJour: '2026-01-01' };
+  await h.ecrireServeur(uid, [{ type: 'update', path: 'users/' + uid + '/meta/main', data: { registre: { brebis: { [eid(91)]: entree, [eid(92)]: entree }, beliers: {}, agnelles: {} }, registreCollectionMigree20260930: false } }]);
   const d10 = await h.ouvrir({ reseau: { delaiLectureMs: 800 } });
   await enregistrerSauvegardes(d10);
-  await d10.page.evaluate(() => {
-    const entree = { sanitaire: [], agnelages: [], mouvements: [{ type: 'Entrée', date: '2020-01-01' }], echographies: [], controleLaitier: [], modesRepro: [], derniereMiseAJour: '2026-01-01' };
-    DB.registre = { brebis: { ['25001629919' + '00091']: entree, ['25001629919' + '00092']: entree }, beliers: {}, agnelles: {} };
-    DB.registreCollectionMigree20260930 = false; saveData(DB);
-  });
   await h.connecter(d10, mail, MDP);
   await h.attendre(d10, () => currentView === 'home' && DB.lots.some(l => l.id === 'LC'), { timeout: 30000, label: 'E : compte lu' });
   await h.attendreServeur(uid, 'registre', r => Object.keys(r.docs).length === 2, 'E : les 2 fiches du registre sont migrées');

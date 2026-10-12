@@ -83,9 +83,6 @@ await serveurAttend('evenementsLots', r => Object.keys(r.docs).length === 1, 'le
 await serveurAttend('meta', r => r.exists && r.data && Array.isArray(r.data.lots) && r.data.lots.some(l => l.id === 'LC'), 'le serveur reçoit le lot (meta.lots)');
 
 const d2 = await newDevicePage(false);         // mobile
-// Le 2e appareil démarre « déjà migré » : sinon la migration du registre (saveData juste après la connexion) peut écrire ses valeurs par défaut sur le
-// compte AVANT que son premier instantané ne l'ait rempli (course connue de l'appli, hors sujet ici : ce test porte sur la concurrence, pas sur la 1re connexion).
-await d2.page.evaluate(() => { DB.registreCollectionMigree20260930 = true; });
 await d2.page.evaluate(async ({ email, pw }) => { await window.OvilogSync.login(email, pw); }, { email, pw: password });
 await waitFor(d2.page, () => window.OvilogSync.getState().loggedIn, { label: 'mobile connecté' });
 await waitFor(d2.page, () => DB.lots.some(l => l.id === 'LC') && DB.evenementsLots.length === 1, { label: 'le mobile reçoit le lot et son événement initial' });

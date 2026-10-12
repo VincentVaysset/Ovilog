@@ -174,6 +174,21 @@
   }
   .sync-badge.show { display: inline-block; animation: sync-badge-pulse 1.6s ease-in-out infinite; }
   @keyframes sync-badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  /* Bandeau « Synchro en attente » (charte : ambre pastel, liseré gauche) -- sous l'en-tête ; masqué avec lui sur les écrans de connexion. */
+  .sync-bandeau { display: flex; flex-direction: column; gap: 2px; margin: 10px 16px 0; padding: 10px 14px; background: var(--ch-ambre-pastel); border-left: 5px solid var(--ch-ambre); border-radius: var(--ch-rayon); color: var(--ch-ambre-texte); font-size: 13.5px; line-height: 1.4; }
+  .sync-bandeau[hidden], header.hidden + .sync-bandeau { display: none; }
+  .sync-bandeau strong { font-size: 14px; }
+  body.desktop-shell .sync-bandeau { margin-left: 256px; }
+  /* Écran « Lecture de votre compte… » (première connexion : rien n'est affiché ni envoyé avant la réponse du serveur). */
+  .attente-compte { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; gap: 20px; padding: 0 4px; }
+  .attente-carte { width: 100%; max-width: 380px; box-sizing: border-box; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .attente-roue { width: 34px; height: 34px; border-radius: 50%; border: 4px solid var(--ch-vert-pastel); border-top-color: var(--ch-vert); animation: attente-tour 1s linear infinite; }
+  @keyframes attente-tour { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .attente-roue { animation: none; } }
+  .attente-titre { font-size: 18px; font-weight: 700; color: var(--ch-texte); }
+  .attente-texte { font-size: 13.5px; color: var(--ch-texte2); line-height: 1.45; }
+  .attente-alerte { width: 100%; box-sizing: border-box; text-align: left; padding: 10px 14px; background: var(--ch-ambre-pastel); border-left: 5px solid var(--ch-ambre); border-radius: var(--ch-rayon); color: var(--ch-ambre-texte); font-size: 13.5px; line-height: 1.45; }
+  .attente-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; }
   main { max-width: 700px; margin: 0 auto; padding: 16px; padding-bottom: 60px; }
   /* Voir render() -- appliqué écran par écran (classe posée/retirée à
      chaque navigation), jamais globalement : seuls les écrans desktop
@@ -1301,6 +1316,7 @@
   </div>
   <h1 id="page-title">Mon troupeau</h1>
 </header>
+<div id="sync-bandeau" class="sync-bandeau" role="status" hidden><strong>Synchro en attente</strong><span id="sync-bandeau-texte"></span></div>
 
 <div id="nav-drawer-overlay" class="drawer-overlay hidden">
   <nav id="nav-drawer" class="nav-drawer"></nav>
@@ -6073,7 +6089,7 @@ function render(view, sheepId) {
   // traitement pour "Première configuration" (chantier "Paramétrage de la
   // date de début de campagne") : validation obligatoire avant d'accéder
   // au reste de l'appli, jamais de menu ni de retour possible non plus.
-  const isAuthGate = (view === 'boot' || view === 'auth' || view === 'premiere-configuration');
+  const isAuthGate = (view === 'boot' || view === 'auth' || view === 'premiere-configuration' || view === 'attente-compte');
   const headerEl = document.querySelector('header');
   if (headerEl) headerEl.classList.toggle('hidden', isAuthGate);
 
@@ -6149,6 +6165,7 @@ function render(view, sheepId) {
     else if (view === 'historique-echo') renderHistoriqueEcho();
     else if (view === 'boot') renderBoot();
     else if (view === 'auth') renderAuthGate();
+    else if (view === 'attente-compte') renderAttenteCompte();
     else if (view === 'premiere-configuration') renderPremiereConfiguration();
     else if (view === 'diag-bluetooth') renderDiagBluetooth();
     else if (view === 'maj-inventaire') renderMajInventaire();
@@ -28044,7 +28061,16 @@ function updateHeaderReaderButton() {
 // par un changement de vue.
 window.updateHeaderSyncBadge = function updateHeaderSyncBadge() {
   const badge = document.getElementById('sync-badge');
-  if (badge) badge.classList.toggle('show', !!window.__syncEnAttente);
+  const attente = !!window.__syncEnAttente || !!window.__syncAttenteCompte;
+  if (badge) badge.classList.toggle('show', attente);
+  const bandeau = document.getElementById('sync-bandeau');
+  if (bandeau) {
+    bandeau.hidden = !attente;
+    const texte = document.getElementById('sync-bandeau-texte');
+    if (texte) texte.textContent = window.__syncAttenteCompte
+      ? 'Lecture de votre compte en cours : vos saisies sont gardées sur cet appareil et ne partiront qu\'après.'
+      : 'Nouvelle tentative automatique (voir Paramètres).';
+  }
   // Même déclencheur que la pastille d'en-tête ci-dessus -- rafraîchit aussi
   // l'indicateur détaillé de Paramètres > Exploitation quand cet écran est
   // affiché (no-op silencieux sinon, voir la fonction ci-dessous).
@@ -28063,14 +28089,16 @@ function rafraichirStatutSynchroParametres() {
   if (!detail) return;
   const btnJournal = document.getElementById('btn-voir-journal-synchro');
   const journal = (window.OvilogSync && window.OvilogSync.lireJournal) ? window.OvilogSync.lireJournal() : [];
-  if (window.__syncEnAttente) {
+  if (window.__syncAttenteCompte) {
+    detail.innerHTML = '<span style="color:var(--warning);">⏳ Lecture du compte en cours — rien n\'est envoyé tant que le compte n\'a pas été lu.</span>';
+  } else if (window.__syncEnAttente) {
     detail.innerHTML = '<span style="color:var(--warning);">⏳ Synchronisation en attente — nouvelle tentative automatique en cours.</span>';
   } else if (journal.length) {
     detail.innerHTML = '<span style="color:var(--text-muted);">✅ Synchronisation à jour (dernier incident : ' + new Date(journal[0].date).toLocaleString() + ').</span>';
   } else {
     detail.innerHTML = '<span style="color:var(--success);">✅ Synchronisation à jour.</span>';
   }
-  detail.style.display = (window.__syncEnAttente || journal.length) ? '' : 'none';
+  detail.style.display = (window.__syncEnAttente || window.__syncAttenteCompte || journal.length) ? '' : 'none';
   if (btnJournal) btnJournal.style.display = journal.length ? '' : 'none';
 }
 
@@ -28370,6 +28398,36 @@ function renderBoot() {
    nouvelle vue) : 'login' | 'signup' | 'forgot'. Sans session active,
    c'est la seule chose accessible -- pas de mode hors-ligne sans connexion
    initiale (comportement "Version A" validé). */
+/* Écran « Lecture de votre compte… » : première connexion d'un appareil jamais appairé. Rien n'est affiché du troupeau ni envoyé tant que le SERVEUR n'a pas
+   répondu (voir decideEcranApresConnexion). Au bout de 8 s sans réponse (réseau lent ou coupé), le message l'explique et propose Réessayer / Se déconnecter ;
+   la lecture reprend de toute façon toute seule au retour du réseau. */
+const DELAI_MESSAGE_COMPTE_MS = 8000;
+function renderAttenteCompte() {
+  pageTitle.textContent = 'Connexion';
+  app.innerHTML = `
+    <div class="attente-compte">
+      <img src="${OVILOG_LOGO_DATA_URI}" alt="Ovilog" style="width:88px;height:88px;border-radius:20px;">
+      <div class="card attente-carte">
+        <div class="attente-roue" aria-hidden="true"></div>
+        <div class="attente-titre">Lecture de votre compte…</div>
+        <div class="attente-texte">Ovilog lit les données de votre compte avant d'afficher votre troupeau.</div>
+        <div id="attente-alerte" class="attente-alerte hidden" role="status"><strong>Le compte n'a pas encore pu être lu</strong> (réseau lent ou coupé). Rien n'est envoyé tant que ce n'est pas fait : les données de votre compte ne risquent rien. La lecture reprend toute seule dès que le réseau revient.</div>
+        <div id="attente-actions" class="attente-actions hidden">
+          <button class="btn btn-primary" id="btn-reessayer-compte">Réessayer</button>
+          <button class="btn btn-secondary" id="btn-deconnexion-compte">Se déconnecter</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('btn-reessayer-compte').onclick = () => { if (window.OvilogSync && window.OvilogSync.reessayerLecture) window.OvilogSync.reessayerLecture(); };
+  document.getElementById('btn-deconnexion-compte').onclick = () => { if (window.OvilogSync) window.OvilogSync.logout(); };
+  setTimeout(() => {
+    if (currentView !== 'attente-compte') return;
+    document.getElementById('attente-alerte').classList.remove('hidden');
+    document.getElementById('attente-actions').classList.remove('hidden');
+  }, DELAI_MESSAGE_COMPTE_MS);
+}
+
 function renderAuthGate() {
   const mode = currentAuthMode;
   const titles = { login: 'Connexion', signup: 'Créer un compte', forgot: 'Mot de passe oublié' };
@@ -28776,7 +28834,7 @@ import {
   onAuthStateChanged, signOut,
   initializeFirestore, persistentLocalCache, persistentSingleTabManager,
   collection, doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, onSnapshot, arrayUnion,
-  writeBatch
+  writeBatch, runTransaction
 } from './vendor/firebase.bundle.js';
 
 const firebaseConfig = {
@@ -28854,8 +28912,71 @@ const sync = {
   // Dernier état connu de chaque collection/document tel qu'envoyé vers ou
   // reçu depuis Firestore, pour calculer un diff minimal à chaque sauvegarde
   // plutôt que de tout réécrire.
-  lastSynced: { brebis: {}, beliers: {}, agnelles: {}, prelevementsQualite: {}, ordonnances: {}, registre: {}, evenementsLots: {}, meta: undefined }
+  lastSynced: { brebis: {}, beliers: {}, agnelles: {}, prelevementsQualite: {}, ordonnances: {}, registre: {}, evenementsLots: {}, meta: undefined },
+  // ÉTAT « COMPTE CONNU » (première connexion) -- voir marquerSourceConnue : sources (collections + 'meta') dont l'état SERVEUR est connu de cet
+  // appareil. Tant qu'une source n'y figure pas, AUCUNE écriture ne la concerne (buildAnimalCollectionOps / buildMetaOp) : un appareil ne doit jamais
+  // écrire ses valeurs par défaut sur un compte qu'il n'a pas encore lu.
+  connu: new Set(),
+  metaExiste: null,            // null = inconnu ; true / false une fois le 1er instantané SERVEUR de meta reçu
+  attentes: [],                // [{ source, resolve }] : promesses en attente d'une source connue (voir attendreSourceConnue)
+  dernierBrut: {},             // dernier contenu distant appliqué par source (signature JSON) : écarte les rappels qui ne changent que les métadonnées
+  ecrituresRetenues: false,    // des écritures ont été écartées faute de compte lu (affichage « Synchro en attente »)
+  compteInitialiseIci: false,  // ce appareil vient de créer le document meta d'un compte vide (donc le compte n'avait pas de données)
+  sauvegardeFaite: false,      // une sauvegarde locale a déjà été faite pour cette connexion (une seule suffit)
+  baselineMeta: null           // meta locale à la connexion : sert à repérer les saisies faites pendant la lecture (voir lectureMetaPremiere)
 };
+const SOURCES_SYNCHRO = DOC_COLLECTIONS.concat(['meta']);
+const SYNC_CONNU_PREFIX = 'ovilog_sync_connu_';
+function cleSyncConnu(uid) { return SYNC_CONNU_PREFIX + uid; }
+function persisterSyncConnu() {
+  if (!sync.uid) return;
+  try { localStorage.setItem(cleSyncConnu(sync.uid), JSON.stringify(Array.from(sync.connu))); } catch (e) { /* sans conséquence : relu au prochain instantané serveur */ }
+}
+function compteEntierementLu() { return SOURCES_SYNCHRO.every(c => sync.connu.has(c)); }
+// Pastille / bandeau d'en-tête : « lecture du compte en cours » tant qu'une source reste inconnue (rien n'est envoyé).
+function majEtatAttenteCompte() {
+  window.__syncAttenteCompte = !!sync.uid && !compteEntierementLu();
+  if (window.updateHeaderSyncBadge) window.updateHeaderSyncBadge();
+}
+// Attend que l'état SERVEUR d'une source soit connu (résolu tout de suite si elle l'est déjà).
+function attendreSourceConnue(source) {
+  if (sync.connu.has(source)) return Promise.resolve();
+  return new Promise(resolve => { sync.attentes.push({ source, resolve }); });
+}
+// Une source devient « connue » UNIQUEMENT sur un instantané SERVEUR (jamais sur un instantané du cache, qui peut être vide sans que le compte le soit).
+// Retourne true si elle vient de passer de inconnue à connue.
+function marquerSourceConnue(source) {
+  if (sync.connu.has(source)) return false;
+  sync.connu.add(source);
+  persisterSyncConnu();
+  const prets = sync.attentes.filter(a => a.source === source);
+  sync.attentes = sync.attentes.filter(a => a.source !== source);
+  prets.forEach(a => a.resolve());
+  majEtatAttenteCompte();
+  return true;
+}
+// Repart d'un état « rien n'est connu » (nouvelle connexion) ; les références persistées d'un appareil déjà appairé le rétablissent (voir startListeners).
+function reinitialiserEtatCompte() {
+  sync.connu = new Set();
+  sync.metaExiste = null;
+  sync.attentes = [];
+  sync.dernierBrut = {};
+  sync.ecrituresRetenues = false;
+  sync.baselineMeta = null;
+  sync.compteInitialiseIci = false;
+  sync.lastSynced = { brebis: {}, beliers: {}, agnelles: {}, prelevementsQualite: {}, ordonnances: {}, registre: {}, evenementsLots: {}, meta: undefined };
+  majEtatAttenteCompte();
+}
+// Appareil déjà appairé : les sources lues sur le serveur lors d'une session précédente (clé persistée) restent connues. Références d'avant cette notion
+// (aucune clé, mais un lastSynced.meta persisté) : toutes connues, comme avant -- seules les références vides ne prouvent rien.
+function restaurerSyncConnu() {
+  let liste = null;
+  try { liste = JSON.parse(localStorage.getItem(cleSyncConnu(sync.uid)) || 'null'); } catch (e) { liste = null; }
+  if (Array.isArray(liste)) liste.forEach(c => { if (SOURCES_SYNCHRO.includes(c)) sync.connu.add(c); });
+  else if (sync.lastSynced.meta !== undefined) SOURCES_SYNCHRO.forEach(c => sync.connu.add(c));
+  if (sync.connu.has('meta')) sync.metaExiste = true;
+  majEtatAttenteCompte();
+}
 
 /* Copie profonde + remplace toute valeur undefined par null (Firestore
    refuse undefined). Sert à la fois pour ce qu'on envoie réellement à
@@ -28990,6 +29111,9 @@ function setRecordsArrayForSync(colName, arr) {
    puisse l'appliquer précisément une fois -- et seulement une fois -- son
    écriture réellement confirmée. */
 function buildAnimalCollectionOps(colName, records, ops) {
+  // PORTE D'ÉCRITURE : tant que l'état SERVEUR de cette collection n'est pas connu, lastSynced ne prouve rien (vide = « tout est nouveau ») -- on
+  // n'écrit RIEN. Les saisies restent en local ; elles partent dès la lecture du compte (voir reprendreEcrituresRetenues).
+  if (!sync.connu.has(colName)) { sync.ecrituresRetenues = true; return; }
   const colRef = collection(fbDb, 'users', sync.uid, colName);
   const lastMap = sync.lastSynced[colName];
   const seenIds = new Set();
@@ -29010,9 +29134,20 @@ function buildAnimalCollectionOps(colName, records, ops) {
   });
 }
 
-function buildMetaOp(data, ops) {
+function metaRecordPourCloud(data) {
   const metaRecord = {};
   META_FIELDS.forEach(k => { metaRecord[k] = deepClean(k === 'lots' ? lotsPourCloud(data[k]) : data[k]); });
+  return metaRecord;
+}
+function sousEnsembleMetaLocale() {
+  const sous = {};
+  META_FIELDS.forEach(k => { sous[k] = DB[k]; });
+  return sous;
+}
+function buildMetaOp(data, ops) {
+  // Même porte que pour les collections : sans état serveur connu, lastSynced.meta est vide et produirait un `set` complet de valeurs par défaut.
+  if (!sync.connu.has('meta')) { sync.ecrituresRetenues = true; return; }
+  const metaRecord = metaRecordPourCloud(data);
   const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
   if (sync.lastSynced.meta === undefined) {
     ops.push({ type: 'set', ref: metaRef, data: metaRecord, colName: 'meta', id: 'main', newValue: metaRecord });
@@ -29053,6 +29188,7 @@ function marquerOpAppliquee(op) {
    pas une 2e fois inutilement. */
 window.ecrireEtVerifierDocRegistre = async function ecrireEtVerifierDocRegistre(categorie, eid, entree, options) {
   if (!sync.uid) return { ok: false, raison: "aucune synchro cloud active sur cet appareil -- impossible de garantir l'archivage avant suppression" };
+  if (!sync.connu.has('registre')) return { ok: false, raison: "le compte n'a pas encore été lu (réseau lent ou coupé) -- rien n'a été écrit, la fiche n'est pas retirée" };
   const docId = categorie + '_' + cleanEid(eid);
   const ref = doc(fbDb, 'users', sync.uid, 'registre', docId);
   // Garde optionnelle (dédoublonnage) : relit le document cloud AVANT d'écrire et
@@ -29478,8 +29614,108 @@ function chargerSyncLastSyncedPersiste() {
   }
 }
 
+/* ---------- Première lecture du compte : sauvegarde, modifications remplacées, collisions ---------- */
+// Sauvegarde locale de CET appareil, prise AVANT que la lecture du compte ne la remplace ou ne la fusionne (copie faite tout de suite, écriture ensuite).
+function sauvegardeLocaleAvantLecture(prefixe) {
+  if (sync.sauvegardeFaite) return;
+  sync.sauvegardeFaite = true;
+  const copie = JSON.parse(JSON.stringify(DB));
+  Promise.resolve().then(() => exportBackupFile(copie, prefixe)).catch(e => console.error('Sauvegarde locale avant lecture du compte : échec', e));
+}
+// Message clair à l'utilisateur (jamais de suppression ni de remplacement silencieux).
+function afficherMessageSynchro(texte) {
+  setTimeout(() => { try { alert(texte); } catch (e) { if (typeof showToast === 'function') showToast(texte); } }, 0);
+}
+/* Première application de meta sur un appareil qui n'avait pas de références : (1) saisies faites sur CET appareil pendant la lecture, que le compte
+   remplace (le compte prime) -> sauvegarde puis message ; (2) à défaut, simple sauvegarde si l'appareil porte déjà des fiches ou des lots (la fusion
+   des fiches locales avec le compte est ensuite faite par la synchro normale). Appelée au moment d'appliquer, avant de toucher DB. */
+function preparerPremiereLectureMeta(meta) {
+  let base = null;
+  try { base = sync.baselineMeta ? JSON.parse(sync.baselineMeta) : null; } catch (e) { base = null; }
+  const remplaces = base ? META_FIELDS.filter(k => JSON.stringify(DB[k]) !== JSON.stringify(base[k]) && JSON.stringify(meta[k]) !== JSON.stringify(DB[k])) : [];
+  if (remplaces.length) {
+    sauvegardeLocaleAvantLecture('avant-lecture-du-compte');
+    return 'Pendant la lecture de votre compte, des modifications avaient été faites sur cet appareil (' + remplaces.join(', ') + '). Elles ont été remplacées par les données du compte. Une sauvegarde de cet appareil a été enregistrée avant.';
+  }
+  const nbFiches = (DB.brebis || []).length + (DB.beliers || []).length + (DB.agnelles || []).length + (DB.lots || []).length;
+  if (nbFiches > 0) sauvegardeLocaleAvantLecture('avant-synchronisation-cloud');
+  return null;
+}
+// Fiche de cet appareil, absente du compte, mais qui entre en collision avec une fiche du compte (même EID, même n° long ou court SIEOL) : le compte prime.
+function collisionAvecCompte(locale, distantes) {
+  const eid = cleanEid(locale.eid || '');
+  for (const r of distantes) {
+    if (eid && eid === cleanEid(r.eid || '')) return { distante: r, raison: 'même EID' };
+    if (locale.numeroLongTravailSieol && locale.numeroLongTravailSieol === r.numeroLongTravailSieol) return { distante: r, raison: 'même numéro long' };
+    if (locale.numeroCourtTravailSieol && locale.numeroCourtTravailSieol === r.numeroCourtTravailSieol) return { distante: r, raison: 'même numéro court' };
+  }
+  return null;
+}
+// `fusion` = résultat de fusionnerInstantaneDistant lors de la PREMIÈRE lecture : on en retire les fiches locales (absentes du compte) en collision ; les autres
+// fiches locales restent et partent vers le compte. Sauvegarde avant, message qui les liste.
+function ecarterCollisionsPremiereLecture(colName, fusion, distantes) {
+  const idsDistants = new Set(distantes.map(r => r.id));
+  const gardees = [], ecartees = [];
+  fusion.forEach(r => {
+    if (idsDistants.has(r.id)) { gardees.push(r); return; }
+    const c = collisionAvecCompte(r, distantes);
+    if (c) ecartees.push({ locale: r, collision: c }); else gardees.push(r);
+  });
+  if (!ecartees.length) return fusion;
+  sauvegardeLocaleAvantLecture('avant-synchronisation-cloud');
+  const lignes = ecartees.map(e => '• ' + (e.locale.numeroCourtTravailSieol ? 'n° ' + e.locale.numeroCourtTravailSieol + ', ' : '') + 'EID ' + (e.locale.eid || '?') + ' : ' + e.collision.raison + ' qu\'une fiche déjà dans le compte (EID ' + (e.collision.distante.eid || '?') + (e.collision.distante.numeroCourtTravailSieol ? ', n° ' + e.collision.distante.numeroCourtTravailSieol : '') + ')');
+  afficherMessageSynchro('Des fiches de cet appareil entrent en collision avec des fiches déjà dans votre compte (' + colName + '). Le compte prime : ces fiches n\'ont pas été ajoutées et sont retirées de cet appareil. Elles figurent dans la sauvegarde enregistrée avant la fusion.\n\n' + lignes.join('\n'));
+  return gardees;
+}
+
+/* Un instantané SERVEUR d'une source vient d'être appliqué : l'état du compte est connu pour elle. Quand tout est lu, les écritures retenues partent
+   (sous forme de différences par rapport à l'état réel du compte, jamais de valeurs par défaut). */
+function lectureServeurTerminee(source) {
+  if (!marquerSourceConnue(source)) return;
+  if (compteEntierementLu()) reprendreEcrituresRetenues();
+}
+async function reprendreEcrituresRetenues() {
+  if (typeof operationGroupeeEnCours !== 'undefined' && operationGroupeeEnCours) return;      // la fin de l'opération groupée relance de toute façon
+  // La migration du registre (sauvegarde puis création des documents) passe AVANT la synchro normale : un tour de boucle suffit pour qu'onSignedIn l'ait lancée.
+  await new Promise(r => setTimeout(r, 0));
+  if (migrationRegistreEnCours) { try { await migrationRegistreEnCours; } catch (e) { /* déjà journalisé par la migration */ } }
+  try { await syncAllToCloud(DB); } catch (e) { console.error('Reprise des écritures après lecture du compte : erreur', e); }
+}
+/* Le SERVEUR confirme que le compte n'a pas encore de document meta : compte réellement vide, ce premier appareil l'initialise avec ses données. La
+   création est une transaction « créer seulement si absent » : si un autre appareil initialise le même compte au même instant, un seul gagne ; l'autre
+   n'écrit rien, attend l'instantané serveur du gagnant et lit son contenu (les fiches propres à chaque appareil sont ensuite réunies par la synchro
+   normale). Le compte n'est déclaré « connu » qu'une fois le document réellement créé. */
+let initCompteVideEnCours = false;
+async function compteVideConfirme() {
+  if (initCompteVideEnCours || sync.connu.has('meta') || !sync.uid) return;
+  initCompteVideEnCours = true;
+  try {
+    const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
+    const record = metaRecordPourCloud(DB);
+    const cree = await runTransaction(fbDb, async tx => {
+      const snap = await tx.get(metaRef);
+      if (snap.exists()) return false;
+      tx.set(metaRef, record);
+      return true;
+    });
+    if (cree) {
+      sync.lastSynced.meta = record;
+      persisterSyncLastSynced();
+      sync.metaExiste = true;
+      sync.compteInitialiseIci = true;
+      lectureServeurTerminee('meta');
+    }
+  } catch (e) {
+    console.error('Initialisation du compte vide : échec, nouvelle tentative dans 5 s', e);
+    setTimeout(() => { if (!sync.connu.has('meta') && sync.metaExiste === false) compteVideConfirme(); }, 5000);
+  } finally {
+    initCompteVideEnCours = false;
+  }
+}
+
 async function startListeners(dejaAppairePrecedemment) {
   if (dejaAppairePrecedemment && chargerSyncLastSyncedPersiste()) {
+    restaurerSyncConnu();       // un appareil déjà appairé n'attend pas le serveur : ses références persistées disent ce qu'il a déjà lu
     // Réconciliation AVANT tout abonnement : sans cet ordre précis, le
     // premier instantané distant reçu écraserait DB[colName] (voir plus bas)
     // avant que la moindre modification locale non confirmée n'ait pu être
@@ -29500,7 +29736,10 @@ async function startListeners(dejaAppairePrecedemment) {
   // pour la première fois, disponible dès la prochaine ouverture.
   DOC_COLLECTIONS.forEach(colName => {
     const colRef = collection(fbDb, 'users', sync.uid, colName);
-    const unsub = onSnapshot(colRef, snap => {
+    // includeMetadataChanges : sans lui, un instantané SERVEUR au contenu identique à celui du cache n'appellerait jamais ce rappel -- or c'est lui seul qui
+    // prouve que l'état du compte est connu (voir marquerSourceConnue). Les rappels qui ne changent que les métadonnées sont écartés plus bas (dernierBrut).
+    const unsub = onSnapshot(colRef, { includeMetadataChanges: true }, snap => {
+      const duServeur = !(snap.metadata && snap.metadata.fromCache);
       const arr = [];
       snap.forEach(d => arr.push(d.data()));
       // Un instantané distant peut arriver AVANT que le correctif fait par
@@ -29521,6 +29760,13 @@ async function startListeners(dejaAppairePrecedemment) {
           });
         });
       }
+      const premiereFusion = !sync.connu.has(colName);
+      const signatureBrute = JSON.stringify(arr);
+      if (sync.dernierBrut[colName] === signatureBrute) {            // métadonnées seules (confirmation serveur, état de cache) : rien à fusionner
+        if (duServeur) lectureServeurTerminee(colName);
+        return;
+      }
+      sync.dernierBrut[colName] = signatureBrute;
       // Référence ANCIENNE capturée AVANT d'écraser sync.lastSynced[colName]
       // ci-dessous -- nécessaire à fusionnerInstantaneDistant pour distinguer
       // un enregistrement légitimement à jour d'un enregistrement localement
@@ -29541,16 +29787,27 @@ async function startListeners(dejaAppairePrecedemment) {
       // gardé la version locale.
       arr.forEach(r => { sync.lastSynced[colName][r.id] = deepClean(r); });
       applyOrQueueRemoteUpdate(colName, () => {
-        setRecordsArrayForSync(colName, fusionnerInstantaneDistant(colName, arr, ancienneRef));
+        let fusion = fusionnerInstantaneDistant(colName, arr, ancienneRef);
+        if (premiereFusion && (colName === 'brebis' || colName === 'beliers' || colName === 'agnelles')) fusion = ecarterCollisionsPremiereLecture(colName, fusion, arr);
+        setRecordsArrayForSync(colName, fusion);
       });
       persisterSyncLastSynced();
+      if (duServeur) lectureServeurTerminee(colName);
     }, err => console.error('Erreur d\'écoute Firestore (' + colName + ') :', err));
     sync.unsubscribers.push(unsub);
   });
   const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
-  const unsubMeta = onSnapshot(metaRef, snap => {
+  const unsubMeta = onSnapshot(metaRef, { includeMetadataChanges: true }, snap => {
+    const duServeur = !(snap.metadata && snap.metadata.fromCache);
     if (snap.exists()) {
       const meta = snap.data();
+      const premiereLectureMeta = !sync.connu.has('meta');
+      const signatureBrute = JSON.stringify(meta);
+      if (sync.dernierBrut.meta === signatureBrute) {               // métadonnées seules : rien à fusionner
+        if (duServeur) { sync.metaExiste = true; lectureServeurTerminee('meta'); }
+        return;
+      }
+      sync.dernierBrut.meta = signatureBrute;
       // Fusion CHAMP PAR CHAMP (voir fusionnerEnregistrementDistant, même
       // fonction que pour les collections) -- correctif repéré par un test de
       // ce chantier : sans elle, un instantané meta distant "en retard" (ne
@@ -29567,6 +29824,7 @@ async function startListeners(dejaAppairePrecedemment) {
       const refConnueMeta = sync.lastSynced.meta;
       sync.lastSynced.meta = deepClean(meta);
       applyOrQueueRemoteUpdate('meta', () => {
+        const avertissement = premiereLectureMeta ? preparerPremiereLectureMeta(meta) : null;
         const localMetaSubset = {};
         META_FIELDS.forEach(k => { localMetaSubset[k] = DB[k]; });
         const fus = fusionnerEnregistrementDistant(localMetaSubset, meta, refConnueMeta);
@@ -29574,8 +29832,13 @@ async function startListeners(dejaAppairePrecedemment) {
           ? { lots: fusionnerListeLots(localMetaSubset.lots, meta.lots, Array.isArray(refConnueMeta.lots) ? refConnueMeta.lots : []) } : {};
         Object.assign(DB, fus, lotsFusionnes);
         recalculerMembresLotsRepro();      // lots reçus (cache membres d'un autre appareil) : à confronter au journal local, sans jamais écraser un écart
+        if (avertissement) afficherMessageSynchro(avertissement);
       });
       persisterSyncLastSynced();
+      if (duServeur) { sync.metaExiste = true; lectureServeurTerminee('meta'); }
+    } else if (duServeur) {
+      sync.metaExiste = false;                  // le SERVEUR confirme que le compte n'a pas de meta : compte vide (jamais déduit d'un instantané du cache)
+      compteVideConfirme();
     }
   }, err => console.error('Erreur d\'écoute Firestore (meta) :', err));
   sync.unsubscribers.push(unsubMeta);
@@ -29593,20 +29856,18 @@ function stopListeners() {
    sauvegarde les données locales de cet appareil par sécurité puis on
    bascule sur celles du cloud (récupérées ensuite par startListeners). */
 async function bootstrapDevice(uid) {
+  // LECTURE SEULE : l'appareil ne pousse plus rien ici. L'initialisation d'un compte vide se fait à la réception de l'instantané serveur de meta
+  // (voir compteVideConfirme), jamais sur la foi d'une simple lecture ponctuelle.
   const metaRef = doc(fbDb, 'users', uid, 'meta', 'main');
   const metaSnap = await getDoc(metaRef);
-  if (!metaSnap.exists()) {
-    await syncAllToCloud(DB);
-  } else {
+  if (metaSnap.exists()) {
     await exportBackupFile(DB, 'avant-synchronisation-cloud');
+    sync.sauvegardeFaite = true;
   }
-  localStorage.setItem(BOOTSTRAP_FLAG_KEY, uid);
-  // Signale si le compte avait DÉJÀ un document meta côté cloud avant ce
-  // bootstrap (avant le push ci-dessus, qui en crée un si absent) -- voir
+  // Signale si le compte avait DÉJÀ un document meta côté cloud -- voir
   // onSignedIn/decideEcranApresConnexion, chantier "Paramétrage de la date
   // de début de campagne" : décide si l'écran "Première configuration"
-  // doit s'afficher (jamais pour un compte qui avait déjà des données,
-  // même si ce document meta vient tout juste d'être créé par ce push).
+  // doit s'afficher (jamais pour un compte qui avait déjà des données).
   return metaSnap.exists();
 }
 
@@ -29627,9 +29888,20 @@ async function bootstrapDevice(uid) {
    getDocs (ne recrée que ce qui manque encore). N'écrit rien qui vienne
    remplacer/supprimer meta.registre : il reste en place tel quel (filet de
    secours), voir le commentaire sur META_FIELDS. */
-async function migrerRegistreVersCollection() {
-  if (DB.registreCollectionMigree20260930) return;
+let migrationRegistreEnCours = null;
+function migrerRegistreVersCollection() {
+  if (!migrationRegistreEnCours) migrationRegistreEnCours = migrerRegistreVersCollectionEffective().finally(() => { migrationRegistreEnCours = null; });
+  return migrationRegistreEnCours;
+}
+async function migrerRegistreVersCollectionEffective() {
   if (!sync.uid) return;
+  // Première connexion : jamais avant d'avoir LU le compte (le drapeau de migration vient du compte ; sans cette attente, un appareil neuf croyait la migration
+  // à faire et écrivait ses valeurs par défaut sur un compte existant). Sans réseau, la migration attend, ou reprend à la prochaine lecture réussie.
+  const uidMigration = sync.uid;
+  await attendreSourceConnue('meta');
+  await attendreSourceConnue('registre');
+  if (sync.uid !== uidMigration) return;
+  if (DB.registreCollectionMigree20260930) return;
   const registreCollRef = collection(fbDb, 'users', sync.uid, 'registre');
   let dejaPresents;
   try {
@@ -29642,6 +29914,9 @@ async function migrerRegistreVersCollection() {
   }
   const aCreer = registreVersRecords(DB).filter(r => !dejaPresents.has(r.id));
   if (aCreer.length) {
+    // Garde-fou : une migration qui ÉCRIT est précédée d'une sauvegarde de ce que le compte vient de renvoyer (rien à écrire = pas de sauvegarde).
+    try { await exportBackupFile(DB, 'avant-migration-registre'); sync.sauvegardeFaite = true; }
+    catch (e) { console.error('Migration du registre : sauvegarde préalable impossible, migration reportée à la prochaine ouverture', e); return; }
     const ops = aCreer.map(r => {
       const data = deepClean(r);
       return { type: 'set', ref: doc(registreCollRef, r.id), data: data, colName: 'registre', id: r.id, newValue: data };
@@ -29667,12 +29942,29 @@ async function migrerRegistreVersCollection() {
    est encore vide au moment de la décision (le vrai risque que ce chantier
    cherche à éliminer). */
 async function onSignedIn(user) {
+  const memeSession = sync.uid === user.uid;
   sync.uid = user.uid;
   sync.email = user.email;
+  if (!memeSession) {
+    reinitialiserEtatCompte();
+    sync.sauvegardeFaite = false;
+    sync.baselineMeta = JSON.stringify(sousEnsembleMetaLocale());
+  }
   const alreadyBootstrapped = localStorage.getItem(BOOTSTRAP_FLAG_KEY) === user.uid;
-  const hadDonneesExistantes = alreadyBootstrapped ? true : await bootstrapDevice(user.uid);
+  let hadDonneesExistantes = alreadyBootstrapped ? true : null;
+  if (!alreadyBootstrapped) {
+    try { hadDonneesExistantes = await bootstrapDevice(user.uid); }
+    catch (e) { console.error('Lecture ponctuelle du compte impossible pour le moment (réseau lent ou coupé) : attente de l\'instantané serveur', e); }
+  }
   await startListeners(alreadyBootstrapped);
-  await migrerRegistreVersCollection();
+  if (!alreadyBootstrapped) {
+    // Appareil jamais appairé : rien ne se fait avant que le SERVEUR ait répondu pour meta (écran « Lecture de votre compte… », voir decideEcranApresConnexion).
+    await attendreSourceConnue('meta');
+    if (hadDonneesExistantes === null) hadDonneesExistantes = sync.metaExiste === true && !sync.compteInitialiseIci;
+    localStorage.setItem(BOOTSTRAP_FLAG_KEY, user.uid);
+  }
+  const migration = migrerRegistreVersCollection();
+  if (sync.connu.has('meta')) await migration; else migration.catch(e => console.error('Migration du registre : erreur', e));
   return hadDonneesExistantes;
 }
 
@@ -29680,6 +29972,7 @@ function onSignedOut() {
   stopListeners();
   sync.uid = null;
   sync.email = null;
+  reinitialiserEtatCompte();
 }
 
 /* Décide l'écran d'atterrissage juste après une connexion réussie (session
@@ -29691,6 +29984,8 @@ function onSignedOut() {
    jamais risquer de diverger entre les deux déclencheurs possibles d'une
    connexion. */
 async function decideEcranApresConnexion(user) {
+  // Appareil jamais appairé : on n'affiche rien du troupeau (valeurs par défaut) avant que le serveur ait répondu.
+  if (localStorage.getItem(BOOTSTRAP_FLAG_KEY) !== user.uid) render('attente-compte');
   const hadDonneesExistantes = await onSignedIn(user);
   render(!hadDonneesExistantes && premiereConfigurationCampagneNecessaire() ? 'premiere-configuration' : 'home');
 }
@@ -29767,6 +30062,12 @@ window.OvilogSync = {
     } catch (e) {
       throw new Error(friendlyAuthError(e));
     }
+  },
+  // « Réessayer » de l'écran de lecture du compte : relance les écoutes (le SDK retente de toute façon seul au retour du réseau).
+  async reessayerLecture() {
+    if (!sync.uid || compteEntierementLu()) return;
+    stopListeners();
+    await startListeners(false);
   },
   logout() {
     signOut(fbAuth).catch(e => console.error('Erreur de déconnexion :', e));
