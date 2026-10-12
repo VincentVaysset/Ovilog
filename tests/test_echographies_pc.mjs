@@ -306,9 +306,9 @@ const r = spawnSync('python3', ['-I', '-c', PY, f], { encoding: 'utf8' });
 check(r.status === 0, 'lecture du PDF : ' + r.stderr);
 const P = JSON.parse(r.stdout), TXT = P.txt.join('\n');
 check(P.pages >= 2 && P.verts >= 6, 'PDF : plusieurs pages, en-têtes de tableau verts #357f4b (' + P.verts + ' éléments)');
-for (const motif of ['Échographies · résultats', 'Campagne : toutes · 16 brebis comptées (résultat figé)', 'Pleines', 'Vides définitives', 'Sans échographie', 'Résultat', 'Pleines par stade', 'Pleines par comptage', 'Par lot', 'Brebis uniques', 'Échos par semaine', 'Détail par brebis', 'Avant MB : dernière écho antérieure à la dernière mise bas', 'IA septembre, Éponge août', 'Page 1/' + P.pages, 'Page ' + P.pages + '/' + P.pages, 'Ovilog · Échographies · résultats'])
+for (const motif of ['Échographies · résultats', 'Campagne : toutes · 16 brebis comptées (résultat figé)', 'Pleines', 'Vides définitives', 'Sans échographie', 'Résultat', 'Pleines par stade', 'Pleines par comptage', 'Par lot', 'Brebis uniques', 'Échos par semaine', 'Détail par brebis', 'Avant MB : dernière écho antérieure à la dernière mise bas', 'IA septembre, Éponge août', 'Page 1/' + P.pages, 'Page ' + P.pages + '/' + P.pages, 'Ovilog — Échographies · résultats · Campagne'])
   check(TXT.includes(motif), 'PDF contient « ' + motif + ' »');
-// page du détail : en-têtes complets (aucune troncature « … »), « Comptage » en entier, dernière colonne « Avant MB » + note en pied de page
+// page du détail : en-têtes complets (aucune troncature « … »), « Comptage » en entier, dernière colonne « Avant MB » + note sous le titre
 check(!TXT.includes('…') && !TXT.includes('...'), 'PDF : aucune troncature (« … ») dans le texte');
 for (const h of ['Comptage', 'Cas particulier', 'Dernière écho', 'Stade / cas', 'Avant MB', 'Millésime'])
   check(TXT.includes(h), 'PDF : en-tête « ' + h + ' » en entier');
@@ -316,7 +316,7 @@ check(!/Avant mise b/.test(TXT.split('Détail par brebis')[1] || ''), 'PDF : « 
 check(P.ent.length >= 22 && P.ent.length % 11 === 0, 'PDF : l\'en-tête du détail est répété à chaque page du détail, 11 colonnes complètes (' + P.ent.length + ')');
 eq(P.ent.slice(0, 11).map(e => e[0]), ['N° court', 'Millésime', 'Âge', 'Résultat', 'Dernière écho', 'Type', 'Stade / cas', 'Comptage', 'Cas particulier', 'Lots', 'Avant MB'], 'PDF : les 11 en-têtes du détail sont lisibles sur le bandeau vert, dans l\'ordre');
 check(P.ent.every(e => e[1] <= e[2] - 20), 'PDF : aucun en-tête ne dépasse la marge droite de la page');
-check(P.txt.slice(1).some(t => t.includes('Avant MB : dernière écho antérieure à la dernière mise bas (brebis comptée « Sans échographie »)')), 'PDF : la note « Avant MB » figure en pied de page du détail');
+check(P.txt[0].includes('Avant MB : dernière écho antérieure à la dernière mise bas (brebis comptée « Sans échographie »)'), 'PDF : la note « Avant MB » figure sous le titre (plus en pied de page, désormais unique)');
 check(Math.max(...P.ent.filter(e => e[0] === 'Lots').map(e => e[1])) > 0 && P.ent.find(e => e[0] === 'Lots')[1] < P.ent.find(e => e[0] === 'Avant MB')[1] - 30, 'PDF : la colonne Lots est réduite, « Avant MB » reste à sa droite');
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'les exports n\'écrivent rien');
 console.log('OK 11 Exports : Excel (Résumé + Détail, colonnes d\'écho, vue filtrée), PDF charte colorée (tuiles, tableaux verts, Page X/Y), aucune écriture.');

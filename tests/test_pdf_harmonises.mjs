@@ -11,7 +11,8 @@ import { lirePdfMots, ecartMots } from './lib/pdf_texte.mjs';
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 const ref = JSON.parse(readFileSync(new URL('./ref/pdf_avant.json', import.meta.url)));
 // PDF déjà migrés vers la charte : paysage ou portrait, et mots que la charte AJOUTE (logo, édition, tuiles, pied de page) en plus du contenu d'origine
-const COMMUNS = ['OVILOG', 'Ovilog', 'Édité', 'le', '·', '—', /^\d\d-\d\d-\d{4}$/, /^[\d.,]+$/, /^\d+\/\d+$/, 'Page'];
+const MOTS_PIED_DISPARUS = ['export', 'généré', 'automatiquement'];   // ancien pied « Ovilog — export généré automatiquement », remplacé par le pied unique « Ovilog — [export] · [campagne] »
+const COMMUNS = ['OVILOG', 'Ovilog', 'Édité', 'le', '·', '—', /^\d\d-\d\d-\d{4}$/, /^[\d.,]+$/, /^\d+\/\d+$/, 'Page', 'Campagne', 'Année']   // + pied de page unique « Ovilog — [export] · Campagne X »;
 const MIGRES = {
   registre_agnelage: { paysage: true, ajouts: ['Registre', "d'élevage", 'Agnelage', 'Agneaux', 'enregistrés', 'Mâles', 'Femelles', 'Morts-nés'] },
   registre_mouvements: { paysage: true, ajouts: ['Registre', "d'élevage", 'Mouvements', 'Animaux', 'au', 'registre', 'Actifs', 'Entrées', 'Sorties'] },
@@ -21,9 +22,9 @@ const MIGRES = {
   controle_laitier: { paysage: true, ajouts: ['Contrôle', 'laitier'], ignorer: ['undefined'] },   // l'ancien PDF imprimait le mot « undefined » comme sous-titre (défaut) : retiré, rien d'autre ne change
   bilan_lactation: { paysage: false, ajouts: ['Litrage', 'total', 'produit', 'L', 'Brebis', 'passées', 'à', 'la', 'traite', '/', 'brebis',
     // deux histogrammes mensuels ajoutés au PDF (mêmes barres que la page PC)
-    'de', 'par', 'mois', 'Tank', 'octobre', 'septembre', 'en', 'milliers', 'litres', 'Oct', 'Nov', 'Déc', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'présentes,', 'moyenne', 'mensuelle', 'Effectif', 'au', 'premier', 'jour', 'chaque', 'trait', 'pointillé', '='], ignorer: ['Ovilog', '—', '·'] },   // « Ovilog — » devant le titre et « · » entre exploitation et campagne : remplacés par le logo OVILOG et la mise en page de l'en-tête
+    'de', 'par', 'mois', 'Tank', 'octobre', 'septembre', 'en', 'milliers', 'litres', 'Oct', 'Nov', 'Déc', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Bilan', 'lactation', 'présentes,', 'moyenne', 'mensuelle', 'Effectif', 'au', 'premier', 'jour', 'chaque', 'trait', 'pointillé', '='], ignorer: ['Ovilog', '—', '·'] },   // « Ovilog — » devant le titre et « · » entre exploitation et campagne : remplacés par le logo OVILOG et la mise en page de l'en-tête
   bilan_age: { paysage: false, ajouts: ['Bilan', 'de', 'reproduction', 'troupeau', 'Brebis', 'présentes', 'Mises', 'bas', 'Campagne', 'DÉTAIL', 'PAR', 'MILLÉSIME'], ignorer: ['Ovilog', '—', '·', 'édité'] },   // « Ovilog — », « · » et « édité » : repris par le logo OVILOG et l'en-tête (« Édité le »)
-  bilan_complet: { paysage: false, ajouts: ['Bilan', 'de', 'reproduction'], ignorer: ['Ovilog', '—', '·', 'édité', 'page'], tolerer: { 1: 1, 2: 3, '/': 2 } },   // « Ovilog — », « · », « édité le » et « page i / N » : repris par le logo, l'en-tête et le pied « Page i/N » de la charte
+  bilan_complet: { paysage: false, ajouts: ['Bilan', 'de', 'reproduction'], ignorer: ['Ovilog', '—', '·', 'édité', 'page'], tolerer: { 1: 1, 2: 3, '/': 2, campagne: 2, bilan: 2 } },   // « Ovilog — », « · », « édité le » et « page i / N » : repris par le logo, l'en-tête et le pied « Page i/N » de la charte
   lot_ia: { paysage: true, ajouts: ['Lot', 'de', 'reproduction', 'IA', 'Éponge', 'Effectif', 'du', 'lot', 'Mises', 'bas', 'Fertilité', 'Prolificité', '%'], ignorer: ['Ovilog', '—', '·', 'édité'] },   // « Ovilog — », « · » et « édité le » : repris par le logo OVILOG et l'en-tête
   lot_eponge: { paysage: false, ajouts: ['Lot', 'de', 'reproduction', 'IA', 'Éponge', 'Effectif', 'du', 'lot', 'Mises', 'bas', 'Fertilité', 'Prolificité', '%'], ignorer: ['Ovilog', '—', '·', 'édité'] },
   registre_sanitaire_filtre: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] }
@@ -46,7 +47,7 @@ for (const [nom, att] of Object.entries(MIGRES)) {
   const [bp, bm] = [await octets(pc, nom), await octets(mob, nom)];
   check(bp === bm, nom + ' : même PDF sur PC et sur mobile (octets identiques)');
   const r = lirePdfMots(Buffer.from(bp, 'base64'), 'h_' + nom);
-  const e = ecartMots(ref[nom].mots.filter(w => !(att.ignorer || []).includes(w)), r.mots);
+  const e = ecartMots(ref[nom].mots.filter(w => !(att.ignorer || []).includes(w) && !MOTS_PIED_DISPARUS.includes(w)), r.mots.filter(w => !MOTS_PIED_DISPARUS.includes(w)));
   Object.keys(att.tolerer || {}).forEach(w => { if (e.manquants[w] && e.manquants[w] <= att.tolerer[w]) delete e.manquants[w]; });   // chiffres du pied « page i / N » devenu « Page i/N »
   check(Object.keys(e.manquants).length === 0, nom + ' : contenu d\'origine intact, mots manquants : ' + JSON.stringify(e.manquants));
   const autorises = COMMUNS.concat(att.ajouts);

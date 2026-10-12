@@ -1,6 +1,6 @@
 /* Inventaire : PDF à la charte colorée pour chacun des 4 onglets (Brebis, Agnelles, Béliers, Agneaux). Vérifié, texte et rendu relus avec PyMuPDF : titre « Inventaire · <onglet> »,
    campagne, « Situation au <date> », éleveur, « Édité le … » ; 3 tuiles d'effectifs identiques quel que soit l'onglet (Brebis, Agnelles, Béliers actifs, pas d'agneaux) aux couleurs de la maquette
-   (fond pastel + liseré gauche : vert, ambre, bleu) ; tableau à en-tête vert #357f4b, lignes alternées #f6f1e4 / blanc, colonnes de l'écran, tri de l'écran ; pied « Ovilog · Inventaire des <onglet> »
+   (fond pastel + liseré gauche : vert, ambre, bleu) ; tableau à en-tête vert #357f4b, lignes alternées #f6f1e4 / blanc, colonnes de l'écran, tri de l'écran ; pied « Ovilog — Inventaire des <onglet> · Campagne X »
    et « Page X/Y » ; grand effectif sur plusieurs pages (en-tête de suite, tableau arrondi sur chaque page) ; liste filtrée = seulement les lignes affichées ; même octets sur PC et mobile
    (par le clic sur « Export PDF » dans les deux modes) ; les autres PDF ne sont pas touchés (test_exports_prod_laitiere). saveOrShareBinaryFile REMPLACÉ. */
 import { chromium } from 'playwright';
@@ -82,7 +82,7 @@ for (const [nom, page] of [['PC', pc], ['mobile', mob]]) {
     check(s.nom === 'inventaire_' + (onglet) + '_2026-10-09.pdf' && s.mime === 'application/pdf', nom + ' : nom de fichier ' + s.nom);
     const pdf = lire(nom + '_' + onglet + '.pdf', s.b64);
     const t = norm(pdf.texte.join(' '));
-    for (const x of ['OVILOG', 'Inventaire · ' + titre, 'Campagne 2027', 'Situation au 09-10-2026', 'Ferme du Test', 'Édité le 09-10-2026', 'Brebis actives', 'Agnelles actives', 'Béliers actifs', 'Ovilog · Inventaire des ' + pied, ...entetes])
+    for (const x of ['OVILOG', 'Inventaire · ' + titre, 'Campagne 2027', 'Situation au 09-10-2026', 'Ferme du Test', 'Édité le 09-10-2026', 'Brebis actives', 'Agnelles actives', 'Béliers actifs', 'Ovilog — Inventaire des ' + pied + ' · Campagne 2027', ...entetes])
       check(t.includes(x), nom + ' ' + onglet + ' : contient « ' + x + ' »');
     check(!/Béliers actifs 2 Agneaux (actifs )?\d/.test(t) && !/Agneaux actifs \d+ (Brebis|Agnelles)/.test(t), nom + ' ' + onglet + ' : pas de tuile Agneaux');
     // les 3 tuiles : effectifs actifs, identiques quel que soit l'onglet
