@@ -12741,7 +12741,93 @@ function misebasCampagneRows() {
    sur PC : on saisit le numéro court ou l'EID), compteurs Mâles / Femelles / Mort-nés (qui pilotent les mêmes agneaux que
    les cartes de détail, EID et adoption facultatifs), Repro déduite et modifiable, contrôles, mises bas de la campagne,
    avancement. Restantes attendues = troupeau à mettre bas (actives − vides définitives) − mises bas réalisées. */
-function miseBasRapideStatsPc(campagneRows) {
+/* ---------- Règles communes de la saisie des mises bas (mobile ET PC : une seule fonction métier) ----------
+   Une mise bas par campagne. BLOQUER : EID inconnu (ou déjà pris ailleurs), brebis ayant déjà mis bas. ALERTER (jamais bloquer) : date future, brebis vide définitive.
+   Aucun encart permanent : un message n'apparaît que lorsqu'une règle se déclenche. */
+function controlesMiseBas(sheep, dateISO) {
+  const bloquants = [], alertes = [];
+  const idx = sheep ? agnelageCampagneActuelleIdx(sheep) : -1;
+  if (idx !== -1) {
+    const a = sheep.agnelages[idx];
+    bloquants.push({ code: 'deja-mis-bas', agnelageIdx: idx, date: a.date, nbAgneaux: (a.lambs || []).length });
+  }
+  if (dateISO && dateISO > jourAujourdhuiISO()) alertes.push({ code: 'date-future', message: 'La date saisie (' + formatDateFr(dateISO) + ') est postérieure à aujourd\'hui.' });
+  if (sheep && idx === -1 && estVideDefinitiveCampagne(sheep)) alertes.push({ code: 'vide-definitive', message: 'Marquée vide définitive cette campagne : l\'enregistrer crée une incohérence, signalée et jamais corrigée seule.' });
+  return { bloquants, alertes };
+}
+// Recherche de la brebis saisie ou scannée : { statut: 'trouvee', sheep } | { statut: 'ambigu', candidats } | { statut: 'inconnue', eid } | { statut: 'conflit', eid, conflit }
+function chercherBrebisMiseBas(val) {
+  const r = trouverUnParEidOuNumero(DB.brebis, val);
+  if (r.statut === 'ambigu') return { statut: 'ambigu', candidats: r.candidats };
+  if (r.statut === 'absent') { const conflit = verifierEidUnique(val); return conflit ? { statut: 'conflit', eid: val, conflit } : { statut: 'inconnue', eid: val }; }
+  return { statut: 'trouvee', sheep: r.item };
+}
+/* Construit l'agnelage d'une saisie. saisie : { date, codeRepro, lambs: [{ sexe: 'Mâle' | 'Femelle' | 'Mort-né', sexeMortNe?, eid?, adopte?, adoptNum? }] }.
+   Retourne { erreur } ou { agnelage }. Mort-né : jamais d'EID (sexeMortNe facultatif, simple information) ; agneau vivant : Séléphérol 2 cc automatique ; adoption : brebis ACTIVE uniquement. */
+function construireAgnelageMiseBas(sheep, saisie) {
+  const lambs = saisie.lambs || [];
+  if (lambs.length === 0) return { erreur: 'Ajoute au moins un agneau.' };
+  const vivants = lambs.filter(l => l.sexe && l.sexe !== 'Mort-né');
+  const eids = vivants.map(l => cleanEid((l.eid || '').trim())).filter(Boolean);
+  const doublon = eids.filter((v, i) => eids.indexOf(v) !== i);
+  if (doublon.length > 0) return { erreur: 'Deux agneaux de cet agnelage ont le même EID (n°' + numeroVisuel(doublon[0]) + ').' };
+  const out = [];
+  for (let i = 0; i < lambs.length; i++) {
+    const l = lambs[i], n = i + 1;
+    if (!l.sexe) return { erreur: 'Sélectionne le sexe de chaque agneau.' };
+    if (l.sexe === 'Mort-né') {
+      const mn = { sexe: 'Mort-né', adopte: false };
+      if (l.sexeMortNe === 'Mâle' || l.sexeMortNe === 'Femelle') mn.sexeMortNe = l.sexeMortNe;
+      out.push(mn);
+      continue;
+    }
+    const eidVal = (l.eid || '').trim();
+    const conflit = verifierEidUnique(eidVal);
+    if (conflit) return { erreur: messageEidDejaUtilise(conflit) + ' (agneau ' + n + ')' };
+    const lamb = { sexe: l.sexe, adopte: !!l.adopte, eid: eidVal };
+    if (l.adopte) {
+      const adoptVal = (l.adoptNum || '').trim();
+      const mere = trouverBrebisActiveParEidOuNumero(adoptVal);
+      if (!mere) return { erreur: trouverBrebisActivesParNumero(adoptVal).length > 1
+        ? "Plusieurs brebis actives correspondent à ce numéro (mère adoptive de l'agneau " + n + ") — saisis l'EID complet."
+        : "Aucune brebis active ne correspond à ce numéro (mère adoptive de l'agneau " + n + ")." };
+      lamb.adoptiveEid = mere.eid;
+    }
+    lamb.sanitaire = [Object.assign({ type: 'Traitement', sousType: null, produit: 'Séléphérol', dose: '2 cc', date: saisie.date, commentaire: 'Injection systématique à la naissance' }, delaisSelepherolSnapshot())];
+    out.push(lamb);
+  }
+  const agnelage = { date: saisie.date, lambs: out, campagne: DB.campagneDebut, codeRepro: saisie.codeRepro, codeSieolRepro: REPRO_CODE_SIEOL[saisie.codeRepro] };
+  agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
+  return { agnelage };
+}
+function enregistrerMiseBas(sheep, agnelage) {
+  sheep.agnelages = sheep.agnelages || [];
+  sheep.agnelages.push(agnelage);
+  saveData(DB);
+  return sheep.agnelages.length - 1;
+}
+// Annulation d'une mise bas : un geste, SANS confirmation (mobile et PC)
+function annulerMiseBas(sheepId, agnelageIdx) {
+  const sheep = findSheep(sheepId);
+  if (!sheep || !sheep.agnelages || !sheep.agnelages[agnelageIdx]) return false;
+  sheep.agnelages.splice(agnelageIdx, 1);
+  saveData(DB);
+  return true;
+}
+// « 1 mâle, 1 femelle mort-née » : résumé d'une mise bas (les morts-nés avec leur sexe quand il est connu)
+function resumeAgnelage(agnelage) {
+  const l = agnelage.lambs || [], n = (f) => l.filter(f).length;
+  const parts = [];
+  const m = n(x => x.sexe === 'Mâle'), f = n(x => x.sexe === 'Femelle');
+  if (m) parts.push(m + ' mâle' + (m > 1 ? 's' : ''));
+  if (f) parts.push(f + ' femelle' + (f > 1 ? 's' : ''));
+  const mnM = n(x => x.sexe === 'Mort-né' && x.sexeMortNe === 'Mâle'), mnF = n(x => x.sexe === 'Mort-né' && x.sexeMortNe === 'Femelle'), mnI = n(x => x.sexe === 'Mort-né' && !x.sexeMortNe);
+  if (mnM) parts.push(mnM + ' mâle' + (mnM > 1 ? 's morts-nés' : ' mort-né'));
+  if (mnF) parts.push(mnF + ' femelle' + (mnF > 1 ? 's mortes-nées' : ' mort-née'));
+  if (mnI) parts.push(mnI + (mnI > 1 ? ' morts-nés' : ' mort-né'));
+  return parts.join(', ');
+}
+function miseBasRapideStats(campagneRows) {
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   const cb = campagneBilanChiffres(actives);
   const somme = cle => campagneRows.reduce((a, r) => a + r[cle], 0);
@@ -12750,7 +12836,7 @@ function miseBasRapideStatsPc(campagneRows) {
   return { cb, misesBas: campagneRows.length, nes, males: somme('male'), femelles: somme('femelle'), mortNes: somme('mortNe'), prolificite: campagneRows.length > 0 ? nes / campagneRows.length : null, portees };
 }
 function miseBasRapidePcHtml(c) {
-  const rows = c.campagneRows, st = miseBasRapideStatsPc(rows), cb = st.cb;
+  const rows = c.campagneRows, st = miseBasRapideStats(rows), cb = st.cb;
   const aujourdhui = jourAujourdhuiISO();
   const nb = n => n > 0 ? String(n) : '<span style="color:var(--text-muted);">–</span>';
   const pct = cb.troupeauAMettreBas > 0 ? Math.round(cb.misesBasActives / cb.troupeauAMettreBas * 1000) / 10 : 0;
@@ -13073,14 +13159,7 @@ function renderMiseBasRapide() {
 
     document.querySelectorAll('.btn-annuler-mb-campagne').forEach(btn => {
       btn.onclick = () => {
-        const sheep = findSheep(btn.dataset.sheepId);
-        const agnelageIdx = parseInt(btn.dataset.agnelageIdx, 10);
-        const numeroConfirm = sheep ? numeroVisuel(sheep.eid) : '?';
-        if (!confirm('Annuler la mise bas enregistrée pour la brebis n°' + numeroConfirm + ' ? Cette action est irréversible.')) return;
-        if (sheep && sheep.agnelages) {
-          sheep.agnelages.splice(agnelageIdx, 1);
-          saveData(DB);
-        }
+        annulerMiseBas(btn.dataset.sheepId, parseInt(btn.dataset.agnelageIdx, 10));   // un geste, sans confirmation
         draw();
       };
     });
@@ -13228,85 +13307,22 @@ function renderMiseBasRapide() {
       const btnValiderMb = document.getElementById('btn-valider-misebas');
       btnValiderMb.onclick = () => {
         const err = document.getElementById('err');
-        // PC : une date postérieure à aujourd'hui est une alerte à confirmer (jamais corrigée seule)
-        if (desktopMB) {
-          const dSaisie = document.getElementById('f-date-rapide').value;
-          if (dSaisie > jourAujourdhuiISO() && !confirm('La date saisie (' + formatDateFr(dSaisie) + ') est postérieure à aujourd\'hui. Enregistrer la mise bas avec cette date ?')) return;
-        }
+        // une date postérieure à aujourd'hui est une alerte à confirmer (jamais corrigée seule) : règle commune mobile / PC
+        const alerteDate = controlesMiseBas(currentSheep, document.getElementById('f-date-rapide').value).alertes.find(x => x.code === 'date-future');
+        if (alerteDate && !confirm(alerteDate.message + ' Enregistrer la mise bas avec cette date ?')) return;
         const ids = Object.keys(lambs);
-        if (ids.length === 0) {
-          err.textContent = "Ajoute au moins un agneau.";
-          err.classList.remove('hidden');
-          return;
-        }
-        // Doublon entre agneaux de CE MÊME agnelage (voir renderAddAgnelage,
-        // même logique) : deux EID fraîchement saisis identiques ne seraient
-        // pas détectés par verifierEidUnique seul, aucun des deux n'étant
-        // encore enregistré au moment du contrôle.
-        const eidsSaisis = ids
-          .filter(id => lambs[id].sexe !== 'Mort-né')
-          .map(id => (document.querySelector(`.eid-input-rapide[data-id="${id}"]`) || {}).value)
-          .map(v => cleanEid((v || '').trim()))
-          .filter(Boolean);
-        const eidsEnDouble = eidsSaisis.filter((v, i) => eidsSaisis.indexOf(v) !== i);
-        if (eidsEnDouble.length > 0) {
-          err.textContent = "Deux agneaux de cet agnelage ont le même EID (n°" + numeroVisuel(eidsEnDouble[0]) + ").";
-          err.classList.remove('hidden');
-          return;
-        }
-        for (const id of ids) {
-          if (!lambs[id].sexe) {
-            err.textContent = "Sélectionne le sexe de chaque agneau.";
-            err.classList.remove('hidden');
-            return;
-          }
-          if (lambs[id].sexe !== 'Mort-né') {
-            const eidInput = document.querySelector(`.eid-input-rapide[data-id="${id}"]`);
-            const eidVal = eidInput.value.trim();
-            const conflitEidLamb = verifierEidUnique(eidVal);
-            if (conflitEidLamb) {
-              err.textContent = messageEidDejaUtilise(conflitEidLamb) + ' (agneau ' + id + ')';
-              err.classList.remove('hidden');
-              return;
-            }
-            lambs[id].eid = eidVal;
-            if (lambs[id].adopte) {
-              const adoptEidInput = document.querySelector(`.adopt-eid-rapide[data-id="${id}"]`);
-              const adoptVal = adoptEidInput.value.trim();
-              const mereAdoptive = trouverBrebisActiveParEidOuNumero(adoptVal);
-              if (!mereAdoptive) {
-                err.textContent = trouverBrebisActivesParNumero(adoptVal).length > 1
-                  ? "Plusieurs brebis actives correspondent à ce numéro (mère adoptive de l'agneau " + id + ") — choisis dans la liste affichée ou " + (isDesktopMode() ? "saisis l'EID complet." : "scanne l'EID complet.")
-                  : "Aucune brebis active ne correspond à ce numéro (mère adoptive de l'agneau " + id + ").";
-                err.classList.remove('hidden');
-                return;
-              }
-              lambs[id].adoptiveEid = mereAdoptive.eid;
-            }
-            lambs[id].sanitaire = lambs[id].sanitaire || [];
-            const dateNaissance = document.getElementById('f-date-rapide').value;
-            const dejaSelepherol = lambs[id].sanitaire.some(s => s.produit === 'Séléphérol');
-            if (!dejaSelepherol) {
-              lambs[id].sanitaire.push(Object.assign({
-                type: 'Traitement', sousType: null, produit: 'Séléphérol', dose: '2 cc',
-                date: dateNaissance,
-                commentaire: 'Injection systématique à la naissance'
-              }, delaisSelepherolSnapshot()));
-            }
-          }
-        }
+        const saisie = {
+          date: document.getElementById('f-date-rapide').value, codeRepro,
+          lambs: ids.map(id => ({
+            sexe: lambs[id].sexe, eid: (document.querySelector(`.eid-input-rapide[data-id="${id}"]`) || {}).value || '',
+            adopte: !!lambs[id].adopte, adoptNum: (document.querySelector(`.adopt-eid-rapide[data-id="${id}"]`) || {}).value || ''
+          }))
+        };
+        const r = construireAgnelageMiseBas(currentSheep, saisie);
+        if (r.erreur) { err.textContent = r.erreur; err.classList.remove('hidden'); return; }
         err.classList.add('hidden');
         btnValiderMb.disabled = true; // évite un double-clic/double-tap qui rejouerait la validation
-        const agnelage = {
-          date: document.getElementById('f-date-rapide').value,
-          lambs: ids.map(id => lambs[id]),
-          campagne: DB.campagneDebut,
-          codeRepro, codeSieolRepro: REPRO_CODE_SIEOL[codeRepro]
-        };
-        agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
-        currentSheep.agnelages = currentSheep.agnelages || [];
-        currentSheep.agnelages.push(agnelage);
-        saveData(DB);
+        enregistrerMiseBas(currentSheep, r.agnelage);
         misebasRapideCount++;
         resetForm();
         draw();
