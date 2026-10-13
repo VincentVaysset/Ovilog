@@ -28,7 +28,7 @@ for (const bureau of [true, false]) {
   const c = await page.evaluate(() => declarationAnnuelleChiffres(2026));
   // ---- en-tête et export
   eq(await page.evaluate(() => document.querySelector('.brd-title').textContent), 'Déclaration 2026', nom + ' : titre');
-  check(await page.evaluate(() => document.getElementById('app').textContent.includes('Recensement au 1er janvier et ratio de l\'aide ovine')), nom + ' : sous-titre');
+  check(await page.evaluate(() => { const t = document.getElementById('app').textContent; return t.includes('Année civile, indépendante de la campagne agricole') && !t.includes('Recensement au 1er janvier et ratio de l\'aide ovine'); }), nom + ' : sous-titre (sans répéter les titres de cartes)');
   check(!(await page.evaluate(() => document.getElementById('app').textContent.includes('❔'))), nom + ' : aucun ❔');
   eq(await page.evaluate(() => document.getElementById('btn-export-declaration-pdf').textContent + '|' + document.getElementById('btn-export-declaration-pdf').classList.contains('btn-primary')), (bureau ? 'Export PDF' : 'Exporter (PDF)') + '|true', nom + ' : bouton vert « ' + (bureau ? 'Export PDF' : 'Exporter (PDF)') + ' »');
   const bExp = await box(page, '#btn-export-declaration-pdf'), bRec = await box(page, '#decl-recensement'), bSel = await box(page, '#declaration-annee');
@@ -44,12 +44,12 @@ for (const bureau of [true, false]) {
   // ---- ratio
   eq(await page.evaluate(() => document.querySelector('#decl-ratio .prm-titre').textContent), 'Ratio PAC (aide ovine) · 2025', nom + ' : titre de la carte ratio');
   const rt = await tuiles('#decl-ratio');
-  eq(rt.slice(0, 3).map(t => [t[0], t[1]]), [['Brebis présentes au 1er janvier 2025', String(c.brebisRatio)], ['Agneaux nés en 2025', String(c.agneauxNesRatio)], ['Agneaux vendus en 2025', String(c.agneauxVendusRatio)]], nom + ' : 3 chiffres du ratio');
+  eq(rt.slice(0, 2).map(t => [t[0], t[1]]), [['Brebis présentes au 1er janvier', String(c.brebisRatio)], ['Agneaux vendus', String(c.agneauxVendusRatio)]], nom + ' : 2 chiffres du ratio (l\'année n\'est que dans le titre de la carte ; « Agneaux nés » n\'est que dans le recensement)');
   const attendu = c.ratio.toFixed(2).replace('.', ',');
-  eq(rt[3].slice(0, 2), ['Ratio', attendu], nom + ' : ratio à 2 décimales, virgule');
+  eq(rt[2].slice(0, 2), ['Ratio', attendu], nom + ' : ratio à 2 décimales, virgule');
   check(c.ratio !== null && /^\d+,\d\d$/.test(attendu), nom + ' : format 1,17');
-  check(await page.evaluate(() => { const t = document.querySelector('.decl-tuile-ratio'); return !!t && /agneaux vendus ÷ brebis présentes/.test(t.textContent) && /≈ 0,5/.test(t.textContent) && getComputedStyle(t).backgroundColor !== getComputedStyle(document.querySelector('.decl-tuile:not(.decl-tuile-ratio)')).backgroundColor; }), nom + ' : ratio en vert avec sa formule et le seuil indicatif');
-  if (bureau) check(new Set(rt.map(t => t[3])).size === 1, 'PC : les 4 tuiles du ratio sont sur une ligne');
+  check(await page.evaluate(() => { const t = document.querySelector('.decl-tuile-ratio'); return !!t && /agneaux vendus ÷ brebis présentes/.test(t.textContent) && /≈ 0,5/.test(t.textContent) && getComputedStyle(t).backgroundColor !== getComputedStyle([...document.querySelectorAll('#decl-ratio .decl-tuile:not(.decl-tuile-ratio)')].pop()).backgroundColor; }), nom + ' : ratio en vert avec sa formule et le seuil indicatif');
+  if (bureau) check(new Set(rt.map(t => t[3])).size === 1, 'PC : les 3 tuiles du ratio sont sur une ligne');
   console.log('OK ' + nom + ' : en-tête, export, recensement, ratio 2 décimales en vert avec formule, aucun ❔.');
   // ---- changement d'année
   await page.selectOption('#declaration-annee', '2025');
@@ -57,7 +57,7 @@ for (const bureau of [true, false]) {
   // ---- non disponible (aucune brebis au 1er janvier de l'année précédente)
   await jeu('2025-06-01');
   const rt2 = await tuiles('#decl-ratio');
-  eq(rt2[3].slice(0, 2), ['Ratio', 'Non disponible'], nom + ' : « Non disponible » conservé');
+  eq(rt2[2].slice(0, 2), ['Ratio', 'Non disponible'], nom + ' : « Non disponible » conservé');
   check(await page.evaluate(() => !!document.querySelector('.decl-tuile-nd') && !document.querySelector('.decl-tuile-ratio')), nom + ' : tuile grise, pas verte');
   // ---- données insuffisantes
   await jeu('2026-01-01'); await page.evaluate(() => { declarationAnneeSelectionnee = 2026; render('declaration-annuelle'); });

@@ -55,7 +55,7 @@ for (const bureau of [true, false]) {
     eq(st.premiere, ['rgb(47, 110, 68)|700', 'rgb(47, 110, 68)|700'], 'PC : 1re colonne en vert gras');
     eq(st.fonds, ['rgb(246, 241, 228)', 'rgb(255, 255, 255)'], 'PC : lignes alternées beige / blanc');
     // 3 tuiles d'effectifs colorées au-dessus du tableau, sur une ligne, toujours les mêmes
-    const tu = await page.evaluate(() => [...document.querySelectorAll('#inv-tuiles .reg-tuile')].map(e => { const r = e.getBoundingClientRect(); return [e.querySelector('.reg-tuile-l').textContent, e.querySelector('.reg-tuile-v').textContent, e.classList[1], Math.round(r.y), e.classList.contains('actif')]; }));
+    const tu = await page.evaluate(() => [...document.querySelectorAll('#inv-tuiles .reg-tuile')].map(e => { const r = e.getBoundingClientRect(); return [e.querySelector('.reg-tuile-l').textContent, e.querySelector('.reg-tuile-v').textContent, [...e.classList].find(c => ['vert', 'ambre', 'bleu'].includes(c)), Math.round(r.y), e.classList.contains('actif')]; }));
     eq(tu.map(x => x.slice(0, 3)), [['Brebis actives', '5', 'vert'], ['Agnelles actives', '2', 'ambre'], ['Béliers actifs', '2', 'bleu']], 'PC : tuiles Brebis / Agnelles / Béliers (sans agneaux)');
     check(new Set(tu.map(x => x[3])).size === 1, 'PC : les 3 tuiles sont sur une ligne');
     check(tu[0][4] && !tu[1][4] && !tu[2][4], 'PC : la tuile de l\'onglet courant est cerclée');

@@ -46,14 +46,14 @@ await jeu();
 check(await nb('#pc-production') === 1, 'page PC Production laitière affichée (pas la version mobile)');
 eq(await $$t('#pl-onglets .tab-btn'), ['Tank', 'Qualité'], 'deux onglets');
 eq(await $t('#pc-production .brd-title'), 'Tank', 'titre');
-eq(await page.evaluate(() => [...document.querySelectorAll('#pc-production .brd-actions button')].map(b => b.textContent)), ['Export Excel', 'Tank (PDF)', 'Calendrier (PDF)'], 'boutons d\'action en haut à droite, aucun import');
+eq(await page.evaluate(() => [...document.querySelectorAll('#pc-production .brd-actions button')].map(b => b.textContent)), ['Export Excel', 'Export PDF'], 'boutons d\'action en haut à droite (Export Excel blanc, Export PDF vert = Calendrier du tank), plus de Tank (PDF), aucun import');
 check(await page.evaluate(() => !!document.querySelector('#pc-production .brd-actions select')), 'sélecteur de campagne en haut à droite');
 check(!/[Ii]mporter/.test(await $t('#app')), 'aucun bouton d\'import du fichier tank');
 check(!/€/.test(await $t('#app')), 'Tank PC : aucun montant en euros');
 check(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(await $t('#app')), 'aucun emoji');
 const dT = await page.evaluate(() => { const d = tankCampagneData(2026); return { titre: d.tuileMois.titre, litres: d.tuileMois.litres, total: d.total.litres, n: d.total.nbReleves, pointe: d.pointe }; });
 let K = await kpis();
-eq(Object.keys(K).map(k => k.toUpperCase()), ['MOIS EN COURS', 'CAMPAGNE 2027', 'RELEVÉS', 'MOIS DE POINTE'], 'quatre tuiles');
+eq(Object.keys(K), ['Mois en cours', 'Lait de la campagne', 'Relevés saisis', 'Mois de pointe'], 'quatre tuiles (libellés en minuscules, sans répéter la campagne)');
 eq(K[Object.keys(K)[0]][0], '1 010 L', 'litrage du mois en cours (500 + 510)');
 eq(K[Object.keys(K)[1]][0], '1 010 L', 'litrage de la campagne');
 eq(K[Object.keys(K)[2]][0], '2', 'nombre de relevés');
@@ -65,7 +65,7 @@ console.log('OK 1 Tank PC : onglets, titre, actions, 4 tuiles, tableau « Litrag
 // ================================================================ 2. campagne passée : « Dernier mois », mois, relevés, fiche
 await ouvrir('tank', 2025);
 K = await kpis(); let ks = Object.keys(K);
-eq(ks.map(k => k.toUpperCase()), ['DERNIER MOIS', 'CAMPAGNE 2026', 'RELEVÉS', 'MOIS DE POINTE'], 'campagne passée : tuile « Dernier mois »');
+eq(ks.map(k => k.toUpperCase()), ['DERNIER MOIS', 'LAIT DE LA CAMPAGNE', 'RELEVÉS SAISIS', 'MOIS DE POINTE'], 'campagne passée : tuile « Dernier mois »');
 eq(await cells('#pc-tank-mois'), [['Octobre 2025', '1', '200', '', '200'], ['Décembre 2025', '2', '610', '', '810'], ['Juillet 2026', '2', '250', '', '1 060'], ['Septembre 2026', '1', '90', '', '1 150'], ['Campagne 2026', '6', '1 150', '', '1 150']], 'mois de la campagne 2026 uniquement (aucun relevé d\'octobre 2026)');
 eq(K[ks[0]][0], '90 L', 'dernier mois = septembre 2026 (90 L)');
 eq(await $t('#pc-tank-releves .brd-ttl'), 'Septembre 2026', 'relevés du dernier mois affichés à droite');
@@ -123,12 +123,13 @@ console.log('OK 5 suppression : confirmation (message sur le prélèvement conse
 // ================================================================ 6. exports : mêmes fonctions que le mobile, campagne affichée
 await ouvrir('tank', 2025);
 await page.evaluate(() => { window.__saisies = []; });
-for (const id of ['btn-export-tank-pdf', 'btn-export-tank-xlsx', 'btn-export-calendrier-pdf']) { await page.click('#' + id); await page.waitForFunction(n => window.__saisies.length >= n, ['btn-export-tank-pdf', 'btn-export-tank-xlsx', 'btn-export-calendrier-pdf'].indexOf(id) + 1, { timeout: 15000 }); }
+for (const id of ['btn-export-tank-xlsx', 'btn-export-calendrier-pdf']) { await page.click('#' + id); await page.waitForFunction(n => window.__saisies.length >= n, ['btn-export-tank-xlsx', 'btn-export-calendrier-pdf'].indexOf(id) + 1, { timeout: 15000 }); }
 const ex = await page.evaluate(() => window.__saisies);
-check(ex.length === 3 && ex.every(e => /2026/.test(e.nom) && e.n > 500), 'trois exports, campagne 2026 dans le nom : ' + JSON.stringify(ex));
-const ref = await page.evaluate(async () => { window.__saisies = []; await exportTankPdf(2025); await exportTankXlsx(2025); await exportCalendrierTankPdf(2025); return window.__saisies; });
+check(ex.length === 2 && ex.every(e => /2026/.test(e.nom) && e.n > 500), 'deux exports (Excel, Export PDF = Calendrier du tank), campagne 2026 dans le nom : ' + JSON.stringify(ex));
+check(await page.evaluate(() => !document.getElementById('btn-export-tank-pdf')), 'plus de bouton Tank (PDF)');
+const ref = await page.evaluate(async () => { window.__saisies = []; await exportTankXlsx(2025); await exportCalendrierTankPdf(2025); return window.__saisies; });
 eq(ex.map(e => [e.nom, e.mime, e.n]), ref.map(e => [e.nom, e.mime, e.n]), 'PC = fonctions partagées appelées directement (même nom, même type, même taille)');
-console.log('OK 6 exports Tank PDF / Excel / Calendrier : mêmes fonctions, même nom de fichier, campagne affichée.');
+console.log('OK 6 exports Excel / Export PDF (Calendrier du tank) : mêmes fonctions, même nom de fichier, campagne affichée.');
 
 // ================================================================ 7. Qualité PC : bandeau positif, tuiles, Moyennes par mois, prélèvements du mois, Modifier
 await jeu();

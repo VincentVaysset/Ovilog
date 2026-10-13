@@ -1,4 +1,4 @@
-/* Tous les PDF de l'application, sur jeux SYNTHÉTIQUES : window.CAS_PDF_TOUS = { nom: async () => octets } (les 11 cas de jeux_pdf.mjs + Tank, Calendrier du tank, Rapport de campagne, Inventaire, Échographies, Déclaration annuelle).
+/* Tous les PDF de l'application, sur jeux SYNTHÉTIQUES : window.CAS_PDF_TOUS = { nom: async () => octets } (les 11 cas de jeux_pdf.mjs + Calendrier du tank, Rapport de campagne, Inventaire, Échographies, Déclaration annuelle).
    Fonction AUTONOME (sérialisée dans la page par page.evaluate, après installerCasPdf). Le nom d'exploitation « Ferme du Test » est posé dans chaque jeu (migrateData enveloppée), sauf si window.__nomExploitation est '' (cas du repli « Ovilog »). saveData et saveOrShareBinaryFile sont REMPLACÉS ; aucune donnée réelle. */
 export function installerCasPdfTous() {   // à appeler APRÈS page.evaluate(installerCasPdf)
   window.__nomExploitation = 'Ferme du Test';
@@ -14,7 +14,6 @@ export function installerCasPdfTous() {   // à appeler APRÈS page.evaluate(ins
     DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 12, prixReference: null, msuReference: null }];
   };
   Object.assign(window.CAS_PDF, {
-    tank: async () => { prod(); return u8(buildTankPdfBytes(2025)); },
     calendrier: async () => { prod(); return u8(buildCalendrierTankPdfBytes(2025)); },
     rapport: async () => { prod(); return u8(buildRapportCampagnePdfBytes(2025)); },
     inventaire: async () => { window.jeuBilanSynth(); return u8(buildInventairePdfBytes('brebis', DB.brebis.filter(s => (s.statut || 'active') === 'active').slice(0, 30), '')); },

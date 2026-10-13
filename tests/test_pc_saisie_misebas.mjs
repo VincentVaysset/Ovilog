@@ -55,6 +55,13 @@ check(/Saisir le n° de la brebis \(court ou EID complet\)/.test(texte), 'consig
 check(await page.evaluate(() => !document.getElementById('lamb-list-rapide') && !!document.querySelector('.btn-annuler-mb-campagne') && /Total \(2 mises bas\)/.test(document.getElementById('mb-totaux').textContent)), 'tableau des mises bas de la campagne et ligne de totaux');
 const rowsTxt = await page.evaluate(() => [...document.querySelectorAll('#pc-saisie-misebas table.brd-t tr')].slice(1, 3).map(r => r.textContent.replace(/\s+/g, ' ').trim()));
 check(rowsTxt.some(t => /31-12-2099 date à vérifier/.test(t)), 'mise bas à date future : « date à vérifier » sans correction : ' + JSON.stringify(rowsTxt));
+// plus de carte « Contrôles automatiques » (les contrôles restent actifs : messages seulement quand ils se déclenchent) ; « Terminer la session » : pilule visible de 44 px, contour et texte verts, en haut à droite
+{
+  const r = await page.evaluate(() => { const b = document.getElementById('btn-fin-session-mb'), c = getComputedStyle(b), R = b.getBoundingClientRect(), A = document.getElementById('app').getBoundingClientRect(); return { carte: /Contrôles automatiques|Blocage|Alerte/.test(document.getElementById('pc-saisie-misebas').textContent), h: Math.round(R.height), rayon: parseFloat(c.borderTopLeftRadius), bord: c.borderTopColor, bordL: c.borderTopWidth, texte: c.color, fond: c.backgroundColor, droite: Math.round(A.right - R.right), haut: Math.round(R.top - A.top) }; });
+  check(!r.carte, 'plus de carte « Contrôles automatiques » (Blocage / Alerte) sur la page');
+  check(r.h === 44 && r.rayon >= 22 && r.bord === 'rgb(53, 127, 75)' && r.texte === 'rgb(53, 127, 75)' && r.fond === 'rgb(255, 255, 255)' && r.bordL === '2px', '« Terminer la session » : pilule 44 px, contour et texte verts : ' + JSON.stringify(r));
+  check(r.droite <= 40 && r.haut <= 80, '« Terminer la session » en haut à droite : ' + JSON.stringify(r));
+}
 console.log('OK 1 indicateurs : 2 mises bas, 3 agneaux (prolificité 1,50), restantes attendues 6 sur 8 = calcul du bilan de campagne ; aucune mention de bip ; date future signalée.');
 
 // ================================================================ 2. saisie : numéro, compteurs, repro
@@ -102,7 +109,7 @@ check(await page.evaluate(() => /1 mise bas saisie dans cette session/.test(docu
 const ligneNouvelle = await page.evaluate(() => [...document.querySelectorAll('#pc-saisie-misebas table.brd-t tr')].some(r => /15-11-2026/.test(r.textContent)));
 check(ligneNouvelle, 'la mise bas apparaît dans le tableau');
 const av = await page.evaluate(() => document.querySelector('#pc-saisie-misebas .pc-legend').parentElement.textContent.replace(/\s+/g, ' '));
-check(/3 mises bas sur 8 brebis à mettre bas \(37,5 %\)/.test(av) && /Portées : 1 simple, 2 doubles/.test(av), 'avancement : ' + av);
+check(/37,5 % réalisé/.test(av) && !/brebis à mettre bas/.test(av) && /Portées : 1 simple, 2 doubles/.test(av), 'avancement (« restantes / attendues » n\'est dit que par la tuile) : ' + av);
 console.log('OK 4 validation : agnelage enregistré (campagne, date, repro IA, 2 agneaux, Séléphérol 2 cc) ; indicateurs, tableau et avancement mis à jour.');
 
 // ================================================================ 5. contrôles : déjà une mise bas, inconnue, vide définitive

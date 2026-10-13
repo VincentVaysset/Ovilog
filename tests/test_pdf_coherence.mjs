@@ -67,11 +67,11 @@ for (const nom of noms) {
 console.log('OK ' + noms.length + ' PDF : nom de l\'exploitation, pied unique « Ovilog — [export] · [campagne] », « Page i/N », aucun en-tête tronqué, identiques sur PC et mobile.');
 // repli quand le nom est vide
 const V = await tous(pc, '');
-for (const nom of ['tank', 'bilan_complet', 'bilan_lactation', 'inventaire']) { const r = lire(V[nom], 'vide_' + nom); check(r.spans.some(s => s[7] === 0 && s[3] === 'Ovilog' && s[4] === 10.5), nom + ' : sans nom d\'exploitation, repli « Ovilog » en haut à droite'); }
+for (const nom of ['calendrier', 'bilan_complet', 'bilan_lactation', 'inventaire']) { const r = lire(V[nom], 'vide_' + nom); check(r.spans.some(s => s[7] === 0 && s[3] === 'Ovilog' && s[4] === 10.5), nom + ' : sans nom d\'exploitation, repli « Ovilog » en haut à droite'); }
 console.log('OK repli « Ovilog » quand le nom de l\'exploitation est vide (même fonction pour les deux moteurs PDF).');
 // (4) Production laitière à la charte des exports
 const VERT = '#357f4b', ALT = '#f6f1e4';
-for (const nom of ['tank', 'calendrier', 'rapport']) {
+for (const nom of ['calendrier', 'rapport']) {
   const r = resultats[nom];
   const teintes = ['#e3f3e6', '#e6f0fa', '#fbeed7', '#fbe3e0'];
   const tuiles = r.fills.filter(f => f[3] > 30 && f[4] > 35 && f[4] < 70 && teintes.some(t => proche(f, t, 2)));
@@ -83,6 +83,6 @@ for (const nom of ['tank', 'calendrier', 'rapport']) {
   check(!r.fills.some(f => f[0] === 246 && f[1] === 243 && f[2] === 234), nom + ' : plus de beige neutre ancien (#f6f3ea)');
   check(!r.spans.some(s => /\.\.\.|…/.test(s[3])), nom + ' : aucun texte coupé (« ... ») : ' + JSON.stringify(r.spans.filter(s => /\.\.\.|…/.test(s[3])).map(s => s[3])));
 }
-console.log('OK Production laitière (Tank, Calendrier du tank, Rapport de campagne) : tuiles colorées à liseré, en-tête de tableau vert, lignes alternées.');
+console.log('OK Production laitière (Calendrier du tank, Rapport de campagne) : tuiles colorées à liseré, en-tête de tableau vert, lignes alternées.');
 await browser.close();
 console.log('\nTOUS LES TESTS « COHÉRENCE DES PDF » SONT PASSÉS.');

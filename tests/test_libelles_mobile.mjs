@@ -73,7 +73,7 @@ const s12 = (page) => page.evaluate(() => { DB.elevageBio = false; render('trait
 const m12 = await s12(mob), p12 = await s12(pc);
 eq([m12.bandeau, m12.ttl], ['Traitements sur 12 mois', []], 'mobile « Traitements sur 12 mois » : plus de titre répété');
 check(/Ce suivi est réservé/.test(m12.note), 'mobile : la phrase d\'info reste');
-eq(p12.ttl, ['Traitements sur 12 mois'], 'PC « Traitements sur 12 mois » : titre conservé');
+eq(p12.ttl, [], 'PC « Traitements sur 12 mois » : plus de titre de carte qui répète le bandeau');
 console.log('OK 3 titres répétés supprimés sur mobile (4 écrans), PC inchangé.');
 check(await mob.evaluate(() => window.__saves === 0), 'aucune écriture');
 await browser.close();

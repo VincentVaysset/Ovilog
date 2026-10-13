@@ -40,7 +40,7 @@ const jeu = pg => pg.evaluate(() => {
   saveOrShareBinaryFile = async function (nom, bytes, mime) { window.__saisies.push({ nom, mime, n: bytes.length }); };
   window.b64 = u8 => { let s = ''; for (const x of u8) s += String.fromCharCode(x); return btoa(s); };
 });
-const pdfs = pg => pg.evaluate(() => ({ tank: b64(buildTankPdfBytes(2025)), cal: b64(buildCalendrierTankPdfBytes(2025)), rap: b64(buildRapportCampagnePdfBytes(2025)), tank24: b64(buildTankPdfBytes(2024)), rap24: b64(buildRapportCampagnePdfBytes(2024)) }));
+const pdfs = pg => pg.evaluate(() => ({ cal: b64(buildCalendrierTankPdfBytes(2025)), rap: b64(buildRapportCampagnePdfBytes(2025)), rap24: b64(buildRapportCampagnePdfBytes(2024)) }));
 // texte des pages relu depuis les flux de contenu (non compressés) : chaque page = ses chaînes (...) Tj, octets WinAnsi -> texte
 function textePages(b64) {
   const s = Buffer.from(b64, 'base64').toString('latin1');
@@ -59,23 +59,14 @@ await jeu(mob); await jeu(pc);
 const m = await pdfs(mob), p = await pdfs(pc);
 
 // ================================================================ 1. parité mobile / PC : mêmes octets
-['tank', 'cal', 'rap', 'tank24', 'rap24'].forEach(k => check(m[k] === p[k], 'PDF « ' + k + ' » identique octet pour octet sur mobile et sur PC'));
+['cal', 'rap', 'rap24'].forEach(k => check(m[k] === p[k], 'PDF « ' + k + ' » identique octet pour octet sur mobile et sur PC'));
 const feuilles = await Promise.all([mob, pc].map(pg => pg.evaluate(() => JSON.stringify(tankXlsxFeuilles(2025)))));
 check(feuilles[0] === feuilles[1], 'Excel Tank : mêmes feuilles sur mobile et sur PC');
-console.log('OK 1 parité : Tank, Calendrier, Rapport (PDF) identiques octet pour octet sur mobile et PC ; Excel : mêmes feuilles.');
+console.log('OK 1 parité : Calendrier, Rapport (PDF) identiques octet pour octet sur mobile et PC ; Excel : mêmes feuilles.');
 
-// ================================================================ 2. Tank (PDF)
-const tk = textePages(m.tank);
-check(tk.length === 1, 'Tank : 1 page pour 4 mois de traite et 6 relevés : ' + tk.length);
-const t1 = tk[0];
-['OVILOG', 'Production laitière · Tank', 'Campagne 2026 · du 01-10-2025 au 30-09-2026', 'Ferme du Test', 'Édité le 03-10-2026', 'Lait livré', '1 180,5 L', 'Relevés', 'du 01-10-2025 au 30-09-2026', 'Mois de pointe', 'Décembre 2025', 'Moyenne par relevé', 'Litrage par mois', 'Octobre 2025', 'Novembre 2025', 'Campagne 2026', 'Détail des relevés · Octobre 2025', '01-10-2025', '02-10-2025', '150,5 L', 'analyse', 'Page 1/1'].forEach(x => check(t1.includes(x), 'Tank contient « ' + x + ' » : ' + t1.slice(0, 400)));
-check(!t1.includes('30-09-2025') || /Campagne 2026 · du 01-10-2025 au 30-09-2026/.test(t1), 'ok');
-check(!/ 100 L/.test(t1) && !t1.includes('01-10-2026') && !t1.includes('500 L'), 'Tank : aucun relevé d\'une autre campagne (30/09/2025 : 100 L, 01/10/2026 : 500 L)');
-// mois sans lait en tirets
-check(/Novembre 2025 \| — \| — \| — \| — \|/.test(t1) || /Novembre 2025 \| — \| —/.test(t1), 'mois sans lait : tirets');
-const tk24 = textePages(m.tank24)[0];
-check(tk24.includes('Campagne 2025 · du 01-10-2024 au 30-09-2025') && tk24.includes('100 L') && !tk24.includes('150,5') && tk24.includes('Septembre 2025'), 'Tank campagne 2024 : seulement le relevé du 30/09/2025');
-console.log('OK 2 Tank (PDF) : en-tête, tuiles, 12 mois avec tirets, détail des relevés (jour d\'analyse marqué), décimales conservées (150,5 L), une seule campagne.');
+// ================================================================ 2. plus de PDF Tank (supprimé sur PC et sur mobile : le Calendrier du tank le remplace)
+check(await mob.evaluate(() => typeof buildTankPdfBytes === 'undefined' && typeof exportTankPdf === 'undefined'), 'le PDF Tank n\'existe plus (ni buildTankPdfBytes ni exportTankPdf)');
+console.log('OK 2 plus de PDF Tank : seuls le Calendrier du tank et le Rapport de campagne restent en PDF.');
 
 // ================================================================ 3. Calendrier du tank (PDF)
 const cl = textePages(m.cal);
@@ -110,13 +101,13 @@ eq(xl[1].rows.find(r => r[0] === '05-12-2025'), ['05-12-2025', 310, 'Oui'], 'jou
 console.log('OK 5 Excel Tank : mêmes colonnes que le PDF, feuille Relevés de la campagne seulement.');
 
 // ================================================================ 6. noms de fichier, aucune écriture, validité
-const noms = await mob.evaluate(async () => { await exportTankPdf(2025); await exportCalendrierTankPdf(2025); await exportTankXlsx(2025); await exportRapportCampagnePdf(2025); return window.__saisies.map(x => [x.nom, x.mime, x.n > 500]); });
-const nomsPc = await pc.evaluate(async () => { await exportTankPdf(2025); await exportCalendrierTankPdf(2025); await exportTankXlsx(2025); await exportRapportCampagnePdf(2025); return window.__saisies.map(x => [x.nom, x.mime, x.n > 500]); });
-eq(noms, [['tank_campagne-2026_2026-10-03.pdf', 'application/pdf', true], ['calendrier-tank_campagne-2026_2026-10-03.pdf', 'application/pdf', true], ['tank_campagne-2026_2026-10-03.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', true], ['rapport-campagne_2026_2026-10-03.pdf', 'application/pdf', true]], 'noms de fichier');
+const noms = await mob.evaluate(async () => { await exportCalendrierTankPdf(2025); await exportTankXlsx(2025); await exportRapportCampagnePdf(2025); return window.__saisies.map(x => [x.nom, x.mime, x.n > 500]); });
+const nomsPc = await pc.evaluate(async () => { await exportCalendrierTankPdf(2025); await exportTankXlsx(2025); await exportRapportCampagnePdf(2025); return window.__saisies.map(x => [x.nom, x.mime, x.n > 500]); });
+eq(noms, [['calendrier-tank_campagne-2026_2026-10-03.pdf', 'application/pdf', true], ['tank_campagne-2026_2026-10-03.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', true], ['rapport-campagne_2026_2026-10-03.pdf', 'application/pdf', true]], 'noms de fichier');
 eq(noms, nomsPc, 'mêmes noms de fichier sur mobile et PC');
 check(await mob.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'aucune écriture dans les données');
-const pages = ['tank', 'cal', 'rap'].map(k => validerAvecPyMuPDF(k + '.pdf', m[k]));
-if (pages[0] !== null) eq(pages, [1, 1, 2], 'PyMuPDF ouvre les 3 PDF (pages)');
+const pages = ['cal', 'rap'].map(k => validerAvecPyMuPDF(k + '.pdf', m[k]));
+if (pages[0] !== null) eq(pages, [1, 2], 'PyMuPDF ouvre les 2 PDF (pages)');
 console.log('OK 6 noms de fichier identiques mobile / PC, aucune écriture' + (pages[0] !== null ? ', PDF valides (PyMuPDF)' : ' (PyMuPDF absent : validité non vérifiée)') + '.');
 
 // ================================================================ 7. données réelles, lecture seule
@@ -127,16 +118,15 @@ if (exportPresent(EXPORT_ORIGINAL)) {
     const avant = JSON.stringify(DB);
     const enc = u8 => { let s = ''; for (const x of u8) s += String.fromCharCode(x); return btoa(s); };
     const t = tankCampagneData(2025), q = qualiteCampagneData(2025);
-    const r = { tank: enc(buildTankPdfBytes(2025)), rap: enc(buildRapportCampagnePdfBytes(2025)), cal: enc(buildCalendrierTankPdfBytes(2025)), litres: t.total.litres, nb: t.total.nbReleves, nbPrelev: q.total.nbPrelevements };
+    const r = { rap: enc(buildRapportCampagnePdfBytes(2025)), cal: enc(buildCalendrierTankPdfBytes(2025)), litres: t.total.litres, nb: t.total.nbReleves, nbPrelev: q.total.nbPrelevements };
     r.intact = JSON.stringify(DB) === avant;
     return r;
   }, j);
   check(out.intact, 'données réelles : aucune écriture');
-  const tr = textePages(out.tank).join(' '), rr = textePages(out.rap), cr = textePages(out.cal).join(' ');
-  check(tr.includes('108 178 L') && tr.includes('202') && textePages(out.tank).length >= 2, 'réel : Tank = 108 178 L, 202 relevés : ' + tr.slice(0, 300));
+  const rr = textePages(out.rap), cr = textePages(out.cal).join(' ');
   check(cr.includes('108 178 L') && textePages(out.cal).length === 1, 'réel : Calendrier = 108 178 L sur 1 page');
   check(rr.length === 3 && rr[1].includes('Détail des prélèvements') && rr[2].includes('(suite)'.replace('(suite)', 'Page 3/3')), 'réel : 30 prélèvements, le détail continue sur une page 3 : ' + rr.length + ' pages');
-  console.log('OK 7 données réelles (lecture seule) : Tank 108 178 L / 202 relevés ; Calendrier 1 page ; Rapport ' + rr.length + ' pages (détail des ' + out.nbPrelev + ' prélèvements sur une page 3).');
+  console.log('OK 7 données réelles (lecture seule) : Calendrier 1 page ; Rapport ' + rr.length + ' pages (détail des ' + out.nbPrelev + ' prélèvements sur une page 3).');
 }
 await browser.close();
 console.log('\nTOUS LES TESTS DES EXPORTS PRODUCTION LAITIÈRE SONT PASSÉS');

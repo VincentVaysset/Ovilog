@@ -1,4 +1,4 @@
-/* Couleurs des PDF = charte, source unique (PDF_CHARTE ; PDF_COULEURS et PDF_PL_COUL en dérivent) : sur chaque PDF (Tank, Calendrier du tank, Rapport de campagne, Bilan de lactation, Bilan de reproduction),
+/* Couleurs des PDF = charte, source unique (PDF_CHARTE ; PDF_COULEURS et PDF_PL_COUL en dérivent) : sur chaque PDF (Calendrier du tank, Rapport de campagne, Bilan de lactation, Bilan de reproduction),
    le filet d'en-tête est EXACTEMENT le vert Ovilog #357f4b (à l'arrondi du PDF près), les titres de section sont en vert foncé #2f6e44 (texte et chiffres), et plus aucune trace des anciennes couleurs hors charte
    (vert #3c8a55, bleu #3f7fb0, corail #c1402c, ambre #b3760a). Même PDF, octet pour octet, sur PC et sur mobile. Jeu SYNTHÉTIQUE, saveOrShareBinaryFile remplacé, aucune donnée réelle. */
 import { chromium } from 'playwright';
@@ -41,7 +41,7 @@ async function ouvrir(bureau) {
       DB.prelevementsQualite = [{ id: 'p1', date: '2025-12-05', volumeLait: 310, tb: 70, tp: 55, cellules: 400000, floreTotale: 20000, coliformes: 40, butyriques: 100, listeria: 'negatif', salmonelles: 'negatif', campagne: 2026 }];
       DB.penalitesBacterio = [{ id: 'pen1', dateDebut: '2026-07-30', dateFin: '2026-07-31', cause: 'salmonelles', litrageL: 1200, commentaire: 'test' }];
       DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 12, prixReference: null, msuReference: null }];
-      return { tank: buildTankPdfBytes(2025), calendrier: buildCalendrierTankPdfBytes(2025), rapport: buildRapportCampagnePdfBytes(2025) };
+      return { calendrier: buildCalendrierTankPdfBytes(2025), rapport: buildRapportCampagnePdfBytes(2025) };
     };
   });
   return page;

@@ -97,16 +97,17 @@ console.log('OK 5 « Voir tous les relevés » : par campagne, plus récent d\'a
 
 // ================================================================ 6. exports depuis le Tank : choix de campagne
 await page.evaluate(() => { window.__saisies.length = 0; });
-await page.click('#btn-export-tank-pdf');
+check(await page.evaluate(() => { const b = [...document.querySelectorAll('#btn-export-tank-xlsx, #btn-export-calendrier-pdf')]; return !document.getElementById('btn-export-tank-pdf') && b.map(x => x.textContent).join('|') === 'Export Excel|Export PDF' && b[0].classList.contains('btn-secondary') && b[1].classList.contains('btn-primary'); }), 'mobile : « Export Excel » (blanc) et « Export PDF » (vert, Calendrier du tank), plus de Tank (PDF)');
+await page.click('#btn-export-calendrier-pdf');
 check(await page.evaluate(() => !!document.querySelector('.export-camp-opt')) && /Campagne 2027 \(en cours\)/.test(await $t('.export-camp-opt')), 'plusieurs campagnes avec relevés : petit choix, campagne en cours en premier');
 await page.click('.export-camp-opt[data-c="2025"]'); await page.waitForTimeout(300);
 await page.click('#btn-export-calendrier-pdf'); await page.click('.export-camp-opt[data-c="2026"]'); await page.waitForTimeout(300);
 await page.click('#btn-export-tank-xlsx'); await page.click('#export-camp-annuler'); await page.waitForTimeout(200);
-eq((await page.evaluate(() => window.__saisies.map(x => x.nom))).map(n => n.replace(/\d{4}-\d{2}-\d{2}(?=\.)/, 'DATE')), ['tank_campagne-2026_DATE.pdf', 'calendrier-tank_campagne-2027_DATE.pdf'], 'exports par campagne choisie ; Annuler = rien');
+eq((await page.evaluate(() => window.__saisies.map(x => x.nom))).map(n => n.replace(/\d{4}-\d{2}-\d{2}(?=\.)/, 'DATE')), ['calendrier-tank_campagne-2026_DATE.pdf', 'calendrier-tank_campagne-2027_DATE.pdf'], 'exports par campagne choisie ; Annuler = rien');
 await page.evaluate(() => { DB.laitTank = DB.laitTank.filter(l => l.date >= '2026-10-01'); render('qualite'); window.__saisies.length = 0; });
 await page.click('#btn-export-tank-xlsx'); await page.waitForTimeout(300);
 eq((await page.evaluate(() => window.__saisies.map(x => x.nom))).map(n => n.replace(/\d{4}-\d{2}-\d{2}(?=\.)/, 'DATE')), ['tank_campagne-2027_DATE.xlsx'], 'une seule campagne avec relevés : export direct, sans choix');
-console.log('OK 6 exports Tank (PDF, Excel, Calendrier) : choix de campagne s\'il y en a plusieurs, direct sinon.');
+console.log('OK 6 exports Tank (Excel, Export PDF = Calendrier du tank) : choix de campagne s\'il y en a plusieurs, direct sinon.');
 
 // ================================================================ 7. Qualité : flèches de mois, moyennes, prélèvements
 await jeu(); await ouvrirQualite();

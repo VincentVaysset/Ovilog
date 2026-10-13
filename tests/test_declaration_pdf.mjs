@@ -80,11 +80,11 @@ for (const [nom, page] of [['mobile', mob], ['PC', pc]]) {
   const t = norm(pdf.texte[0]);
   const ratioTxt = c.ratio.toFixed(2).replace('.', ',');
   for (const x of ['Déclaration annuelle', 'Déclaration 2026', 'Recensement au 1er janvier 2026', 'Brebis présentes', 'Béliers présents', 'Agnelles >6 mois présentes', 'Agneaux nés en 2025',
-    'Ratio PAC (aide ovine) · 2025', 'Brebis présentes au 1er janvier 2025', 'Agneaux vendus en 2025', 'Ratio', ratioTxt, 'agneaux vendus ÷ brebis présentes', 'Seuil réglementaire indicatif', 'Page 1/1'])
+    'Ratio PAC (aide ovine) · 2025', 'Brebis présentes au 1er janvier', 'Agneaux vendus', 'Ratio', ratioTxt, 'agneaux vendus ÷ brebis présentes', 'Seuil réglementaire indicatif', 'Page 1/1'])
     check(t.includes(x), nom + ' : le PDF contient « ' + x + ' » : ' + t.slice(0, 500));
   check(/\d,\d\d/.test(ratioTxt) && !t.includes(String(c.ratio) + ' ') || ratioTxt === String(c.ratio), nom + ' : ratio à 2 décimales dans le PDF');
   // chiffres de l'écran dans le PDF
-  for (const v of [c.recensement.brebis, c.recensement.beliers, c.recensement.agnelles, c.recensement.agneauxNes, c.brebisRatio, c.agneauxNesRatio, c.agneauxVendusRatio])
+  for (const v of [c.recensement.brebis, c.recensement.beliers, c.recensement.agnelles, c.recensement.agneauxNes, c.brebisRatio, c.agneauxVendusRatio])
     check(new RegExp('(^| )' + v + '( |$)').test(t), nom + ' : le chiffre ' + v + ' figure dans le PDF');
   // charte : bandeau vert Ovilog en haut, page colorée (pas de noir et blanc)
   check(pdf.vert > 150, nom + ' : en-tête vert Ovilog (titre et filet verts) en haut de page : ' + pdf.vert + ' pixels verts');

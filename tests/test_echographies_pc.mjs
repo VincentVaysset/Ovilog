@@ -134,7 +134,7 @@ const T = await pc.evaluate(() => ({
   onglets: [...document.querySelectorAll('#ep-onglets button')].map(b => b.textContent), thFond: getComputedStyle(document.querySelector('table.ep-table th')).backgroundColor, thTexte: getComputedStyle(document.querySelector('table.ep-table th')).color,
   alt: [...document.querySelectorAll('.ep-g2 table tbody tr')].map(r => getComputedStyle(r.children[1]).backgroundColor) }));
 eq(T.tuiles.map(t => t.slice(0, 3)), [['Pleines', '10', '63 % des brebis'], ['Vides', '1', '1 à repasser à l\'écho'], ['Vides définitives', '1', 'campagne 2027'], ['Avortées / pseudo.', '2', 'cas particuliers'], ['Sans échographie', '2', 'sur 16 brebis']], 'cinq tuiles = chiffres de l\'accueil');
-eq(T.tuiles.map(t => t[3]), ['rgb(47, 110, 68)', 'rgb(163, 58, 49)', 'rgb(163, 58, 49)', 'rgb(181, 112, 28)', 'rgb(94, 91, 71)'], 'filets des tuiles : vert, rouge, rouge, ambre, gris');
+eq(T.tuiles.map(t => t[3]), ['rgb(47, 110, 68)', 'rgb(163, 58, 49)', 'rgb(163, 58, 49)', 'rgb(138, 84, 19)', 'rgb(138, 134, 112)'], 'filets des tuiles (composant unique, comme l\'Accueil) : vert, rouge, rouge, ambre, neutre');
 eq(T.anneau, ['Pleine 10 · 63 %', 'Vide 1 · 6 %', 'Vide définitive 1 · 6 %', 'Avortée / pseudo. 2 · 13 %', 'Sans échographie 2 · 13 %'], 'légende de l\'anneau');
 eq([T.centre, T.cercles], [['16', 'brebis'], 5], 'anneau SVG : total au centre, 5 segments');
 eq(T.stades, ['Début 1', 'Milieu 2', 'Fin 3', 'IA 1', 'Retour 1 0', 'Retour 2 0', 'Tardive 0', 'Stade non précisé 3'], 'pleines par stade');
