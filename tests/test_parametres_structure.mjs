@@ -1,5 +1,5 @@
 /* Refonte Paramètres, partie 0 : structure. PC : 5 onglets dans l'ordre Exploitation, Campagne, Listes, Imports, Sauvegarde, chacun avec un titre et une ligne d'explication.
-   Mobile : plus d'onglets, un écran d'arrivée à 4 rubriques (Exploitation, Campagne, Listes, Sauvegarde ; pas d'Imports) avec un résumé chacune, qui ouvrent chacune leur écran avec retour
+   Mobile : plus d'onglets, un écran d'arrivée à 5 rubriques (Exploitation, Campagne, Listes, Lecteur, Sauvegarde ; pas d'Imports) avec un résumé chacune, qui ouvrent chacune leur écran avec retour
    (flèche de l'en-tête) ; état de synchro et version en pied ; retour d'un sous-écran (Gérer les produits) sur la bonne rubrique ; le menu rouvre toujours l'écran d'arrivée. saveData REMPLACÉ. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
@@ -44,8 +44,8 @@ const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? docume
   await jeu(page);
   await page.evaluate(() => render('parametres'));
   check(await page.evaluate(() => !document.querySelector('.tab-bar')), 'mobile : plus d\'onglets');
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Sauvegarde'], 'mobile : 4 rubriques, pas d\'Imports');
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-resume')].map(e => e.textContent)), ['Galibert Clément · cheptel 12241205', 'Campagne 2027 · réglages de reproduction', '6 listes · acheteurs, causes de mortalité…', 'Aucune sauvegarde vérifiée sur cet appareil'], 'résumés des rubriques');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Lecteur', 'Sauvegarde'], 'mobile : 5 rubriques (dont Lecteur), pas d\'Imports');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-resume')].map(e => e.textContent)), ['Galibert Clément · cheptel 12241205', 'Campagne 2027 · réglages de reproduction', '6 listes · acheteurs, causes de mortalité…', 'À régler dans l\'appli du téléphone', 'Aucune sauvegarde vérifiée sur cet appareil'], 'résumés des rubriques');
   check(/Synchronisation|Connexion|Hors ligne/.test(await txt(page, '#prm-accueil-sync')) && /Version .* · les imports de fichiers se font sur PC/.test(await txt(page, '.prm-pied')), 'pied : état de synchro + version : ' + await txt(page, '.prm-pied'));
   check(await page.evaluate(() => !document.getElementById('btn-back').classList.contains('hidden') === false && !document.getElementById('btn-menu').classList.contains('hidden')), 'écran d\'arrivée : menu visible, pas de flèche de retour');
   // une rubrique + retour
@@ -66,7 +66,7 @@ const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? docume
   await page.evaluate(() => { parametresRubrique = 'campagne'; render('home'); });
   await page.click('#btn-menu'); await page.click('.nav-item[data-view="parametres"]');
   check(await page.evaluate(() => !!document.querySelector('.prm-rub')), 'le menu rouvre l\'écran d\'arrivée');
-  console.log('OK mobile : écran d\'arrivée à 4 rubriques (résumés, pied), chaque rubrique avec retour, retour de sous-écran, menu.');
+  console.log('OK mobile : écran d\'arrivée à 5 rubriques (résumés, pied), chaque rubrique avec retour, retour de sous-écran, menu.');
   await page.close();
 }
 await browser.close();

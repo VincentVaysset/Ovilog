@@ -99,7 +99,7 @@ console.log('OK 6 : format « date · campagne · lignes ».');
 const mob = await (await browser.newContext({ viewport: { width: 420, height: 900 } })).newPage();
 await mob.goto(URL_APP, { waitUntil: 'load' }); await mob.waitForTimeout(300);
 await mob.evaluate(() => { DB = migrateData({}); saveData = () => true; parametresRubrique = null; render('parametres'); });
-eq(await mob.evaluate(() => [...document.querySelectorAll('.prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Sauvegarde'], 'mobile : aucune rubrique Imports');
+eq(await mob.evaluate(() => [...document.querySelectorAll('.prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Lecteur', 'Sauvegarde'], 'mobile : aucune rubrique Imports');
 check(await mob.evaluate(() => /les imports de fichiers se font sur PC/.test(document.querySelector('.prm-pied').textContent)), 'mobile : mention « les imports de fichiers se font sur PC »');
 console.log('OK 7 : mobile sans Imports.');
 await browser.close();

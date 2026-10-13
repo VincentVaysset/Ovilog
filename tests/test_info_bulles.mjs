@@ -121,10 +121,10 @@ console.log('OK groupe 5 : première configuration (texte sous le champ), sept �
 // ================================================================ groupe 6 : lecteur Bluetooth (Changer de lecteur, Diagnostic) et nettoyage final
 await page.evaluate(() => {
   window.Capacitor = { Plugins: { BluetoothSerial: new Proxy({}, { get: () => async () => ({ devices: [], connected: false, granted: true }) }) } };
-  ouvrirChangerLecteur();
+  parametresRubrique = 'lecteur'; render('parametres');
 });
-check(await page.evaluate(() => !!document.getElementById('overlay-changer-lecteur') && document.getElementById('overlay-changer-lecteur').textContent.includes('Changer de lecteur') && !document.querySelector('#overlay-changer-lecteur .info-bulle-btn') && !document.getElementById('overlay-changer-lecteur').textContent.includes('❔')), 'Changer de lecteur : fenêtre ouverte, sans bulle « ? »');
-await page.evaluate(() => { document.getElementById('overlay-changer-lecteur').remove(); btDiag.frames = [{ t: 1, hex: '0A', ascii: 'a' }]; btDiag.paired = [{ name: 'Allflex', address: 'AA:BB' }]; render('diag-bluetooth'); });
+check(await page.evaluate(() => !!document.getElementById('lecteur-etat') && document.getElementById('app').textContent.includes('Tester un scan') && !document.querySelector('#app .info-bulle-btn') && !document.getElementById('app').textContent.includes('❔')), 'Paramètres › Lecteur : écran ouvert, sans bulle « ? »');
+await page.evaluate(() => { btDiag.frames = [{ t: 1, hex: '0A', ascii: 'a' }]; btDiag.paired = [{ name: 'Allflex', address: 'AA:BB' }]; render('diag-bluetooth'); });
 { const e = await sansBulle('Diagnostic Bluetooth'); eq(e.infos, [], 'Diagnostic Bluetooth : aucune ligne d\'information'); }
 check(await page.evaluate(() => document.getElementById('app').textContent.includes('Trames reçues (1)')), 'Diagnostic Bluetooth : le titre « Trames reçues » reste, sans bulle');
 // nettoyage final : plus aucune bulle dans le code
