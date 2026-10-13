@@ -31,7 +31,8 @@ async function entrer(route, input) {
   // Une session d'écho déjà démarrée est reprise telle quelle (état de module) ;
   // sinon l'écran propose d'abord de choisir le type de session.
   if (route === 'echo-rapide' && !(await page.$(input))) {
-    await page.selectOption('#f-echo-session-combo', 'constat|aucun');
+    await page.click('#echo-type [data-val="constat"]');
+    await page.click('#echo-comptage [data-val="aucun"]');
     await page.click('#btn-start-echo-session');
   }
   await page.waitForSelector(input);
@@ -41,11 +42,11 @@ for (const [route, input, ambig, nom] of [['echo-rapide', '#scan-echo', '#echo-a
   await preparer();
   await entrer(route, input);
   await saisir(input, '30001'); // collision numéro court x / SIEOL y
-  let n = await page.evaluate((a) => ({ chips: document.querySelectorAll(a + ' .eid-candidate-chip').length, trouvee: !!document.querySelector('.found-badge') }), ambig);
+  let n = await page.evaluate((a) => ({ chips: document.querySelectorAll(a + ' .eid-candidate-chip').length, trouvee: !!document.querySelector('.found-badge, [data-brebis-trouvee]') }), ambig);
   check(n.chips === 2 && !n.trouvee, nom + ' : collision -> 2 candidats, aucune sélection automatique, obtenu ' + JSON.stringify(n));
   await entrer(route, input);
   await saisir(input, '777'); // SIEOL unique
-  n = await page.evaluate(() => ({ trouvee: !!document.querySelector('.found-badge'), texte: document.getElementById('app').textContent.includes('n°50003') }));
+  n = await page.evaluate(() => ({ trouvee: !!document.querySelector('.found-badge, [data-brebis-trouvee]'), texte: document.getElementById('app').textContent.includes('n°50003') }));
   check(n.trouvee && n.texte, nom + ' : SIEOL unique "777" -> brebis n°50003 trouvée, obtenu ' + JSON.stringify(n));
   await entrer(route, input);
   await saisir(input, E.y);

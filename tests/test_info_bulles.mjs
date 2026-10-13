@@ -38,8 +38,8 @@ eq((await sansBulle('Ajout d\'agnelage')).infos, [], 'Ajout d\'agnelage : aucune
 const mn = await page.evaluate(() => { const b = document.querySelector('.sexe-opt[data-val="Mort-né"]'); const id = b.dataset.id; const bloc = () => document.querySelector(`.eid-block[data-id="${id}"]`).classList.contains('hidden'); const avant = bloc(); b.click(); return { avant, apres: bloc(), note: document.querySelectorAll('.mortne-note').length }; });
 eq(mn, { avant: false, apres: true, note: 0 }, 'Ajout d\'agnelage : « Mort-né » masque le champ EID, sans encart d\'aide');
 await page.evaluate(() => { resetEchoRapideSession(); render('echo-rapide'); });
-eq((await sansBulle('Saisie rapide d\'échos (nouvelle session)')).infos.map(i => i.t), ['Constat avant le démarrage : choisis « à venir ».'], 'Saisie rapide d\'échos : seule la ligne « Campagne concernée » reste');
-check(await page.evaluate(() => document.getElementById('app').textContent.includes('Combinaison résultat + comptage pour cette session') && !!document.getElementById('f-echo-session-combo')), 'Saisie rapide d\'échos : le champ « Combinaison résultat + comptage » reste, sans bulle');
+eq((await sansBulle('Saisie rapide d\'échos (nouvelle session)')).infos.map(i => i.t), ['Si activé, les brebis vides passent en vide définitive.', 'Constat avant le démarrage : choisis « à venir ».'], 'Saisie rapide d\'échos : seules restent la ligne sous « Dernière écho de la campagne » (effet inattendu : vide définitive) et la ligne « Campagne concernée »');
+check(await page.evaluate(() => /Type d'écho/.test(document.getElementById('app').textContent) && /Comptage des agneaux/.test(document.getElementById('app').textContent) && !!document.getElementById('echo-type') && !!document.getElementById('echo-comptage')), 'Saisie rapide d\'échos : les choix « Type d\'écho » et « Comptage des agneaux » restent, sans bulle');
 uneInfo(await etat(), 'Constat avant le démarrage : choisis « à venir ».', 'Saisie rapide d\'échos');
 await page.evaluate(() => { currentSheepId = 'P1'; render('add-echo', 'P1'); });
 uneInfo(await sansBulle('Ajout d\'écho'), 'Constat avant le démarrage : choisis « à venir ».', 'Ajout d\'écho');

@@ -56,8 +56,8 @@ await mob.evaluate(() => { currentSheepId = 'G'; editContext = null; render('add
 const bouton = await mob.evaluate(() => { const b = document.querySelector('.comptage-mode-opt[data-val="exact"]'); return { txt: b.textContent, val: b.dataset.val }; });
 eq(bouton, { txt: 'Nombre (1, 2, 3 et +)', val: 'exact' }, 'bouton de comptage : libellé changé, valeur « exact » conservée');
 await mob.evaluate(() => { resetEchoRapideSession(); render('echo-rapide'); });
-const options = await mob.evaluate(() => [...document.querySelectorAll('#f-echo-session-combo option')].map(o => o.value + ' | ' + o.textContent));
-eq(options.filter(o => /exact/.test(o)), ['constat|exact | Constat (Pleine/Vide) + Nombre (1, 2, 3 et +)', 'stade|exact | Stade + Nombre (1, 2, 3 et +)'], 'menu « Combinaison résultat + comptage »');
+const options = await mob.evaluate(() => [...document.querySelectorAll('#echo-comptage .tab-btn')].map(o => o.dataset.val + ' | ' + o.textContent));
+eq(options.filter(o => /exact/.test(o)), ['exact | Nombre (1, 2, 3 et +)'], 'choix « Comptage des agneaux » de la session d\'échos');
 console.log('OK 2 « Nombre (1, 2, 3 et +) », valeurs stockées inchangées.');
 
 // ---- 3. titres répétés : supprimés sur mobile, gardés sur PC, phrase d'info conservée

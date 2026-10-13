@@ -109,13 +109,13 @@ console.log('OK 5 détail : Avant mise bas, date égale, aucune écriture.');
 // ================================================================ 6. aiguillage PC : consultation seule, la saisie n'existe plus (mobile inchangé)
 await pc.evaluate(() => { echosPcEtat.onglet = 'historique'; render('echo-rapide'); });
 const a1 = await pc.evaluate(() => ({ vue: currentView, ecran: !!document.getElementById('pc-echographies'), on: document.querySelector('#ep-onglets .on').textContent,
-  saisie: ['#scan-echo', '#f-echo-session-combo', '#btn-start-echo-session', '#f-dernier-echo'].map(q => document.querySelectorAll(q).length), bulles: document.querySelectorAll('#app .info-bulle-btn').length, titre: pageTitle.textContent }));
-eq(a1, { vue: 'echo-rapide', ecran: true, on: 'Résultats', saisie: [0, 0, 0, 0], bulles: 0, titre: 'Échographies' }, 'PC : l\'entrée du menu ouvre l\'onglet Résultats ; plus de session, de scan, de combinaison ni de case « dernière échographie » ; aucune bulle « ? »');
+  saisie: ['#scan-echo', '#echo-type', '#echo-comptage', '#f-echo-lot', '#btn-start-echo-session', '#f-dernier-echo', '#btn-valider-echo', '#btn-passer-echo'].map(q => document.querySelectorAll(q).length), bulles: document.querySelectorAll('#app .info-bulle-btn').length, titre: pageTitle.textContent }));
+eq(a1, { vue: 'echo-rapide', ecran: true, on: 'Résultats', saisie: [0, 0, 0, 0, 0, 0, 0, 0], bulles: 0, titre: 'Échographies' }, 'PC : l\'entrée du menu ouvre l\'onglet Résultats ; plus de session, de scan, de combinaison ni de case « dernière échographie » ; aucune bulle « ? »');
 await pc.evaluate(() => render('historique-echo'));
 eq(await pc.evaluate(() => [currentView, document.querySelector('#ep-onglets .on').textContent]), ['echo-rapide', 'Historique'], 'PC : « historique-echo » ouvre l\'onglet Historique de la même page');
 const mob = await ouvrir(false);
 await mob.evaluate(() => { resetEchoRapideSession(); render('echo-rapide'); });
-eq(await mob.evaluate(() => ['#f-echo-session-combo', '#btn-start-echo-session', '#pc-echographies'].map(q => document.querySelectorAll(q).length)), [1, 1, 0], 'mobile : la saisie par session est inchangée');
+eq(await mob.evaluate(() => ['#echo-type', '#echo-comptage', '#f-echo-lot', '#f-echo-date', '#f-dernier-echo', '#btn-start-echo-session', '#pc-echographies'].map(q => document.querySelectorAll(q).length)), [1, 1, 1, 1, 1, 1, 0], 'mobile : l\'écran de session (type, comptage, lot, date, dernière écho, démarrer) existe, sans écran PC');
 await mob.evaluate(() => { currentSheepId = 'P1'; detailOrigin = 'list'; ficheBrebisTab = 'repro'; ficheBrebisTabSheepId = 'P1'; render('detail', 'P1'); });
 eq(await mob.evaluate(() => document.querySelectorAll('#btn-add-echo').length), 1, 'mobile : le bouton « + Échographie » de la fiche reste');
 await pc.evaluate(() => { currentSheepId = 'P1'; detailOrigin = 'list'; ficheBrebisTab = 'repro'; ficheBrebisTabSheepId = 'P1'; render('detail', 'P1'); });
