@@ -238,6 +238,60 @@ let pairePourB = null;
   console.log('OK G fiches locales : la fiche nouvelle est envoyée ; les fiches en collision (même EID, même n°) cèdent au compte, listées dans un message, sauvegardées avant.');
 }
 
+// ---------------- H. rendu des écrans techniques (maquette « Écrans techniques ») : connexion, lecture du compte (8 s, Réessayer, Se déconnecter), bannière ----------------
+for (const pc of [false, true]) {
+  const nom = pc ? 'PC' : 'mobile';
+  const { mail, uid } = await creerCompteExistant('rendu' + (pc ? 'pc' : 'mob'));
+  const d = await h.ouvrir({ desktop: pc, reseau: { coupe: false }, contexte: { viewport: pc ? { width: 1300, height: 900 } : { width: 390, height: 844 } } });
+  await h.attendre(d, () => currentView === 'auth', { label: nom + ' : écran de connexion' });
+  const c = await d.page.evaluate(() => { const r = q => document.querySelector(q), h = q => Math.round(r(q).getBoundingClientRect().height);
+    return { logo: !!r('#ecran-connexion img[alt="Ovilog"]'), marque: r('#ecran-connexion .nom').textContent, sous: r('#ecran-connexion .sous').textContent, labels: [...document.querySelectorAll('#ecran-connexion label')].map(l => l.textContent), hEmail: h('#f-auth-email'), hMdp: h('#f-auth-password'), hBtn: h('#btn-auth-submit'),
+      boutons: [...document.querySelectorAll('#ecran-connexion .btn-primary')].length, mdpOublie: r('#link-forgot').textContent, afficher: r('.champ-mdp .afficher').textContent, type: r('#f-auth-password').type, vert: getComputedStyle(r('#btn-auth-submit')).backgroundColor }; });
+  check(c.logo && c.marque === 'OVILOG' && c.sous === 'Gestion de troupeau ovin lait', 'H ' + nom + ' : logo brebis, OVILOG et la phrase d\'accueil');
+  check(c.labels.join() === 'Email,Mot de passe' && c.mdpOublie === 'Mot de passe oublié ?' && c.afficher === 'Afficher' && c.type === 'password', 'H ' + nom + ' : Email, Mot de passe (Afficher), Mot de passe oublié ? : ' + JSON.stringify(c));
+  const hAttendue = pc ? 44 : 48;
+  check(c.hEmail === hAttendue && c.hMdp === hAttendue && c.hBtn === hAttendue && c.boutons === 1 && c.vert === 'rgb(53, 127, 75)', 'H ' + nom + ' : champs et bouton de ' + hAttendue + ' px, un seul bouton principal vert : ' + JSON.stringify(c));
+  await d.page.click('.champ-mdp .afficher');
+  check(await d.page.evaluate(() => document.getElementById('f-auth-password').type === 'text' && document.querySelector('.champ-mdp .afficher').textContent === 'Masquer'), 'H ' + nom + ' : « Afficher » montre le mot de passe');
+  await d.page.click('.champ-mdp .afficher');
+  // champs vides : indication en AMBRE (pas une erreur) ; mauvais mot de passe : la seule vraie erreur, en ROUGE
+  await d.page.click('#btn-auth-submit');
+  const ambre = await d.page.evaluate(() => { const e = document.getElementById('auth-err'); return { cls: e.className, fond: getComputedStyle(e).backgroundColor, txt: e.textContent }; });
+  check(/alerte/.test(ambre.cls) && ambre.fond === 'rgb(251, 238, 215)' && /Renseigne/.test(ambre.txt), 'H ' + nom + ' : champs vides = indication ambre : ' + JSON.stringify(ambre));
+  await d.page.fill('#f-auth-email', mail); await d.page.fill('#f-auth-password', 'mauvais-mot-de-passe');
+  await d.page.click('#btn-auth-submit');
+  await h.attendre(d, () => /bloc/.test(document.getElementById('auth-err').className), { label: 'H ' + nom + ' : erreur rouge' });
+  const rouge = await d.page.evaluate(() => { const e = document.getElementById('auth-err'); return { fond: getComputedStyle(e).backgroundColor, txt: e.innerText.replace(/\s+/g, ' ') }; });
+  check(rouge.fond === 'rgb(251, 227, 224)' && rouge.txt === 'Email ou mot de passe incorrect Vérifiez la saisie et réessayez.', 'H ' + nom + ' : « Email ou mot de passe incorrect » en rouge : ' + JSON.stringify(rouge));
+  check(await d.page.evaluate(() => currentView === 'auth' && !document.getElementById('btn-auth-submit').disabled), 'H ' + nom + ' : on reste sur la connexion, le bouton se réactive');
+  // lecture du compte : réseau coupé -> 8 s -> « Connexion lente » + Réessayer / Se déconnecter
+  await h.reseau(d, { coupe: true });
+  await d.page.fill('#f-auth-password', MDP);
+  await d.page.click('#btn-auth-submit');
+  await h.attendre(d, () => currentView === 'attente-compte', { label: 'H ' + nom + ' : écran de lecture du compte' });
+  const avant8 = await d.page.evaluate(() => ({ logo: !!document.querySelector('#attente-compte-ecran img[alt="Ovilog"]'), txt: document.getElementById('attente-compte-ecran').innerText.replace(/\s+/g, ' '), alerte: !document.getElementById('attente-alerte').classList.contains('hidden'), actions: !document.getElementById('attente-actions').classList.contains('hidden'), roue: !!document.querySelector('.attente-roue') }));
+  check(avant8.logo && avant8.roue && /Lecture de votre compte…/.test(avant8.txt) && /Rien n'est modifié tant que la lecture n'est pas terminée\./.test(avant8.txt) && !avant8.alerte && !avant8.actions, 'H ' + nom + ' : avant 8 s : logo, indicateur, message de sécurité, ni alerte ni boutons : ' + avant8.txt);
+  await h.dormir(8300);
+  const apres8 = await d.page.evaluate(() => { const a = document.querySelector('#attente-alerte .msg-charte'); return { alerte: !document.getElementById('attente-alerte').classList.contains('hidden'), titre: a.querySelector('b').textContent, fond: getComputedStyle(a).backgroundColor, boutons: [...document.querySelectorAll('#attente-actions .btn')].map(b => b.textContent + ':' + b.classList.contains('btn-primary')), txt: a.innerText.replace(/\s+/g, ' ') }; });
+  check(apres8.alerte && apres8.titre === 'Connexion lente' && apres8.fond === 'rgb(251, 238, 215)' && /Rien n'est envoyé tant que ce n'est pas fait/.test(apres8.txt) && /vos données sont en sécurité/.test(apres8.txt), 'H ' + nom + ' : après 8 s : carte ambre « Connexion lente » : ' + JSON.stringify(apres8));
+  check(apres8.boutons.join() === 'Réessayer:true,Se déconnecter:false', 'H ' + nom + ' : « Réessayer » (principal) et « Se déconnecter » : ' + apres8.boutons);
+  check(await d.page.evaluate(() => (window.__ecrituresLog || []).length) === 0 && await nbEcritures(uid, d) === 0, 'H ' + nom + ' : aucune écriture pendant l\'attente');
+  await d.page.click('#btn-reessayer-compte'); await h.dormir(400);
+  check(await vue(d) === 'attente-compte', 'H ' + nom + ' : « Réessayer » sans réseau : on reste sur l\'écran, rien ne casse');
+  await d.page.click('#btn-deconnexion-compte');
+  await h.attendre(d, () => currentView === 'auth', { label: 'H ' + nom + ' : « Se déconnecter » ramène à la connexion' });
+  check(await d.page.evaluate(() => !window.OvilogSync.getState().loggedIn), 'H ' + nom + ' : déconnecté');
+  check(await nbEcritures(uid, d) === 0, 'H ' + nom + ' : toujours aucune écriture de cet appareil');
+  // bannière « Synchro en attente » : une ligne ambre sous l'en-tête, disparaît seule
+  await h.reseau(d, { coupe: false });
+  await d.page.evaluate(() => { window.__syncEnAttente = true; window.updateHeaderSyncBadge(); });
+  const ban = await d.page.evaluate(() => { const b = document.getElementById('sync-bandeau'); return { cache: b.hidden, txt: b.innerText.replace(/\s+/g, ' '), fond: getComputedStyle(b).backgroundColor, point: getComputedStyle(b.querySelector('strong'), '::after').content }; });
+  check(!ban.cache && /^Synchro en attente/.test(ban.txt) && ban.point === '" ·"' && /vos saisies sont gardées sur cet appareil/.test(ban.txt) && ban.fond === 'rgb(251, 238, 215)', 'H ' + nom + ' : bannière ambre « Synchro en attente · vos saisies sont gardées sur cet appareil » : ' + JSON.stringify(ban));
+  await d.page.evaluate(() => { window.__syncEnAttente = false; window.updateHeaderSyncBadge(); });
+  check(await d.page.evaluate(() => document.getElementById('sync-bandeau').hidden), 'H ' + nom + ' : la bannière disparaît seule quand la synchro reprend');
+  console.log('OK H ' + nom + ' : connexion (logo, Afficher, ambre / rouge), lecture du compte (8 s, Connexion lente, Réessayer, Se déconnecter), bannière — aucune écriture.');
+}
+
 for (const d of h.appareils) check(d.erreurs.length === 0, 'aucune erreur JavaScript sur un appareil : ' + JSON.stringify(d.erreurs));
 await h.fin();
 console.log('\nTOUS LES TESTS DE PREMIÈRE CONNEXION SONT PASSÉS (comptes jetables, faux backend local, aucune donnée réelle)');
