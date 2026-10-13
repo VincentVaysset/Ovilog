@@ -21,18 +21,18 @@ async function ouvrir(bureau) {
   await page.goto(URL_APP, { waitUntil: 'load' }); await page.waitForTimeout(300);
   return page;
 }
-const jeu = (page, premiereEntree, annee) => page.evaluate(([pe, an]) => {
+const jeu = (page, premiereEntree, annee, vendus) => page.evaluate(([pe, an, vd]) => {
   window.__saves = 0; DB = migrateData({}); saveData = function () { window.__saves++; return true; };
   DB.campagneDebut = 2026; DB.campagneInitialisee = true;
   const b = (n, entree, agn) => ({ id: 'b' + n, eid: '250 0162991000' + n, statut: 'active', dateEntree: entree, mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: agn || [], createdAt: 1 });
-  const lamb = (vendu, k) => ({ eid: 'l' + k, sexe: 'Mâle', mouvements: vendu ? [{ type: 'Vendu', date: '2025-05-10', acheteur: 'X' }] : [] });
+  const lamb = (vendu, k) => ({ eid: 'l' + k, sexe: 'Mâle', mouvements: vd[k - 1] ? [{ type: 'Vendu', date: '2025-05-10', acheteur: 'X' }] : [] });
   DB.brebis = [b(1, pe, [{ date: '2025-02-01', lambs: [lamb(true, 1), lamb(true, 2), lamb(false, 3)] }]), b(2, pe, [{ date: '2025-03-01', lambs: [lamb(true, 4), lamb(false, 5)] }]), b(3, pe), b(4, pe)];
   DB.beliers = [{ id: 'be1', eid: '250 0162991000b1', statut: 'actif', dateEntree: pe, mouvements: [] }]; DB.agnelles = [];
   window.__avant = JSON.stringify(DB);
   window.__saisies = [];
   saveOrShareBinaryFile = async function (nom, bytes, mime) { window.__saisies.push({ nom, mime, b64: (() => { let s = ''; for (const x of bytes) s += String.fromCharCode(x); return btoa(s); })() }); };
   declarationAnneeSelectionnee = an; render('declaration-annuelle');
-}, [premiereEntree, annee]);
+}, [premiereEntree, annee, vendus || [true, true, false, true, false]]);
 async function exporter(page) {
   await page.evaluate(() => { window.__saisies = []; });
   await page.click('#btn-export-declaration-pdf');
@@ -108,6 +108,71 @@ for (const [nom, page] of [['mobile', mob], ['PC', pc]]) {
   const s4 = await exporter(page);
   check(/^declaration-annuelle_2025_/.test(s4.nom) && norm(lirePdf(nom + '_2025.pdf', s4.b64).texte[0]).includes('Déclaration 2025'), nom + ' : année 2025 dans le nom et le titre');
   console.log('OK ' + nom + ' : Non disponible, Données insuffisantes, autre année.');
+}
+// ---- tons des 7 tuiles (fond pastel + liseré, lus dans le dessin du PDF avec PyMuPDF) : même règle que l'écran (tonDeclarationTuile), jamais de rouge
+const PY_TUILES = `import sys, json
+import pymupdf as m
+d = m.open(sys.argv[1]); p = d[0]
+dessins = [(x['rect'], x['fill']) for x in p.get_drawings() if x.get('fill') is not None]
+hexa = lambda f: '#%02x%02x%02x' % tuple(round(v * 255) for v in f)
+out = {}
+for lab in json.loads(sys.argv[2]):
+    cand = []
+    for q in p.search_for(lab):
+        cx, cy = q.x0 + 2, (q.y0 + q.y1) / 2
+        cand = [(rc, f) for rc, f in dessins if rc.x0 <= cx <= rc.x1 and rc.y0 <= cy <= rc.y1 and rc.width > 20 and rc.height > 20 and rc.width < 300]
+        if cand: break
+    if not cand: continue
+    rc, f = min(cand, key=lambda t: t[0].width * t[0].height)
+    st = [g for g, h in dessins if abs(g.x0 - rc.x0) < 0.6 and abs(g.y0 - rc.y0) < 0.6 and abs(g.height - rc.height) < 0.6 and g.width < 8]
+    sf = [h for g, h in dessins if abs(g.x0 - rc.x0) < 0.6 and abs(g.y0 - rc.y0) < 0.6 and abs(g.height - rc.height) < 0.6 and g.width < 8]
+    out[lab] = [hexa(f), hexa(sf[0]) if sf else None]
+print(json.dumps(out))`;
+const LIBELLES = ['Brebis présentes', 'Béliers présents', 'Agnelles >6 mois présentes', 'Agneaux nés en', 'Brebis présentes au 1er janvier', 'Agneaux vendus', 'Ratio'];
+function tuilesPdf(nom, b64) {
+  const f = path.join(dir, nom); writeFileSync(f, Buffer.from(b64, 'base64'));
+  const r = spawnSync('python3', ['-I', '-c', PY_TUILES, f, JSON.stringify(LIBELLES)], { encoding: 'utf8' });
+  check(r.status === 0, 'PyMuPDF lit les tuiles : ' + (r.stderr || '').slice(0, 300));
+  return JSON.parse(r.stdout);
+}
+const proche = (a, b) => !!a && [1, 3, 5].every(i => Math.abs(parseInt(a.slice(i, i + 2), 16) - parseInt(b.slice(i, i + 2), 16)) <= 2);   // couleurs du PDF écrites à 3 décimales
+const CLE_LIBELLE = { 'Brebis présentes': 'brebis', 'Béliers présents': 'beliers', 'Agnelles >6 mois présentes': 'agnelles', 'Agneaux nés en': 'agneauxNes', 'Brebis présentes au 1er janvier': 'brebisRatio', 'Agneaux vendus': 'agneauxVendus', 'Ratio': 'ratio' };
+for (const page of [pc, mob]) {
+  // fonction partagée : règle des tons (0,50 vert, 0,49 ambre, non disponible neutre, jamais rouge)
+  const u = await page.evaluate(() => {
+    const ton = (cle, ratio) => tonDeclarationTuile(cle, { ratio });
+    const cles = ['brebis', 'beliers', 'agnelles', 'agneauxNes', 'brebisRatio', 'agneauxVendus', 'ratio'];
+    const tous = [null, undefined, 0, 0.3, 0.495, 0.5, 0.504, 0.75, 2].flatMap(r => cles.map(k => ton(k, r)));
+    return { seuil: SEUIL_RATIO_AIDE_OVINE, fixes: cles.slice(0, 6).map(k => ton(k, 0.75)), r: [null, 0, 0.49, 0.494, 0.495, 0.5, 0.75].map(r => ton('ratio', r)), rouge: tous.includes('rouge') };
+  });
+  eq(u.seuil, 0.5, 'seuil de l\'aide ovine');
+  eq(u.fixes, ['vert', 'bleu', 'ambre', 'ambre', 'vert', 'ambre'], 'tons fixes : brebis vert, béliers bleu, agnelles / agneaux nés / agneaux vendus ambre, brebis du ratio vert');
+  eq(u.r.slice(0, 4), ['neutre', 'ambre', 'ambre', 'ambre'], 'ratio : non disponible neutre, 0,00 / 0,49 / 0,494 ambre');
+  eq(u.r.slice(5), ['vert', 'vert'], 'ratio : 0,50 et 0,75 vert');
+  check(!u.rouge, 'jamais de rouge');
+  const CH = await page.evaluate(() => PDF_CHARTE);
+  const TEINTE = { vert: [CH.vertPastel, CH.vertFonce], bleu: [CH.bleuPastel, CH.bleu], ambre: [CH.ambrePastel, CH.ambre], neutre: [CH.ligneAlt, CH.texte2] };
+  const cas = [['≥ seuil (0,75)', '2024-06-01', 2026, undefined, 'vert'], ['pile au seuil (0,50)', '2024-06-01', 2026, [true, false, false, true, false], 'vert'], ['< seuil (0,00)', '2024-06-01', 2026, [false, false, false, false, false], 'ambre'], ['non disponible', '2025-06-01', 2026, undefined, 'neutre']];
+  for (const [nomCas, pe, an, vd, tonRatio] of cas) {
+    await jeu(page, pe, an, vd);
+    const c = await page.evaluate(an2 => declarationAnnuelleChiffres(an2), an);
+    const attendu = {};
+    for (const [lib, cle] of Object.entries(CLE_LIBELLE)) attendu[lib] = await page.evaluate(([k, an2]) => tonDeclarationTuile(k, declarationAnnuelleChiffres(an2)), [cle, an]);
+    eq(attendu['Ratio'], tonRatio, nomCas + ' : ton du ratio');
+    const s = await exporter(page);
+    const lu = tuilesPdf('tons_' + nomCas.replace(/\W+/g, '_') + '.pdf', s.b64);
+    for (const [lib, ton] of Object.entries(attendu)) {
+      const [fond, trait] = TEINTE[ton];
+      check(lu[lib] && proche(lu[lib][0], fond) && proche(lu[lib][1], trait), nomCas + ' : tuile « ' + lib + ' » ' + ton + ' attendu (fond ' + fond + ', liseré ' + trait + ') ; lu ' + JSON.stringify(lu[lib]));
+    }
+    check(!Object.values(lu).some(v => proche(v[0], CH.rougePastel) || proche(v[1], CH.rouge)), nomCas + ' : aucun rouge dans les tuiles');
+    check(norm(lirePdf('tons2.pdf', s.b64).texte[0]).includes('Page 1/1') && lirePdf('tons3.pdf', s.b64).pages === 1, nomCas + ' : une seule page');
+    // l'écran (PC) suit la même règle : classe de ton de chaque tuile = fonction partagée
+    const ecran = await page.evaluate(() => [...document.querySelectorAll('.decl-tuile')].map(t => [t.querySelector('.decl-tuile-l').textContent.replace(/\s+/g, ' ').trim(), ['vert', 'bleu', 'ambre', 'rouge', 'neutre'].find(x => t.classList.contains(x))]));
+    eq(ecran.map(e => e[1]), ['vert', 'bleu', 'ambre', 'ambre', 'vert', 'ambre', tonRatio], nomCas + ' : tons de l\'écran = tons du PDF');
+    console.log('OK tons ' + nomCas + ' : 7 tuiles aux couleurs attendues (PDF et écran), ratio ' + tonRatio + '.');
+    void c;
+  }
 }
 // ---- parité mobile / PC : mêmes octets
 for (const k of ['nominal', 'nd', 'insuf']) {

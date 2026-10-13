@@ -50,6 +50,15 @@ for (const bureau of [true, false]) {
   check(c.ratio !== null && /^\d+,\d\d$/.test(attendu), nom + ' : format 1,17');
   check(await page.evaluate(() => { const t = document.querySelector('.decl-tuile-ratio'); return !!t && /agneaux vendus ÷ brebis présentes/.test(t.textContent) && /≈ 0,5/.test(t.textContent) && getComputedStyle(t).backgroundColor !== getComputedStyle([...document.querySelectorAll('#decl-ratio .decl-tuile:not(.decl-tuile-ratio)')].pop()).backgroundColor; }), nom + ' : ratio en vert avec sa formule et le seuil indicatif');
   if (bureau) check(new Set(rt.map(t => t[3])).size === 1, 'PC : les 3 tuiles du ratio sont sur une ligne');
+  // tons (PC ET mobile, même règle que le PDF : tonDeclarationTuile) : fond pastel et liseré de 5 px aux couleurs de la charte, ratio 0,75 = vert (ambre sous 0,50, gris si non disponible : test_declaration_pdf)
+  const couleurs = await page.evaluate(() => {
+    const res = v => { const e = document.createElement('i'); e.style.color = 'var(' + v + ')'; document.body.appendChild(e); const c = getComputedStyle(e).color; e.remove(); return c; };
+    const attendu = { vert: [res('--ch-vert-pastel'), res('--ch-vert-fonce')], bleu: [res('--ch-bleu-pastel'), res('--ch-bleu')], ambre: [res('--ch-ambre-pastel'), res('--ch-ambre-texte')] };
+    const tons = ['vert', 'bleu', 'ambre', 'ambre', 'vert', 'ambre', 'vert'];
+    return [...document.querySelectorAll('.decl-tuile')].map((t, i) => { const cs = getComputedStyle(t); return { ton: tons[i], fond: cs.backgroundColor, trait: cs.borderLeftColor, largeur: cs.borderLeftWidth, v: getComputedStyle(t.querySelector('.decl-tuile-v')).color, att: attendu[tons[i]] }; });
+  });
+  eq(couleurs.length, 7, nom + ' : 7 tuiles');
+  for (const t of couleurs) check(t.fond === t.att[0] && t.trait === t.att[1] && t.v === t.att[1] && t.largeur === '5px', nom + ' : tuile ' + t.ton + ' (fond, liseré 5 px, chiffre) : ' + JSON.stringify(t));
   console.log('OK ' + nom + ' : en-tête, export, recensement, ratio 2 décimales en vert avec formule, aucun ❔.');
   // ---- changement d'année
   await page.selectOption('#declaration-annee', '2025');
