@@ -43,9 +43,8 @@ for (const bureau of [true, false]) {
   check(await page.evaluate(() => { const d = document.getElementById('prm-maintenance'); return !!d && !d.open; }) && !(await visible(page, '#btn-dd-analyser')), nom + ' : Maintenance repliée par défaut');
   await page.click('#prm-maintenance > summary'); await page.waitForTimeout(100);
   check(await visible(page, '#btn-dd-analyser') && await visible(page, '#btn-nettoyer-registre'), nom + ' : dépliée : doublons + nettoyage');
-  check(await visible(page, '#btn-goto-diag-bluetooth') === !bureau, nom + ' : diagnostic Bluetooth dans Maintenance, sur mobile seulement');
-  if (!bureau) { await page.click('#btn-goto-diag-bluetooth'); eq(await page.evaluate(() => currentView), 'diag-bluetooth', 'mobile : le diagnostic s\'ouvre'); await page.click('#btn-back'); eq(await page.evaluate(() => parametresRubrique), 'sauvegarde', 'mobile : retour du diagnostic sur la rubrique Sauvegarde'); }
-  console.log('OK ' + nom + ' : structure, version une seule fois, plus de test/partage, Maintenance repliée (doublons, nettoyage, diagnostic mobile).');
+  check(await page.evaluate(() => !document.getElementById('btn-goto-diag-bluetooth') && !document.getElementById('card-diag-bluetooth')), nom + ' : le diagnostic Bluetooth n\'est plus dans Maintenance (il est au bas de Paramètres › Lecteur, sur mobile)');
+  console.log('OK ' + nom + ' : structure, version une seule fois, plus de test/partage, Maintenance repliée (doublons, nettoyage).');
 
   // ---- export : navigateur / PC = téléchargement contrôlé avant l'export
   await page.evaluate(() => { parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres'); });
