@@ -1,4 +1,4 @@
-/* Lecteur (mobile) : pastille « Lecteur » des écrans de scan (verte connecté, ambre reconnexion / absent, JAMAIS rouge ; absente hors écran de scan, sur PC et sans plugin), reconnexion automatique
+/* Lecteur (mobile) : pastille « Lecteur » des écrans de scan (dans la ligne du titre ; toucher sur « Lecteur absent · Connecter » = connexion immédiate sans quitter l'écran ni perdre la saisie, « Connexion… » ignoré puis rendu après 10 s, toucher sur la verte et appui long = écran Lecteur PAR-DESSUS l'écran de scan, flèche et bouton Retour d'Android le ferment) (verte connecté, ambre reconnexion / absent, JAMAIS rouge ; absente hors écran de scan, sur PC et sans plugin), reconnexion automatique
    (3 essais, « essai n sur 3 », coupure détectée par l'écouteur du plugin, réglage qui la coupe, déconnexion voulue = aucun essai), écran Paramètres › Lecteur (état, deux interrupteurs, test de scan, choisir un autre
    lecteur, oublier sans confirm()), bip sonore par appareil (coupe tous les bips, saisie manuelle comprise ; les quatre bips trouvé / ambigu / introuvable / déjà trouvé restent distincts), réglages propres à l'appareil
    (hors META_FIELDS) et PC : « Lecteur : mobile uniquement » sans lecteur ni scan. Faux plugin Bluetooth et faux AudioContext ; jeu synthétique. */
@@ -20,11 +20,12 @@ async function ouvrir(pc, avecPlugin = true) {
       createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; } };
     if (!d && plugin) {
       const bt = window.__bt = { connectOk: true, essais: [], deconnexions: 0, ecouteurs: {} };
-      window.Capacitor = { Plugins: { BluetoothSerial: {
+      const app = window.__app = { ecouteurs: {} };
+      window.Capacitor = { Plugins: { App: { addListener: async (n, cb) => { app.ecouteurs[n] = cb; return { remove() { delete app.ecouteurs[n]; } }; } }, BluetoothSerial: {
         checkPermissions: async () => ({ connect: 'granted', scan: 'granted', fineLocation: 'granted' }), requestPermissions: async () => ({ connect: 'granted', scan: 'granted', fineLocation: 'granted' }),
         list: async () => ({ devices: [{ name: 'Allflex LPR 4812', address: 'AA:01' }] }), discoverUnpaired: async () => ({ devices: [{ name: 'Allflex LPR 3390', address: 'BB:02' }] }),
         addListener: async (nom, cb) => { bt.ecouteurs[nom] = cb; return { remove() {} }; }, cancelDiscovery: async () => ({}),
-        connect: async ({ address }) => { bt.essais.push(address); const ok = typeof bt.connectOk === 'function' ? bt.connectOk(bt.essais.length) : bt.connectOk; if (!ok) throw new Error('introuvable'); return {}; },
+        connect: async ({ address }) => { bt.essais.push(address); if (bt.delai) await new Promise(r => setTimeout(r, bt.delai)); const ok = typeof bt.connectOk === 'function' ? bt.connectOk(bt.essais.length) : bt.connectOk; if (!ok) throw new Error('introuvable'); return {}; },
         disconnect: async () => { bt.deconnexions++; return {}; }, available: async () => ({ available: 0 }), read: async () => ({ data: '' }) } } };
     }
   }, [!!pc, avecPlugin]);
@@ -35,7 +36,7 @@ async function ouvrir(pc, avecPlugin = true) {
   await page.evaluate(() => { DB = migrateData({}); DB.brebis.push({ id: 'b1', eid: '250123456789012', numeroOrdre: '1234', statut: 'Entrée', dateNaissance: '2022-01-10', mere: '', pere: '' }); window.__saves = 0; const o = saveData; saveData = function (...a) { window.__saves++; return o.apply(this, a); }; BT_PAUSES_MS[0] = 20; BT_PAUSES_MS[1] = 20; BT_PAUSES_MS[2] = 20; });
   return { page, dialogues };
 }
-const pastille = (page) => page.evaluate(() => { const b = document.getElementById('btn-lecteur-lpr'), c = document.getElementById('led-lecteur-lpr'); return { visible: getComputedStyle(b).visibility === 'visible', etat: c.dataset.etat, texte: c.querySelector('.txt').textContent, fond: getComputedStyle(c).backgroundColor, point: getComputedStyle(c.querySelector('.point')).backgroundColor }; });
+const pastille = (page) => page.evaluate(() => { const b = document.getElementById('btn-lecteur-lpr'), c = document.getElementById('led-lecteur-lpr'), r = c.getBoundingClientRect(); return { visible: b.classList.contains('visible') && getComputedStyle(b).display !== 'none', etat: c.dataset.etat, texte: c.querySelector('.txt').textContent, fond: getComputedStyle(c).backgroundColor, point: getComputedStyle(c.querySelector('.point')).backgroundColor, h: Math.round(r.height), droite: Math.round(innerWidth - r.right) }; });
 const couleur = (page, v) => page.evaluate((n) => { const e = document.createElement('i'); e.style.color = 'var(' + n + ')'; document.body.appendChild(e); const c = getComputedStyle(e).color; e.remove(); return c; }, v);
 const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
 
@@ -50,7 +51,7 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
   check(!(await pastille(page)).visible, 'accueil (aucun champ de scan) : pas de pastille');
   await page.evaluate(() => render('misebas-rapide'));
   let p = await pastille(page);
-  eq([p.visible, p.etat, p.texte], [true, 'absent', 'Lecteur absent'], 'écran de scan sans lecteur choisi : pastille ambre « Lecteur absent »');
+  eq([p.visible, p.etat, p.texte], [true, 'absent', 'Lecteur absent · Choisir'], 'écran de scan sans lecteur choisi : pastille ambre « Lecteur absent · Choisir »');
   check(p.fond === ambrePastel && p.point === ambre && !rouges.includes(p.fond) && !rouges.includes(p.point), 'lecteur absent : ambre, jamais rouge');
   check(await page.evaluate(() => !!document.getElementById('scan-misebas')), 'la saisie manuelle reste possible (champ présent)');
 
@@ -67,7 +68,7 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
   for (let i = 0; i < 40; i++) { vus.add(await page.evaluate(() => lecteurEtatInfo().detail)); await page.waitForTimeout(60); }
   check(vus.has('Essai 1 sur 3') && vus.has('Essai 2 sur 3') && vus.has('Essai 3 sur 3'), 'les essais s\'affichent « Essai n sur 3 » : ' + [...vus].join(' | '));
   p = await pastille(page);
-  eq([p.etat, p.texte], ['absent', 'Lecteur absent'], '3 essais sans réponse : « Lecteur absent » (ambre)');
+  eq([p.etat, p.texte], ['absent', 'Lecteur absent · Connecter'], '3 essais sans réponse : « Lecteur absent · Connecter » (ambre)');
   eq(await page.evaluate(() => __bt.essais), ['AA:01', 'AA:01', 'AA:01'], 'exactement 3 tentatives de connexion sur le lecteur mémorisé');
   check(!rouges.includes((await pastille(page)).fond), 'après échec : toujours pas de rouge');
 
@@ -89,24 +90,101 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
   eq(await page.evaluate(() => __bt.essais.length), 0, 'déconnexion voulue : pas de reconnexion automatique');
   await page.evaluate(() => { btDeconnexionVolontaire = false; });
 
-  // ---- écran Paramètres › Lecteur, ouvert par la pastille
+  // ---- gestes sur la pastille : toucher, toucher sur la verte, appui long, retour Android, saisie conservée
+  await page.evaluate(() => { BT_DELAIS.connexion = 700; BT_DELAIS.appuiLong = 150; lecteurEnregistrerOption('reconnexionAuto', false); __bt.connectOk = true; __bt.essais = []; __bt.deconnexions = 0; render('misebas-rapide'); });
+  await page.fill('#scan-misebas', '09152');
+  const saisie = () => page.evaluate(() => ({ valeur: document.getElementById('scan-misebas').value, vue: currentView, cible: !!activeScanTarget && activeScanTarget.id }));
+  const mm = (v) => ({ valeur: '09152', vue: 'misebas-rapide', cible: 'scan-misebas' });
+  p = await pastille(page);
+  eq([p.etat, p.texte], ['absent', 'Lecteur absent · Connecter'], 'lecteur mémorisé mais absent : « Lecteur absent · Connecter »');
+  check(p.h >= 36 && p.droite >= 0 && p.droite <= 24, 'zone tactile de la pastille : ' + p.h + ' px (36 minimum), dans l\'écran à droite');
+  // mise en page : la pastille ne chevauche ni la campagne ni le titre, et n'agrandit pas le bandeau vert
+  const geo = await page.evaluate(() => { const hd = document.querySelector('header'), pill = document.getElementById('led-lecteur-lpr').getBoundingClientRect(), camp = document.getElementById('farm-campagne').getBoundingClientRect(), h1 = document.getElementById('page-title');
+    const r = document.createRange(); r.selectNodeContents(h1); const t = r.getBoundingClientRect(); const avec = hd.getBoundingClientRect().height; document.getElementById('btn-lecteur-lpr').classList.remove('visible'); document.getElementById('header-titre-row').classList.remove('avec-lecteur'); const sans = hd.getBoundingClientRect().height; updateHeaderReaderButton();
+    return { avec, sans, sousCampagne: pill.top >= camp.bottom - 1, titreAGauche: t.right <= pill.left, dansBandeau: pill.bottom <= hd.getBoundingClientRect().bottom }; });
+  eq([geo.avec, geo.sousCampagne, geo.titreAGauche, geo.dansBandeau], [geo.sans, true, true, true], 'pastille : bandeau de même hauteur, sous la campagne, à droite du titre, dans le bandeau vert');
+  // toucher : connexion immédiate, sans quitter l'écran
+  await page.evaluate(() => { __bt.delai = 400; });
+  await page.click('#btn-lecteur-lpr');
+  p = await pastille(page);
+  eq([p.etat, p.texte, p.fond], ['connexion', 'Connexion…', ambrePastel], 'toucher sur l\'ambre : « Connexion… » (ambre)');
+  await page.click('#btn-lecteur-lpr');   // ignoré pendant « Connexion… »
+  eq(await page.evaluate(() => __bt.essais.length), 1, 'un second toucher pendant « Connexion… » est ignoré (une seule connexion)');
+  await page.waitForFunction(() => document.getElementById('led-lecteur-lpr').dataset.etat === 'connecte');
+  p = await pastille(page);
+  eq([p.texte, p.fond, p.point], ['Lecteur', vertPastel, vert], 'connexion réussie : « Lecteur » (vert)');
+  eq([await page.evaluate(() => __bt.essais), await saisie(), await page.evaluate(() => !!document.getElementById('ecran-lecteur'))], [['AA:01'], mm(), false], 'la connexion s\'est faite sans quitter l\'écran ni perdre la saisie, sans ouvrir l\'écran Lecteur');
+  // échec : retour à l'ambre + toast, saisie intacte
+  await page.evaluate(() => { __bt.delai = 0; __bt.ecouteurs.connectionChange({ state: 0 }); __bt.connectOk = false; __bt.essais = []; });
+  eq((await pastille(page)).texte, 'Lecteur absent · Connecter', 'coupure (reconnexion automatique coupée) : de nouveau « Lecteur absent · Connecter »');
+  await page.click('#btn-lecteur-lpr');
+  await page.waitForFunction(() => document.getElementById('led-lecteur-lpr').dataset.etat === 'absent' && document.querySelector('.toast.show'));
+  eq([await page.evaluate(() => document.querySelector('.toast').textContent), (await pastille(page)).texte, await saisie()], ['Lecteur introuvable.', 'Lecteur absent · Connecter', mm()], 'échec : toast « Lecteur introuvable. », pastille ambre, saisie intacte');
+  check(!rouges.includes((await pastille(page)).fond), 'jamais rouge, même après un échec');
+  // connexion qui dure : après 10 s (ici 0,7 s) la pastille redevient cliquable
+  await page.evaluate(() => { __bt.delai = 5000; __bt.connectOk = true; __bt.essais = []; });
+  await page.click('#btn-lecteur-lpr');
+  eq((await pastille(page)).texte, 'Connexion…', 'connexion lente : « Connexion… »');
+  await page.waitForFunction(() => document.getElementById('led-lecteur-lpr').dataset.etat === 'absent', null, { timeout: 3000 });
+  eq((await pastille(page)).texte, 'Lecteur absent · Connecter', 'au-delà du délai : la pastille repasse à « Lecteur absent · Connecter » (pas de blocage silencieux)');
+  await page.click('#btn-lecteur-lpr');
+  eq([await page.evaluate(() => __bt.essais.length), (await pastille(page)).texte], [2, 'Connexion…'], 'un nouveau toucher relance une connexion');
+  await page.waitForFunction(() => document.getElementById('led-lecteur-lpr').dataset.etat === 'absent', null, { timeout: 3000 });
+  await page.evaluate(() => { __bt.delai = 0; __bt.essais = []; });
+  // appui long sur l'ambre : écran Lecteur, aucune connexion lancée
+  const appuiLong = async () => { const r = await page.evaluate(() => { const b = document.getElementById('led-lecteur-lpr').getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; }); await page.mouse.move(r.x, r.y); await page.mouse.down(); await page.waitForTimeout(350); await page.mouse.up(); };
+  await appuiLong();
+  eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await page.evaluate(() => __bt.essais.length), (await pastille(page)).visible], [true, 0, false], 'appui long sur l\'ambre : écran Lecteur ouvert, aucune connexion lancée, pastille masquée derrière');
+  eq(await page.evaluate(() => [document.querySelector('#ecran-lecteur h2').textContent, document.getElementById('scan-misebas').value, document.getElementById('scan-misebas').isConnected, currentView]), ['Lecteur', '09152', true, 'misebas-rapide'], 'l\'écran dessous n\'a pas bougé : même champ, même saisie');
+  // bouton Retour d'Android : ferme et rétablit la cible de scan
+  eq(await page.evaluate(() => typeof __app.ecouteurs.backButton), 'function', 'Retour Android : écouteur posé pendant l\'écran Lecteur');
+  await page.evaluate(() => __app.ecouteurs.backButton({ canGoBack: false }));
+  eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await page.evaluate(() => typeof __app.ecouteurs.backButton), await saisie(), (await pastille(page)).visible], [false, 'undefined', mm(), true], 'Retour Android : écran Lecteur fermé, écouteur retiré, saisie et cible de scan rétablies, pastille de retour');
+  // toucher sur la verte : écran Lecteur, jamais de déconnexion
+  await page.evaluate(async () => { __bt.connectOk = true; await btConnect('AA:01'); __bt.essais = []; __bt.deconnexions = 0; });
+  await page.click('#btn-lecteur-lpr');
+  eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await page.evaluate(() => [__bt.essais.length, __bt.deconnexions])], [true, [0, 0]], 'toucher sur la verte : écran Lecteur, sans déconnexion ni nouvelle connexion');
+  await page.click('#btn-lecteur-retour');
+  eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await saisie(), await page.evaluate(() => typeof __app.ecouteurs.backButton)], [false, mm(), 'undefined'], 'flèche de retour : écran de scan retrouvé à l\'identique (saisie et cible de scan)');
+  // appui long sur la verte
+  await appuiLong();
+  check(await page.evaluate(() => !!document.getElementById('ecran-lecteur')), 'appui long sur la verte : écran Lecteur');
+  await page.click('#btn-lecteur-retour');
+  // appui long pendant « Connexion… »
+  await page.evaluate(async () => { await btDisconnect(); btDeconnexionVolontaire = false; __bt.delai = 5000; });
+  await page.click('#btn-lecteur-lpr');
+  eq((await pastille(page)).texte, 'Connexion…', 'connexion en cours');
+  await appuiLong();
+  check(await page.evaluate(() => !!document.getElementById('ecran-lecteur')), 'appui long pendant « Connexion… » : écran Lecteur');
+  await page.click('#btn-lecteur-retour');
+  await page.evaluate(() => { __bt.delai = 0; });
+  await page.waitForFunction(() => document.getElementById('led-lecteur-lpr').dataset.etat !== 'connexion', null, { timeout: 3000 });
+  // aucun lecteur choisi : le toucher ouvre l'écran Lecteur
+  await page.evaluate(() => { btConnectedAddress = null; DB.lecteurBluetooth = null; updateHeaderReaderButton(); });
+  eq((await pastille(page)).texte, 'Lecteur absent · Choisir', 'aucun lecteur : « Lecteur absent · Choisir »');
+  await page.click('#btn-lecteur-lpr');
+  check(await page.evaluate(() => !!document.getElementById('ecran-lecteur')), 'toucher sur « Lecteur absent · Choisir » : écran Lecteur');
+  await page.click('#btn-lecteur-retour');
+  await page.evaluate(() => { DB.lecteurBluetooth = { address: 'AA:01', name: 'Allflex LPR 4812' }; lecteurEnregistrerOption('reconnexionAuto', true); BT_DELAIS.connexion = 10000; __bt.connectOk = true; __bt.essais = []; });
+
+  // ---- écran Lecteur (par-dessus l'écran de scan)
   await page.evaluate(async () => { render('misebas-rapide'); await btConnect('AA:01'); });
   await page.click('#btn-lecteur-lpr');
-  const e = await page.evaluate(() => ({ titre: document.getElementById('page-title').textContent, nom: document.querySelector('#lecteur-etat b').textContent, etat: document.getElementById('lecteur-pastille-etat').textContent, ton: document.getElementById('lecteur-pastille-etat').className,
+  const e = await page.evaluate(() => ({ titre: document.querySelector('#ecran-lecteur h2').textContent, nom: document.querySelector('#lecteur-etat b').textContent, etat: document.getElementById('lecteur-pastille-etat').textContent, ton: document.getElementById('lecteur-pastille-etat').className,
     interrupteurs: [...document.querySelectorAll('#lecteur-reglages label')].map(l => l.firstElementChild.firstChild.textContent + ':' + l.querySelector('input').checked), zones: [...document.querySelectorAll('.card .prm-titre')].map(t => t.textContent),
-    boutons: [...document.querySelectorAll('#app .btn')].map(b => b.textContent), principaux: document.querySelectorAll('#app .btn-primary').length, pastilleEntete: getComputedStyle(document.getElementById('btn-lecteur-lpr')).visibility }));
-  eq([e.titre, e.nom, e.etat, e.ton], ['Paramètres · Lecteur', 'Allflex LPR 4812', 'Connecté', 'mb-pastille vert'], 'écran Lecteur : état « Connecté » (vert)');
+    boutons: [...document.querySelectorAll('#ecran-lecteur .btn')].map(b => b.textContent), principaux: document.querySelectorAll('#ecran-lecteur .btn-primary').length, pastilleEntete: getComputedStyle(document.getElementById('btn-lecteur-lpr')).display }));
+  eq([e.titre, e.nom, e.etat, e.ton], ['Lecteur', 'Allflex LPR 4812', 'Connecté', 'mb-pastille vert'], 'écran Lecteur : état « Connecté » (vert)');
   eq(e.interrupteurs, ['Reconnexion automatique:true', 'Bip sonore:true'], 'deux interrupteurs, activés par défaut');
   check(e.zones.includes('Tester un scan') && e.zones.includes('Changer de lecteur'), 'zones « Tester un scan » et choix du lecteur');
   eq(e.boutons, ['Choisir un autre lecteur', 'Oublier ce lecteur'], 'boutons : « Choisir un autre lecteur », « Oublier ce lecteur »');
-  eq([e.principaux, e.pastilleEntete], [0, 'hidden'], 'connecté : aucun bouton principal ; pas de pastille d\'en-tête sur l\'écran Lecteur lui-même');
+  eq([e.principaux, e.pastilleEntete], [0, 'none'], 'connecté : aucun bouton principal ; pas de pastille d\'en-tête derrière l\'écran Lecteur');
 
   // état reconnexion / absent dans l'écran
   await page.evaluate(() => { __bt.connectOk = false; BT_PAUSES_MS[0] = 3000; __bt.ecouteurs.connectionChange({ state: 0 }); });
   let r = await page.evaluate(() => ({ etat: document.getElementById('lecteur-pastille-etat').textContent, ton: document.getElementById('lecteur-pastille-etat').className, detail: document.getElementById('lecteur-detail').textContent }));
   eq(r, { etat: 'Reconnexion en cours…', ton: 'mb-pastille ambre', detail: 'Essai 1 sur 3' }, 'écran Lecteur : « Reconnexion en cours… » (ambre, essai 1 sur 3)');
   await page.evaluate(() => { btReconnexionAnnuler(); });
-  r = await page.evaluate(() => ({ etat: document.getElementById('lecteur-pastille-etat').textContent, ton: document.getElementById('lecteur-pastille-etat').className, bouton: document.getElementById('btn-lecteur-reconnecter').textContent, principaux: document.querySelectorAll('#app .btn-primary').length }));
+  r = await page.evaluate(() => ({ etat: document.getElementById('lecteur-pastille-etat').textContent, ton: document.getElementById('lecteur-pastille-etat').className, bouton: document.getElementById('btn-lecteur-reconnecter').textContent, principaux: document.querySelectorAll('#ecran-lecteur .btn-primary').length }));
   eq(r, { etat: 'Lecteur absent', ton: 'mb-pastille ambre', bouton: 'Se reconnecter', principaux: 1 }, 'écran Lecteur : absent (ambre) avec « Se reconnecter » (un seul bouton principal)');
   await page.evaluate(() => { __bt.connectOk = true; __bt.essais = []; });
   await page.click('#btn-lecteur-reconnecter');
@@ -154,11 +232,11 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
   eq(dialogues, [], 'aucun confirm() / alert() dans tout le parcours');
 
   // ---- retour : revient à l'écran de scan
-  await page.click('#btn-back');
-  eq(await page.evaluate(() => currentView), 'misebas-rapide', 'Retour ramène à l\'écran de scan d\'où l\'on vient');
+  await page.click('#btn-lecteur-retour');
+  eq(await page.evaluate(() => [currentView, !!document.getElementById('ecran-lecteur')]), ['misebas-rapide', false], 'la flèche de retour ferme l\'écran Lecteur : écran de scan d\'où l\'on vient');
   check((await pastille(page)).visible, 'la pastille est de retour sur l\'écran de scan');
   // depuis Paramètres (menu) : cinq rubriques dont Lecteur
-  await page.evaluate(() => { parametresRubrique = null; lecteurOrigine = null; render('parametres'); });
+  await page.evaluate(() => { parametresRubrique = null; render('parametres'); });
   eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Lecteur', 'Sauvegarde'], 'mobile : la rubrique Lecteur existe dans Paramètres');
   eq(await page.evaluate(() => document.querySelector('.prm-rub[data-rub="lecteur"] .prm-rub-resume').textContent), 'Aucun lecteur choisi', 'résumé de la rubrique');
   await page.click('.prm-rub[data-rub="lecteur"]'); await page.click('#btn-back');
