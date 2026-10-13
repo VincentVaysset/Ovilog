@@ -122,6 +122,7 @@ await page.waitForTimeout(150);
 // désactivé tant que la case de confirmation supplémentaire n'est pas cochée.
 const caseAvantSeuil = await page.$('#f-avant-seuil-confirm');
 if (caseAvantSeuil) await caseAvantSeuil.check();
+await page.check('#f-nc-confirm');   // dates proposées de la nouvelle campagne : à confirmer
 await page.click('#btn-confirmer-nouvelle-campagne');
 await page.waitForTimeout(300);
 const resultatTxt = await page.textContent('#app');

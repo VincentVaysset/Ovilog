@@ -59,6 +59,7 @@ await page.evaluate((db) => {
   render('confirmation-nouvelle-campagne');
 }, baseDb());
 await page.waitForTimeout(150);
+await page.check('#f-nc-confirm');   // les dates proposées de la nouvelle campagne sont à confirmer (en plus de la confirmation « avant le seuil » testée ici)
 
 const etatAvantSeuil = await page.evaluate(() => ({
   caseExiste: !!document.getElementById('f-avant-seuil-confirm'),
@@ -92,13 +93,16 @@ await page.evaluate((db) => {
   render('confirmation-nouvelle-campagne');
 }, baseDb());
 await page.waitForTimeout(150);
+const boutonAvantDates = await page.evaluate(() => document.getElementById('btn-confirmer-nouvelle-campagne').disabled);
+if (!boutonAvantDates) throw new Error('FAIL: tant que les dates proposées de la nouvelle campagne ne sont pas confirmées, le bouton Valider reste désactivé.');
+await page.check('#f-nc-confirm');
 const etatApresSeuil = await page.evaluate(() => ({
   caseExiste: !!document.getElementById('f-avant-seuil-confirm'),
   boutonDisabled: document.getElementById('btn-confirmer-nouvelle-campagne').disabled
 }));
 if (etatApresSeuil.caseExiste) throw new Error('FAIL: aucune case de confirmation supplémentaire ne doit apparaître après le seuil configuré.');
 if (etatApresSeuil.boutonDisabled) throw new Error('FAIL: le bouton Valider doit être actif d\'emblée après le seuil configuré.');
-console.log('OK point 3: après le seuil configuré, pas de confirmation supplémentaire, bouton actif d\'emblée.');
+console.log('OK point 3: après le seuil configuré, pas de confirmation « avant le seuil » ; le bouton s\'active dès que les dates de la nouvelle campagne sont confirmées.');
 
 // ============================================================
 // Point 2 -- Point de restauration interne : posé avant la bascule, bouton

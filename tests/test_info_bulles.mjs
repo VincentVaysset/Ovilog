@@ -98,8 +98,10 @@ console.log('OK groupe 4 : mise à jour d\'inventaire, liste en série, agnelles
 
 // ================================================================ groupe 5 : imports et première configuration
 await page.evaluate(() => { render('premiere-configuration'); });
-{ const T = 'Non suivi, CLS (simplifié) ou CLO (officiel) — modifiable dans Paramètres > Exploitation.'; const e = await sansBulle('Première configuration'); eq(e.infos.map(i => i.t), [T], 'Première configuration : un texte sous le champ « Type de suivi laitier »'); uneInfo(e, T, 'Première configuration');
-  check(await page.evaluate(() => { const sel = document.getElementById('f-premconf-type-suivi'), t = document.querySelector('.info.sous-champ'); return !!sel && !!t && sel.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING; }), 'Première configuration : le texte est placé sous le champ'); }
+{ const e1 = await sansBulle('Première configuration (étape 1)'); eq(e1.infos.map(i => i.t), [], 'Première configuration, étape 1 : aucune ligne d\'information (le type de suivi laitier se règle dans Paramètres › Exploitation)');
+  await page.click('#btn-premconf-suivant');
+  const T = "Nommée d'après l'année de fin. Dates modifiables, elles servent aux bilans et exports."; const e = await sansBulle('Première configuration (étape 2)'); eq(e.infos.map(i => i.t), [T], 'Première configuration, étape 2 : une seule ligne sous les dates de la campagne de départ'); uneInfo(e, T, 'Première configuration');
+  check(await page.evaluate(() => !document.getElementById('f-premconf-type-suivi')), 'Première configuration : plus de champ « Type de suivi laitier » (il reste dans Paramètres › Exploitation)'); }
 for (const [vue, champs] of [['import-bilan-lactation', ['Fichier CSV']], ['import-controle-laitier-sieol', ['Fichier résumé', 'Fichier cahier de contrôle']], ['import-correspondance-sieol', ['Fichier modèle Ovilog']], ['import-lactation-modele', ['Fichier modèle Ovilog']], ['import-nouveaux-animaux', ['Fichier modèle Ovilog']], ['import-controle-laitier-modele', ['Fichier modèle Ovilog']]]) {
   await page.evaluate(v => render(v), vue);
   eq((await sansBulle('Import ' + vue)).infos, [], vue + ' : aucune ligne d\'information (format du fichier : texte dans le manuel)');
