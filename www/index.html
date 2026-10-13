@@ -1119,6 +1119,28 @@
   .mn-barre { position: sticky; bottom: 0; z-index: 5; display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; margin: 0 -16px -16px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--ch-fond); border-top: 1px solid var(--ch-bord); }
   .mn-barre .btn { margin: 0; height: 48px; }
   .mn-barre.une { grid-template-columns: 1fr; }
+  /* Saisie des mises bas (mobile) : confirmation verte, blocage rouge, alerte ambre, agneaux, dernières saisies */
+  .mb-msg { border-left: 5px solid var(--mb-trait); background: var(--mb-fond); color: var(--mb-texte); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; margin-bottom: 12px; }
+  .mb-msg b { font-size: 15px; }
+  .mb-msg.ok { --mb-trait: var(--ch-vert-fonce); --mb-fond: var(--ch-vert-pastel); --mb-texte: var(--ch-vert-texte); }
+  .mb-msg.bloc { --mb-trait: var(--ch-rouge); --mb-fond: var(--ch-rouge-pastel); --mb-texte: var(--ch-rouge); }
+  .mb-msg.alerte { --mb-trait: var(--ch-ambre); --mb-fond: var(--ch-ambre-pastel); --mb-texte: var(--ch-ambre-texte); }
+  .mb-msg.neutre { --mb-trait: var(--ch-icone); --mb-fond: var(--ch-onglets); --mb-texte: var(--ch-texte2); }
+  .mb-msg .lien { align-self: flex-start; min-height: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+  .mb-ag { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--ch-bord); border-radius: 14px; background: var(--ch-ligne-alt); }
+  .mb-ag .tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .mb-ag input[type=text] { margin: 0; }
+  .mb-ag .tab-bar { margin: 0; }
+  .mb-pastille { font-size: 12px; font-weight: 500; border-radius: 999px; padding: 3px 10px; white-space: nowrap; background: var(--ch-onglets); color: var(--ch-texte2); }
+  .mb-pastille.vert { background: var(--ch-vert-pastel); color: var(--ch-vert-texte); }
+  .mb-pastille.bleu { background: var(--ch-bleu-pastel); color: var(--ch-bleu); }
+  .mb-pastille.ambre { background: var(--ch-ambre-pastel); color: var(--ch-ambre-texte); }
+  .mb-der { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 6px 0; border-top: 1px solid var(--ch-separateur); cursor: pointer; }
+  .mb-der:first-child { border-top: 0; }
+  .mb-der .c { flex: 1; min-width: 0; }
+  .mb-der .a { font-size: 16px; font-weight: 700; color: var(--ch-vert-fonce); }
+  .mb-der .b { font-size: 12px; color: var(--ch-texte2); }
+  .btn-lien { min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--ch-vert); font-weight: 700; font-size: 14px; text-decoration: underline; cursor: pointer; }
   /* Tuile d'effectifs MOBILE de la charte (même apparence que .tuile-pc sur PC) : liseré 5 px, fond pastel, libellé gris, chiffre coloré 24 px gras */
   .tuiles-charte { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
   .tuile-charte { --tp-fond: var(--ch-onglets); --tp-trait: var(--ch-icone); --tp-chiffre: var(--ch-texte2); display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 10px 12px; border-left: 5px solid var(--tp-trait); border-radius: 14px; background: var(--tp-fond); }
@@ -12958,7 +12980,232 @@ function miseBasRapidePcHtml(c) {
   </div>`;
 }
 
+/* ---------- Saisie de mises bas (MOBILE) : maquette « Mise bas rapide » ----------
+   Scan de la brebis, date, une carte par agneau (EID bippé, Mâle / Femelle en segmenté ; mort-né : pas d'EID, sexe facultatif ; adoption vers une brebis ACTIVE seulement ; Séléphérol 2 cc
+   automatique sur chaque agneau vivant), barre fixe « Annuler | Enregistrer et suivante ». Après l'enregistrement : confirmation verte avec « Annuler cette saisie » (un geste, sans confirmation),
+   puis « Dernières saisies » modifiables d'un toucher. Contrôles discrets : un message n'apparaît que si une règle se déclenche (blocage rouge : déjà mis bas ; alertes : date future, vide définitive).
+   Toute la logique métier est dans les fonctions communes (controlesMiseBas, construireAgnelageMiseBas, enregistrerMiseBas, annulerMiseBas, miseBasRapideStats). */
+function miseBasPortee(n) { return n >= 3 ? ['Triple et +', 'ambre'] : n === 2 ? ['Double', 'bleu'] : ['Simple', 'vert']; }
 function renderMiseBasRapide() {
+  if (isDesktopMode()) return renderMiseBasRapidePcAncien();
+  let currentSheep = null;
+  let unknownEid = null;
+  let conflitEid = null;       // EID absent de DB.brebis mais déjà utilisé ailleurs : bloque la création plutôt que de créer une brebis fantôme
+  let candidatsAmbigus = null; // numéro d'ordre partagé par plusieurs brebis : l'éleveur choisit
+  let form = null;             // { date, codeRepro, lambs: [{ mortNe, sexe, eid, adopte, adoptNum }] }
+  let derniere = null;         // confirmation verte : { sheepId, ref, numero, resume }
+  let annulee = false;         // message « Saisie annulée » après « Annuler cette saisie »
+  const nouvelAgneau = () => ({ mortNe: false, sexe: null, eid: '', adopte: false, adoptNum: '' });
+  const ouvrirFormulaire = (sheep) => { currentSheep = sheep; form = { date: jourAujourdhuiISO(), codeRepro: deduireCodeRepro(sheep, jourAujourdhuiISO()), lambs: [nouvelAgneau()] }; };
+  function resetForm() { currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null; form = null; }
+  const sexeLibelle = (l) => l.mortNe ? 'Mort-né' : (l.sexe || '');
+
+  function lambHtml(l, i) {
+    const eidOk = !l.mortNe && cleanEid(l.eid).length >= 11;
+    return `<div class="mb-ag" data-i="${i}">
+      <div class="tete"><b>Agneau ${i + 1}</b><span class="mb-pastille${l.mortNe ? ' ambre' : eidOk ? ' vert' : ''}" data-pastille="${i}">${l.mortNe ? 'Mort-né' : eidOk ? 'EID bippé' : 'EID à saisir'}</span></div>
+      ${l.mortNe ? '' : `<input type="text" class="eid-input-rapide" data-id="${i}" value="${l.eid}" placeholder="Scanner ou saisir l'EID" inputmode="numeric" autocomplete="off"><div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;"></div>`}
+      <label class="ligne-interrupteur" style="font-weight:500;"><span>Mort-né (pas de boucle)</span><input type="checkbox" class="mortne-check-rapide interrupteur" data-id="${i}"${l.mortNe ? ' checked' : ''}></label>
+      <div class="tab-bar sexe-bar"><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Mâle' ? ' active' : ''}" data-id="${i}" data-val="Mâle">Mâle</button><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Femelle' ? ' active' : ''}" data-id="${i}" data-val="Femelle">Femelle</button></div>
+      ${l.mortNe ? '<div class="info">Le sexe du mort-né est facultatif.</div>' : `
+      <label class="ligne-interrupteur" style="font-weight:500;"><span>Adopté par une autre mère</span><input type="checkbox" class="adopt-check-rapide interrupteur" data-id="${i}"${l.adopte ? ' checked' : ''}></label>
+      <div class="adopt-field-rapide${l.adopte ? '' : ' hidden'}" data-id="${i}"><input type="text" class="adopt-eid-rapide" data-id="${i}" value="${l.adoptNum}" placeholder="N° ou EID de la mère adoptive" autocomplete="off" style="margin:0;"><div class="adopt-preview-rapide" data-id="${i}" style="font-size:12px;"></div></div>`}
+      ${form.lambs.length > 1 ? `<button type="button" class="btn-lien remove-lamb-rapide" data-id="${i}" style="align-self:flex-start;">Retirer cet agneau</button>` : ''}
+    </div>`;
+  }
+  function renderLambs() {
+    const zone = document.getElementById('lamb-list-rapide');
+    if (!zone || !form) return;
+    zone.innerHTML = form.lambs.map(lambHtml).join('');
+    const titre = document.getElementById('mb-nb-agneaux'); if (titre) titre.textContent = 'Agneaux · ' + form.lambs.length;
+    form.lambs.forEach((l, i) => {
+      const q = (sel) => zone.querySelector(`${sel}[data-id="${i}"]`);
+      q('.mortne-check-rapide').onchange = (e) => { l.mortNe = e.target.checked; if (l.mortNe) { l.eid = ''; l.adopte = false; l.adoptNum = ''; } renderLambs(); };
+      zone.querySelectorAll(`.sexe-opt-rapide[data-id="${i}"]`).forEach(b => {
+        b.onclick = () => {
+          // mort-né : le sexe est facultatif, un second toucher le retire
+          l.sexe = (l.mortNe && l.sexe === b.dataset.val) ? null : b.dataset.val;
+          zone.querySelectorAll(`.sexe-opt-rapide[data-id="${i}"]`).forEach(x => x.classList.toggle('active', x.dataset.val === l.sexe));
+          document.getElementById('err').classList.add('hidden');
+        };
+      });
+      const eidInput = q('.eid-input-rapide');
+      if (eidInput) {
+        attachEidBeep(eidInput);
+        eidInput.addEventListener('input', () => {
+          l.eid = eidInput.value;
+          const v = eidInput.value.trim(), prev = q('.eid-preview-rapide'), pastille = zone.querySelector(`[data-pastille="${i}"]`);
+          const ok = cleanEid(v).length >= 11;
+          pastille.textContent = ok ? 'EID bippé' : 'EID à saisir'; pastille.classList.toggle('vert', ok);
+          if (!v) { prev.textContent = ''; return; }
+          const conflit = verifierEidUnique(v);
+          if (conflit) { prev.textContent = messageEidDejaUtilise(conflit); prev.style.color = 'var(--danger)'; }
+          else { prev.textContent = "Numéro d'ordre : n°" + numeroVisuel(v); prev.style.color = 'var(--ch-texte2)'; }
+        });
+      }
+      const check = q('.adopt-check-rapide');
+      if (check) {
+        const champ = zone.querySelector(`.adopt-field-rapide[data-id="${i}"]`), adoptInput = q('.adopt-eid-rapide');
+        check.onchange = () => { l.adopte = check.checked; champ.classList.toggle('hidden', !check.checked); };
+        attachEidBeep(adoptInput);
+        wireMereAdoptiveField(adoptInput, q('.adopt-preview-rapide'), () => { l.adoptNum = adoptInput.value; });
+        if (l.adoptNum) adoptInput.dispatchEvent(new Event('input'));
+      }
+      const retirer = q('.remove-lamb-rapide');
+      if (retirer) retirer.onclick = () => { form.lambs.splice(i, 1); renderLambs(); };
+    });
+  }
+  function majAlertes() {
+    const zone = document.getElementById('mb-alertes');
+    if (!zone || !currentSheep || !form) return;
+    zone.innerHTML = controlesMiseBas(currentSheep, form.date).alertes.map(a => `<div class="mb-msg alerte" data-alerte="${a.code}">${a.message}</div>`).join('');
+  }
+
+  function draw() {
+    pageTitle.textContent = 'Saisie de mises bas';
+    const rows = misebasCampagneRows(), st = miseBasRapideStats(rows);
+    const controles = currentSheep ? controlesMiseBas(currentSheep, form ? form.date : '') : { bloquants: [], alertes: [] };
+    const bloc = controles.bloquants[0];
+    const warn = ICON_WARNING.replace('viewBox="0 0 24 24"', 'width="22" height="22" viewBox="0 0 24 24"');
+    const unknownHtml = conflitEid ? `<div class="mb-msg bloc" id="mb-conflit"><b>EID déjà utilisé</b><span>${messageEidDejaUtilise(conflitEid)} Impossible de créer une brebis avec cet EID.</span><button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">OK</button></div>`
+      : unknownEid ? `<div class="mb-msg bloc" id="mb-inconnue"><b>Brebis inconnue</b><span>Aucune fiche pour cet EID (n°${numeroVisuel(unknownEid)}).</span><button type="button" class="btn btn-primary" id="btn-create-unknown-mb">Créer cette brebis et continuer</button><button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">Annuler ce scan</button></div>` : '';
+    const ambiguHtml = candidatsAmbigus ? `<div class="card"><div style="font-weight:600;margin-bottom:8px;">Plusieurs brebis correspondent à ce numéro</div><div id="mb-ambigu-candidats" style="font-size:13px;"></div></div>` : '';
+    const confirmation = derniere ? `<div class="mb-msg ok" id="mb-confirmation"><b>Mise bas enregistrée</b><span>n°${derniere.numero} · ${derniere.resume}</span><button type="button" class="lien" id="btn-annuler-derniere">Annuler cette saisie</button></div>`
+      : annulee ? `<div class="mb-msg neutre" id="mb-annulee"><b>Saisie annulée</b></div>` : '';
+    const blocage = (currentSheep && bloc) ? `
+      <div class="mb-msg bloc" id="mb-blocage"><span class="mb-pastille" style="align-self:flex-start;background:var(--ch-carte);color:var(--ch-rouge);">Blocage</span><b>n°${numeroVisuel(currentSheep.eid)} a déjà mis bas cette campagne</b><span>Le ${formatDateFr(bloc.date)} · ${bloc.nbAgneaux} agneau${bloc.nbAgneaux > 1 ? 'x' : ''}. Une seule mise bas par campagne.</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px;"><button type="button" class="btn btn-secondary" id="btn-ouvrir-fiche-mb" style="margin:0;border-color:var(--ch-vert);color:var(--ch-vert);">Ouvrir la fiche</button><button type="button" class="btn btn-secondary" id="btn-autre-brebis-mb" style="margin:0;">Autre brebis</button></div>
+      <button type="button" class="btn-lien" id="btn-edit-existing-agnelage-rapide">Modifier l'agnelage existant</button>` : '';
+    const formulaire = (currentSheep && form && !bloc) ? `
+      <div class="card" id="mb-formulaire" data-brebis-trouvee>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><span style="font-size:20px;font-weight:700;color:var(--ch-vert-fonce);">n°${numeroVisuel(currentSheep.eid)}</span>${(() => { const sr = statutReproductionCampagne(currentSheep); return sr && sr !== 'Aucune info repro' ? `<span class="mb-pastille ${/^Gestante|^Mise bas/.test(sr) ? 'vert' : 'ambre'}">${sr}</span>` : ''; })()}</div>
+        <div class="info" style="margin-bottom:10px;">${age(currentSheep.eid)} an(s)${(() => { const pe = echoPrecedenteBrebis(currentSheep); return pe ? ' · écho du ' + formatDateFr(pe.echo.date) : ''; })()}</div>
+        <label for="f-date-rapide">Date de mise bas</label>
+        <input type="date" id="f-date-rapide" value="${form.date}" style="margin-bottom:10px;">
+        <div id="mb-alertes">${controles.alertes.map(a => `<div class="mb-msg alerte" data-alerte="${a.code}">${a.message}</div>`).join('')}</div>
+        <label>Repro</label>
+        <div class="tab-bar" id="repro-code-list-rapide" style="margin-bottom:0;">${[['IA', 'IA'], ['EP', 'Éponge'], ['RE', 'Retour'], ['MN', 'Monte nat.']].map(([v, l]) => `<button type="button" class="tab-btn repro-code-opt-rapide${form.codeRepro === v ? ' active' : ''}" data-val="${v}">${l}</button>`).join('')}</div>
+      </div>
+      <div class="sec" id="mb-nb-agneaux" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Agneaux · ${form.lambs.length}</div>
+      <div id="lamb-list-rapide"></div>
+      <button type="button" class="btn btn-secondary" id="add-lamb-rapide" style="border-style:dashed;margin-bottom:8px;">+ Ajouter un agneau</button>
+      <div class="info" style="margin-bottom:8px;">Séléphérol 2 cc ajouté à chaque agneau vivant.</div>
+      <div id="err" class="error-box hidden"></div>` : '';
+    const derniers = (!form && !currentSheep && rows.length) ? `
+      <div class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Dernières saisies</div>
+      <div class="card" id="mb-dernieres" style="padding:0 14px;">${rows.slice(0, 5).map(r => { const sh = findSheep(r.sheepId), ag = sh.agnelages[r.agnelageIdx], [lib, ton] = miseBasPortee(r.total); return `<div class="mb-der" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}"><div class="c"><div class="a">n°${r.courtSieol || r.numero}</div><div class="b">${formatDateFr(r.date)} · ${resumeAgnelage(ag)}</div></div><span class="mb-pastille ${ton}">${lib}</span></div>`; }).join('')}</div>
+      <div class="info" style="margin:6px 2px 12px;">Toucher une ligne pour la modifier.</div>` : '';
+    app.innerHTML = `
+      <div class="tuiles-charte" id="mb-tuiles">
+        <div class="tuile-charte vert"><div class="l">Mises bas</div><div class="n">${st.misesBas}</div></div>
+        <div class="tuile-charte vert"><div class="l">Agneaux nés</div><div class="n">${st.nes}</div></div>
+        <div class="tuile-charte ambre"><div class="l">Restantes</div><div class="n">${st.cb.misesBasRestantes}</div></div>
+      </div>
+      ${confirmation}
+      <div class="card"><label>${currentSheep ? 'Autre brebis' : 'Brebis qui vient de mettre bas'}</label><input type="text" id="scan-misebas" placeholder="Scanner ou saisir l'EID" autofocus style="margin-bottom:0;"></div>
+      ${unknownHtml}${ambiguHtml}${blocage}${formulaire}${derniers}
+      ${(currentSheep && form && !bloc) ? `<div class="mn-barre"><button type="button" class="btn btn-secondary" id="btn-annuler-saisie-mb">Annuler</button><button type="button" class="btn btn-primary" id="btn-valider-misebas">Enregistrer et suivante</button></div>` : ''}
+      <button type="button" class="btn btn-secondary" id="btn-fin-session-mb" style="margin-top:14px;">Terminer la session</button>
+    `;
+    if (form && !bloc && currentSheep) renderLambs();
+
+    const scanInput = document.getElementById('scan-misebas');
+    setActiveScanTarget(scanInput);
+    requestAnimationFrame(() => scanInput.focus());
+    if (candidatsAmbigus) {
+      renderCandidatsEidChips(candidatsAmbigus, document.getElementById('mb-ambigu-candidats'), (sheep) => { playBeepTrouve(); resetForm(); derniere = null; annulee = false; ouvrirFormulaire(sheep); draw(); });
+    }
+    scanInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.keyCode !== 13) return;
+      e.preventDefault();
+      const val = cleanEid(scanInput.value);
+      if (!val) return;
+      const r = chercherBrebisMiseBas(val);
+      derniere = null; annulee = false;
+      resetForm();
+      if (r.statut === 'ambigu') { playBeepAmbigu(); candidatsAmbigus = r.candidats; draw(); return; }
+      if (r.statut === 'conflit') { playBeepRate(); conflitEid = r.conflit; draw(); return; }
+      if (r.statut === 'inconnue') { playBeepRate(); unknownEid = r.eid; draw(); return; }
+      playBeepTrouve();
+      ouvrirFormulaire(r.sheep);
+      draw();
+    });
+    document.getElementById('btn-fin-session-mb').onclick = () => {
+      const count = misebasRapideCount;
+      if (count > 0 && !confirm('Terminer cette session de mises bas (' + count + ' saisie(s)) ? Tu pourras en commencer une nouvelle à tout moment.')) return;
+      resetMisebasRapideSession();
+      render('home');
+    };
+    const btnAnnulerDerniere = document.getElementById('btn-annuler-derniere');
+    if (btnAnnulerDerniere) btnAnnulerDerniere.onclick = () => {
+      // un geste, SANS confirmation
+      const sh = findSheep(derniere.sheepId), idx = sh ? sh.agnelages.indexOf(derniere.ref) : -1;
+      if (idx !== -1) annulerMiseBas(derniere.sheepId, idx);
+      misebasRapideCount = Math.max(0, misebasRapideCount - 1);
+      derniere = null; annulee = true;
+      draw();
+    };
+    document.querySelectorAll('.mb-der').forEach(el => {
+      el.onclick = () => { currentSheepId = el.dataset.sheepId; editItem('agnelages', parseInt(el.dataset.agnelageIdx, 10)); };   // modifier d'un toucher
+    });
+    if (unknownEid) {
+      document.getElementById('btn-create-unknown-mb').onclick = () => {
+        // un numéro d'ordre tapé par erreur ne doit jamais créer de fiche fantôme
+        if (cleanEid(unknownEid).length < 11) { alert("Numéro EID incomplet — impossible de créer une fiche à partir d'un simple numéro d'ordre. Scanne ou saisis l'EID complet."); return; }
+        const newSheep = {
+          id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+          eid: unknownEid, createdAt: Date.now(), dateEntree: jourAujourdhuiISO(),
+          echographies: [], agnelages: [], sanitaire: [], controleLaitier: [], statut: 'active',
+          mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: jourAujourdhuiISO() }]
+        };
+        DB.brebis.push(newSheep);
+        saveData(DB);
+        unknownEid = null;
+        ouvrirFormulaire(newSheep);
+        draw();
+      };
+    }
+    if (unknownEid || conflitEid) document.getElementById('btn-cancel-unknown-mb').onclick = () => { unknownEid = null; conflitEid = null; draw(); };
+    if (currentSheep && bloc) {
+      document.getElementById('btn-ouvrir-fiche-mb').onclick = () => { detailOrigin = 'misebas-rapide'; previousDetailId = null; render('detail', currentSheep.id); };
+      document.getElementById('btn-autre-brebis-mb').onclick = () => { resetForm(); draw(); };
+      document.getElementById('btn-edit-existing-agnelage-rapide').onclick = () => { currentSheepId = currentSheep.id; editItem('agnelages', bloc.agnelageIdx); };
+    }
+    if (currentSheep && form && !bloc) {
+      document.getElementById('add-lamb-rapide').onclick = () => { form.lambs.push(nouvelAgneau()); renderLambs(); };
+      document.getElementById('btn-annuler-saisie-mb').onclick = () => { resetForm(); draw(); };   // abandonne la saisie en cours : rien n'est enregistré
+      document.querySelectorAll('.repro-code-opt-rapide').forEach(b => {
+        b.onclick = () => { form.codeRepro = b.dataset.val; document.querySelectorAll('.repro-code-opt-rapide').forEach(x => x.classList.toggle('active', x === b)); };
+      });
+      document.getElementById('f-date-rapide').addEventListener('change', (e) => {
+        form.date = e.target.value;
+        form.codeRepro = deduireCodeRepro(currentSheep, form.date);
+        document.querySelectorAll('.repro-code-opt-rapide').forEach(x => x.classList.toggle('active', x.dataset.val === form.codeRepro));
+        majAlertes();
+      });
+      const btnValider = document.getElementById('btn-valider-misebas');
+      btnValider.onclick = () => {
+        const err = document.getElementById('err');
+        // une date postérieure à aujourd'hui est une alerte à confirmer (jamais corrigée seule)
+        const alerteDate = controlesMiseBas(currentSheep, form.date).alertes.find(x => x.code === 'date-future');
+        if (alerteDate && !confirm(alerteDate.message + ' Enregistrer la mise bas avec cette date ?')) return;
+        const saisie = { date: form.date, codeRepro: form.codeRepro, lambs: form.lambs.map(l => ({ sexe: l.mortNe ? 'Mort-né' : l.sexe, sexeMortNe: l.mortNe ? (l.sexe || undefined) : undefined, eid: l.eid, adopte: l.adopte, adoptNum: l.adoptNum })) };
+        const r = construireAgnelageMiseBas(currentSheep, saisie);
+        if (r.erreur) { err.textContent = r.erreur; err.classList.remove('hidden'); err.scrollIntoView && err.scrollIntoView({ block: 'center' }); return; }
+        btnValider.disabled = true; // évite un double-tap qui rejouerait la validation
+        enregistrerMiseBas(currentSheep, r.agnelage);
+        misebasRapideCount++;
+        derniere = { sheepId: currentSheep.id, ref: r.agnelage, numero: numeroVisuel(currentSheep.eid), resume: resumeAgnelage(r.agnelage) };
+        annulee = false;
+        resetForm();
+        draw();
+      };
+    }
+  }
+  draw();
+}
+
+function renderMiseBasRapidePcAncien() {
   let currentSheep = null;
   let unknownEid = null;
   let conflitEid = null; // EID absent de DB.brebis mais déjà utilisé ailleurs (voir verifierEidUnique) : bloque la création plutôt que de créer une brebis fantôme

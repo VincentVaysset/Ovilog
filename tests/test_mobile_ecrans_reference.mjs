@@ -6,6 +6,7 @@
      - toutes les brebis ayant mis bas ont un contrôle (liste vide : rien à signaler).
    Référence régénérée volontairement lors de la refonte « Bilan de campagne mobile » : « Brebis à régulariser » est un nouvel écran (la carte « sans contrôle laitier »
    n'y est plus, les deux cas sont donc identiques), Économique et Lactation ne changent que par la barre d'onglets (libellés raccourcis).
+   Référence régénérée volontairement lors du chantier « Grands écrans de saisie » : seul « saisie_mises_bas » change (maquette Mise bas rapide : tuiles, cartes agneaux, barre fixe, confirmation, dernières saisies) ; les 4 autres écrans sont identiques.
    Les écrans ne doivent changer que par ce qui est demandé : la règle elle-même est testée dans
    test_controle_laitier_manquant. Régénérer volontairement : OVILOG_MAJ_REF=1 node test_mobile_ecrans_reference.mjs */
 import { chromium } from 'playwright';

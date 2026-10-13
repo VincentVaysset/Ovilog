@@ -5,7 +5,9 @@
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP, LIB_DIR, EXPORT_ORIGINAL, EXPORT_CORRIGE, lireExport, exportPresent } from './lib/config.mjs';
 const browser = await chromium.launch(LAUNCH);
-const page = await browser.newPage();
+// Le tableau des mises bas de la campagne est sur la page PC « Saisie de mises bas » (le mobile affiche les « Dernières saisies » en cartes : test_misebas_saisie_mobile)
+const page = await (await browser.newContext({ viewport: { width: 1500, height: 1000 } })).newPage();
+await page.addInitScript(() => { window.electronAPI = { isDesktop: true, version: '1.0.test' }; });
 page.on('pageerror', e => { throw new Error('PAGEERROR: ' + e.message); });
 page.on('dialog', d => d.accept());
 await page.goto(URL_APP, { waitUntil: 'load' });
