@@ -147,7 +147,7 @@ console.log('OK 5 copie des délais sur le soin Séléphérol : la fiche modifi�
 await page.evaluate(() => { window.__avantNaissance = DB.brebis[0].agnelages.length; resetMisebasRapideSession(); render('misebas-rapide'); });
 await page.fill('#scan-misebas', '00001'); await page.press('#scan-misebas', 'Enter');
 await page.waitForSelector('#f-date-rapide');
-await page.click('.pc-st-btn[data-sexe="Mâle"][data-delta="1"]');
+await page.click('.sexe-opt-rapide[data-id="0"][data-val="Mâle"]');
 await page.fill('#f-date-rapide', '2026-10-01'); await page.dispatchEvent('#f-date-rapide', 'change');
 await page.click('.repro-code-opt-rapide[data-val="IA"]');
 await page.click('#btn-valider-misebas');

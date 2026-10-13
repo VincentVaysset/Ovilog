@@ -48,7 +48,7 @@ console.log('OK 2 Accueil mobile.');
 // Saisie de mises bas (PC)
 await pc.evaluate(() => render('misebas-rapide'));
 const k = await pc.evaluate(() => Object.fromEntries([...document.querySelectorAll('.brd-kpi')].map(e => [e.querySelector('.brd-kpi-l').textContent.trim(), [e.querySelector('.brd-kpi-v').textContent.trim(), (e.querySelector('.brd-kpi-s') || { textContent: '' }).textContent.trim()]])));
-check(k['Restantes attendues'] && k['Restantes attendues'][0] === '4' && /sur 7 à mettre bas/.test(k['Restantes attendues'][1]), 'Saisie de mises bas : 4 restantes attendues sur 7 : ' + JSON.stringify(k));
+check(k['Restantes'] && k['Restantes'][0] === '4' && /42,9 % réalisé/.test(k['Restantes'][1]) && /sur 7 attendues/.test(k['Mises bas'][1]), 'Saisie de mises bas : 4 restantes, 3 mises bas sur 7 attendues (42,9 % réalisé) : ' + JSON.stringify(k));
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'aucune écriture');
 console.log('OK 3 Saisie de mises bas.');
 await browser.close();

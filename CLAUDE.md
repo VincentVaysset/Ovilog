@@ -34,6 +34,7 @@ Référence unique pour tout nouvel écran et tout PDF. PC, mobile et PDF ont le
 - Un seul titre par écran PC : celui du bandeau vert. On ne le répète pas dans le contenu, ni en sous-titre d'une carte qui porte déjà ce titre.
 - Libellés d'export identiques partout : « Export Excel » (bouton blanc) puis « Export PDF » (bouton vert).
 - Pas de scan sur PC : aucun libellé « Scanner » ni « bip » (champs « Saisir un n° » / « Saisir un n° / EID », saisie clavier de l'EID) ; le scan reste sur mobile.
+- Saisies (mise bas, échos, mouvements…) : annuler une saisie se fait en UN geste, sans `confirm()` ; les contrôles sont discrets (aucun encart permanent, un message seulement quand une règle se déclenche : bloquer l'erreur certaine, alerter le doute). Sur mobile : tuiles de la charte (`.tuile-charte`), barre fixe « Annuler | Enregistrer et suivante ».
 - Pas de "?" d'aide : l'information passe en une ligne sous le titre ou les filtres.
 - Mobile : liste en cartes (jamais de tableau coupé), exports en bas. PC : même style, plus large.
 
