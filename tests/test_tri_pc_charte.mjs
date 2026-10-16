@@ -53,8 +53,12 @@ await ouvrir('lotsPcEtat=lotsPcEtatInitial();render("add-lot-repro")');
   // fonctions inchangées : un clic sur une puce de type la désactive (même gestionnaire)
   const avant = L.filter(x => x.on).length; await pc.click('#app .pc-gc.le-type'); await pc.waitForTimeout(150);
   const apres = await puces('#app .pc-gc'); eq(apres.filter(x => x.on).length, avant - 1, 'clic sur une puce de type : une puce active de moins'); verifPuces(apres, 'Lots existants après clic'); }
-await ouvrir('render("agnelles")');
-{ const L = await puces('#app .pc-gc'); verifPuces(L, 'Tri des agnelles (À trier / Gardées / Écartées)'); }
+await ouvrir('triPcEtat=null;render("agnelles")');
+{ // Tri des agnelles : les puces À trier / Gardées / Écartées sont devenues trois onglets segmentés (pastille blanche sur fond #efe9da), un seul actif
+  const B = await pc.evaluate(() => { const b = document.querySelector('.tri-seg-pc'), cs = e => getComputedStyle(e); return { fond: cs(b).backgroundColor, rayon: parseFloat(cs(b).borderTopLeftRadius) >= 20, btns: [...b.querySelectorAll('.tab-btn')].map(x => ({ t: x.textContent.trim(), sel: x.classList.contains('active'), bg: cs(x).backgroundColor })) }; });
+  eq(B.btns.map(b => b.t), ['À trier', 'Gardées', 'Écartées'], 'Tri des agnelles : trois onglets segmentés'); eq(B.fond, ONGLETS, 'Tri des agnelles : fond segmenté #efe9da'); check(B.rayon, 'Tri des agnelles : barre arrondie');
+  check(B.btns.filter(b => b.sel).length === 1, 'Tri des agnelles : un seul onglet actif');
+  for (const b of B.btns) eq(b.bg, b.sel ? BLANC : TRANSP, 'Tri des agnelles : onglet « ' + b.t + ' » ' + (b.sel ? 'actif en pastille blanche' : 'inactif sans fond')); }
 await ouvrir('render("mouvement-groupe")');
 { const L = await puces('#app .pc-seg2 .opt-btn'); const act = L.filter(x => x.on), inact = L.filter(x => !x.on);   // puce active des mouvements : vert pastel / texte vert de la charte
   check(act.length === 1 && inact.length === 3, 'Mouvements (catégories) : une puce active, trois inactives');
