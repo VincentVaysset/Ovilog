@@ -1,6 +1,6 @@
 /* Retouches Production laitière / Bilan économique (aucun changement de mise en page) : (1) rouge réservé aux vraies alertes : « Non obtenu » (Super A) en gris sur PC (Qualité, Bilan économique), « Pénalités 0 € »
    neutre (rouge seulement s'il y a des pénalités), le bandeau de résultat positif et les boutons « Supprimer » restent rouges ; (2) un seul titre : plus de titre répété dans Qualité du lait et Bilan économique
-   (PC), le Tank le garde ; (3) exports : « Export Excel » (blanc) puis « Export PDF » (vert) en Qualité du lait (PC et mobile), « Export PDF » en Bilan économique, plus aucun « Rapport de campagne (PDF) » ;
+   (PC), le Tank le garde ; (3) exports : « Export Excel » puis « Export PDF » en Qualité du lait (PC : les deux blancs, « + Nouveau prélèvement » seul vert ; mobile : Excel blanc, PDF vert), « Export PDF » en Bilan économique, plus aucun « Rapport de campagne (PDF) » ;
    Excel de la qualité valide (zip, feuille, lignes de la campagne affichée seulement) ; (4) textes : renvoi vers le Bilan économique, icône SVG à la place de l'emoji, échec d'export = message de charte, jamais d'alert().
    Jeu synthétique, saveData remplacé, saveOrShareBinaryFile remplacé. */
 import { chromium } from 'playwright';
@@ -87,10 +87,10 @@ const bandeau = await couleurs(pc, '#qualite-banner');
 check(bandeau.length === 1 && bandeau[0][1] === ROUGE && bandeau[0][2] === ROUGE_PASTEL, 'Qualité PC : le bandeau de résultat positif reste rouge (vraie alerte) : ' + JSON.stringify(bandeau));
 eq(await pc.evaluate(() => document.querySelectorAll('#pc-qualite .brd-title, #pc-qualite h2').length), 0, 'Qualité PC : plus de titre répété (le bandeau et l\'onglet le portent)');
 check(/analyses de la laiterie/.test(await pc.evaluate(() => document.querySelector('#pc-qualite .brd-sub').textContent)), 'Qualité PC : la ligne d\'information sous le titre reste');
-// exports Qualité PC : Export Excel (blanc), Export PDF (vert), puis « + Nouveau prélèvement » inchangé
+// exports Qualité PC : Export Excel (blanc), Export PDF (blanc : le vert est réservé à l'action principale), puis « + Nouveau prélèvement » (seul bouton vert)
 const ex = await pc.evaluate(() => [...document.querySelectorAll('#pc-qualite .brd-actions button')].map(b => { const c = getComputedStyle(b); return [b.textContent.trim(), b.id, c.backgroundColor]; }));
 eq(ex.map(e => [e[0], e[1]]), [['Export Excel', 'btn-export-qualite-xlsx'], ['Export PDF', 'btn-rapport-qualite'], ['+ Nouveau prélèvement', 'btn-qualite-add']], 'Qualité PC : boutons de l\'en-tête (ordre)');
-eq([ex[0][2], ex[1][2], ex[2][2]], [BLANC, VERT, VERT], 'Qualité PC : Export Excel blanc, Export PDF vert, « + Nouveau prélèvement » vert (inchangé)');
+eq([ex[0][2], ex[1][2], ex[2][2]], [BLANC, BLANC, VERT], 'Qualité PC : Export Excel blanc, Export PDF blanc, « + Nouveau prélèvement » seul bouton vert');
 // Excel de la qualité : campagne affichée seulement, valeurs saisies, cases vides pour « à saisir »
 await pc.evaluate(() => { window.__saisies.length = 0; });
 await pc.click('#btn-export-qualite-xlsx'); await pc.waitForFunction(() => window.__saisies.length >= 1);
@@ -178,6 +178,12 @@ for (const largeur of [360, 390]) {
   await m.evaluate(() => { bilanCampagneTab = 'economique'; bilanEconomiqueCampagneAffichee = 2026; bilanEconomiqueMoisAffiche = null; render('bilan-campagne'); });
   const be = await m.evaluate(() => { const b = document.getElementById('btn-export-rapport-campagne-pdf'); return [b.textContent.trim(), getComputedStyle(b).backgroundColor]; });
   eq(be, ['Export PDF', BLANC], largeur + ' px : Bilan économique mobile : « Export PDF » (même place, même aspect)');
+  await m.evaluate(() => { ecoMobileOuverts = new Set(['2027-01', '2026-10']); ecoMobileTous = false; render('bilan-campagne'); });
+  const badges = await m.evaluate(() => [...document.querySelectorAll('.eco-detail .badge')].filter(b => /^(Non obtenu|Obtenu)$/.test(b.textContent.trim())).map(b => { const c = getComputedStyle(b); return [b.textContent.trim(), c.color, c.backgroundColor, b.className]; }));
+  const nonObt = badges.filter(b => b[0] === 'Non obtenu'), obt = badges.filter(b => b[0] === 'Obtenu');
+  check(nonObt.length >= 1 && obt.length >= 1, largeur + ' px : Bilan économique mobile : des mois « Non obtenu » et « Obtenu » dépliés : ' + JSON.stringify(badges));
+  check(nonObt.every(b => ![ROUGE, ROUGE_PASTEL].includes(b[1]) && ![ROUGE, ROUGE_PASTEL].includes(b[2]) && /badge-muted/.test(b[3])), largeur + ' px : « Non obtenu » en gris (badge-muted), plus rouge : ' + JSON.stringify(nonObt));
+  check(obt.every(b => /badge-green/.test(b[3]) && b[1] === 'rgb(36, 97, 58)'), largeur + ' px : « Obtenu » reste vert : ' + JSON.stringify(obt));
   check(await m.evaluate(() => !document.getElementById('app').innerText.includes('Rapport de campagne (PDF)')), largeur + ' px : plus aucun « Rapport de campagne (PDF) » à l\'écran');
   await m.evaluate(() => { plOnglet = 'qualite'; render('qualite'); saveOrShareBinaryFile = async () => { throw new Error('disque plein'); }; });
   m.__dialogues.length = 0;
