@@ -45,8 +45,9 @@ const res = await page.evaluate(() => {
   currentLotId = '1700000000001'; render('edit-lot'); R.edit_lot_recherche = app();
   currentLotId = '1700000000001'; render('lot-search'); R.lot_search = app();
   render('liste-serie'); R.liste_serie = app();
-  render('agnelles'); const h = app(); R.agnelles_sections = h.slice(h.indexOf('Agnelles triées / achetées') - 80);
-  R.agnelles_tabbar = h.slice(0, h.indexOf('</div>') + 6);
+  // Chantier de tri refondu (maquette mobile) : agnelles_sections = l'écran entier, agnelles_tabbar = les 3 onglets segmentés À trier / Gardées / Écartées
+  triMobileScan = null; triMobileToast = null; triMobileOnglet = 'aTrier'; render('agnelles'); const h = app(); R.agnelles_sections = h;
+  R.agnelles_tabbar = h.slice(h.indexOf('<div class="tab-bar tri-onglets"'), h.indexOf('</div>', h.indexOf('<div class="tab-bar tri-onglets"')) + 6);
   editingAgnelleId = null; addAgnelleOrigin = 'agnelles'; render('add-agnelle'); R.add_agnelle = app();
   return R;
 });

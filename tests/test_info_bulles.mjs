@@ -90,7 +90,7 @@ eq((await sansBulle('Liste en série')).infos, [], 'Liste en série : aucune lig
 check(await page.evaluate(() => !!document.getElementById('scan-liste-serie') && document.getElementById('app').textContent.includes('Scanner un animal')), 'Liste en série : le champ « Scanner un animal » reste');
 await page.evaluate(() => render('agnelles'));
 eq((await sansBulle('Agnelles (tri)')).infos, [], 'Agnelles : aucune ligne d\'information');
-check(await page.evaluate(() => document.getElementById('app').textContent.includes('À trier (femelles nées sur l\'exploitation)')), 'Agnelles : le titre « À trier » reste, sans bulle');
+check(await page.evaluate(() => document.getElementById('app').textContent.includes('Une agnelle vendue ou morte sort seule de la liste.') && document.querySelector('.tri-onglet.active').textContent === 'À trier'), 'Agnelles : l\'onglet « À trier » et sa ligne d\'information restent, sans bulle');
 await page.evaluate(() => { bilanCampagneTab = 'lactation'; bilanLactationCampagneAffichee = 2026; render('bilan-campagne'); });
 eq((await sansBulle('Bilan de lactation (mobile)')).infos, [], 'Bilan de lactation : aucune ligne d\'information (texte dans le manuel)');
 check(await page.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'groupe 4 : aucune écriture');

@@ -104,8 +104,8 @@ await page.click('#ta-tab-lots'); check(await page.evaluate(() => !!document.get
 console.log('OK 2 page PC : compteur, colonnes, sélection par n° sans validation, Garder / Écarter sans confirmation avec Annuler, Reconsidérer (confirmation pour une gardée), mère, ajout manuel, export, surbrillance.');
 
 
-// ================================================================ 3. mobile : carte enrichie, compteur, comportement au bip
-const ctxM = await browser.newContext({ viewport: { width: 420, height: 900 } });
+// ================================================================ 3. mobile : tuiles, compteur, cartes, bandeau Annuler, scan = sélection sans validation
+const ctxM = await browser.newContext({ viewport: { width: 390, height: 900 } });
 const mob = await ctxM.newPage();
 await mob.clock.setFixedTime(new Date('2026-10-03T09:00:00'));
 mob.on('pageerror', e => { throw new Error('PAGEERROR: ' + e.message); });
@@ -113,52 +113,74 @@ mob.on('dialog', d => { if (d.type() === 'confirm') { confirms.push(d.message())
 await mob.goto(URL_APP, { waitUntil: 'load' }); await mob.waitForTimeout(300);
 await jeuSur(mob);
 const $m = sel => mob.evaluate(s => document.querySelector(s) ? document.querySelector(s).textContent.replace(/\s+/g, ' ').trim() : null, sel);
-const ouvrirM = async () => { await mob.evaluate(() => { triMobileScan = null; triMobileToast = null; render('agnelles'); }); await mob.waitForSelector('#scan-tri'); };
+const ouvrirM = async (onglet) => { await mob.evaluate((o) => { triMobileScan = null; triMobileToast = null; triMobileOnglet = o || 'aTrier'; render('agnelles'); }, onglet); await mob.waitForSelector('#scan-tri'); };
 const scanner = async v => { await mob.fill('#scan-tri', v); await mob.press('#scan-tri', 'Enter'); };
 await ouvrirM();
-check(/1 triées sur 4 femelles nées actives/.test(await $m('#ta-compteur')) && /À trier 2 · écartées 1 · achetées 1 \(hors total\)/.test(await $m('#ta-compteur')) && await mob.evaluate(() => document.querySelector('#ta-compteur i').style.width) === '25%', 'mobile : compteur « N triées sur M » + barre + détail (même calcul que le PC) : ' + await $m('#ta-compteur'));
-const tuiles = await mob.evaluate(() => [...document.querySelectorAll('#candidate-0, #candidate-1')].map(c => c.textContent.replace(/\s+/g, ' ').trim()));
-check(/Classe de la mère1Lactation 2026452,0 L/.test(tuiles[0]) && /Classe de la mère-Lactation 2026-/.test(tuiles[1]), 'carte « À trier » enrichie : classe de la mère et « Lactation 2026 » (« - » sans donnée) : ' + tuiles.join(' // '));
-check(await mob.evaluate(() => !!document.querySelector('.btn-garder') && !!document.querySelector('.btn-ecarter') && !!document.querySelector('.btn-voir-mere')), 'boutons existants conservés : Garder (trier), Écarter, Voir la fiche de la mère');
-// bip d'une agnelle à trier : sa carte s'ouvre SEULE, mise en évidence, rien de validé
+check(/1 triées sur 4 femelles nées actives/.test(await $m('#ta-compteur')) && await mob.evaluate(() => document.querySelector('#ta-compteur i').style.width) === '25%', 'mobile : une ligne « N triées sur M » + barre, même calcul que le PC : ' + await $m('#ta-compteur'));
+const tu = await mob.evaluate(() => [...document.querySelectorAll('.tri-tuiles .tuile-charte')].map(t => [t.className.replace('tuile-charte', '').trim(), t.innerText.replace(/\s+/g, ' ').trim()]));
+check(JSON.stringify(tu) === JSON.stringify([['ambre', 'À trier 2'], ['vert', 'Gardées 2 dont 1 achetée'], ['', 'Écartées 1']]), 'trois tuiles : À trier ambre, Gardées vert (nées + achetées, « dont 1 achetée »), Écartées neutre : ' + JSON.stringify(tu));
+check(await mob.evaluate(() => [...document.querySelectorAll('.tri-onglet')].map(b => b.textContent).join('|')) === 'À trier|Gardées|Écartées', 'onglets segmentés');
+check(await mob.evaluate(() => document.querySelectorAll('table').length === 0 && document.querySelectorAll('.carte-liste').length === 2), 'cartes (jamais de tableau) : 2 agnelles à trier');
+const c1 = await mob.evaluate(() => document.querySelector('.carte-liste').textContent.replace(/\s+/g, ' ').trim());
+check(/n°60001/.test(c1) && /À trier/.test(c1) && /Née le 14-01-2026 · Triple · mère n°80133 IA/.test(c1) && /Garder/.test(c1) && /Écarter/.test(c1), 'carte À trier : n°, pastille, « Née le … · Triple · mère n°… » + code d\'origine IA, Garder / Écarter : ' + c1);
+// toucher une carte : sélection + carte Généalogie (mère, classe, lactation N-1), rien de validé
+await mob.click('#tri-carte-' + await mob.evaluate(() => cleanEid(E(6, 1))) + ' .carte-liste-l1');
+const gen = await $m('#tri-genealogie');
+check(/Généalogie/.test(gen) && /Mère n°80133 · 8 ans/.test(gen) && /Voir la fiche/.test(gen) && /Classe 1 · Lactation 2026 452,0 L/.test(gen) && !/Rang de lactation/.test(gen), 'toucher une carte : Généalogie avec classe et lactation N-1, pas de rang sans cahier SIEOL : ' + gen);
+check(await mob.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'la sélection par toucher ne valide rien');
+await mob.click('#tri-carte-' + await mob.evaluate(() => cleanEid(E(6, 4))) + ' .carte-liste-l1');
+check(/Classe - · Lactation 2026 -/.test(await $m('#tri-genealogie')) && await mob.evaluate(() => document.querySelectorAll('.carte-liste.sel').length) === 1, 'une seule sélection à la fois ; « - » sans donnée');
+// bip / n° tapé : l'agnelle trouvée est SÉLECTIONNÉE (cadre vert, « Trouvée »), jamais validée
+await ouvrirM();
 await scanner(await mob.evaluate(() => E(6, 4)));
-check(await mob.evaluate(() => document.querySelectorAll('[id^="candidate-"]').length) === 1 && await mob.evaluate(() => document.querySelector('[id^="candidate-"]').classList.contains('scan-highlight')) && /n°60004/.test(await $m('[id^="candidate-"]')), 'le bip ouvre directement la carte de n°60004, seule, mise en évidence');
-check(await mob.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'rien n\'est validé par le bip');
-check(/1 triées sur 4/.test(await $m('#ta-compteur')), 'compteur inchangé');
-// Garder : retour au champ de scan vide et focalisé, toast, compteur à jour, bouton Annuler
+check(await mob.evaluate(() => document.querySelectorAll('.carte-liste').length) === 1 && await mob.evaluate(() => document.querySelector('.carte-liste').classList.contains('sel')) && /n°60004/.test(await $m('.carte-liste')) && /Trouvée/.test(await $m('.carte-liste')) && /Mère n°90059/.test(await $m('#tri-genealogie')), 'le scan sélectionne n°60004 : cadre vert, « Trouvée », Généalogie');
+check(await mob.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0) && /1 triées sur 4/.test(await $m('#ta-compteur')), 'rien n\'est validé par le scan, compteur inchangé');
+await mob.click('#btn-fermer-scan'); check(await mob.evaluate(() => document.querySelectorAll('.carte-liste').length) === 2, 'Voir toute la liste');
+await scanner(await mob.evaluate(() => E(6, 4)));
+// Garder : bandeau sombre « n°… gardée · Annuler », sans confirmation, compteur à jour
 confirms.length = 0;
 await mob.click('.btn-garder');
-check(confirms.length === 0 && /n°60004 gardée/.test(await $m('#tri-toast')) && /2 triées sur 4/.test(await $m('#ta-compteur')) && await mob.evaluate(() => document.getElementById('scan-tri').value) === '', 'après Garder : toast « n°60004 gardée », compteur 2 sur 4, champ de scan vide, aucune confirmation');
-check(await mob.evaluate(() => document.activeElement && document.activeElement.id) === 'scan-tri', 'le champ de scan est focalisé (prêt pour la suivante)');
-check(await mob.evaluate(() => document.querySelectorAll('[id^="candidate-"]').length) === 1, 'la liste des agnelles à trier est de nouveau affichée (1 restante)');
+check(confirms.length === 0 && /n°60004 gardée/.test(await $m('#tri-toast')) && /Annuler/.test(await $m('#tri-toast')) && /2 triées sur 4/.test(await $m('#ta-compteur')) && await mob.evaluate(() => document.getElementById('scan-tri').value) === '', 'Garder : bandeau « n°60004 gardée · Annuler », compteur 2 sur 4, champ vide, aucune confirmation');
+check(await mob.evaluate(() => document.activeElement && document.activeElement.id) === 'scan-tri', 'le champ est focalisé (prêt pour la suivante)');
+check(await mob.evaluate(() => document.querySelectorAll('.carte-liste').length) === 1, 'la liste des agnelles à trier est de nouveau affichée (1 restante)');
 await mob.click('#tri-toast-annuler');
-check(await mob.evaluate(() => !DB.agnelles.some(a => a.eid === E(6, 4)) && !findLambByEid(E(6, 4)).triStatut) && /1 triées sur 4/.test(await $m('#ta-compteur')), 'toast « Annuler » : tri annulé, compteur 1 sur 4');
-// Écarter : pas de confirmation, toast avec Annuler
+check(await mob.evaluate(() => !DB.agnelles.some(a => a.eid === E(6, 4)) && !findLambByEid(E(6, 4)).triStatut) && /1 triées sur 4/.test(await $m('#ta-compteur')), 'Annuler : tri annulé, compteur 1 sur 4');
+// Écarter : sans confirmation + Annuler
 await scanner(await mob.evaluate(() => E(6, 1))); await mob.click('.btn-ecarter');
-check(confirms.length === 0 && /n°60001 écartée/.test(await $m('#tri-toast')) && await mob.evaluate(() => findLambByEid(E(6, 1)).triStatut) === 'écartée', 'Écarter : sans confirmation, toast avec Annuler');
+check(confirms.length === 0 && /n°60001 écartée/.test(await $m('#tri-toast')) && await mob.evaluate(() => findLambByEid(E(6, 1)).triStatut) === 'écartée', 'Écarter : sans confirmation, bandeau avec Annuler');
 await mob.click('#tri-toast-annuler'); check(await mob.evaluate(() => findLambByEid(E(6, 1)).triStatut) === undefined, 'Annuler l\'écartement');
-// agnelle déjà triée : carte avec son état + Reconsidérer, compteur inchangé
+// agnelle déjà gardée : onglet Gardées, « Trouvée », Reconsidérer sans confirmation (fiche sans saisie) + Annuler
 await scanner(await mob.evaluate(() => E(6, 2)));
-check(/Gardée le 01-09-2026/.test(await $m('#scan-carte')) && await mob.evaluate(() => !!document.querySelector('#scan-carte .btn-annuler-tri')) && /1 triées sur 4/.test(await $m('#ta-compteur')), 'agnelle déjà gardée scannée : « Gardée le 01-09-2026 » + Reconsidérer, compteur inchangé');
-reponse = false; confirms.length = 0; await mob.click('#scan-carte .btn-annuler-tri');
-check(confirms.length === 1 && await mob.evaluate(() => DB.agnelles.some(a => a.id === 'ag2')), 'Reconsidérer une gardée : confirmation, refus = rien');
+check(/Gardées/.test(await $m('.tri-onglet.active')) && /Gardée/.test(await $m('.carte-liste')) && /Trouvée/.test(await $m('.carte-liste')) && await mob.evaluate(() => !!document.querySelector('.carte-liste .btn-reconsiderer')) && /1 triées sur 4/.test(await $m('#ta-compteur')), 'gardée scannée : onglet Gardées, « Trouvée », Reconsidérer, compteur inchangé');
+confirms.length = 0; await mob.click('.btn-reconsiderer');
+check(confirms.length === 0 && /n°60002 remise à trier/.test(await $m('#tri-toast')) && await mob.evaluate(() => !DB.agnelles.some(a => a.id === 'ag2')), 'Reconsidérer une gardée sans saisie : UN geste, aucune confirmation, bandeau');
+await mob.click('#tri-toast-annuler');
+check(await mob.evaluate(() => DB.agnelles.some(a => a.id === 'ag2') && findLambByEid(E(6, 2)).triStatut === 'gardée'), 'Annuler : la gardée est restaurée');
+// fiche avec saisies : la confirmation reste ; refus = rien
+await mob.evaluate(() => { DB.agnelles.find(a => a.id === 'ag2').sanitaire.push({ date: '2026-09-15', produit: 'Vitamine' }); });
+await ouvrirM('gardees'); reponse = false; confirms.length = 0; await mob.click('.btn-reconsiderer');
+check(confirms.length === 1 && await mob.evaluate(() => DB.agnelles.some(a => a.id === 'ag2')), 'Reconsidérer une gardée dont la fiche porte des saisies : confirmation, refus = rien');
 reponse = true;
-await mob.click('#btn-fermer-scan'); check(await mob.evaluate(() => !document.getElementById('scan-carte')), 'Retour au scan sans rien valider');
-await scanner(await mob.evaluate(() => E(6, 5)));
-check(/Écartée/.test(await $m('#scan-carte')) && /1 triées sur 4/.test(await $m('#ta-compteur')), 'agnelle écartée scannée : carte « Écartée »');
-await mob.click('.btn-reconsiderer-scan');
-check(await mob.evaluate(() => findLambByEid(E(6, 5)).triStatut) === undefined && /remise à trier/.test(await $m('#tri-toast')), 'Reconsidérer une écartée : remise à trier, retour au scan');
+// écartée : Reconsidérer + Annuler
+await ouvrirM('ecartees'); await mob.click('.btn-reconsiderer');
+check(await mob.evaluate(() => findLambByEid(E(6, 5)).triStatut) === undefined && /remise à trier/.test(await $m('#tri-toast')), 'Reconsidérer une écartée : remise à trier, bandeau');
+await mob.click('#tri-toast-annuler'); check(await mob.evaluate(() => findLambByEid(E(6, 5)).triStatut) === 'écartée', 'Annuler : l\'écartée l\'est de nouveau');
+// achetée : carte Achetée sans Reconsidérer, ouvre la fiche ; Ajouter une agnelle conservé
 await scanner(await mob.evaluate(() => E(5, 42)));
-check(/Achetée · entrée le 10-09-2026/.test(await $m('#scan-carte')) && await mob.evaluate(() => !document.querySelector('#scan-carte .btn-annuler-tri')), 'achetée scannée : carte « Achetée », pas de Reconsidérer');
-await mob.click('#btn-fermer-scan');
+check(/Achetée/.test(await $m('.carte-liste')) && /Entrée le 10-09-2026/.test(await $m('.carte-liste')) && await mob.evaluate(() => !document.querySelector('.carte-liste .btn-reconsiderer')), 'achetée scannée : carte « Achetée », pas de Reconsidérer');
+await ouvrirM('gardees');
+check(!!await mob.evaluate(() => document.getElementById('btn-add-agnelle')) && /Ajouter une agnelle/.test(await $m('#btn-add-agnelle')), '« Ajouter une agnelle » conservé sous la liste des gardées');
+await mob.click('#tri-carte-' + await mob.evaluate(() => cleanEid(E(5, 42))) + ' .carte-liste-l1');
+check(await mob.evaluate(() => currentView) === 'agnelle-detail', 'une gardée / achetée s\'ouvre sur sa fiche (Modifier, Vendre, Supprimer y sont)');
+await ouvrirM();
 await scanner('999999999999999');
 check(/Aucune agnelle correspondante/.test(await $m('#scan-err')), 'EID inconnu : message');
-// le toast disparaît seul (≈ 6 s)
-await ouvrirM(); await scanner(await mob.evaluate(() => E(6, 4))); await mob.click('.btn-ecarter');
-check(!!await mob.evaluate(() => document.getElementById('tri-toast')), 'toast affiché');
+// le bandeau disparaît seul (≈ 6 s)
+await ouvrirM(); await mob.click('.btn-ecarter >> nth=0');
+check(!!await mob.evaluate(() => document.getElementById('tri-toast')), 'bandeau affiché');
 await mob.waitForTimeout(6400);
-check(await mob.evaluate(() => !document.getElementById('tri-toast')), 'le toast disparaît après quelques secondes (l\'action reste réversible par « Reconsidérer »)');
-console.log('OK 3 mobile : compteur, carte enrichie (classe, lactation, « - »), le bip ouvre la carte seule sans rien valider, retour au scan focalisé + toast avec Annuler, agnelle déjà triée (état + Reconsidérer), écartée, achetée.');
+check(await mob.evaluate(() => !document.getElementById('tri-toast')), 'le bandeau disparaît après quelques secondes (l\'action reste réversible par « Reconsidérer »)');
+console.log('OK 3 mobile : tuiles, ligne de compteur, onglets, cartes, Généalogie au toucher, scan = sélection sans validation, Garder / Écarter / Reconsidérer avec bandeau Annuler, confirmation seulement avec saisies.');
 
 await browser.close();
 console.log('\nTOUS LES TESTS DU TRI DES AGNELLES SONT PASSÉS');
