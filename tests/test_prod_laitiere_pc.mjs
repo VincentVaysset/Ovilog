@@ -134,8 +134,9 @@ console.log('OK 6 exports Excel / Export PDF (Calendrier du tank) : mêmes fonct
 // ================================================================ 7. Qualité PC : bandeau positif, tuiles, Moyennes par mois, prélèvements du mois, Modifier
 await jeu();
 await ouvrir('qualite', 2025);
-eq(await $t('#pc-production .brd-title'), 'Qualité du lait', 'titre');
-eq(await page.evaluate(() => [...document.querySelectorAll('#pc-production .brd-actions button')].map(b => b.textContent)), ['Rapport de campagne (PDF)', '+ Nouveau prélèvement'], 'boutons en haut à droite');
+eq(await nb('#pc-qualite .brd-title'), 0, 'titre : plus de titre répété dans Qualité du lait (retouches Production laitière), la ligne d\'information reste');
+check(/analyses de la laiterie/.test(await $t('#pc-qualite .brd-sub')), 'ligne d\'information sous les boutons');
+eq(await page.evaluate(() => [...document.querySelectorAll('#pc-production .brd-actions button')].map(b => b.textContent)), ['Export Excel', 'Export PDF', '+ Nouveau prélèvement'], 'boutons en haut à droite (Export Excel et Export PDF ajoutés, retouches Production laitière)');
 check(!/€/.test(await $t('#app')), 'Qualité PC : aucun montant en euros');
 const q = await page.evaluate(() => { const d = qualiteCampagneData(2025); return { tb: d.total.tb, tp: d.total.tp, msu: d.total.msu, cel: d.total.cellules, sa: d.total.moisSuperA, n: d.total.moisAvecPrelevements, nbp: d.total.nbPrelevements, vol: d.total.volume }; });
 K = await kpis(); ks = Object.keys(K);
