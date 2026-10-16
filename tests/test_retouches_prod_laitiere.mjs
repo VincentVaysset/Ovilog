@@ -181,7 +181,10 @@ for (const largeur of [360, 390]) {
   check(await m.evaluate(() => !document.getElementById('app').innerText.includes('Rapport de campagne (PDF)')), largeur + ' px : plus aucun « Rapport de campagne (PDF) » à l\'écran');
   await m.evaluate(() => { plOnglet = 'qualite'; render('qualite'); saveOrShareBinaryFile = async () => { throw new Error('disque plein'); }; });
   m.__dialogues.length = 0;
-  await m.click('#btn-rapport-qualite'); await m.waitForSelector('#export-erreur');
+  await m.evaluate(() => window.scrollTo(0, document.body.scrollHeight));      // export lancé en bas de page : le message doit rester visible, pas caché sous l'en-tête
+  await m.click('#btn-rapport-qualite'); await m.waitForSelector('#export-erreur'); await m.waitForTimeout(300);
+  const vis = await m.evaluate(() => { const r = document.getElementById('export-erreur').getBoundingClientRect(), h = document.querySelector('header').getBoundingClientRect(); return { haut: Math.round(r.top), bas: Math.round(r.bottom), enteteBas: Math.round(h.bottom), fenetre: innerHeight }; });
+  check(vis.haut >= vis.enteteBas - 1 && vis.bas <= vis.fenetre, largeur + ' px : le message d\'échec est visible sous l\'en-tête, même après un export lancé en bas de page : ' + JSON.stringify(vis));
   check(m.__dialogues.length === 0 && /disque plein/.test(await m.evaluate(() => document.getElementById('export-erreur').textContent)), largeur + ' px : échec d\'export mobile : message de charte, aucun alert()');
   await m.context().close();
   console.log('OK ' + largeur + ' px mobile : Export Excel + Export PDF en Qualité, « Export PDF » en Bilan économique, icône SVG, renvoi corrigé, échec d\'export sans alert().');
