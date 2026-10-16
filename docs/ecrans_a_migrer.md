@@ -22,9 +22,8 @@ Toutes les couleurs hexadécimales hors `:root` et constantes PDF ont été remp
 ### S
 - Puces et boutons de choix `.opt-btn` des formulaires mobiles, avec le même composant que les puces PC.
 
-### M — tableaux mobiles à passer en cartes (aujourd'hui des tableaux coupés)
-- Historique des échographies, Ordonnances, Sous délai d'attente, Mise bas rapide, Mise à jour d'inventaire.
-- Carnet sanitaire et Produits et délais (les tableaux `.pc-t` s'affichent aussi sur mobile).
+### M — tableaux mobiles en cartes : terminé
+Historique des échographies, Ordonnances, Sous délai d'attente, Carnet sanitaire (« En délai d'attente » et « Derniers soins »), Produits et délais (dont les anciennes valeurs à confirmer), Inventaire (4 onglets), Lot de recherche et Soins sans bio (écran pensé pour le téléphone) passent par le composant `.carte-liste` ; Mise bas rapide et Mise à jour d'inventaire n'avaient pas de tableau. Restent des tableaux de chiffres compacts, sans défilement, issus de maquettes validées : Bilan de reproduction (par âge), Production laitière et Bilan économique (mois par mois), Déclaration. Contrôle : `test_tableaux_cartes`.
 
 ### L — refontes d'écrans mobiles
 - Chantier de tri mobile : lots, détail d'un lot de reproduction, tri des agnelles, liste en série.
@@ -34,7 +33,6 @@ Toutes les couleurs hexadécimales hors `:root` et constantes PDF ont été remp
 
 ## 3. Prochains chantiers proposés
 Terminés : écrans techniques (connexion, première configuration, lecteur), Gabarit PC, Accueil PC, PDF (couleurs en source unique, Bilan de lactation avec histogrammes) et « PDF cohérence » (nom d'exploitation, pied unique, en-têtes complets, Production laitière à la charte). Reste, dans l'ordre choisi par le propriétaire du projet :
-1. Tableaux mobiles à passer en cartes (M).
 2. Grands écrans de saisie (agnelage, saisie rapide d'échos, mise bas rapide, mouvements).
 3. Carnet sanitaire mobile complet.
 4. Journal.
