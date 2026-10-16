@@ -2390,6 +2390,45 @@ function eidDepuisNumeroOfficiel(numeroOfficiel) {
   return '2500' + c.padStart(11, '0');
 }
 
+/* ---------- Agneaux nés dans l'élevage : saisie du seul n° individuel ----------
+   À la mise bas (fiche brebis, saisie rapide mobile et PC), quand on ne peut pas bipper, l'éleveur tape seulement les 5 derniers chiffres de la boucle (ex. 71001)
+   ou le numéro national visible (ex. 162991 71001) : l'EID complet est reconstitué avec « 2500 » + indicatif de marquage de l'exploitation + n° individuel
+   (même règle que eidDepuisNumeroOfficiel). Toute autre saisie (EID bippé de 15 chiffres, saisie libre) est gardée TELLE QUELLE. Sans indicatif de marquage à
+   6 chiffres, rien n'est deviné : erreur claire (bloquante à l'enregistrement). Le chiffre d'année du n° (1er chiffre du n° individuel, lu par anneeNaissance) est
+   comparé à la date de mise bas : un écart est une ALERTE (jamais un blocage). Fonctions pures (lecture de DB.exploitation seulement). */
+function indicatifMarquageElevage() {
+  const ex = (typeof DB !== 'undefined' && DB && DB.exploitation) || {};
+  const v = String(ex.indicatifMarquage || ex.prefixeEid || '').replace(/\D/g, '');
+  return v.length === 6 ? v : null;
+}
+function resoudreEidAgneau(saisie, dateISO) {
+  const brut = cleanEid(String(saisie || ''));
+  if (!brut) return { eid: '', auto: false };
+  let eid = null;
+  if (/^\d{5}$/.test(brut)) {
+    const ind = indicatifMarquageElevage();
+    if (!ind) return { eid: brut, auto: false, erreur: "Indicatif de marquage manquant ou incomplet : renseigne ses 6 chiffres dans Paramètres › Exploitation pour que le n° soit complété seul." };
+    eid = '2500' + ind + brut;
+  } else if (/^\d{11}$/.test(brut)) {
+    eid = eidDepuisNumeroOfficiel(brut);
+  }
+  if (!eid) return { eid: brut, auto: false };
+  const res = { eid, auto: true, national: eid.slice(4, 10) + ' ' + eid.slice(10) };
+  const annee = parseInt(String(dateISO || '').slice(0, 4), 10);
+  if (annee && parseInt(eid.charAt(10), 10) !== annee % 10) res.alerte = "Le chiffre d'année du n° (" + eid.charAt(10) + ") ne correspond pas à la date de naissance (" + annee + ").";
+  return res;
+}
+// Message d'aperçu sous le champ EID d'un agneau : { texte, ton: 'normal' | 'alerte' | 'danger' } ; texte vide si le champ est vide
+function apercuEidAgneau(saisie, dateISO) {
+  const r = resoudreEidAgneau(saisie, dateISO);
+  if (!r.eid) return { texte: '', ton: 'normal', resolu: r };
+  if (r.erreur) return { texte: r.erreur, ton: 'danger', resolu: r };
+  const conflit = verifierEidUnique(r.eid);
+  if (conflit) return { texte: messageEidDejaUtilise(conflit), ton: 'danger', resolu: r };
+  if (r.auto) return { texte: "Né dans l'élevage : " + r.national + (r.alerte ? ' · ' + r.alerte : ''), ton: r.alerte ? 'alerte' : 'normal', resolu: r };
+  return { texte: "Numéro d'ordre : n°" + numeroVisuel(r.eid), ton: 'normal', resolu: r };
+}
+
 /* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, TOUS
    statuts et catégories confondus : brebis (actives, vendues ou mortes),
    béliers (actifs, vendus ou morts), agnelles actives, agneaux (bouclés,
@@ -11912,6 +11951,7 @@ function renderAddAgnelage(sheepId) {
   document.getElementById('f-date').addEventListener('change', (e) => {
     codeRepro = deduireCodeRepro(sheep, e.target.value);
     updateReproCodeButtons();
+    document.querySelectorAll('.eid-input').forEach(i => i.dispatchEvent(new Event('input')));   // l'alerte « chiffre d'année » suit la date
   });
 
   function lambCard(id) {
@@ -11930,8 +11970,8 @@ function renderAddAgnelage(sheepId) {
         <button type="button" class="opt-btn sexe-opt warn" data-id="${id}" data-val="Mort-né">Mort-né</button>
       </div>
       <div class="eid-block" data-id="${id}">
-        <label>${isDesktopMode() ? 'EID de l\'agneau' : 'EID (bip agneau)'}</label>
-        <input type="text" class="eid-input" data-id="${id}" placeholder="${isDesktopMode() ? 'Saisir l\'EID' : 'Scanner ou saisir l\'EID'}">
+        <label>${isDesktopMode() ? 'N° ou EID de l\'agneau' : 'EID (bip agneau) ou n°'}</label>
+        <input type="text" class="eid-input" data-id="${id}" inputmode="numeric" autocomplete="off" placeholder="${isDesktopMode() ? 'Saisir le n° (ex. 71001) ou l\'EID' : 'Scanner, ou saisir le n° (ex. 71001)'}">
         <div class="eid-preview" data-id="${id}" style="font-size:12px;margin-bottom:10px;"></div>
         <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
           <input type="checkbox" class="adopt-check" data-id="${id}" style="width:16px;height:16px;margin:0;">
@@ -11975,9 +12015,9 @@ function renderAddAgnelage(sheepId) {
         const v = eidInput.value.trim();
         if (v === (lambs[id].eidOriginal || '')) { eidPreview.textContent = ''; return; } // valeur inchangée (édition) : pas de re-vérification
         if (!v) { eidPreview.textContent = ''; return; }
-        const conflit = verifierEidUnique(v);
-        if (conflit) { eidPreview.textContent = messageEidDejaUtilise(conflit); eidPreview.style.color = 'var(--danger)'; }
-        else { eidPreview.textContent = "Numéro d'ordre : n°" + numeroVisuel(v); eidPreview.style.color = 'var(--text-muted)'; }
+        const ap = apercuEidAgneau(v, document.getElementById('f-date').value);   // n° à 5 ou 11 chiffres : EID complet reconstitué (voir resoudreEidAgneau)
+        eidPreview.textContent = ap.texte;
+        eidPreview.style.color = ap.ton === 'danger' ? 'var(--danger)' : ap.ton === 'alerte' ? 'var(--ch-ambre-texte)' : 'var(--text-muted)';
       });
     }
     const adoptEidInput = document.querySelector(`.adopt-eid[data-id="${id}"]`);
@@ -12051,7 +12091,7 @@ function renderAddAgnelage(sheepId) {
     const eidsSaisis = ids
       .filter(id => lambs[id].sexe !== 'Mort-né')
       .map(id => (document.querySelector(`.eid-input[data-id="${id}"]`) || {}).value)
-      .map(v => cleanEid((v || '').trim()))
+      .map(v => cleanEid(resoudreEidAgneau((v || '').trim()).eid))
       .filter(Boolean);
     const eidsEnDouble = eidsSaisis.filter((v, i) => eidsSaisis.indexOf(v) !== i);
     if (eidsEnDouble.length > 0) {
@@ -12067,7 +12107,14 @@ function renderAddAgnelage(sheepId) {
       }
       if (lambs[id].sexe !== 'Mort-né') {
         const eidInput = document.querySelector(`.eid-input[data-id="${id}"]`);
-        const eidVal = eidInput.value.trim();
+        const eidBrut = eidInput.value.trim();
+        const resolu = eidBrut === (lambs[id].eidOriginal || '') ? { eid: eidBrut } : resoudreEidAgneau(eidBrut);   // n° court : EID complet reconstitué
+        if (resolu.erreur) {
+          err.textContent = resolu.erreur + ' (agneau ' + id + ')';
+          err.classList.remove('hidden');
+          return;
+        }
+        const eidVal = resolu.eid;
         // Unicité de l'EID sur toute la base — seulement si la valeur a
         // changé depuis le chargement (voir eidOriginal) : re-vérifier une
         // valeur inchangée en édition ferait à tort remonter l'agneau
@@ -13029,7 +13076,7 @@ function construireAgnelageMiseBas(sheep, saisie) {
   const lambs = saisie.lambs || [];
   if (lambs.length === 0) return { erreur: 'Ajoute au moins un agneau.' };
   const vivants = lambs.filter(l => l.sexe && l.sexe !== 'Mort-né');
-  const eids = vivants.map(l => cleanEid((l.eid || '').trim())).filter(Boolean);
+  const eids = vivants.map(l => cleanEid(resoudreEidAgneau((l.eid || '').trim()).eid)).filter(Boolean);
   const doublon = eids.filter((v, i) => eids.indexOf(v) !== i);
   if (doublon.length > 0) return { erreur: 'Deux agneaux de cet agnelage ont le même EID (n°' + numeroVisuel(doublon[0]) + ').' };
   const out = [];
@@ -13042,7 +13089,9 @@ function construireAgnelageMiseBas(sheep, saisie) {
       out.push(mn);
       continue;
     }
-    const eidVal = (l.eid || '').trim();
+    const resolu = resoudreEidAgneau((l.eid || '').trim());   // n° à 5 ou 11 chiffres : EID complet reconstitué (indicatif de l'exploitation)
+    if (resolu.erreur) return { erreur: resolu.erreur + ' (agneau ' + n + ')' };
+    const eidVal = resolu.eid;
     const conflit = verifierEidUnique(eidVal);
     if (conflit) return { erreur: messageEidDejaUtilise(conflit) + ' (agneau ' + n + ')' };
     const lamb = { sexe: l.sexe, adopte: !!l.adopte, eid: eidVal };
@@ -13120,7 +13169,7 @@ function renderMiseBasRapide() {
   function lambRowHtml(l, i) {
     return `<tr data-i="${i}"${i % 2 ? ' class="alt"' : ''}>
       <td class="n">${i + 1}</td>
-      <td>${l.mortNe ? '<span class="info">pas de boucle</span>' : `<input type="text" class="eid-input-rapide" data-id="${i}" value="${l.eid}" placeholder="Saisir l'EID" autocomplete="off" style="margin:0;min-width:170px;"><div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;white-space:normal;"></div>`}</td>
+      <td>${l.mortNe ? '<span class="info">pas de boucle</span>' : `<input type="text" class="eid-input-rapide" data-id="${i}" value="${l.eid}" placeholder="Saisir le n° (ex. 71001) ou l'EID" inputmode="numeric" autocomplete="off" style="margin:0;min-width:170px;"><div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;white-space:normal;"></div>`}</td>
       <td><div class="tab-bar sexe-bar" style="margin:0;display:inline-flex;"><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Mâle' ? ' active' : ''}" data-id="${i}" data-val="Mâle">Mâle</button><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Femelle' ? ' active' : ''}" data-id="${i}" data-val="Femelle">Femelle</button></div></td>
       <td><input type="checkbox" class="mortne-check-rapide" data-id="${i}" aria-label="Mort-né"${l.mortNe ? ' checked' : ''}></td>
       <td>${l.mortNe ? '<span class="info">—</span>' : `<label class="adopt-cell" style="display:inline-flex;align-items:center;gap:6px;margin:0;"><input type="checkbox" class="adopt-check-rapide" data-id="${i}"${l.adopte ? ' checked' : ''}><span>Adopté</span></label><div class="adopt-field-rapide${l.adopte ? '' : ' hidden'}" data-id="${i}" style="display:${l.adopte ? 'block' : 'none'};margin-top:4px;"><input type="text" class="adopt-eid-rapide" data-id="${i}" value="${l.adoptNum}" placeholder="N° ou EID de la mère" autocomplete="off" style="margin:0;min-width:170px;"><div class="adopt-preview-rapide" data-id="${i}" style="font-size:12px;white-space:normal;"></div></div>`}</td>
@@ -13129,10 +13178,11 @@ function renderMiseBasRapide() {
   }
   function lambHtml(l, i) {
     if (pc) return lambRowHtml(l, i);
-    const eidOk = !l.mortNe && cleanEid(l.eid).length >= 11;
+    const resoluL = l.mortNe ? { eid: '' } : resoudreEidAgneau(l.eid);
+    const eidOk = !l.mortNe && !resoluL.erreur && cleanEid(resoluL.eid).length >= 11;
     return `<div class="mb-ag" data-i="${i}">
-      <div class="tete"><b>Agneau ${i + 1}</b><span class="mb-pastille${l.mortNe ? ' ambre' : eidOk ? ' vert' : ''}" data-pastille="${i}">${l.mortNe ? 'Mort-né' : eidOk ? 'EID bippé' : 'EID à saisir'}</span></div>
-      ${l.mortNe ? '' : `<input type="text" class="eid-input-rapide" data-id="${i}" value="${l.eid}" placeholder="Scanner ou saisir l'EID" inputmode="numeric" autocomplete="off"><div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;"></div>`}
+      <div class="tete"><b>Agneau ${i + 1}</b><span class="mb-pastille${l.mortNe ? ' ambre' : eidOk ? ' vert' : ''}" data-pastille="${i}">${l.mortNe ? 'Mort-né' : eidOk ? (resoluL.auto ? 'N° complété' : 'EID bippé') : 'EID à saisir'}</span></div>
+      ${l.mortNe ? '' : `<input type="text" class="eid-input-rapide" data-id="${i}" value="${l.eid}" placeholder="Scanner, ou saisir le n° (ex. 71001)" inputmode="numeric" autocomplete="off"><div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;"></div>`}
       <label class="ligne-interrupteur" style="font-weight:500;"><span>Mort-né (pas de boucle)</span><input type="checkbox" class="mortne-check-rapide interrupteur" data-id="${i}"${l.mortNe ? ' checked' : ''}></label>
       <div class="tab-bar sexe-bar"><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Mâle' ? ' active' : ''}" data-id="${i}" data-val="Mâle">Mâle</button><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Femelle' ? ' active' : ''}" data-id="${i}" data-val="Femelle">Femelle</button></div>
       ${l.mortNe ? '<div class="info">Le sexe du mort-né est facultatif.</div>' : `
@@ -13165,12 +13215,12 @@ function renderMiseBasRapide() {
         eidInput.addEventListener('input', () => {
           l.eid = eidInput.value;
           const v = eidInput.value.trim(), prev = q('.eid-preview-rapide'), pastille = zone.querySelector(`[data-pastille="${i}"]`);
-          const ok = cleanEid(v).length >= 11;
-          if (pastille) { pastille.textContent = ok ? 'EID bippé' : 'EID à saisir'; pastille.classList.toggle('vert', ok); }
+          const ap = apercuEidAgneau(v, form.date);
+          const ok = !ap.resolu.erreur && cleanEid(ap.resolu.eid).length >= 11;
+          if (pastille) { pastille.textContent = ok ? (ap.resolu.auto ? 'N° complété' : 'EID bippé') : 'EID à saisir'; pastille.classList.toggle('vert', ok); }
           if (!v) { prev.textContent = ''; return; }
-          const conflit = verifierEidUnique(v);
-          if (conflit) { prev.textContent = messageEidDejaUtilise(conflit); prev.style.color = 'var(--danger)'; }
-          else { prev.textContent = "Numéro d'ordre : n°" + numeroVisuel(v); prev.style.color = 'var(--ch-texte2)'; }
+          prev.textContent = ap.texte;
+          prev.style.color = ap.ton === 'danger' ? 'var(--danger)' : ap.ton === 'alerte' ? 'var(--ch-ambre-texte)' : 'var(--ch-texte2)';
         });
       }
       const check = q('.adopt-check-rapide');
@@ -13385,6 +13435,7 @@ function renderMiseBasRapide() {
         document.querySelectorAll('.repro-code-opt-rapide').forEach(x => { x.classList.toggle('active', x.dataset.val === form.codeRepro); x.classList.toggle('selected', x.dataset.val === form.codeRepro); });
         const chipRepro = document.getElementById('pc-repro-chip'); if (chipRepro) chipRepro.textContent = 'déduit, modifiable';
         majAlertes();
+        document.querySelectorAll('.eid-input-rapide').forEach(i => i.dispatchEvent(new Event('input')));   // l'alerte « chiffre d'année » suit la date
       });
       const btnValider = document.getElementById('btn-valider-misebas');
       btnValider.onclick = () => {
