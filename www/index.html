@@ -1195,6 +1195,7 @@
   .mb-ag .tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .mb-ag input[type=text] { margin: 0; }
   .mb-ag .tab-bar { margin: 0; }
+  .tri-origine { display: inline-block; min-width: 28px; box-sizing: border-box; text-align: center; font-size: 11px; font-weight: 600; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; background: var(--ch-onglets); color: var(--ch-texte2); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .mb-pastille { font-size: 12px; font-weight: 500; border-radius: 999px; padding: 3px 10px; white-space: nowrap; background: var(--ch-onglets); color: var(--ch-texte2); }
   .mb-pastille.vert { background: var(--ch-vert-pastel); color: var(--ch-vert-texte); }
   .mb-pastille.bleu { background: var(--ch-bleu-pastel); color: var(--ch-bleu); }
@@ -14310,15 +14311,35 @@ function libelleNaissance(n) { return n === 1 ? 'Simple' : n === 2 ? 'Double' : 
 function trierAgnellesAgeNumero(items, cle) {
   return items.slice().sort((a, b) => String(cle(a).date || '').localeCompare(String(cle(b).date || '')) || comparerAnimauxAgeNumero({ age: null, court: cle(a).court, numero: cle(a).numero }, { age: null, court: cle(b).court, numero: cle(b).numero }));
 }
+/* Origine de naissance d'une agnelle : mode de reproduction RENSEIGNÉ sur la mise bas de sa mère (agnelage.codeRepro : IA, RE, EP, MN), lu à l'affichage, jamais stocké.
+   Mère inconnue ou vendue, mise bas sans code (ou code hors IA/RE/EP/MN) : null (affiché « — »). « MN » est le code par défaut posé à la saisie quand aucun lot n'est enregistré : il s'affiche tel quel. */
+const ORIGINE_NAISSANCE_CODES = ['IA', 'RE', 'EP', 'MN'];
+function origineNaissanceAgnelle(motherEid, lamb, dateNaissance) {
+  if (!motherEid) return null;
+  const mere = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(motherEid));
+  if (!mere || mere.statut === 'vendue') return null;
+  let ag = null;
+  if (lamb) ag = (mere.agnelages || []).find(a => a && a.lambs && a.lambs.includes(lamb));
+  if (!ag && dateNaissance) ag = (mere.agnelages || []).find(a => a && a.date === dateNaissance);
+  return ag && ORIGINE_NAISSANCE_CODES.includes(ag.codeRepro) ? ag.codeRepro : null;
+}
+// Pastille d'origine : le code de 2 lettres SEUL dans une petite pastille neutre ; le libellé complet reste dans l'accessibilité (aria-label), jamais en infobulle ni en légende.
+function origineNaissancePastilleHtml(code) {
+  if (!code) return '<span class="tri-origine vide" aria-label="Origine non renseignée">—</span>';
+  return `<span class="tri-origine" role="img" aria-label="${code === 'IA' ? 'Insémination artificielle' : libelleModeRepro(code)}">${code}</span>`;
+}
 // Info « mère » d'une agnelle née sur l'exploitation (lamb = l'agneau dans sheep.agnelages[].lambs ; motherEid = la brebis qui l'a mise bas)
 function infoMereAgnelle(motherEid, lamb, dateNaissance) {
-  if (!motherEid) return { mereEid: null, mereNumero: null, mereAge: null, naissance: null, classeMere: null, lactMere: null, lactCampagne: DB.campagneDebut - 1 };
+  if (!motherEid) return { mereEid: null, mereNumero: null, mereAge: null, naissance: null, classeMere: null, lactMere: null, lactCampagne: DB.campagneDebut - 1, origineNaissance: null, rangLactation: null };
   const mere = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(motherEid)) || null;
   let nb = null;
   if (mere && lamb) { const ag = (mere.agnelages || []).find(a => a && a.lambs && a.lambs.includes(lamb)); if (ag) nb = ag.lambs.length; }
   else if (mere && dateNaissance) { const ag = (mere.agnelages || []).find(a => a && a.date === dateNaissance); if (ag) nb = ag.lambs.length; }
   const cl = lactationPrecedenteBrebis(motherEid);
-  return { mereEid: motherEid, mereNumero: numeroVisuel(motherEid), mereAge: mere ? age(motherEid) : null, naissance: nb === null ? null : libelleNaissance(nb), classeMere: cl.classe, lactMere: cl.lactation, lactCampagne: cl.campagne };
+  // Rang de lactation : seulement si le cahier SIEOL est importé pour la campagne précédente (jamais déduit ; la moyenne estimée lactMoyen n'est pas affichée)
+  const cahier = (DB.cahierControleLaitier || []).find(c => c && cleanEid(c.eid) === cleanEid(motherEid) && c.campagne === cl.campagne);
+  const rang = cahier && cahier.numLactation ? String(cahier.numLactation) : null;
+  return { mereEid: motherEid, mereNumero: numeroVisuel(motherEid), mereAge: mere ? age(motherEid) : null, naissance: nb === null ? null : libelleNaissance(nb), classeMere: cl.classe, lactMere: cl.lactation, lactCampagne: cl.campagne, origineNaissance: origineNaissanceAgnelle(motherEid, lamb, dateNaissance), rangLactation: rang };
 }
 function triAgnellesDonnees() {
   const aTrier = getCandidatesATrier().map(c => Object.assign({ eid: c.lamb.eid, numero: numeroVisuel(c.lamb.eid), court: c.lamb.numeroCourtTravailSieol || c.lamb.numeroTravailSieol || '' }, c, infoMereAgnelle(c.motherEid, c.lamb, c.date)));
