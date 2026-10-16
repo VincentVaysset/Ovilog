@@ -1,4 +1,4 @@
-/* Lot de recherche en tableau : une ligne par membre (n° 5 chiffres, n° SIEOL
+/* Lot de recherche (mobile : une carte par membre, n° en titre, case « Trouvée », n° SIEOL en ligne grise ; PC : tableau) : une ligne par membre (n° 5 chiffres, n° SIEOL
    si présent), tri par âge puis numéro, case cochée à la détection (scan par
    EID ou numéro court), décochage réversible, compteur "trouvées / total",
    "Remettre à zéro" avec confirmation, état stocké en localStorage par id de
@@ -34,10 +34,10 @@ async function preparer(avecSieol) {
 }
 const etat = () => page.evaluate(() => ({
   compteur: document.getElementById('lot-compteur').textContent,
-  ordre: [...document.querySelectorAll('.lot-ligne')].map(tr => tr.querySelector('td:nth-child(2)').textContent.trim()),
+  ordre: [...document.querySelectorAll('.lot-ligne')].map(c => c.querySelector('.carte-liste-nm').textContent.trim()),
   cochees: [...document.querySelectorAll('.lot-check')].filter(c => c.checked).map(c => c.dataset.eid),
   fond: [...document.querySelectorAll('.lot-ligne')].filter(tr => tr.style.background).map(tr => tr.dataset.eid),
-  entetes: [...document.querySelectorAll('th')].map(t => t.textContent.trim())
+  entetes: document.querySelector('.lot-ligne .carte-liste-l2') ? ['N° SIEOL'] : []   // la ligne « N° SIEOL » n'existe sur les cartes que si un membre en a un
 }));
 const scan = async (v) => {
   await page.evaluate((v) => { const el = document.getElementById('scan-lot'); el.value = v; el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true })); }, v);
@@ -104,7 +104,7 @@ console.log('OK remise à zéro : refus = rien ne change ; confirmation = 0 / 5 
 await preparer(true);
 e = await etat();
 check(e.entetes.includes('N° SIEOL'), 'colonne SIEOL attendue quand un membre a un numéro');
-const sieolCell = await page.evaluate(() => document.querySelector('.lot-ligne[data-eid="250016299910002"] td:nth-child(3)').textContent.trim());
+const sieolCell = await page.evaluate(() => document.querySelector('.lot-ligne[data-eid="250016299910002"] .carte-liste-l2').textContent.replace('N° SIEOL :', '').trim());
 check(sieolCell === '543', 'n° SIEOL affiché pour le membre concerné, obtenu ' + sieolCell);
 console.log('OK SIEOL : colonne affichée uniquement quand au moins un membre a un numéro (543 pour le n°10002).');
 

@@ -30,7 +30,9 @@ for (const bureau of [true, false]) {
     const vraiXlsx = buildXlsxWorkbook; buildXlsxWorkbook = async function (feuilles) { window.__xlsx = feuilles; return vraiXlsx(feuilles); };
     render('inventaire-actifs');
   });
-  const lignes = () => page.evaluate(() => [...document.querySelectorAll('.inventaire-actifs-row')].map(tr => [...tr.children].map(td => td.textContent)));
+  // PC : cellules du tableau ; mobile : cartes (1re colonne en titre, les autres colonnes en lignes « libellé : valeur », « — » = vide)
+  const lignes = () => page.evaluate(() => [...document.querySelectorAll('.inventaire-actifs-row')].map(el => el.tagName === 'TR' ? [...el.children].map(td => td.textContent)
+    : [el.querySelector('.carte-liste-nm').textContent, ...(el.querySelector('.carte-liste-l2') ? el.querySelector('.carte-liste-l2').innerHTML.split('<br>').map(x => x.split(' : ').slice(1).join(' : ').replace(/^—$/, '')) : [])]));
   const compte = () => page.evaluate(() => document.getElementById('inv-compte').textContent);
   const box = (sel) => page.evaluate(s => { const r = document.querySelector(s).getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; }, sel);
   const frappe = async (texte) => { await page.fill('#inventaire-recherche', ''); await page.click('#inventaire-recherche'); await page.keyboard.type(texte, { delay: 15 }); };
@@ -42,8 +44,8 @@ for (const bureau of [true, false]) {
   check(await page.evaluate(() => !!document.querySelector('label[for="inventaire-recherche"]') && document.getElementById('inventaire-recherche').placeholder.length > 0), nom + ' : champ de recherche avec libellé');
   const yq = await page.evaluate(() => document.getElementById('inventaire-recherche').getBoundingClientRect().y), yt = await page.evaluate(() => document.querySelector('#inv-liste').getBoundingClientRect().y);
   check(yq < yt, nom + ' : recherche au-dessus du tableau');
-  const largTab = await page.evaluate(() => Math.round(document.querySelector('#inv-liste table').getBoundingClientRect().width)), largZone = await page.evaluate(() => Math.round(document.getElementById('inv-liste').getBoundingClientRect().width));
-  check(largTab >= largZone - 2, nom + ' : tableau sur toute la largeur de la page (' + largTab + ' px sur ' + largZone + ' px)');
+  const largTab = await page.evaluate((b) => Math.round(document.querySelector(b ? '#inv-liste table' : '#inv-cartes').getBoundingClientRect().width), bureau), largZone = await page.evaluate(() => Math.round(document.getElementById('inv-liste').getBoundingClientRect().width));
+  check(largTab >= largZone - 2, nom + (bureau ? ' : tableau' : ' : liste de cartes') + ' sur toute la largeur de la page (' + largTab + ' px sur ' + largZone + ' px)');
   if (bureau) {
     // 3 colonnes réparties sur la largeur (pas de colonnes resserrées)
     const colsW = await page.evaluate(() => [...document.querySelectorAll('#inv-liste thead th')].map(th => Math.round(th.getBoundingClientRect().width)));
@@ -66,7 +68,7 @@ for (const bureau of [true, false]) {
     check(bq.x < bx.x && bx.x < bp.x && bp.x + bp.w >= largZone - 10, 'PC : recherche à gauche, Export Excel puis Export PDF à droite');
   } else {
     check(await page.evaluate(() => !document.getElementById('inv-tuiles')), 'mobile : pas de tuiles (inchangé)');
-    check(!(await page.evaluate(() => document.querySelector('#inv-liste table').classList.contains('inv-table'))), 'mobile : tableau d\'avant, inchangé');
+    check(await page.evaluate(() => !document.querySelector('#inv-liste table') && document.querySelectorAll('#inv-cartes .carte-liste.ouvre').length > 0), 'mobile : plus de tableau, une carte par animal (elle s\'ouvre sur la fiche)');
   }
   eq(await compte(), '5 animal(aux) actif(s).', nom + ' : compte');
   eq((await lignes()).length, 5, nom + ' : 5 brebis');
