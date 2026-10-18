@@ -18,6 +18,32 @@ bash run_all.sh                  # tous les tests ; ou : bash run_all.sh test_lo
 `run_all.sh` sert `www/` sur le port 8998 si rien n'y répond (`OVILOG_URL` pour
 changer l'adresse). Code de sortie 0 = tout vert.
 
+### Prérequis Python : PyMuPDF
+
+Les tests qui **lisent un PDF** (texte, couleurs, nombre de pages) passent par PyMuPDF :
+
+```bash
+pip install pymupdf
+```
+
+Sans lui, ces tests **échouent** (`ModuleNotFoundError: No module named 'pymupdf'`), ils ne sont pas ignorés :
+`test_declaration_pdf`, `test_echographies_pc`, `test_inventaire_pdf`, `test_pdf_coherence`, `test_pdf_couleurs`,
+`test_pdf_harmonises`, `test_pdf_lactation`, `test_tri_pc_parcours`, `test_bilan_economique_reglage`
+(et tout test qui importe `lib/pdf_texte.mjs`).
+`test_controle_laitier_exports` et `test_exports_prod_laitiere` passent sans PyMuPDF mais **sautent alors la vérification du contenu du PDF** :
+les installer aussi pour que ce contrôle ait lieu.
+
+### Chromium dans un environnement sans téléchargement
+
+Si `npx playwright install chromium` n'est pas possible (cloud, réseau fermé), pointer vers un Chromium déjà présent
+(ex. `/opt/pw-browsers/chromium`) : `export CHROMIUM_PATH=/opt/pw-browsers/chromium`. Le dossier `tests/node_modules/` est ignoré par git :
+on peut y faire un lien vers une installation globale de Playwright.
+
+### Passe de fuseaux horaires
+
+Sans argument, `run_all.sh` rejoue en fin de batterie les tests sensibles aux dates en UTC puis en Europe/Paris
+(désactivable : `OVILOG_SANS_FUSEAUX=1`). Pour rejouer TOUTE la batterie dans un fuseau : `TZ=UTC bash run_all.sh`, puis `TZ=Europe/Paris bash run_all.sh`.
+
 ## Données réelles (jamais versionnées)
 
 Certains tests relisent, **en lecture seule**, un export réel de l'élevage. Ces
