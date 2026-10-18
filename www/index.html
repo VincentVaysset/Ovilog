@@ -2389,6 +2389,16 @@ function eidDepuisNumeroOfficiel(numeroOfficiel) {
   if (!c) return null;
   return '2500' + c.padStart(11, '0');
 }
+/* Import « Nouveaux animaux » : l'EID du fichier est accepté sur 11 chiffres (n° national : cheptel 6 + individuel 5) ou sur 15 chiffres (EID complet), espaces ignorés, et
+   TOUJOURS enregistré sur 15 chiffres (« 2500 » + 11 chiffres, comme eidDepuisNumeroOfficiel) : l'âge lu dans l'EID, la recherche au bip et la détection de doublon
+   dépendent de cette forme. Tout autre format (lettres, 7 ou 12 chiffres…) est invalide : rien n'est deviné. Fonction pure. */
+function normaliserEidImport(val) {
+  const brut = String(val === undefined || val === null ? '' : val).replace(/\s+/g, '');
+  if (!brut) return { eid: '', valide: true, vide: true };
+  if (/^\d{11}$/.test(brut)) return { eid: eidDepuisNumeroOfficiel(brut), valide: true, depuis: 11 };
+  if (/^\d{15}$/.test(brut)) return { eid: brut, valide: true, depuis: 15 };
+  return { eid: brut, valide: false };
+}
 
 /* ---------- Agneaux nés dans l'élevage : saisie du seul n° individuel ----------
    À la mise bas (fiche brebis, saisie rapide mobile et PC), quand on ne peut pas bipper, l'éleveur tape seulement les 5 derniers chiffres de la boucle (ex. 71001)
@@ -25363,7 +25373,12 @@ function classerLigneNouvelAnimal(row, categorie) {
     longVal: get(cols.long), courtVal: get(cols.court), numeroLibreVal: get(cols.numeroLibre)
   };
   const toutVide = Object.keys(champs).every(k => k === 'categorie' || !champs[k]);
-  return toutVide ? null : champs;
+  if (toutVide) return null;
+  const n = normaliserEidImport(champs.eidVal);   // 11 ou 15 chiffres -> 15 chiffres ; autre format : gardé tel quel, ligne invalide
+  champs.eidBrut = champs.eidVal;
+  champs.eidVal = n.eid;
+  champs.eidInvalide = !n.valide;
+  return champs;
 }
 // EID déjà présent parmi les 3 pools "vivants" complétables -- jamais une
 // agnelle en tant que PARENT potentiel (resoudreParentEid), mais bien une
@@ -25440,7 +25455,11 @@ function validerNouvelleLigne(champs) {
     sieol = resoudreSieolTravailNouvelAnimal(champs.longVal, champs.courtVal, champs.eidVal);
   }
   const sieolIncoherent = !!(sieol && sieol.incoherent);
-  return { origineOk, dateParsee, dateInvalide, statutMappe, statutInvalide, sieol, sieolIncoherent, valide: origineOk && !dateInvalide && !statutInvalide && !sieolIncoherent };
+  const eidInvalide = !!champs.eidInvalide;
+  // Avertissement (jamais un blocage) : un animal « né » sur l'exploitation doit porter l'indicatif de marquage de l'exploitation ; une « achetée » porte celui de son élevage d'origine
+  const indicatifElevage = indicatifMarquageElevage();
+  const indicatifDiffere = !eidInvalide && !!indicatifElevage && champs.origine.toLowerCase() === 'née' && champs.eidVal.length === 15 && champs.eidVal.slice(4, 10) !== indicatifElevage;
+  return { origineOk, dateParsee, dateInvalide, statutMappe, statutInvalide, sieol, sieolIncoherent, eidInvalide, indicatifDiffere, indicatifElevage, valide: origineOk && !dateInvalide && !statutInvalide && !sieolIncoherent && !eidInvalide };
 }
 // Complétion d'une fiche déjà existante -- champ par champ (Père/Mère/
 // SIEOL), jamais Origine/Statut/Date (voir doc du chantier ci-dessus).
@@ -25485,6 +25504,7 @@ function parserFeuilleNouveauxAnimaux(rows, categorie) {
     const champs = classerLigneNouvelAnimal(rows[i] || [], categorie);
     if (!champs) continue;
     if (!champs.eidVal) { lignes.push({ __idx: lignes.length, ligne: i + 1, champs, type: 'ignoree' }); continue; }
+    if (champs.eidInvalide) { lignes.push({ __idx: lignes.length, ligne: i + 1, champs, type: 'nouvelle', validation: validerNouvelleLigne(champs) }); continue; }
     const doublon = resoudreDoublonNouvelAnimal(champs.eidVal);
     if (doublon) {
       const completion = calculerCompletionDoublon(champs, doublon.item);
@@ -25626,10 +25646,12 @@ function renderSectionNouveauxAnimaux(categorie, lignes) {
   const doublonsACompleter = lignes.filter(l => l.type === 'doublon' && (l.completion.pere !== 'rien' || l.completion.mere !== 'rien' || l.completion.sieol !== 'rien' || l.completion.sieolIncoherent));
   const doublonsNonCompletables = lignes.filter(l => l.type === 'doublon-non-completable');
   const ignorees = lignes.filter(l => l.type === 'ignoree');
+  const aAvertir = aCreer.filter(l => l.validation.indicatifDiffere);
   if (aCreer.length + invalides.length + doublonsACompleter.length + doublonsNonCompletables.length + ignorees.length === 0) return '';
 
   const raisonInvalide = (l) => {
     const raisons = [];
+    if (l.validation.eidInvalide) raisons.push('EID invalide ("' + l.champs.eidBrut + '", attendu 11 ou 15 chiffres)');
     if (!l.validation.origineOk) raisons.push('Origine invalide ("' + l.champs.origine + '", attendu "née" ou "achetée")');
     if (l.validation.dateInvalide) raisons.push('Date invalide ("' + l.champs.dateVal + '")');
     if (l.validation.statutInvalide) raisons.push('Statut invalide ("' + l.champs.statutVal + '")');
@@ -25673,10 +25695,16 @@ function renderSectionNouveauxAnimaux(categorie, lignes) {
       ${ignorees.map(l => `<div style="font-size:12.5px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — ${descriptionChampsNouvelAnimal(l.champs)}</div>`).join('')}
     </div>
     ` : ''}
+    ${aAvertir.length > 0 ? `
+    <div class="card" id="import-avertissement-indicatif" style="margin-top:10px;background:var(--ch-ambre-pastel);color:var(--ch-ambre-texte);">
+      <div style="font-size:13.5px;font-weight:600;margin-bottom:4px;">${label} — Indicatif différent de l'exploitation (${aAvertir.length})</div>
+      <div style="font-size:12.5px;">Animaux « nés » dont l'EID ne porte pas l'indicatif de marquage ${aAvertir[0].validation.indicatifElevage}. Ils seront créés quand même : vérifie la colonne Origine (« achetée » si l'animal vient d'un autre élevage). Lignes : ${aAvertir.map(l => l.ligne).join(', ')}.</div>
+    </div>
+    ` : ''}
     ${aCreer.length > 0 ? `
     <div class="card" style="margin-top:10px;">
       <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">${label} — Seront créées (${aCreer.length})</div>
-      ${aCreer.map(l => `<div style="font-size:12.5px;padding:4px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${l.ligne} — EID ${l.champs.eidVal}</span><span style="color:var(--text-muted);">${descriptionChampsNouvelAnimal(l.champs)}</span></div>`).join('')}
+      ${aCreer.map(l => `<div style="font-size:12.5px;padding:4px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${l.ligne} — EID ${l.champs.eidVal}${l.validation.indicatifDiffere ? ' <b style="color:var(--ch-ambre-texte);">indicatif ≠ exploitation</b>' : ''}</span><span style="color:var(--text-muted);">${descriptionChampsNouvelAnimal(l.champs)}</span></div>`).join('')}
     </div>
     ` : ''}
   `;
