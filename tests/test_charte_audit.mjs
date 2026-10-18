@@ -302,5 +302,45 @@ for (const page of [mob, pc]) {
 }
 console.log('J OK');
 
+// ---------------------------------------------------------------- H. Mobile : tout bouton .btn fait au moins 44 px ; « + » / « Ajouter » à la hauteur de son champ (44-48 px), plus étiré à 57 px ; PC inchangé
+{
+  const ECRANS_H = [["currentSheepId = 'B1'; render('detail')"], ["render('sanitaire')"], ["render('produits-delais')"], ["editContext = null; render('add-ordonnance')"], ["currentLotId = 'L1'; render('lot-repro-detail')"], ["render('controle-laitier')"], ["render('journal')"],
+    ["parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres')"], ["parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres')"], ["parametresTab = 'listes'; parametresRubrique = 'listes'; render('parametres')"], ["parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres')"], ["render('gerer-produits')"],
+    ["currentSheepId = 'B1'; render('add-echo')"], ["currentSheepId = 'B1'; render('add-note')"]];
+  let n = 0;
+  for (const [code] of ECRANS_H) {
+    await ecran(mob, code);
+    const L = await mob.evaluate(() => [...document.querySelectorAll('#app button.btn')].filter(b => b.offsetParent !== null).map(b => ({ t: b.textContent.trim().slice(0, 30), h: Math.round(b.getBoundingClientRect().height * 10) / 10 })));
+    const bas = L.filter(b => b.h < 43.9);
+    check(bas.length === 0, 'H. ' + code + ' (mobile) : boutons .btn sous 44 px : ' + JSON.stringify(bas));
+    n += L.length;
+    const plus = await mob.evaluate(() => [...document.querySelectorAll('#app .row > input + button.btn')].filter(b => b.offsetParent !== null).map(b => { const r = b.getBoundingClientRect(), i = b.previousElementSibling.getBoundingClientRect(); return { t: b.textContent.trim(), h: Math.round(r.height), haut: Math.round(r.top - i.top), hChamp: Math.round(i.height) }; }));
+    for (const b of plus) check(b.h >= 44 && b.h <= 48 && b.haut === 0 && b.h === b.hChamp, 'H. ' + code + ' (mobile) : « ' + b.t + ' » à la hauteur de son champ, 44-48 px : ' + JSON.stringify(b));
+  }
+  check(n > 40, 'H. assez de boutons mesurés (' + n + ')');
+  // boutons de ligne relevés à 44 px : pilule, 16 px de marge latérale, texte inchangé, carte qui grandit de 20 px au plus, rien qui déborde
+  const SEL_LIGNE = '.btn-edit-produit, .btn-del-produit, .btn-retirer-lot, .btn-del-lot, #btn-modifier-numeros-travail-sieol, #btn-modifier-numeros-travail-sieol-ag, #btn-modifier-numero-travail-sieol-belier';
+  let nl = 0;
+  for (const code of ["render('gerer-produits')", "currentLotId = 'L1'; render('lot-repro-detail')", "render('lots')", "currentSheepId = 'B1'; render('detail')", "currentBelierId = 'bel1'; render('belier-detail')", "currentAgnelleId = 'ag1'; render('agnelle-detail')"]) {
+    await ecran(mob, code);
+    const L = await mob.evaluate(SEL => [...document.querySelectorAll(SEL)].filter(b => b.offsetParent).map(b => { const s = getComputedStyle(b), r = b.getBoundingClientRect(), c = (b.closest('.card') || b.parentElement).getBoundingClientRect();
+      return { t: b.textContent.trim(), h: Math.round(r.height), rayon: parseFloat(s.borderTopLeftRadius), pad: [s.paddingLeft, s.paddingRight], fs: s.fontSize, deborde: r.right > c.right + 1 || r.right > innerWidth || b.scrollWidth > b.clientWidth + 1 }; }), SEL_LIGNE);
+    for (const b of L) {
+      check(b.h >= 44 && b.rayon >= b.h / 2 && b.pad.join() === '16px,16px' && !b.deborde, 'H. ' + code + ' (mobile) : « ' + b.t + ' » en pilule de 44 px, 16 px de marge, sans débordement : ' + JSON.stringify(b));
+      check(['12px', '13px'].includes(b.fs), 'H. ' + code + ' : texte de « ' + b.t + ' » inchangé (' + b.fs + ')');
+      nl++;
+    }
+  }
+  check(nl >= 10, 'H. boutons de ligne vérifiés (' + nl + ')');
+  await ecran(pc, "render('gerer-produits')");
+  eq(await pc.evaluate(() => getComputedStyle(document.querySelector('.btn-edit-produit')).paddingLeft), '10px', 'H. PC : boutons de ligne inchangés');
+  await ecran(mob, "currentSheepId = 'B1'; render('add-echo')");
+  check(await mob.evaluate(() => !!document.querySelector('#add-special') && Math.round(document.querySelector('#add-special').getBoundingClientRect().height) <= 48), 'H. « + » de l\'échographie ramené à 48 px au plus');
+  // PC : règle desktop inchangée (44 px, 32 px dans un tableau)
+  const P = await pc.evaluate(() => { const app = document.getElementById('app'), b = document.createElement('button'); b.className = 'btn btn-secondary'; b.textContent = 'x'; app.appendChild(b); const t = document.createElement('table'); t.innerHTML = '<tr><td><button class="btn btn-secondary">x</button></td></tr>'; app.appendChild(t); const r = [getComputedStyle(b).minHeight, getComputedStyle(t.querySelector('button')).minHeight]; b.remove(); t.remove(); return r; });
+  eq(P, ['44px', '32px'], 'H. PC : hauteurs minimales des boutons inchangées');
+}
+console.log('H OK');
+
 await browser.close();
 console.log('OK');
