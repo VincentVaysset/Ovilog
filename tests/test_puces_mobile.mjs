@@ -90,7 +90,7 @@ console.log(total + ' puces vérifiées sur ' + ECRANS.length + ' écrans à 360
     return out;
   });
   eq(R.general, { rayon: '18px', bord: '2px rgb(230, 221, 201)', pad: '12px 12px', fs: '14px', sel: [PASTEL, VERT, VERT_TEXTE].join('|') }, 'PC : .opt-btn général inchangé');
-  eq(R['general-warn'].sel, 'rgb(251, 238, 215)|rgb(226, 165, 48)|rgb(138, 84, 19)', 'PC : variante warn inchangée (ambre)');
+  eq(R['general-warn'].sel, 'rgb(251, 238, 215)|rgb(181, 112, 28)|rgb(138, 84, 19)', 'PC : variante warn en ambre de la charte (audit charte J)');
   eq([R.seg2.rayon, R.seg2.bord, R.seg2.pad, R.seg2.fs], ['999px', '1px rgb(217, 207, 184)', '8px 6px', '12.5px'], 'PC : .pc-seg2 inchangé');
   eq(R['seg2-coral'].sel, 'rgb(227, 243, 230)|rgb(227, 243, 230)|rgb(36, 97, 58)', 'PC : .pc-seg2 coral sélectionné en vert pastel (audit charte F, jamais de rouge)');
   eq([R.onglets.rayon, R.onglets.bord, R.onglets.pad], ['999px', '0px rgb(94, 91, 71)', '9px 10px'], 'PC : .pc-onglets inchangé');

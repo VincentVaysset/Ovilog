@@ -285,5 +285,22 @@ for (const [page, code] of [[pc, "render('sanitaire')"], [mob, "render('sanitair
 }
 console.log('T OK');
 
+// ---------------------------------------------------------------- J. Ambre de la charte (--warning, --accent) ; .chip et .cl-pill sélectionnées en vert pastel, bordure verte, texte vert foncé (mobile et PC)
+for (const page of [mob, pc]) {
+  const J = await page.evaluate(() => {
+    const st = getComputedStyle(document.documentElement), app = document.getElementById('app'), out = { warning: st.getPropertyValue('--warning').trim(), accent: st.getPropertyValue('--accent').trim() };
+    for (const cls of ['chip selected', 'cl-pill selected']) { const b = document.createElement('button'); b.className = cls; b.textContent = 'x'; app.appendChild(b); const s = getComputedStyle(b); out[cls] = [s.backgroundColor, s.borderTopColor, s.color].join('|'); b.remove(); }
+    const t = document.createElement('div'); t.style.color = 'var(--warning)'; app.appendChild(t); out.warningRgb = getComputedStyle(t).color; t.remove();
+    return out;
+  });
+  eq(J.warningRgb, 'rgb(181, 112, 28)', 'J. --warning = ambre de la charte');
+  check(J.warning === 'var(--ch-ambre)' || J.warning === '#b5701c', 'J. --warning lit --ch-ambre : ' + J.warning);
+  check(J.accent === 'var(--ch-ambre)' || J.accent === '#b5701c', 'J. --accent lit --ch-ambre : ' + J.accent);
+  const VP = 'rgb(227, 243, 230)|rgb(53, 127, 75)|rgb(36, 97, 58)';
+  eq(J['chip selected'], VP, 'J. .chip sélectionnée en vert pastel');
+  eq(J['cl-pill selected'], VP, 'J. .cl-pill sélectionnée en vert pastel');
+}
+console.log('J OK');
+
 await browser.close();
 console.log('OK');
