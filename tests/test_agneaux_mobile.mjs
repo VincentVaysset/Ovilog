@@ -61,7 +61,7 @@ eq(c1.sexes, ['♂', '♀'], 'sexe');
 eq(c1.statut, ['reg-pastille ambre|En attente', 'reg-pastille ambre|En attente'], 'pastille de statut');
 eq(c1.nee, ['Né le 25/09 · mère n°08133', 'Né le 25/09 · mère n°08133'], 'Né le … · mère n°…');
 eq(c1.sortie.concat(c1.annuler), [false, false, false, false], 'pas de ligne de sortie ni d\'annulation en attente');
-check(c1.v.txt === 'Vendu' && c1.mo.txt === 'Mort' && Math.abs(c1.v.y - c1.mo.y) <= 1 && c1.v.x < c1.mo.x && c1.v.bg === 'rgb(31, 90, 138)' && c1.mo.bg === 'rgb(163, 58, 49)', 'deux pilules côte à côte : Vendu bleu, Mort rouge : ' + JSON.stringify([c1.v, c1.mo]));
+check(c1.v.txt === 'Vendu' && c1.mo.txt === 'Mort' && Math.abs(c1.v.y - c1.mo.y) <= 1 && c1.v.x < c1.mo.x && c1.v.bg === 'rgb(53, 127, 75)' && c1.mo.bg === 'rgb(255, 255, 255)', 'deux pilules côte à côte : Vendu vert plein, Mort en secondaire (audit charte C : jamais de rouge plein) : ' + JSON.stringify([c1.v, c1.mo]));
 eq(c1.gros, 0, 'plus de gros boutons empilés (Voir la fiche, Voir la fiche de la mère, mère adoptive)');
 check(!c1.debord, 'aucun débordement horizontal à 390 px');
 console.log('OK 1 segmenté, cartes, pilules Vendu / Mort.');

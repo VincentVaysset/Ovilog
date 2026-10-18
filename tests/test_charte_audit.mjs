@@ -47,5 +47,34 @@ console.log('A OK');
 }
 console.log('B OK');
 
+// ---------------------------------------------------------------- C. Boutons principaux toujours verts (plus de fond rouge, ambre, bleu ou marron en dur)
+{
+  const VERT = 'rgb(53, 127, 75)', BLANC = 'rgb(255, 255, 255)', ROUGE = 'rgb(163, 58, 49)';
+  const fonds = (page) => page.evaluate(() => [...document.querySelectorAll('#app .btn-primary, .modal-overlay .btn-primary, .sheet-overlay .btn-primary')].filter(b => b.offsetParent).map(b => b.textContent.trim().slice(0, 30) + '|' + getComputedStyle(b).backgroundColor));
+  await ecran(mob, "render('detail')");
+  const vus = [];
+  for (let i = 0; i < 8; i++) { await mob.evaluate(k => { const t = document.querySelectorAll('.fiche-tab-btn')[k]; if (t) t.click(); }, i); await mob.waitForTimeout(80); vus.push(...await fonds(mob)); }
+  check(vus.some(x => /Carnet sanitaire/.test(x)) && vus.some(x => /\+ Mouvement/.test(x)) && vus.some(x => /\+ Note/.test(x)), 'C. fiche brebis : boutons d\'ajout trouvés : ' + JSON.stringify(vus));
+  check(vus.every(x => x.endsWith(VERT)), 'C. fiche brebis (mobile) : tous les boutons principaux verts : ' + JSON.stringify(vus));
+  await ecran(mob, "render('add-note')");
+  check((await fonds(mob)).every(x => x.endsWith(VERT)), 'C. « Enregistrer la note » vert');
+  await ecran(mob, "render('agneaux')");
+  const ag = await mob.evaluate(() => ['.btn-agneau-vendu', '.btn-agneau-mort'].map(s => { const b = document.querySelector(s), c = getComputedStyle(b); return c.backgroundColor + '|' + c.color; }));
+  eq(ag, [VERT + '|' + BLANC, BLANC + '|rgb(43, 38, 28)'], 'C. Agneaux (mobile) : « Vendu » vert plein, « Mort » secondaire');
+  for (const page of [mob, pc]) {
+    await ecran(page, "render('agnelles'); showVendreAgnelleModal(DB.agnelles[1], function () {})");
+    check((await fonds(page)).some(x => /Valider la vente/.test(x) && x.endsWith(VERT)), 'C. « Valider la vente » vert');
+    await ecran(page, "render('confirmation-nouvelle-campagne'); document.getElementById('btn-confirmer-nouvelle-campagne').disabled = false");
+    check((await fonds(page)).some(x => /Valider le changement/.test(x) && x.endsWith(VERT)), 'C. « Valider le changement de campagne » vert');
+  }
+  await ecran(mob, "render('lots'); ouvrirModalRetraitLot(DB.lots[0], DB.lots[0].membres[0], function () {})");
+  const r = await mob.evaluate(() => { const c = getComputedStyle(document.getElementById('retrait-confirm')); return [c.backgroundColor, c.borderTopColor, c.color]; });
+  eq(r, [BLANC, ROUGE, ROUGE], 'C. « Retirer » (retrait d\'un lot) : secondaire rouge (contour et texte), jamais rouge plein');
+  await ecran(pc, "lotsPcEtat = null; render('lots'); document.querySelector('#lt-type .opt-btn[data-val=\"reforme\"]').click()");
+  check(await pc.evaluate(() => getComputedStyle(document.getElementById('lt-creer')).backgroundColor) === VERT, 'C. Chantier de tri (PC) : « Créer le lot » de réforme vert');
+  check(!/background:var\(--(danger|coral-fg|ch-ambre|accent|blue-solid)\)/.test(await pc.evaluate(() => document.documentElement.outerHTML.match(/<button[^>]*btn-primary[^>]*>/g).join(''))), 'C. aucun bouton principal à fond coloré en dur');
+}
+console.log('C OK');
+
 await browser.close();
 console.log('OK');
