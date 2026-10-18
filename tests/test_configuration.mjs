@@ -103,8 +103,10 @@ for (const pc of [false, true]) {
   // ---------------- Terminer : enregistrement
   const avant = await lire(page, () => ({ saves: window.__saves, nom: DB.exploitation.nom }));
   eq(avant.nom, '', nom + ' : exploitation encore vide avant « Terminer »');
+  if (pc) eq(await lire(page, () => ({ menu: getComputedStyle(document.getElementById('nav-drawer-overlay')).display !== 'none', centre: (() => { const r = document.getElementById('app').getBoundingClientRect(); return Math.abs(r.left - (innerWidth - r.right)) <= 2; })() })), { menu: false, centre: true }, nom + ' : première configuration sans menu latéral, contenu centré (audit charte U)');
   await page.click('#btn-premconf-suivant');
   await page.waitForFunction(() => currentView === 'home');
+  if (pc) eq((await lire(page, () => ({ menu: getComputedStyle(document.getElementById('nav-drawer-overlay')).display !== 'none', centre: (() => { const r = document.getElementById('app').getBoundingClientRect(); return Math.abs(r.left - (innerWidth - r.right)) <= 2; })() }))).menu, true, nom + ' : le menu latéral revient sur l\'accueil (audit charte U)');
   const f = await lire(page, () => ({ ex: DB.exploitation, debut: DB.campagneDebut, dd: DB.campagneDateDebut, df: DB.campagneDateFin, label: campagneLabel(DB.campagneDebut), ref: [campagneDebutISO(DB.campagneDebut), campagneFinISO(DB.campagneDebut), formatISOLocal(campagneDateFinReelle())], suiv: [campagneDebutISO(DB.campagneDebut + 1), campagneFinISO(DB.campagneDebut + 1)], necessaire: premiereConfigurationCampagneNecessaire(), typeSuivi: DB.exploitation.typeSuivi, saves: window.__saves }));
   eq([f.ex.nom, f.ex.numeroCheptel, f.ex.indicatifMarquage, f.ex.adresse, f.ex.telephone], ['GAEC de la Combe', '81 123 456', 'FR 81 123', 'La Combe, 81000 Albi', '06 12 34 56 78'], nom + ' : exploitation enregistrée');
   eq([f.ex.campagneMoisDebut, f.ex.campagneJourDebut, f.debut, f.dd, f.df, f.label], [10, 1, 2026, '2026-10-01', '2027-09-30', 2027], nom + ' : jour et mois de démarrage, année, dates saisies, nom « Campagne 2027 »');

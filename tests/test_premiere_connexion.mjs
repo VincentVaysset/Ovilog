@@ -37,6 +37,9 @@ async function creerCompteExistant(tag) {
   return { mail, d1, uid: d1.uid };
 }
 const vue = dev => dev.page.evaluate(() => currentView);
+// PC (audit charte U) : menu latéral affiché ? contenu centré dans la fenêtre ?
+const menuPc = dev => dev.page.evaluate(() => { const r = document.getElementById('app').getBoundingClientRect(); return { menu: getComputedStyle(document.getElementById('nav-drawer-overlay')).display !== 'none', centre: Math.abs(r.left - (innerWidth - r.right)) <= 2 }; });
+const sansMenu = async (dev, pc, qui) => { if (!pc) return; const m = await menuPc(dev); check(!m.menu && m.centre, qui + ' : PC sans menu latéral, contenu centré (audit charte U) : ' + JSON.stringify(m)); };
 const nbEcritures = async (uid, dev) => { const cid = await h.clientId(dev); return (await h.journal(uid)).filter(e => e.clientId === cid).length; };
 const enregistrerSauvegardes = dev => dev.page.evaluate(() => { window.__sauvegardes = []; window.exportBackupFile = async function (data, prefixe) { window.__sauvegardes.push({ prefixe, t: performance.now(), brebis: (data.brebis || []).length, acheteurs: JSON.stringify(data.acheteurs) }); }; });
 
@@ -244,6 +247,7 @@ for (const pc of [false, true]) {
   const { mail, uid } = await creerCompteExistant('rendu' + (pc ? 'pc' : 'mob'));
   const d = await h.ouvrir({ desktop: pc, reseau: { coupe: false }, contexte: { viewport: pc ? { width: 1300, height: 900 } : { width: 390, height: 844 } } });
   await h.attendre(d, () => currentView === 'auth', { label: nom + ' : écran de connexion' });
+  await sansMenu(d, pc, 'H ' + nom + ' : connexion à froid');
   const c = await d.page.evaluate(() => { const r = q => document.querySelector(q), h = q => Math.round(r(q).getBoundingClientRect().height);
     return { logo: !!r('#ecran-connexion img[alt="Ovilog"]'), marque: r('#ecran-connexion .nom').textContent, sous: r('#ecran-connexion .sous').textContent, labels: [...document.querySelectorAll('#ecran-connexion label')].map(l => l.textContent), hEmail: h('#f-auth-email'), hMdp: h('#f-auth-password'), hBtn: h('#btn-auth-submit'),
       boutons: [...document.querySelectorAll('#ecran-connexion .btn-primary')].length, mdpOublie: r('#link-forgot').textContent, afficher: r('.champ-mdp .afficher').textContent, type: r('#f-auth-password').type, vert: getComputedStyle(r('#btn-auth-submit')).backgroundColor }; });
@@ -269,6 +273,7 @@ for (const pc of [false, true]) {
   await d.page.fill('#f-auth-password', MDP);
   await d.page.click('#btn-auth-submit');
   await h.attendre(d, () => currentView === 'attente-compte', { label: 'H ' + nom + ' : écran de lecture du compte' });
+  await sansMenu(d, pc, 'H ' + nom + ' : lecture du compte');
   const avant8 = await d.page.evaluate(() => ({ logo: !!document.querySelector('#attente-compte-ecran img[alt="Ovilog"]'), txt: document.getElementById('attente-compte-ecran').innerText.replace(/\s+/g, ' '), alerte: !document.getElementById('attente-alerte').classList.contains('hidden'), actions: !document.getElementById('attente-actions').classList.contains('hidden'), roue: !!document.querySelector('.attente-roue') }));
   check(avant8.logo && avant8.roue && /Lecture de votre compte…/.test(avant8.txt) && /Rien n'est modifié tant que la lecture n'est pas terminée\./.test(avant8.txt) && !avant8.alerte && !avant8.actions, 'H ' + nom + ' : avant 8 s : logo, indicateur, message de sécurité, ni alerte ni boutons : ' + avant8.txt);
   await h.dormir(8300);
@@ -281,6 +286,7 @@ for (const pc of [false, true]) {
   await d.page.click('#btn-deconnexion-compte');
   await h.attendre(d, () => currentView === 'auth', { label: 'H ' + nom + ' : « Se déconnecter » ramène à la connexion' });
   check(await d.page.evaluate(() => !window.OvilogSync.getState().loggedIn), 'H ' + nom + ' : déconnecté');
+  await sansMenu(d, pc, 'H ' + nom + ' : retour à la connexion');
   check(await nbEcritures(uid, d) === 0, 'H ' + nom + ' : toujours aucune écriture de cet appareil');
   // bannière « Synchro en attente » : une ligne ambre sous l'en-tête, disparaît seule
   await h.reseau(d, { coupe: false });
@@ -289,6 +295,11 @@ for (const pc of [false, true]) {
   check(!ban.cache && /^Synchro en attente/.test(ban.txt) && ban.point === '" ·"' && /vos saisies sont gardées sur cet appareil/.test(ban.txt) && ban.fond === 'rgb(251, 238, 215)', 'H ' + nom + ' : bannière ambre « Synchro en attente · vos saisies sont gardées sur cet appareil » : ' + JSON.stringify(ban));
   await d.page.evaluate(() => { window.__syncEnAttente = false; window.updateHeaderSyncBadge(); });
   check(await d.page.evaluate(() => document.getElementById('sync-bandeau').hidden), 'H ' + nom + ' : la bannière disparaît seule quand la synchro reprend');
+  if (pc) {   // reconnexion : le menu latéral revient avec l'accueil
+    await d.page.fill('#f-auth-email', mail); await d.page.fill('#f-auth-password', MDP); await d.page.click('#btn-auth-submit');
+    await h.attendre(d, () => currentView === 'home', { timeout: 30000, label: 'H PC : reconnecté, accueil' });
+    const m = await menuPc(d); check(m.menu, 'H PC : le menu latéral revient à la connexion (audit charte U) : ' + JSON.stringify(m));
+  }
   console.log('OK H ' + nom + ' : connexion (logo, Afficher, ambre / rouge), lecture du compte (8 s, Connexion lente, Réessayer, Se déconnecter), bannière — aucune écriture.');
 }
 
