@@ -228,5 +228,16 @@ console.log('N OK');
 }
 console.log('O OK');
 
+// ---------------------------------------------------------------- P. Textes entiers : étiquettes du Calendrier (PC) et indication « 0 = aucune attente » (fiche produit, mobile)
+{
+  await ecran(pc, "DB.journal = [{ type: 'Autre', date: '2026-10-12', note: 'x' }]; render('journal')");
+  const e = await pc.evaluate(() => [...document.querySelectorAll('.cal-etiq')].filter(x => x.offsetParent).map(x => x.textContent.trim() + '|' + (x.scrollWidth > x.clientWidth + 1 ? 'COUPE' : 'entier')));
+  check(e.length > 0 && e.every(x => x.endsWith('|entier')), 'P. Calendrier (PC) : étiquettes entières : ' + JSON.stringify(e));
+  await ecran(mob, "render('produits-delais'); ouvrirFicheProduitModal({ categorieKey: 'antibiotiques' })");
+  const ph = await mob.evaluate(() => ['fp-viande', 'fp-lait'].map(id => { const i = document.getElementById(id), c = document.createElement('canvas').getContext('2d'), st = getComputedStyle(i, '::placeholder'); c.font = st.fontSize + ' ' + st.fontFamily; return c.measureText(i.placeholder).width <= i.clientWidth - parseFloat(getComputedStyle(i).paddingLeft) - parseFloat(getComputedStyle(i).paddingRight) + 1; }));
+  eq(ph, [true, true], 'P. fiche produit (mobile) : « 0 = aucune attente » entier');
+}
+console.log('P OK');
+
 await browser.close();
 console.log('OK');
