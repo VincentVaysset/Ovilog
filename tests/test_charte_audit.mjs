@@ -277,5 +277,13 @@ console.log('Q OK');
 }
 console.log('S OK');
 
+// ---------------------------------------------------------------- T. Astérisque « obligatoire » en vert foncé, jamais en rouge
+for (const [page, code] of [[pc, "render('sanitaire')"], [mob, "render('sanitaire')"], [mob, "render('mouvement-groupe')"]]) {
+  await ecran(page, code);
+  const c = await page.evaluate(() => [...document.querySelectorAll('.pc-req, .mn-req')].filter(e => e.offsetParent).map(e => getComputedStyle(e).color));
+  check(c.length > 0 && c.every(x => x === 'rgb(47, 110, 68)'), 'T. ' + code + ' : astérisques en vert foncé : ' + JSON.stringify([...new Set(c)]));
+}
+console.log('T OK');
+
 await browser.close();
 console.log('OK');
