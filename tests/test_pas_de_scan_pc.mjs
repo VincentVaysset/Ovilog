@@ -24,7 +24,9 @@ const ECRANS = [
   ['Mouvements d\'animaux', 'render("mouvement-groupe")'], ['Chantier de tri (lots)', 'lotsPcEtat=null;render("lots")'], ['Chantier de tri, étape 2', 'lotsPcEtat=lotsPcEtatInitial();lotsPcEtat.lotId="L1";currentLotId="L1";render("edit-lot")'],
   ['Tri des agnelles', 'render("agnelles")'], ['Contrôle de lot', 'render("controle-lot-delai")'], ['Carnet sanitaire', 'render("sanitaire")'], ['Contrôle laitier', 'render("controle-laitier")'], ['Échographies', 'render("echo-rapide")'],
   ['Inventaire', 'render("inventaire-actifs")'], ['Ajout d\'une brebis', 'render("add-sheep")'], ['Ajout d\'un bélier', 'render("add-belier")'], ['Ajout d\'une agnelle', 'editingAgnelleId=null;addAgnelleOrigin="agnelles";render("add-agnelle")'],
-  ['Ajout d\'agnelage', 'currentSheepId="B1";editContext=null;render("add-agnelage","B1")']];
+  ['Ajout d\'agnelage', 'currentSheepId="B1";editContext=null;render("add-agnelage","B1")'],
+  // audit charte D : trois écrans de saisie en série, libellés PC sans scan ni bip (le mobile garde « Scanner… »)
+  ['Mise à jour inventaire', 'DB.majInventaireSession={eids:[]};render("maj-inventaire")'], ['Créer une liste', 'render("liste-serie")'], ['Chercher en bergerie', 'currentLotId=(DB.lots[0]||{}).id;render("lot-search")']];
 for (const [nom, code] of ECRANS) {
   await pc.evaluate(code); await pc.waitForTimeout(120);
   const t = await texte(pc);

@@ -76,5 +76,18 @@ console.log('B OK');
 }
 console.log('C OK');
 
+// ---------------------------------------------------------------- D. PC : aucun libellé de scan ni de bip (Mise à jour inventaire, Créer une liste, Chercher en bergerie) ; le mobile ne change pas
+{
+  const ECR = [['Mise à jour inventaire', "DB.majInventaireSession = { eids: [] }; render('maj-inventaire')", 'Saisir une brebis'], ['Créer une liste', "render('liste-serie')", 'Saisir un animal'], ['Chercher en bergerie', "render('lot-search')", 'Saisir une brebis']];
+  for (const [nom, code, lib] of ECR) {
+    await ecran(pc, code);
+    const t = await pc.evaluate(() => document.getElementById('app').innerText + ' ' + [...document.querySelectorAll('#app input')].map(i => i.placeholder).join(' '));
+    check(!/scann|\bbip|bipé|bipage/i.test(t) && t.includes(lib) && t.includes('Saisir un n° / EID'), 'D. ' + nom + ' (PC) : « ' + lib + ' », « Saisir un n° / EID », aucun scan ni bip : ' + t.slice(0, 200));
+    await ecran(mob, code);
+    check(/Scanner/.test(await mob.evaluate(() => document.getElementById('app').innerText)), 'D. ' + nom + ' (mobile) : « Scanner… » conservé');
+  }
+}
+console.log('D OK');
+
 await browser.close();
 console.log('OK');
