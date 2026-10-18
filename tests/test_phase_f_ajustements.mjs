@@ -195,7 +195,7 @@ if (avantReconnexion.exists) throw new Error('FAIL (infra test) : "c-hors-ligne"
 // déconnexion/reconnexion sur la MÊME page -- déclenche onAuthStateChanged -> onSignedIn -> startListeners(),
 // qui attend la réception de TOUS les instantanés initiaux (collections + meta) avant de réconcilier.
 await d1.page.evaluate(async ({ email, pw }) => {
-  window.OvilogSync.logout();
+  window.OvilogSync.deconnecterSansVider();
   await new Promise(r => setTimeout(r, 200));
   await window.OvilogSync.login(email, pw);
 }, { email: testEmail, pw: testPassword });

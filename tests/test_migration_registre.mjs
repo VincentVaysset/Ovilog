@@ -107,7 +107,7 @@ await d1.page.waitForTimeout(300);
 // au-dessus toujours en mémoire (jamais poussé avant, voir localStorage.setItem
 // ci-dessus qui contourne saveData).
 await d1.page.evaluate(async ({ email, pw }) => {
-  window.OvilogSync.logout();
+  window.OvilogSync.deconnecterSansVider();
   await new Promise(r => setTimeout(r, 200));
   await window.OvilogSync.login(email, pw);
 }, { email, pw: password });
@@ -143,7 +143,7 @@ console.log('OK point 2 (détail): le contenu d\'un document migré (mouvements,
 await d1.page.evaluate(() => { DB.registreCollectionMigree20260930 = false; }); // force une 2e tentative
 const compteBatchAvant2e = await d1.page.evaluate(() => window.__testBatchCallCount || 0);
 await d1.page.evaluate(async ({ email, pw }) => {
-  window.OvilogSync.logout();
+  window.OvilogSync.deconnecterSansVider();
   await new Promise(r => setTimeout(r, 200));
   await window.OvilogSync.login(email, pw);
 }, { email, pw: password });
@@ -197,7 +197,7 @@ await fetch('http://127.0.0.1:' + fakePort + '/batch', {
 });
 await d2.page.evaluate(() => { DB.registreCollectionMigree20260930 = false; });
 await d2.page.evaluate(async ({ email, pw }) => {
-  window.OvilogSync.logout();
+  window.OvilogSync.deconnecterSansVider();
   await new Promise(r => setTimeout(r, 200));
   await window.OvilogSync.login(email, pw);
 }, { email, pw: password });

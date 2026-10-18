@@ -82,7 +82,7 @@ let pairePourB = null;
 // ---------------- B2. appareil DÉJÀ appairé hors ligne : on ne bloque pas le travail ----------------
 {
   const { mail, uid, d3 } = pairePourB;
-  await d3.page.evaluate(() => window.OvilogSync.logout());
+  await d3.page.evaluate(() => window.OvilogSync.deconnecterSansVider());
   await h.attendre(d3, () => currentView === 'auth', { label: 'B2 : déconnecté' });
   await h.reseau(d3, { coupe: true });
   await h.connecter(d3, mail, MDP);

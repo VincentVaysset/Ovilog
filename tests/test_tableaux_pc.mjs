@@ -14,6 +14,7 @@ pc.on('pageerror', e => { throw new Error('PAGEERROR: ' + e.message); });
 pc.on('dialog', d => d.accept());
 await pc.goto(URL_APP, { waitUntil: 'load' }); await pc.waitForTimeout(300);
 await pc.evaluate(jeuPcEcrans);
+await pc.evaluate(() => { DB.bilanEconomiqueActif = true; });   // le Bilan économique est un réglage de compte : ce test le vérifie, donc actif
 // [écran, code d'ouverture, nombre de tableaux attendus]
 const VUES = [
   ['Tri des agnelles', 'triPcEtat=null;render("agnelles")', 1], ['Lots existants', 'lotsPcEtat=null;render("lots")', 1], ['Chantier de tri, étape 2', 'lotsPcEtat=lotsPcEtatInitial();lotsPcEtat.lotId="L1";currentLotId="L1";render("edit-lot")', 2],

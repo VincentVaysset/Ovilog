@@ -130,7 +130,7 @@ async function getUidViaFetchInterception(page) {
     };
   });
   await d1.page.evaluate(async ({ email, pw }) => {
-    window.OvilogSync.logout();
+    window.OvilogSync.deconnecterSansVider();
     await new Promise(r => setTimeout(r, 200));
     await window.OvilogSync.login(email, pw);
   }, { email: emailA, pw });
@@ -204,7 +204,7 @@ async function getUidViaFetchInterception(page) {
 
   // Le device passe hors-ligne (déconnexion -- ses écouteurs s'arrêtent,
   // exactement comme une appli fermée ou un téléphone sans réseau prolongé).
-  await d1.page.evaluate(() => window.OvilogSync.logout());
+  await d1.page.evaluate(() => window.OvilogSync.deconnecterSansVider());
   await d1.page.waitForTimeout(200);
 
   // Pendant ce temps, une correction manuelle (identique à celle réellement

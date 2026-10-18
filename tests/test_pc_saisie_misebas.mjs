@@ -77,7 +77,7 @@ check(await page.evaluate(() => document.querySelectorAll('#lamb-list-rapide tr'
 const sexe = async (i, v) => page.click(`.sexe-opt-rapide[data-id="${i}"][data-val="${v}"]`);
 await sexe(0, 'Mâle'); await page.click('#add-lamb-rapide'); await sexe(1, 'Femelle');
 let cpt = await page.evaluate(() => ({ lignes: document.querySelectorAll('#lamb-list-rapide tr').length, portee: document.getElementById('pc-portee').textContent, actifs: [...document.querySelectorAll('.sexe-opt-rapide.active')].map(b => b.dataset.val), ph: [...document.querySelectorAll('.eid-input-rapide')].map(i => i.placeholder) }));
-check(cpt.lignes === 2 && cpt.portee === 'Portée double · 2 agneaux' && cpt.actifs.join() === 'Mâle,Femelle' && cpt.ph.every(p => p === "Saisir l'EID"), '2 lignes, portée double, sexes choisis, EID tapé (pas de scan) : ' + JSON.stringify(cpt));
+check(cpt.lignes === 2 && cpt.portee === 'Portée double · 2 agneaux' && cpt.actifs.join() === 'Mâle,Femelle' && cpt.ph.every(p => p === "Saisir le n° (ex. 71001) ou l'EID"), '2 lignes, portée double, sexes choisis, EID tapé (pas de scan) : ' + JSON.stringify(cpt));
 // mort-né : plus d'EID ni d'adoption sur la ligne ; adoption : un champ pour la mère apparaît
 await page.check('.mortne-check-rapide[data-id="1"]');
 check(await page.evaluate(() => !document.querySelector('.eid-input-rapide[data-id="1"]') && !document.querySelector('.adopt-check-rapide[data-id="1"]') && /pas de boucle/.test(document.querySelector('#lamb-list-rapide tr:nth-child(2)').textContent) && !!document.querySelector('.sexe-opt-rapide[data-id="1"][data-val="Femelle"].active')), 'mort-né : pas de boucle ni d\'adoption, le sexe reste facultatif');

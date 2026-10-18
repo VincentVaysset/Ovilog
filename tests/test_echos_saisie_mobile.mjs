@@ -69,6 +69,9 @@ await page.waitForFunction(() => document.querySelector('#echo-n-vides').textCon
 let e105 = await echos(105);
 eq([e105.length, e105[1].stade, e105[1].date, e105[1].campagne, e105[1].type], [2, 'Vide', '2026-10-01', 2026, 'stade'], 'écho enregistrée à la date de la session');
 check(await page.evaluate(() => estVideDefinitiveCampagne(DB.brebis.find(b => b.eid === E(3, 105)))), 'dernière écho : la brebis Vide devient vide définitive');
+// Le focus du champ de scan est posé au prochain rafraîchissement d'écran (requestAnimationFrame) : on l'attend (cinq secondes au plus) au lieu de supposer qu'il est déjà posé, ce qui rendait le test
+// instable sous charge. L'exigence reste la même : le champ de scan DOIT avoir le focus.
+await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'scan-echo', null, { timeout: 5000 });
 const apres = await page.evaluate(() => ({ scan: document.getElementById('scan-echo').value, carte: !!document.getElementById('carte-echo-brebis'), t: [...document.querySelectorAll('#echo-tuiles .n')].map(n => n.textContent), actif: document.activeElement && document.activeElement.id }));
 eq(apres, { scan: '', carte: false, t: ['0', '1', '0,0 %'], actif: 'scan-echo' }, 'enchaînement : champ de scan vidé et actif, tuiles Pleines 0 / Vides 1 / Réussite 0,0 %');
 

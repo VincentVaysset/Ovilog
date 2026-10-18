@@ -123,14 +123,9 @@ app.whenReady().then(() => {
     // packagée sans terminal).
     autoUpdater.logger = log;
 
-    // Toutes les Releases publiées jusqu'ici sont marquées "prerelease" sur
-    // GitHub (voir build-apk.yml : prerelease tant que la branche n'est pas
-    // main) -- electron-updater les ignore par défaut (allowPrerelease vaut
-    // false tant que app.getVersion() n'a pas elle-même un suffixe du genre
-    // "-beta", ce qui n'est pas notre cas). Sans ce réglage, la vérification
-    // ne trouve donc jamais rien à installer, silencieusement. À revoir une
-    // fois la branche mergée sur main (Releases non-prerelease).
-    autoUpdater.allowPrerelease = true;
+    // Canal stable : les builds de main sont publiés en "pre-release" (voir build-apk.yml) et ne deviennent visibles qu'une fois promus à la main sur
+    // GitHub (case "pre-release" décochée, "Set as the latest release" cochée). electron-updater ne doit donc proposer QUE les versions non pre-release.
+    autoUpdater.allowPrerelease = false;
 
     // Relaie chaque étape du cycle de vie vers l'écran Paramètres (voir
     // envoyerStatutMiseAJour/preload.js), que la vérification vienne de
