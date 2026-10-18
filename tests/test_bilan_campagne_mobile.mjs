@@ -25,6 +25,7 @@ async function ouvrir(bureau) {
   await page.evaluate(installerCasPdf);
   await page.evaluate(() => {
     jeuBilanSynth();
+    DB.bilanEconomiqueActif = true;   // réglage de compte : ces écrans comportent l'onglet économique
     DB.brebis.filter(s => (s.agnelages || []).length).slice(0, 2).forEach(s => { s.videesDefinitives = [{ campagne: DB.campagneDebut, date: '2026-02-01' }]; });   // 2 incohérences
     DB.brebis.filter(s => !(s.agnelages || []).length).slice(0, 3).forEach(s => { s.videesDefinitives = [{ campagne: DB.campagneDebut, date: '2026-01-20' }]; });  // 3 vides définitives
     const eids = DB.brebis.filter(s => (s.agnelages || []).length).map(s => s.eid);

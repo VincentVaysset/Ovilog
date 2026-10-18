@@ -6030,6 +6030,15 @@ let ficheBrebisTab = 'ident';
 let ficheCarriereOuverts = {};
 let ficheBrebisTabSheepId = null;
 let bilanCampagneTab = 'incoherences';
+/* Réglage de COMPTE « Bilan économique » (bilanEconomiqueActif, synchronisé via META_FIELDS). Faux : l'onglet « Bilan économique » de Bilan de campagne, le lien « Prix du lait, bonus et
+   pénalités » de la Qualité du lait et la page « Bilan économique » du rapport PDF disparaissent ; la Qualité du lait (prélèvements, grades, Super A, exports) reste. Rien n'est supprimé :
+   tank, prélèvements, pénalités et paramètres de prix restent en base et reviennent tels quels à la réactivation. Réglage ABSENT (compte antérieur à ce réglage) : actif seulement s'il y a
+   déjà des données de lait ; un compte neuf reçoit explicitement « faux » à sa création (compteVideConfirme), donc il n'apparaît pas quand l'exploitant saisit son premier relevé. */
+function bilanEconomiqueActif(base) {
+  base = base || DB;
+  if (typeof base.bilanEconomiqueActif === 'boolean') return base.bilanEconomiqueActif;
+  return ['laitTank', 'prelevementsQualite', 'penalitesBacterio'].some(k => Array.isArray(base[k]) && base[k].length > 0);
+}
 let bilanLactationCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan de lactation, voir bilanLactationHtml
 let bilanEconomiqueCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan économique, voir bilanEconomiqueHtml
 let ecoMobileOuverts = new Set(); // mois dépliés (clés 'YYYY-MM') dans « Mois par mois » du Bilan économique mobile
@@ -7373,6 +7382,8 @@ function renderList() {
    et depuis la sidebar sur desktop (voir NAV_ITEMS). */
 function renderBilanCampagne() {
   pageTitle.textContent = 'Bilan de campagne';
+  const avecEco = bilanEconomiqueActif();
+  if (!avecEco && bilanCampagneTab === 'economique') bilanCampagneTab = 'incoherences';   // onglet masqué : jamais d'écran économique atteint par un état mémorisé
 
   const tabs = [
     { key: 'incoherences', label: 'Brebis à régulariser', court: 'À régulariser' },
@@ -7385,9 +7396,9 @@ function renderBilanCampagne() {
     // ET desktop comme les 3 autres onglets, aucun gating isDesktopMode().
     { key: 'economique', label: 'Bilan économique', court: 'Économique' },
     { key: 'lactation', label: 'Bilan de lactation', court: 'Lactation' }
-  ];
-  // Mobile : libellés raccourcis pour tenir sur une ligne à 390 px (mêmes 4 onglets, mêmes clés) ; PC inchangé.
-  const tabBarHtml = `<div class="tab-bar${isDesktopMode() ? '' : ' bc-onglets'}">${tabs.map(t =>
+  ].filter(t => avecEco || t.key !== 'economique');
+  // Mobile : libellés raccourcis pour tenir sur une ligne à 390 px (mêmes onglets, mêmes clés) ; PC inchangé.
+  const tabBarHtml = `<div class="tab-bar${isDesktopMode() ? '' : ' bc-onglets'}"${isDesktopMode() || tabs.length === 4 ? '' : ` style="grid-template-columns:repeat(${tabs.length},minmax(0,1fr));"`}>${tabs.map(t =>
     `<button type="button" class="tab-btn${bilanCampagneTab === t.key ? ' active' : ''}" data-tab="${t.key}">${isDesktopMode() ? t.label : t.court}</button>`
   ).join('')}</div>`;
 
@@ -8061,6 +8072,10 @@ function bilanEconomiqueDesktopHtml() {
    est affiché aux deux endroits (utile ici comme dénominateur du prix, et
    sur Production laitière dans "Moyennes de la campagne") -- la seule
    duplication volontaire. Visible identiquement sur mobile et desktop. */
+// Lien de la Qualité du lait (mobile) vers le Bilan économique : absent quand le réglage de compte est désactivé
+function lienBilanEconomiqueHtml() {
+  return bilanEconomiqueActif() ? '<a href="#" class="pl-lien" id="pl-lien-eco">Prix du lait, bonus et pénalités : Bilan économique</a>' : '';
+}
 function bilanEconomiqueHtml() {
   const campagnes = campagnesDisponiblesSieol();
   if (bilanEconomiqueCampagneAffichee === null || !campagnes.includes(bilanEconomiqueCampagneAffichee)) {
@@ -16400,7 +16415,7 @@ function plQualiteHtml() {
   const camp = mois ? campagneAnneeDebutPourDate(mois + '-01') : campagneAnneeDebutPourDate(jourAujourdhuiISO());
   if (!mois) {
     return `<div class="card"><div class="empty" style="margin-bottom:12px;">Aucun prélèvement qualité enregistré pour l'instant.</div><button type="button" class="btn btn-primary" id="btn-qualite-add">+ Nouveau prélèvement</button></div>
-      <a href="#" class="pl-lien" id="pl-lien-eco">Prix du lait, bonus et pénalités : Bilan économique</a>`;
+      ${lienBilanEconomiqueHtml()}`;
   }
   const list = DB.prelevementsQualite.filter(p => p.date.slice(0, 7) === mois).sort((a, b) => b.date.localeCompare(a.date));
   const mM = moyennesQualitePonderees(list), qc = qualiteCampagneData(camp).total, superA = !!bilanCampagneQualite(camp).superAParMois[mois];
@@ -16436,7 +16451,7 @@ function plQualiteHtml() {
     <div class="card" id="pl-prelevements"><div style="font-size:15px;font-weight:700;margin-bottom:4px;">Prélèvements du mois</div>${rows}</div>
     <button type="button" class="btn btn-primary" id="btn-qualite-add" style="margin-bottom:10px;">+ Nouveau prélèvement</button>
     <div class="grid2" style="margin-bottom:10px;"><button type="button" class="btn btn-secondary" id="btn-export-qualite-xlsx">Export Excel</button><button type="button" class="btn btn-primary" id="btn-rapport-qualite">Export PDF</button></div>
-    <a href="#" class="pl-lien" id="pl-lien-eco">Prix du lait, bonus et pénalités : Bilan économique</a>`;
+    ${lienBilanEconomiqueHtml()}`;
 }
 function plQualiteBrancher() {
   const mois = plMoisQualiteCourant(), liste = moisAvecPrelevements();
@@ -16450,7 +16465,8 @@ function plQualiteBrancher() {
   if (bn) bn.onclick = () => { const rows = Array.from(document.querySelectorAll('.pl-prelev')).filter(r => { const p = findPrelevementQualiteByDate(r.dataset.date); return p && (p.listeria === 'positif' || p.salmonelles === 'positif'); }); if (rows[0]) rows[0].scrollIntoView({ behavior: 'smooth', block: 'center' }); rows.forEach(r => { r.classList.add('flash-highlight'); setTimeout(() => r.classList.remove('flash-highlight'), 1600); }); };
   const rap = document.getElementById('btn-rapport-qualite'); if (rap) rap.onclick = () => lancerExportAvecBouton(rap, () => exportRapportCampagnePdf(camp));
   const xq = document.getElementById('btn-export-qualite-xlsx'); if (xq) xq.onclick = () => lancerExportAvecBouton(xq, () => exportQualiteXlsx(camp));
-  document.getElementById('pl-lien-eco').onclick = ev => { ev.preventDefault(); bilanCampagneTab = 'economique'; bilanEconomiqueCampagneAffichee = camp; bilanEconomiqueMoisAffiche = null; render('bilan-campagne'); };
+  const lienEco = document.getElementById('pl-lien-eco');
+  if (lienEco) lienEco.onclick = ev => { ev.preventDefault(); bilanCampagneTab = 'economique'; bilanEconomiqueCampagneAffichee = camp; bilanEconomiqueMoisAffiche = null; render('bilan-campagne'); };
 }
 
 /* ---------- Production laitière, version PC : onglets « Tank » et « Qualité » ----------
@@ -22639,12 +22655,14 @@ async function exportTankXlsx(campagne) {
 
 // ---- Rapport de campagne (PDF) : page 1 Bilan économique, page 2 Qualité du lait (le détail des prélèvements continue sur une page 3 s'il déborde) ----
 function buildRapportCampagnePdfBytes(campagne) {
-  const e = ecoCampagneData(campagne), q = qualiteCampagneData(campagne), X = PDF_PL_COUL, C = PDF_COULEURS, rouge = X.rouge, vert = X.vertTitre;
+  const avecEco = bilanEconomiqueActif();   // désactivé : le rapport ne contient que la Qualité du lait (aucun montant en euros)
+  const e = avecEco ? ecoCampagneData(campagne) : null, q = qualiteCampagneData(campagne), X = PDF_PL_COUL, C = PDF_COULEURS, rouge = X.rouge, vert = X.vertTitre;
   const dates = campagneDatesIso(campagne);
   const doc = pdfProdDoc();
   const euro = (v, sg) => v === null || v === undefined ? '—' : (v < 0 ? '−' : (sg && v > 0 ? '+' : '')) + fmtGroupe(Math.abs(v), 2) + ' €';
   const mille = (v, sg) => v === null || v === undefined ? '—' : (v < 0 ? '−' : (sg && v > 0 ? '+' : '')) + fmtGroupe(Math.abs(v), 2);
   // ----- page 1 : Bilan économique -----
+  if (avecEco) {
   const piedEco = pdfPied('Rapport de campagne · Bilan économique', e.titre);
   doc.page('Bilan économique', e.titre + ' · du ' + formatDateFr(dates.debut) + ' au ' + formatDateFr(dates.fin) + ' · coefficient MSU ' + fmtDecimal(e.coef, 4), piedEco);
   const T = e.totaux;
@@ -22689,6 +22707,7 @@ function buildRapportCampagnePdfBytes(campagne) {
   });
   doc.y -= 6;
   doc.note('Prix moyen avec qualité de la campagne : pénalités déduites. Bonus Super A calculé sur les critères suivis par Ovilog ; antibiotiques, résazurine et conditions d\'hygiène à vérifier avec la laiterie.', 8);
+  }
   // ----- page 2 : Qualité du lait -----
   const piedQ = pdfPied('Rapport de campagne · Qualité du lait', q.titre);
   doc.page('Production laitière · Qualité du lait', q.titre + ' · du ' + formatDateFr(dates.debut) + ' au ' + formatDateFr(dates.fin), piedQ);
@@ -27287,7 +27306,14 @@ function renderParametresExploitation(content) {
         <div class="prm-note">3 par défaut : au-delà, l'animal perd le statut bio. Signalement seulement, rien n'est bloqué.</div>
       </div>
     </div>`;
-  content.innerHTML = prmColonnesHtml(carteIdentite, carteSynchro + carteBio);
+  const carteEco = `
+    <div class="card" id="card-bilan-economique">
+      <div class="prm-titre">Bilan économique</div>
+      <label class="prm-case"><input type="checkbox" id="f-exp-bilan-eco"${bilanEconomiqueActif() ? ' checked' : ''}><span>Afficher le Bilan économique</span></label>
+      <div class="prm-note">Prix du lait, bonus et pénalités en euros, dans Bilan de campagne et dans le rapport PDF. Désactivé, ils sont masqués ; rien n'est supprimé et tout revient à la réactivation.</div>
+    </div>`;
+  content.innerHTML = prmColonnesHtml(carteIdentite, carteSynchro + carteBio + carteEco);
+  document.getElementById('f-exp-bilan-eco').onchange = (ev) => { DB.bilanEconomiqueActif = ev.target.checked; saveData(DB); };   // réversible, enregistré tout de suite
 
   document.getElementById('btn-sync-action').onclick = () => {
     // Paramètres n'est accessible qu'une fois connecté (voir "Écran
@@ -29482,6 +29508,8 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', '
   'reproGestationMin', 'reproGestationMax', 'reproRetourMin', 'reproRetourMax',
   // Chantier de tri : seuil du filtre « Critères IA » + marqueur de version du format des lots (garde-fou « Mettre à jour l'application »)
   'reproSeuilMiseBasMois', 'schemaLots',
+  // Réglage de compte « Bilan économique » (voir bilanEconomiqueActif) : absent = déduit des données de lait ; un compte neuf reçoit « faux »
+  'bilanEconomiqueActif',
   // Drapeau de migration CÔTÉ CLOUD (jamais localStorage seul) -- voir
   // migrerRegistreVersCollection : doit être visible de tous les appareils
   // du compte, sinon un appareil qui vient de se réinstaller relancerait la
@@ -30304,6 +30332,7 @@ async function compteVideConfirme() {
   initCompteVideEnCours = true;
   try {
     const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
+    if (typeof DB.bilanEconomiqueActif !== 'boolean') DB.bilanEconomiqueActif = false;   // compte neuf : Bilan économique masqué (réactivable dans Paramètres)
     const record = metaRecordPourCloud(DB);
     const cree = await runTransaction(fbDb, async tx => {
       const snap = await tx.get(metaRef);
