@@ -183,7 +183,7 @@ await jeu(true, 35);
 await page.evaluate(() => { window.electronAPI.isDesktop = false; render('sanitaire'); });
 check(await page.evaluate(() => !!document.getElementById('cs-12-mois')), 'mobile : bouton « Traitements sur 12 mois » sur le carnet (bio activé)');
 await page.click('#cs-12-mois'); await page.waitForSelector('#m12');
-const mk = await page.evaluate(() => [...document.querySelectorAll('#m12 .card')].slice(0, 3).map(c => c.textContent.replace(/\s+/g, ' ').trim()));
+const mk = await page.evaluate(() => [...document.querySelectorAll('#m12 .tuile-charte')].slice(0, 3).map(c => c.textContent.replace(/\s+/g, ' ').trim()));
 check(/2 traitements\s*3/.test(mk[0]) && /3 : limite\s*1/.test(mk[1]) && /4 et plus\s*1/.test(mk[2]), 'mobile : cartes 2 / 3 limite / 4 et plus : ' + mk.join(' | '));
 check(await page.evaluate(() => document.querySelectorAll('.m12-an').length) === 41, 'mobile : 41 animaux (même fonction que le PC)');
 await page.click('.m12-puce[data-v="3"]');

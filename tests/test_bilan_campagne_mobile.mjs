@@ -144,7 +144,7 @@ console.log('OK 5 export Excel : bouton en bas, même fichier que sur PC (' + xm
 await aller(mob, 'reproduction'); await aller(pc, 'reproduction');
 const kpiR = await pc.evaluate(() => [...document.querySelectorAll('.brd-kpis .brd-kpi')].map(k => [k.querySelector('.brd-kpi-l').textContent.trim(), k.querySelector('.brd-kpi-v').textContent.trim(), k.querySelector('.brd-kpi-s').textContent.trim()]));
 const tuilesR = await mob.evaluate(() => [...document.querySelectorAll('.bc-tuiles .reg-tuile')].map(t => [t.querySelector('.reg-tuile-l').textContent, t.querySelector('.reg-tuile-v').textContent, t.querySelector('.reg-tuile-s').textContent, t.className.replace('reg-tuile ', '')]));
-eq(tuilesR.map(t => t[3]), ['vert', 'bleu', 'ambre', 'rouge'], 'couleurs des tuiles');
+eq(tuilesR.map(t => t[3]), ['vert', 'bleu', 'ambre', /^0([,.]0+)?\s*%?$/.test(String(tuilesR[3][1]).trim()) ? 'neutre' : 'ambre'], 'couleurs des tuiles (audit charte B : mortalité après naissance ambre, neutre à 0)');
 eq(tuilesR.map(t => norm(t[1])), kpiR.map(k => norm(k[1])), 'valeurs des 4 tuiles = indicateurs de la page PC');
 kpiR.forEach((k, i) => { const nb = (k[2].match(/\d+/g) || []).join('/').split('/')[0]; check(!nb || tuilesR[i][2].includes(nb), 'sous-titre tuile « ' + tuilesR[i][0] + ' » = ' + k[2].slice(0, 40) + ' / ' + tuilesR[i][2]); });
 const tauxPc = await pc.evaluate(() => { const a = document.querySelector('.brd-alert.info strong'); return a ? a.textContent : null; });

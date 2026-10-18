@@ -44,7 +44,8 @@ for (const v of ['mouvements', 'sanitaire', 'agnelage']) {
     : v === 'sanitaire' ? [['Soins enregistrés', ind.sanitaire.soins], ['Traitements', ind.sanitaire.traitements], ['Vaccins', ind.sanitaire.vaccins], ['Autres', ind.sanitaire.autres]]
     : [['Agneaux enregistrés', ind.agnelage.agneaux], ['Mâles', ind.agnelage.males], ['Femelles', ind.agnelage.femelles], ['Morts-nés', ind.agnelage.mortNes]];
   eq(tuiles.map(t => [t[0], t[1]]), attendu.map(a => [a[0], String(a[1])]), v + ' : tuiles = chiffres de la page PC');
-  eq(await page.evaluate(() => [...document.querySelectorAll('.reg-tuile')].map(t => t.classList[1])), ['vert', 'bleu', 'ambre', 'rouge'], v + ' : couleurs vert, bleu, ambre, rouge');
+  { const tc = await page.evaluate(() => [...document.querySelectorAll('.reg-tuile')].map(t => [t.classList[1], t.querySelector('.reg-tuile-v').textContent.trim()]));   // audit charte B : 4e tuile ambre, neutre à 0 (jamais rouge)
+    eq(tc.map(x => x[0]), ['vert', 'bleu', 'ambre', tc[3] && tc[3][1] === '0' ? 'neutre' : 'ambre'], v + ' : couleurs vert, bleu, ambre, ambre (neutre à 0)'); }
   // carte de filtres : recherche puis filtres sur une seule ligne
   const sels = await page.evaluate(() => [...document.querySelectorAll('#registre-filtres select')].map(s => { const r = s.getBoundingClientRect(); return [Math.round(r.y), Math.round(r.x), Math.round(r.width)]; }));
   eq(sels.length, v === 'agnelage' ? 2 : 3, v + ' : nombre de filtres');

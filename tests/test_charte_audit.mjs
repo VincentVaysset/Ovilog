@@ -25,5 +25,27 @@ check(!/div style=|<\/?(div|table)/.test(await texteApp(pc)), 'A. Carnet sanitai
 check(await pc.evaluate(() => !!document.querySelector('#cs-derniers > div > table#cs-table-derniers')), 'A. tableau « Derniers soins » dans son conteneur à défilement');
 console.log('A OK');
 
+// ---------------------------------------------------------------- B. Tons des tuiles : jamais de rouge pour un zéro ou un « — » (écran mobile, PC et PDF)
+{
+  const u = await pc.evaluate(() => [tonTuile(0, 'rouge'), tonTuile('0,0 %', 'ambre', true), tonTuile(3, 'rouge'), tonTuile('—', 'vert'), tonTuile('', 'bleu'), tonTuile(0, 'vert'), tonTuile('9,2 %', 'ambre', true),
+    ...(() => { const f = (t, v) => JSON.stringify(pdfTuile(t, 'x', v).fond), n = f('neutre', 5); return [f('rouge', 0) === n, f('rouge', 2) === n, f('vert', '—') === n]; })()]);
+  eq(u, ['neutre', 'neutre', 'rouge', 'neutre', 'neutre', 'vert', 'ambre', true, false, true], 'B. règle commune tonTuile / pdfTuile');
+  const tuilesM = async (code, sel) => { await ecran(mob, code); return mob.evaluate(s => [...document.querySelectorAll(s)].map(t => (t.querySelector('.reg-tuile-l, .l') || t).textContent.trim() + '|' + t.textContent.replace(/\s+/g, ' ').trim() + '|' + t.className), sel); };
+  const repro = await tuilesM("bilanCampagneTab = 'reproduction'; render('bilan-campagne')", '.bc-tuiles .reg-tuile');
+  check(repro.length === 4 && !/rouge/.test(repro[3]) && /Mort\. après naissance/.test(repro[3]), 'B. Bilan de reproduction (mobile) : « Mort. après naissance » jamais rouge : ' + repro[3]);
+  for (const v of ['agnelage', 'mouvements', 'sanitaire']) {
+    const t = await tuilesM(`registreView = '${v}'; render('registre')`, '#registre-tuiles .reg-tuile');
+    check(t.length === 4 && t.every(x => !/ rouge/.test(x)), 'B. Registre ' + v + ' (mobile) : aucune tuile rouge : ' + JSON.stringify(t));
+  }
+  const t12 = await tuilesM("DB.exploitation = Object.assign({}, DB.exploitation, { elevageBio: true }); render('traitements-12-mois')", '#m12 .tuile-charte');
+  check(t12.length === 3 && t12.every(x => !/rouge/.test(x)), 'B. Traitements 12 mois (mobile) : 3 tuiles de la charte, pas de rouge à 0 : ' + JSON.stringify(t12));
+  await ecran(pc, "render('echo-rapide')");
+  const ep = await pc.evaluate(() => [...document.querySelectorAll('.ep-tuile')].map(t => t.className + '|' + t.querySelector('.reg-tuile-v').textContent));
+  check(ep.slice(1, 3).every(x => /\|0$/.test(x) && / neutre /.test(x)), 'B. Échographies (PC) : « Vides » et « Vides définitives » à 0 en neutre : ' + JSON.stringify(ep));
+  await ecran(pc, "render('home')");
+  check(await pc.evaluate(() => ![...document.querySelectorAll('#app .t-rouge')].some(b => b.textContent.trim() === '0')), 'B. Accueil (PC) : aucun 0 en rouge');
+}
+console.log('B OK');
+
 await browser.close();
 console.log('OK');
