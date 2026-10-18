@@ -194,5 +194,15 @@ console.log('I OK');
 }
 console.log('K OK');
 
+// ---------------------------------------------------------------- L. Produits et délais (mobile) : tuiles de la charte (fond pastel, liseré), mêmes libellés et chiffres
+{
+  await ecran(mob, "render('produits-delais')");
+  const t = await mob.evaluate(() => [...document.querySelectorAll('#pc-produits-delais .pc-kpis > *')].map(e => e.className + '|' + e.querySelector('.l, .brd-kpi-l').textContent + '|' + getComputedStyle(e).borderLeftWidth));
+  check(t.length >= 4 && t.every(x => x.startsWith('tuile-charte') && x.endsWith('|5px')), 'L. Produits et délais (mobile) : tuiles de la charte : ' + JSON.stringify(t));
+  await ecran(pc, "render('produits-delais')");
+  check(await pc.evaluate(() => [...document.querySelectorAll('#pc-produits-delais .pc-kpis > *')].every(e => e.classList.contains('tuile-pc'))), 'L. Produits et délais (PC) : tuiles PC inchangées');
+}
+console.log('L OK');
+
 await browser.close();
 console.log('OK');
