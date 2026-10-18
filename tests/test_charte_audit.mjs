@@ -89,5 +89,39 @@ console.log('C OK');
 }
 console.log('D OK');
 
+// ---------------------------------------------------------------- E. Pastilles et icônes : rouge seulement pour une vraie alerte
+{
+  const ROUGES = ['rgb(163, 58, 49)', 'rgb(251, 227, 224)'], AMBRE_P = 'rgb(251, 238, 215)', NEUTRE = 'rgb(239, 233, 218)';
+  const st = (page, sel) => page.evaluate(sel => [...document.querySelectorAll(sel)].filter(e => e.offsetParent).map(e => { const c = getComputedStyle(e); return e.textContent.trim().slice(0, 20) + '|' + c.backgroundColor + '|' + c.color; }), sel);
+  await ecran(pc, "render('agneaux')");
+  const fem = (await st(pc, '.badge')).filter(x => x.startsWith('Femelle'));
+  check(fem.length > 0 && fem.every(x => x.includes(AMBRE_P)), 'E. Agneaux (PC) : « Femelle » en ambre : ' + JSON.stringify(fem));
+  await ecran(mob, "render('lots')");
+  const ref = (await st(mob, '.badge')).filter(x => x.startsWith('Réforme'));
+  check(ref.length === 1 && !ROUGES.some(r => ref[0].includes(r)), 'E. Lots (mobile) : « Réforme » sans rouge : ' + ref);
+  const ic = await st(mob, '.icon-circle.ic-coral');
+  check(ic.length > 0 && ic.every(x => x.includes(NEUTRE)), 'E. icônes de catégorie (ic-coral) neutres : ' + ic[0]);
+  await ecran(pc, "lotsPcEtat = null; render('lots')");
+  const refPc = (await st(pc, '.pc-pill')).filter(x => x.startsWith('Réforme'));
+  check(refPc.length > 0 && refPc.every(x => !ROUGES.some(r => x.includes(r))), 'E. Lots (PC) : « Réforme » sans rouge : ' + refPc);
+  await ecran(pc, "render('produits-delais')");
+  const inc = (await st(pc, '.pc-pill')).filter(x => x.startsWith('Incomplète'));
+  check(inc.length > 0 && inc.every(x => x.includes(AMBRE_P)), 'E. Produits et délais (PC) : « Incomplète » en ambre : ' + inc);
+  await ecran(mob, "render('detail')");
+  const bdg = await st(mob, '.fiche-tab-badge');
+  check(bdg.length > 0 && bdg.every(x => !ROUGES.some(r => x.includes(r))), 'E. fiche : compteur d\'onglet sans rouge : ' + bdg);
+  await ecran(mob, "render('add-agnelage')");
+  check((await st(mob, '.icon-circle.ic-alerte')).some(x => x.includes(ROUGES[1])), 'E. « Agnelage déjà enregistré » garde son icône rouge (.ic-alerte)');
+  await ecran(mob, "render('controle-laitier')");
+  const ano = await st(mob, '.cl-ano');
+  check(ano.length > 0 && ano.every(x => x.includes(AMBRE_P)), 'E. Contrôle laitier (mobile) : anomalie en ambre : ' + ano);
+  await ecran(pc, "render('controle-laitier')");
+  check(!(await pc.evaluate(() => [...document.querySelectorAll('#app td span')].some(sp => getComputedStyle(sp).backgroundColor === 'rgb(251, 227, 224)'))), 'E. Contrôle laitier (PC) : anomalie du tableau sans rouge');
+  await ecran(mob, "render('historique-echo')");
+  const vide = (await st(mob, '.reg-pastille')).filter(x => x.startsWith('Vide'));
+  check(vide.length > 0 && vide.every(x => x.includes(AMBRE_P)), 'E. Historique des échos : « Vide » en ambre : ' + vide);
+}
+console.log('E OK');
+
 await browser.close();
 console.log('OK');
