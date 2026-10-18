@@ -1,6 +1,6 @@
 /* Inventaire (onglets Brebis, Agnelles, Béliers, Agneaux actifs), PC et mobile : champ « Rechercher un numéro » (frappe réelle au clavier) qui porte sur TOUS les numéros de l'onglet
    (court, long, officiel, travail, EID complet) sans tenir compte des espaces ; le champ garde le focus pendant la frappe ; changer d'onglet vide la recherche ; « Export PDF » en vert plein et
-   « Export Excel (.xlsx) » en contour ; PC : tableau pleine largeur, 3 tuiles d'effectifs, recherche à gauche et exports à droite ; clic sur une ligne -> fiche (brebis, agnelle, bélier ; agneau -> fiche de la mère), y compris dans une liste filtrée ;
+   « Export Excel » en contour ; PC : tableau pleine largeur, 3 tuiles d'effectifs, recherche à gauche et exports à droite ; clic sur une ligne -> fiche (brebis, agnelle, bélier ; agneau -> fiche de la mère), y compris dans une liste filtrée ;
    les exports PDF et Excel portent sur la liste AFFICHÉE ; aucune écriture de données. saveData et saveOrShareBinaryFile REMPLACÉS. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
@@ -39,7 +39,7 @@ for (const bureau of [true, false]) {
 
   // ---- structure : boutons, champ, tableau
   eq(await page.evaluate(() => [document.getElementById('btn-export-inventaire-pdf').className, document.getElementById('btn-export-inventaire-xlsx').className]), ['btn btn-primary', 'btn btn-secondary'], nom + ' : Export PDF vert plein, Export Excel en contour');
-  eq(await page.evaluate(() => [document.getElementById('btn-export-inventaire-pdf').textContent, document.getElementById('btn-export-inventaire-xlsx').textContent]), ['Export PDF', bureau ? 'Export Excel' : 'Export Excel (.xlsx)'], nom + ' : libellés des boutons');
+  eq(await page.evaluate(() => [document.getElementById('btn-export-inventaire-pdf').textContent, document.getElementById('btn-export-inventaire-xlsx').textContent]), ['Export PDF', 'Export Excel'], nom + ' : libellés des boutons (audit charte G : « Export Excel » partout)');
   eq(await page.evaluate(() => getComputedStyle(document.getElementById('btn-export-inventaire-pdf')).backgroundColor !== getComputedStyle(document.getElementById('btn-export-inventaire-xlsx')).backgroundColor), true, nom + ' : fonds différents');
   check(await page.evaluate(() => !!document.querySelector('label[for="inventaire-recherche"]') && document.getElementById('inventaire-recherche').placeholder.length > 0), nom + ' : champ de recherche avec libellé');
   const yq = await page.evaluate(() => document.getElementById('inventaire-recherche').getBoundingClientRect().y), yt = await page.evaluate(() => document.querySelector('#inv-liste').getBoundingClientRect().y);

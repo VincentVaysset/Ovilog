@@ -136,5 +136,26 @@ console.log('E OK');
 }
 console.log('F OK');
 
+// ---------------------------------------------------------------- G. Exports : « Export Excel » (blanc) puis « Export PDF » (vert), partout
+{
+  const VERT = 'rgb(53, 127, 75)', BLANC = 'rgb(255, 255, 255)';
+  const exportsDe = (page) => page.evaluate(() => [...document.querySelectorAll('#app button')].filter(b => b.offsetParent && /excel|pdf|xlsx|export/i.test(b.textContent) && !/de ce lot|par âge|complet|mes données/i.test(b.textContent)).map(b => [b.textContent.trim(), getComputedStyle(b).backgroundColor]));
+  const ECR = [['Mouvements', "render('inventaire')", 'm'], ['Carnet sanitaire', "render('sanitaire')", 'm'], ['Brebis à régulariser', "bilanCampagneTab = 'incoherences'; render('bilan-campagne')", 'mp'], ['Registre', "registreView = 'agnelage'; render('registre')", 'mp'],
+    ['Contrôle laitier', "render('controle-laitier')", 'mp'], ['Inventaire', "render('inventaire-actifs')", 'mp'], ['Créer une liste', "render('liste-serie')", 'm'], ['Déclaration', "render('declaration-annuelle')", 'mp'],
+    ['Sous délai', "render('sous-delai')", 'mp'], ['Bilan économique', "bilanCampagneTab = 'economique'; render('bilan-campagne')", 'mp'], ['Bilan de lactation', "bilanCampagneTab = 'lactation'; render('bilan-campagne')", 'mp'],
+    ['Traitements 12 mois', "DB.exploitation = Object.assign({}, DB.exploitation, { elevageBio: true }); render('traitements-12-mois')", 'p']];
+  for (const [nom, code, ou] of ECR) for (const [page, lieu] of [[mob, 'm'], [pc, 'p']]) {
+    if (!ou.includes(lieu)) continue;
+    await ecran(page, code); const e = await exportsDe(page);
+    check(e.length > 0, 'G. ' + nom + ' (' + lieu + ') : des exports sont affichés');
+    for (const [t, bg] of e) check((t === 'Export Excel' && bg === BLANC) || (t === 'Export PDF' && bg === VERT), 'G. ' + nom + ' (' + lieu + ') : « ' + t + ' » ' + bg + ' (attendu « Export Excel » blanc ou « Export PDF » vert)');
+    const ix = e.findIndex(x => x[0] === 'Export Excel'), ip = e.findIndex(x => x[0] === 'Export PDF');
+    if (ix >= 0 && ip >= 0) check(ix < ip, 'G. ' + nom + ' (' + lieu + ') : Excel avant PDF');
+  }
+  await ecran(pc, "lotsPcEtat = null; render('lots')");
+  check(await pc.evaluate(() => [...document.querySelectorAll('.le-excel')].every(b => b.textContent.trim() === 'Export Excel')), 'G. Chantier de tri (PC) : « Export Excel » sur chaque lot');
+}
+console.log('G OK');
+
 await browser.close();
 console.log('OK');

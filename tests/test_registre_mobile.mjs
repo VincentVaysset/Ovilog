@@ -53,7 +53,7 @@ for (const v of ['mouvements', 'sanitaire', 'agnelage']) {
   check((await box('#registre-filtre')).y < sels[0][0], v + ' : recherche au-dessus des filtres');
   check(await page.evaluate(() => document.querySelector('.reg-carte-filtres').contains(document.querySelector('.reg-info')) && /lecture seule/.test(document.querySelector('.reg-info').textContent) && /conditionnalité PAC/.test(document.querySelector('.reg-info').textContent)), v + ' : l\'information des « ? » tient dans une ligne sous les filtres');
   // exports en bas : Excel en contour, PDF en vert plein
-  eq(await page.evaluate(() => [document.getElementById('btn-export-registre').className, document.getElementById('btn-export-registre-pdf').className, document.getElementById('btn-export-registre').textContent, document.getElementById('btn-export-registre-pdf').textContent]), ['btn btn-secondary', 'btn btn-primary', 'Exporter (.xlsx)', 'Export PDF'], v + ' : boutons d\'export');
+  eq(await page.evaluate(() => [document.getElementById('btn-export-registre').className, document.getElementById('btn-export-registre-pdf').className, document.getElementById('btn-export-registre').textContent, document.getElementById('btn-export-registre-pdf').textContent]), ['btn btn-secondary', 'btn btn-primary', 'Export Excel', 'Export PDF'], v + ' : boutons d\'export');
   check((await box('#btn-export-registre')).y > (await box('.reg-carte-liste')).y, v + ' : exports sous la liste');
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), v + ' : aucun défilement horizontal');
   // cartes : rien de coupé

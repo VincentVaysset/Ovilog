@@ -177,7 +177,7 @@ for (const largeur of [360, 390]) {
   // Bilan économique mobile
   await m.evaluate(() => { bilanCampagneTab = 'economique'; bilanEconomiqueCampagneAffichee = 2026; bilanEconomiqueMoisAffiche = null; render('bilan-campagne'); });
   const be = await m.evaluate(() => { const b = document.getElementById('btn-export-rapport-campagne-pdf'); return [b.textContent.trim(), getComputedStyle(b).backgroundColor]; });
-  eq(be, ['Export PDF', BLANC], largeur + ' px : Bilan économique mobile : « Export PDF » (même place, même aspect)');
+  eq(be, ['Export PDF', 'rgb(53, 127, 75)'], largeur + ' px : Bilan économique mobile : « Export PDF » vert (audit charte G), même place');
   await m.evaluate(() => { ecoMobileOuverts = new Set(['2027-01', '2026-10']); ecoMobileTous = false; render('bilan-campagne'); });
   const badges = await m.evaluate(() => [...document.querySelectorAll('.eco-detail .badge')].filter(b => /^(Non obtenu|Obtenu)$/.test(b.textContent.trim())).map(b => { const c = getComputedStyle(b); return [b.textContent.trim(), c.color, c.backgroundColor, b.className]; }));
   const nonObt = badges.filter(b => b[0] === 'Non obtenu'), obt = badges.filter(b => b[0] === 'Obtenu');

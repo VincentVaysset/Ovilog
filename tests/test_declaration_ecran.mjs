@@ -30,7 +30,7 @@ for (const bureau of [true, false]) {
   eq(await page.evaluate(() => document.querySelector('.brd-title').textContent), 'Déclaration 2026', nom + ' : titre');
   check(await page.evaluate(() => { const t = document.getElementById('app').textContent; return t.includes('Année civile, indépendante de la campagne agricole') && !t.includes('Recensement au 1er janvier et ratio de l\'aide ovine'); }), nom + ' : sous-titre (sans répéter les titres de cartes)');
   check(!(await page.evaluate(() => document.getElementById('app').textContent.includes('❔'))), nom + ' : aucun ❔');
-  eq(await page.evaluate(() => document.getElementById('btn-export-declaration-pdf').textContent + '|' + document.getElementById('btn-export-declaration-pdf').classList.contains('btn-primary')), (bureau ? 'Export PDF' : 'Exporter (PDF)') + '|true', nom + ' : bouton vert « ' + (bureau ? 'Export PDF' : 'Exporter (PDF)') + ' »');
+  eq(await page.evaluate(() => document.getElementById('btn-export-declaration-pdf').textContent + '|' + document.getElementById('btn-export-declaration-pdf').classList.contains('btn-primary')), 'Export PDF|true', nom + ' : bouton vert « ' + (bureau ? 'Export PDF' : 'Exporter (PDF)') + ' »');
   const bExp = await box(page, '#btn-export-declaration-pdf'), bRec = await box(page, '#decl-recensement'), bSel = await box(page, '#declaration-annee');
   if (bureau) check(bExp.y < bRec.y && bExp.x > 900 && Math.abs((bExp.y + bExp.h / 2) - (bSel.y + bSel.h / 2)) < 8, 'PC : année et export en haut à droite, sur la même ligne');
   else check(bExp.y > (await box(page, '#decl-ratio')).y, 'mobile : bouton d\'export sous les cartes');

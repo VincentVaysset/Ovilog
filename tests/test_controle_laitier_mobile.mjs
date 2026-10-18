@@ -102,7 +102,7 @@ eq(await mob.evaluate(() => document.querySelectorAll('.cl-check:checked').lengt
 console.log('OK 4 filtres au clavier (seuil, date, code d\'anomalie), Réinitialiser, sélection, lot.');
 
 // ---- 5. exports : liste filtrée affichée ; style des boutons
-eq(await mob.evaluate(() => [document.getElementById('btn-cl-export-xlsx').className, document.getElementById('btn-cl-export-pdf').className, document.getElementById('btn-cl-export-xlsx').textContent, document.getElementById('btn-cl-export-pdf').textContent]), ['btn btn-secondary', 'btn btn-primary', 'Excel (.xlsx)', 'Export PDF'], 'Excel en contour, PDF en vert plein');
+eq(await mob.evaluate(() => [document.getElementById('btn-cl-export-xlsx').className, document.getElementById('btn-cl-export-pdf').className, document.getElementById('btn-cl-export-xlsx').textContent, document.getElementById('btn-cl-export-pdf').textContent]), ['btn btn-secondary', 'btn btn-primary', 'Export Excel', 'Export PDF'], 'Excel en contour, PDF en vert plein');
 await mob.click('.ctrl-filtre-opt[data-val="3"]'); await mob.click('.op-filtre-opt[data-val=">"]'); await mob.click('#f-seuil'); await mob.keyboard.type('1300', { delay: 15 });
 const attendu = (await cartes()).map(c => c.num);
 await mob.evaluate(() => { window.__sorties = []; window.__pdf = []; window.__xlsx = []; });
