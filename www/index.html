@@ -2073,7 +2073,7 @@ async function exportBackupFile(data, filenamePrefix) {
   if (!controle.ok) {
     noterResultatSauvegarde({ ok: false, raison: controle.raison });
     alert('Export non effectué : ' + controle.raison + '. Rien n\'a été téléchargé.');
-    return;
+    return { ok: false, raison: controle.raison };
   }
   // Voir saveOrShareBinaryFile plus bas dans le fichier : ni navigator.share()
   // ni <a download> sur une blob: URL ne sont fiables dans la WebView Android
@@ -2085,6 +2085,54 @@ async function exportBackupFile(data, filenamePrefix) {
   const res = await saveOrShareBinaryFile(filename, bytes, 'application/json', { verifierCompteurs: compteursSauvegarde(data) });
   const surAndroid = !!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem);
   if (!surAndroid && res && res.ok) noterResultatSauvegarde({ ok: true, mode: 'telechargement', nom: filename, taille: bytes.length });
+  return res;
+}
+
+/* ---------- Isolation entre comptes sur un même appareil ----------
+   La base locale (troupeau_data_v1) n'est PAS rattachée à un compte : sans ces fonctions, un deuxième compte créé ou connecté sur le même appareil recevait la configuration
+   et les fiches du premier (compteVideConfirme / synchro initiale les envoyaient vers son compte). Le propriétaire de la base locale est le compte avec lequel l'appareil
+   a été appairé (clé ovilog_sync_bootstrapped_uid, posée par onSignedIn) ; un appareil sans propriétaire connu (données locales d'avant le cloud) garde le comportement
+   d'origine : le premier compte qui s'y connecte les adopte. À la déconnexion d'un appareil appairé : fichier de sauvegarde, puis vidage de la base locale et des clés de
+   synchro, puis rechargement. Les réglages propres à l'appareil (lecteur Bluetooth, mise à jour reportée) sont conservés. Le cache IndexedDB de Firestore n'est pas vidé :
+   il est rangé par chemin /users/{uid}/..., donc inaccessible à un autre compte. */
+const CLES_LOCALES_DE_COMPTE = ['troupeau_data_v1', 'ovilog_sync_bootstrapped_uid', 'ovilog_sync_journal', 'ovilog_pre_campagne_snapshot', 'ovilog_export_en_cours', 'ovilog_derniere_sauvegarde', 'ovilog_derniers_imports'];
+const PREFIXES_CLES_LOCALES_DE_COMPTE = ['ovilog_sync_connu_', 'ovilog_sync_last_synced_', 'ovilog_lot_trouvees_'];
+function proprietaireBaseLocale() { try { return localStorage.getItem('ovilog_sync_bootstrapped_uid') || null; } catch (e) { return null; } }
+function baseLocaleContientDesDonnees(base) {
+  base = base || {};
+  return ['brebis', 'beliers', 'agnelles', 'lots', 'laitTank', 'prelevementsQualite'].some(k => Array.isArray(base[k]) && base[k].length > 0);
+}
+function viderBaseLocaleDeCompte() {
+  const garde = { lecteurBluetooth: (DB && DB.lecteurBluetooth) || null, lecteurOptions: (DB && DB.lecteurOptions) || null };
+  try {
+    const aSupprimer = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (CLES_LOCALES_DE_COMPTE.includes(k) || PREFIXES_CLES_LOCALES_DE_COMPTE.some(pre => k.startsWith(pre))) aSupprimer.push(k);
+    }
+    aSupprimer.forEach(k => localStorage.removeItem(k));
+    const base = loadData();   // plus de clé : base vide par défaut
+    base.lecteurBluetooth = garde.lecteurBluetooth; base.lecteurOptions = garde.lecteurOptions;
+    localStorage.setItem('troupeau_data_v1', JSON.stringify(base));
+  } catch (e) { console.error('Vidage de la base locale : échec', e); }
+}
+async function sauvegarderBaseLocaleAvantIsolation(prefixe) {
+  if (!baseLocaleContientDesDonnees(DB)) return true;   // rien à sauvegarder
+  try { const res = await exportBackupFile(JSON.parse(JSON.stringify(DB)), prefixe); return !!(res && res.ok); } catch (e) { return false; }
+}
+// Déconnexion volontaire : sauvegarde d'abord ; si elle n'est pas enregistrée, l'utilisateur choisit (ses données restent dans son compte). Retourne false si la déconnexion est annulée.
+async function deconnexionAvecSauvegarde() {
+  if (!proprietaireBaseLocale()) return true;
+  if (window.__syncEnAttente && !confirm("Des modifications de cet appareil ne sont pas encore synchronisées : elles seront dans la sauvegarde, mais pas dans ton compte. Se déconnecter quand même ?")) return false;
+  if (await sauvegarderBaseLocaleAvantIsolation('avant-deconnexion')) return true;
+  return confirm("La sauvegarde de cet appareil n'a pas été enregistrée. Se déconnecter quand même ? Tes données restent dans ton compte.");
+}
+// Un autre compte se connecte sur un appareil appairé à un compte différent : sauvegarde, vidage, rechargement. Ne rend jamais la main (la page se recharge).
+async function isolerBaseLocaleAutreCompte() {
+  await sauvegarderBaseLocaleAvantIsolation('avant-changement-de-compte');
+  viderBaseLocaleDeCompte();
+  location.reload();
+  return new Promise(() => {});
 }
 function controlerOctetsSauvegarde(bytes, data) {
   if (!bytes || !bytes.length) return { ok: false, raison: 'le contenu à exporter est vide' };
@@ -29888,7 +29936,15 @@ async function commitOpsIndividually(ops) {
   }
 }
 
+// Garde-fou : jamais d'écriture vers un compte différent de celui avec lequel cet appareil a été appairé (base locale d'un autre compte)
+function ecritureCloudAutorisee() {
+  const proprietaire = proprietaireBaseLocale();
+  if (!sync.uid || !proprietaire || proprietaire === sync.uid) return true;
+  console.error('Écriture vers le cloud refusée : la base locale appartient à un autre compte.');
+  return false;
+}
 async function commitOpsInBatches(ops) {
+  if (!ecritureCloudAutorisee()) return;
   for (let i = 0; i < ops.length; i += FIRESTORE_BATCH_MAX) {
     const chunk = ops.slice(i, i + FIRESTORE_BATCH_MAX);
     const batch = writeBatch(fbDb);
@@ -29908,6 +29964,7 @@ async function commitOpsInBatches(ops) {
 }
 
 async function syncAllToCloud(data) {
+  if (!ecritureCloudAutorisee()) return;
   const ops = [];
   for (const col of DOC_COLLECTIONS) buildAnimalCollectionOps(col, getRecordsArrayForSync(col, data), ops);
   buildMetaOp(data, ops);
@@ -30243,7 +30300,7 @@ async function reprendreEcrituresRetenues() {
    normale). Le compte n'est déclaré « connu » qu'une fois le document réellement créé. */
 let initCompteVideEnCours = false;
 async function compteVideConfirme() {
-  if (initCompteVideEnCours || sync.connu.has('meta') || !sync.uid) return;
+  if (initCompteVideEnCours || sync.connu.has('meta') || !sync.uid || !ecritureCloudAutorisee()) return;
   initCompteVideEnCours = true;
   try {
     const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
@@ -30498,6 +30555,8 @@ async function migrerRegistreVersCollectionEffective() {
    est encore vide au moment de la décision (le vrai risque que ce chantier
    cherche à éliminer). */
 async function onSignedIn(user) {
+  const proprietaire = proprietaireBaseLocale();
+  if (proprietaire && proprietaire !== user.uid) { await isolerBaseLocaleAutreCompte(); return false; }   // base locale d'un autre compte : jamais envoyée vers celui-ci
   const memeSession = sync.uid === user.uid;
   sync.uid = user.uid;
   sync.email = user.email;
@@ -30625,8 +30684,16 @@ window.OvilogSync = {
     stopListeners();
     await startListeners(false);
   },
-  logout() {
-    signOut(fbAuth).catch(e => console.error('Erreur de déconnexion :', e));
+  async logout() {
+    if (!(await deconnexionAvecSauvegarde())) return;
+    const proprietaire = proprietaireBaseLocale();   // lu AVANT la déconnexion
+    try { await signOut(fbAuth); } catch (e) { console.error('Erreur de déconnexion :', e); return; }
+    if (proprietaire) { viderBaseLocaleDeCompte(); location.reload(); }   // appareil appairé : plus rien du compte ne reste ici
+  },
+  // Déconnexion technique SANS vidage de la base locale : ce que fait le SDK quand la session expire (onAuthStateChanged(null)) ; la même base locale reste l'appareil du même compte.
+  // Utilisée par les tests de reconnexion ; l'action « Se déconnecter » des Paramètres passe, elle, par logout().
+  async deconnecterSansVider() {
+    try { await signOut(fbAuth); } catch (e) { console.error('Erreur de déconnexion :', e); }
   },
   // Exposés pour l'indicateur Paramètres > Exploitation (script classique,
   // voir rafraichirStatutSynchroParametres) -- lireJournalSynchro/
