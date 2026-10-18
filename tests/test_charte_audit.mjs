@@ -264,5 +264,18 @@ console.log('P OK');
 }
 console.log('Q OK');
 
+// ---------------------------------------------------------------- S. PC : boutons d'action à la largeur de leur libellé (plus de bouton pleine largeur)
+{
+  for (const [code, id] of [["render('beliers')", 'btn-add-belier'], ["render('ordonnances')", 'btn-add-ordonnance'], ["editContext = null; render('add-ordonnance')", 'btn-save-ordonnance']]) {
+    await ecran(pc, code);
+    const w = await pc.evaluate(id => { const b = document.getElementById(id); return [Math.round(b.getBoundingClientRect().width), Math.round(document.getElementById('app').getBoundingClientRect().width)]; }, id);
+    check(w[0] < 400 && w[0] < w[1] / 2, 'S. ' + id + ' (PC) : largeur du libellé (' + w[0] + ' px sur ' + w[1] + ')');
+    await ecran(mob, code);
+    const wm = await mob.evaluate(id => Math.round(document.getElementById(id).getBoundingClientRect().width), id);
+    check(wm > 300, 'S. ' + id + ' (mobile) : inchangé, pleine largeur (' + wm + ' px)');
+  }
+}
+console.log('S OK');
+
 await browser.close();
 console.log('OK');
