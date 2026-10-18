@@ -45,7 +45,7 @@ const kpis = () => page.evaluate(() => Object.fromEntries([...document.querySele
 await jeu();
 check(await nb('#pc-production') === 1, 'page PC Production laitière affichée (pas la version mobile)');
 eq(await $$t('#pl-onglets .tab-btn'), ['Tank', 'Qualité'], 'deux onglets');
-eq(await $t('#pc-production .brd-title'), 'Tank', 'titre');
+eq(await page.evaluate(() => document.querySelectorAll('#pc-production .brd-title').length), 0, 'titre : plus de titre « Tank » répété (audit charte K : l\'onglet et le bandeau suffisent)');
 eq(await page.evaluate(() => [...document.querySelectorAll('#pc-production .brd-actions button')].map(b => b.textContent)), ['Export Excel', 'Export PDF'], 'boutons d\'action en haut à droite (Export Excel blanc, Export PDF vert = Calendrier du tank), plus de Tank (PDF), aucun import');
 check(await page.evaluate(() => !!document.querySelector('#pc-production .brd-actions select')), 'sélecteur de campagne en haut à droite');
 check(!/[Ii]mporter/.test(await $t('#app')), 'aucun bouton d\'import du fichier tank');

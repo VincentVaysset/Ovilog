@@ -178,5 +178,21 @@ console.log('G OK');
 }
 console.log('I OK');
 
+// ---------------------------------------------------------------- K. PC : un seul titre (celui du bandeau), pas de titre d'onglet ni de nom de fiche répété
+{
+  const titresVisibles = () => pc.evaluate(() => [...document.querySelectorAll('#app h1, #app h2, #app .brd-title, #app .fiche-desktop-name')].filter(e => e.offsetParent).map(e => e.textContent.replace(/\s+/g, ' ').trim()));
+  const ECR = [["bilanCampagneTab = 'incoherences'; render('bilan-campagne')", 'Brebis à régulariser'], ["bilanCampagneTab = 'reproduction'; render('bilan-campagne')", 'Bilan de reproduction'], ["bilanCampagneTab = 'lactation'; render('bilan-campagne')", 'Bilan de lactation'],
+    ["plOnglet = 'tank'; render('qualite')", 'Tank'], ...['exploitation', 'campagne', 'listes', 'imports', 'sauvegarde'].map(t => [`parametresTab = '${t}'; parametresRubrique = '${t}'; render('parametres')`, null])];
+  for (const [code, titre] of ECR) {
+    await ecran(pc, code); const t = await titresVisibles();
+    check(t.length === 0, 'K. ' + (titre || code) + ' (PC) : aucun titre répété dans la page : ' + JSON.stringify(t));
+  }
+  for (const [code, nom] of [["render('detail')", 'Brebis n°'], ["render('belier-detail')", 'Bélier n°'], ["render('agnelle-detail')", 'Agnelle n°']]) {
+    await ecran(pc, code); const t = await titresVisibles();
+    check(t.length === 1 && /^EID \d+/.test(t[0]) && !t[0].includes(nom), 'K. fiche ' + nom + ' (PC) : la carte garde l\'EID sans répéter le nom du bandeau : ' + JSON.stringify(t));
+  }
+}
+console.log('K OK');
+
 await browser.close();
 console.log('OK');

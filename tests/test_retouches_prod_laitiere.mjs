@@ -116,7 +116,7 @@ await pc.click('#btn-rapport-qualite'); await pc.waitForFunction(() => window.__
 eq(await pc.evaluate(() => window.__saisies[0].nom), 'rapport-campagne_2027_2027-03-15.pdf', 'Export PDF Qualité : nom de fichier inchangé');
 // Tank : titre et exports inchangés
 await pc.evaluate(() => { plOnglet = 'tank'; plPcCampagne = null; plPcMoisTank = null; plPcDate = null; render('qualite'); });
-eq(await pc.evaluate(() => document.querySelector('#pc-tank .brd-title').textContent), 'Tank', 'Tank PC : le titre est conservé');
+eq(await pc.evaluate(() => document.querySelectorAll('#pc-tank .brd-title').length), 0, 'Tank PC : plus de titre « Tank » répété (audit charte K)');
 eq(await pc.evaluate(() => [...document.querySelectorAll('#pc-tank .brd-actions button')].map(b => b.textContent.trim())), ['Export Excel', 'Export PDF'], 'Tank PC : exports inchangés');
 // Bilan économique PC
 await pc.evaluate(() => { bilanCampagneTab = 'economique'; bilanEconomiqueCampagneAffichee = 2026; bilanEconomiqueMoisAffiche = '2027-01'; render('bilan-campagne'); });
