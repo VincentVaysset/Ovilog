@@ -220,5 +220,13 @@ for (const [page, code] of [[mob, "render('list')"], [mob, "render('sanitaire')"
 }
 console.log('N OK');
 
+// ---------------------------------------------------------------- O. Champs désactivés en gris de la charte (#8a8670), pas le gris du navigateur
+{
+  await ecran(pc, "mvPcEtat = null; render('inventaire')");
+  const d = await pc.evaluate(() => [...document.querySelectorAll('#app select:disabled, #app input:disabled')].filter(e => e.offsetParent).map(e => e.id + '|' + getComputedStyle(e).color));
+  check(d.length > 0 && d.every(x => x.endsWith('rgb(138, 134, 112)')), 'O. Mouvements (PC) : champs désactivés en #8a8670 : ' + JSON.stringify(d));
+}
+console.log('O OK');
+
 await browser.close();
 console.log('OK');
