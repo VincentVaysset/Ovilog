@@ -204,5 +204,13 @@ console.log('K OK');
 }
 console.log('L OK');
 
+// ---------------------------------------------------------------- M. Champs fichier (imports) : bouton au style de la charte (secondaire, pilule, contour #d9cfb8)
+for (const page of [mob, pc]) {
+  await ecran(page, "render('import-controle-laitier-sieol')");
+  const f = await page.evaluate(() => [...document.querySelectorAll('input[type=file]')].map(i => { const c = getComputedStyle(i, '::file-selector-button'); return [c.backgroundColor, c.borderTopColor, parseFloat(c.borderTopLeftRadius) >= 18].join('|'); }));
+  check(f.length > 0 && f.every(x => x === 'rgb(255, 255, 255)|rgb(217, 207, 184)|true'), 'M. import du contrôle laitier : bouton de fichier à la charte : ' + JSON.stringify(f));
+}
+console.log('M OK');
+
 await browser.close();
 console.log('OK');
