@@ -212,5 +212,13 @@ for (const page of [mob, pc]) {
 }
 console.log('M OK');
 
+// ---------------------------------------------------------------- N. Texte des champs en #2b261c (charte), jamais en noir pur
+for (const [page, code] of [[mob, "render('list')"], [mob, "render('sanitaire')"], [pc, "mvPcEtat = null; render('inventaire')"]]) {
+  await ecran(page, code);
+  const noirs = await page.evaluate(() => [...document.querySelectorAll('#app input:not([type=checkbox]):not([type=radio]):not([type=file]), #app select, #app textarea')].filter(e => e.offsetParent && !e.disabled && getComputedStyle(e).color === 'rgb(0, 0, 0)').map(e => e.id || e.className));
+  check(noirs.length === 0, 'N. ' + code + ' : champs en noir pur : ' + JSON.stringify(noirs));
+}
+console.log('N OK');
+
 await browser.close();
 console.log('OK');
