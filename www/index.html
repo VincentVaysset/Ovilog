@@ -2476,12 +2476,24 @@ function resoudreEidAgneau(saisie, dateISO) {
   if (annee && parseInt(eid.charAt(10), 10) !== annee % 10) res.alerte = "Le chiffre d'année du n° (" + eid.charAt(10) + ") ne correspond pas à la date de naissance (" + annee + ").";
   return res;
 }
+/* Un numéro déjà enregistré l'est peut-être sous une AUTRE forme (anciennes fiches : EID sur 11 chiffres, avec ou sans espaces). Aucun numéro enregistré n'est jamais modifié ni converti ;
+   pour savoir si un nouveau numéro est libre, on compare donc aussi par le numéro national (11 derniers chiffres, `eidAffichageCourt`) toutes les catégories. Retourne le même conflit que
+   verifierEidUnique (de l'animal déjà enregistré), ou null si le numéro est libre sous toutes ses formes. */
+function conflitEidToutesFormes(eid) {
+  const v = cleanEid(String(eid || ''));
+  if (!v) return null;
+  const direct = verifierEidUnique(v);
+  if (direct) return direct;
+  const existant = resoudreDoublonNouvelAnimal(v);
+  if (existant) return verifierEidUnique(existant.item.eid) || null;
+  return verifierDoublonHorsPerimetreNouvelAnimal(v);
+}
 // Message d'aperçu sous le champ EID d'un agneau : { texte, ton: 'normal' | 'alerte' | 'danger' } ; texte vide si le champ est vide
 function apercuEidAgneau(saisie, dateISO) {
   const r = resoudreEidAgneau(saisie, dateISO);
   if (!r.eid) return { texte: '', ton: 'normal', resolu: r };
   if (r.erreur) return { texte: r.erreur, ton: 'danger', resolu: r };
-  const conflit = verifierEidUnique(r.eid);
+  const conflit = conflitEidToutesFormes(r.eid);
   if (conflit) return { texte: messageEidDejaUtilise(conflit), ton: 'danger', resolu: r };
   if (r.auto) return { texte: "Né dans l'élevage : " + r.national + (r.alerte ? ' · ' + r.alerte : ''), ton: r.alerte ? 'alerte' : 'normal', resolu: r };
   return { texte: "Numéro d'ordre : n°" + numeroVisuel(r.eid), ton: 'normal', resolu: r };
@@ -12193,7 +12205,7 @@ function renderAddAgnelage(sheepId) {
         // valeur inchangée en édition ferait à tort remonter l'agneau
         // lui-même (déjà présent dans la base sous ce même EID).
         if (eidVal !== (lambs[id].eidOriginal || '')) {
-          const conflitEid = verifierEidUnique(eidVal);
+          const conflitEid = conflitEidToutesFormes(eidVal);
           if (conflitEid) {
             err.textContent = messageEidDejaUtilise(conflitEid) + ' (agneau ' + id + ')';
             err.classList.remove('hidden');
@@ -13165,7 +13177,7 @@ function construireAgnelageMiseBas(sheep, saisie) {
     const resolu = resoudreEidAgneau((l.eid || '').trim());   // n° à 5 ou 11 chiffres : EID complet reconstitué (indicatif de l'exploitation)
     if (resolu.erreur) return { erreur: resolu.erreur + ' (agneau ' + n + ')' };
     const eidVal = resolu.eid;
-    const conflit = verifierEidUnique(eidVal);
+    const conflit = conflitEidToutesFormes(eidVal);
     if (conflit) return { erreur: messageEidDejaUtilise(conflit) + ' (agneau ' + n + ')' };
     const lamb = { sexe: l.sexe, adopte: !!l.adopte, eid: eidVal };
     if (l.adopte) {

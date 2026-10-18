@@ -134,5 +134,46 @@ for (const desktop of [false, true]) {
   console.log('OK 3 fiche brebis : même règle que la saisie rapide.');
   await page.context().close();
 }
+// ================================================================ 4. numéros DÉJÀ enregistrés sous une ancienne forme (11 chiffres) : jamais modifiés, jamais contournés
+{
+  const page = await ouvrir(false);
+  const r = await page.evaluate(() => {
+    const fiche = (id, eid, extra) => Object.assign({ id, eid, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }, extra || {});
+    DB.brebis = [fiche('ancienne', '16299161001', { numeroCourtTravailSieol: '61001', pere: '16299112345', numeroLongTravailSieol: '261001' }),
+      fiche('mere', '250016299150001', { agnelages: [{ date: '2026-03-01', campagne: 2025, lambs: [{ sexe: 'Mâle', eid: '16299162002', adopte: false, adoptiveEid: '16299161001' }] }] }),
+      fiche('nouvelle', '250016299150002')];
+    DB.beliers = [{ id: 'bel', eid: '16299163003', statut: 'actif', sanitaire: [], mouvements: [] }];
+    DB.agnelles = [{ id: 'agn', eid: '16299164004', origine: 'née', sanitaire: [], mouvements: [], mere: '16299150001' }];
+    // photographie de TOUS les numéros existants, avant toute opération
+    const numeros = () => JSON.stringify({ b: DB.brebis.map(b => [b.eid, b.numeroCourtTravailSieol, b.numeroLongTravailSieol, b.pere, b.mere, (b.agnelages || []).map(a => (a.lambs || []).map(l => [l.eid, l.adoptiveEid]))]), bel: DB.beliers.map(x => x.eid), agn: DB.agnelles.map(x => [x.eid, x.mere]) });
+    window.__numeros = numeros;
+    const avant = numeros();
+    const sheep = DB.brebis[2];
+    const res = {};
+    // chaque numéro existant, tapé sous ses 3 formes (5 chiffres, 11 chiffres, 15 chiffres), est reconnu comme déjà utilisé
+    [['brebis', '61001'], ['agneau', '62002'], ['bélier', '63003'], ['agnelle', '64004']].forEach(([nom, court]) => {
+      res[nom] = [court, '162991' + court, '162991 ' + court, '2500162991' + court].map(f => /déjà/.test(apercuEidAgneau(f, '2026-10-02').texte));
+    });
+    const refus = construireAgnelageMiseBas(sheep, { date: '2026-10-02', codeRepro: 'IA', lambs: [{ sexe: 'Mâle', eid: '62002' }] });
+    res.refus = /déjà/.test(refus.erreur || '');
+    // un numéro réellement libre passe, et seul le nouvel agneau est ajouté
+    const ok = construireAgnelageMiseBas(sheep, { date: '2026-10-02', codeRepro: 'IA', lambs: [{ sexe: 'Femelle', eid: '65005' }] });
+    res.libre = ok.agnelage ? ok.agnelage.lambs[0].eid : ok.erreur;
+    enregistrerMiseBas(sheep, ok.agnelage);
+    sheep.agnelages[0].lambs.pop();   // on retire seulement le nouvel agneau pour comparer le reste
+    sheep.agnelages.pop();
+    res.numerosInchanges = numeros() === avant;
+    return res;
+  });
+  eq(r.brebis, [true, true, true, true], 'brebis enregistrée sur 11 chiffres : reconnue sous ses 4 formes de saisie');
+  eq(r['agneau'], [true, true, true, true], 'agneau enregistré sur 11 chiffres : reconnu sous ses 4 formes de saisie');
+  eq(r['bélier'], [true, true, true, true], 'bélier enregistré sur 11 chiffres : reconnu sous ses 4 formes de saisie');
+  eq(r['agnelle'], [true, true, true, true], 'agnelle enregistrée sur 11 chiffres : reconnue sous ses 4 formes de saisie');
+  check(r.refus, 'mise bas : un n° déjà porté par un agneau ancien est refusé à l\'enregistrement');
+  eq(r.libre, '250016299165005', 'un numéro libre est accepté et complété');
+  check(r.numerosInchanges, 'AUCUN numéro déjà enregistré n\'est modifié (EID, n° SIEOL, père/mère, mère adoptive, agneaux) : ancien format 11 chiffres conservé tel quel');
+  console.log('OK 4 numéros existants (ancien format 11 chiffres) : jamais modifiés, jamais contournés.');
+  await page.context().close();
+}
 await browser.close();
 console.log('OK test_misebas_numero_court');
