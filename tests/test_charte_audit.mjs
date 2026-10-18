@@ -157,5 +157,26 @@ console.log('F OK');
 }
 console.log('G OK');
 
+// ---------------------------------------------------------------- I. Rouge des boutons : seulement Supprimer / Suppr. / Retirer / Nettoyer le registre (secondaire), jamais pour les autres actions
+{
+  const ROUGE = 'rgb(163, 58, 49)', VERT = 'rgb(53, 127, 75)';
+  const couleur = (page, sel) => page.evaluate(sel => [...document.querySelectorAll(sel)].filter(b => b.offsetParent).map(b => { const c = getComputedStyle(b); return b.textContent.trim().slice(0, 30) + '|' + c.color + '|' + c.borderTopColor + '|' + c.backgroundColor; }), sel);
+  const pasRouge = (l, nom) => check(l.length > 0 && l.every(x => !x.includes(ROUGE)), 'I. ' + nom + ' : sans rouge : ' + JSON.stringify(l));
+  await ecran(mob, "currentAgnelleId = 'ag1'; render('agnelle-detail')");
+  pasRouge(await couleur(mob, '#btn-vendre-agnelle-fiche'), 'fiche agnelle « Vendre »');
+  check((await couleur(mob, '#btn-delete-agnelle-fiche'))[0].includes(ROUGE), 'I. « Supprimer cette agnelle » garde le rouge (secondaire)');
+  await ecran(pc, "render('agneaux')"); pasRouge(await couleur(pc, '.btn-agneau-vendu, .btn-agneau-mort'), 'Agneaux (PC) « Vendu » / « Mort »');
+  await ecran(mob, "render('lots')"); pasRouge(await couleur(mob, '#btn-new-lot-reforme'), '« + Nouveau lot de réforme »');
+  await ecran(mob, "render('sous-delai')"); pasRouge(await couleur(mob, '#btn-controle-lot-delai'), '« Contrôle de lot (scan) »');
+  await ecran(mob, "render('inventaire-actifs')"); pasRouge(await couleur(mob, '#btn-maj-inventaire'), '« Mise à jour inventaire »');
+  await ecran(pc, "render('misebas-rapide')"); pasRouge(await couleur(pc, '.btn-annuler-mb-campagne'), 'Mises bas (PC) « Annuler »');
+  await ecran(pc, "mvPcEtat = null; render('inventaire')"); pasRouge(await couleur(pc, '.mv-annuler, .mv-annuler-lot'), 'Mouvements passés (PC) « Annuler »');
+  for (const page of [mob, pc]) {
+    await ecran(page, "parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres')");
+    check((await couleur(page, '#btn-nouvelle-campagne'))[0].endsWith(VERT), 'I. « Démarrer la campagne » en vert');
+  }
+}
+console.log('I OK');
+
 await browser.close();
 console.log('OK');
