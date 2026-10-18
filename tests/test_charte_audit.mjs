@@ -3,6 +3,12 @@
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
 import { jeuPcEcrans } from './lib/jeu_pc_ecrans.mjs';
+import { installerCasPdf } from './lib/jeux_pdf.mjs';
+import { jeuRegistre } from './lib/jeu_registre_cl.mjs';
+import { spawnSync } from 'child_process';
+import { writeFileSync, mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + ' : ' + JSON.stringify(a) + ' attendu ' + JSON.stringify(b));
 const browser = await chromium.launch(LAUNCH);
@@ -238,6 +244,25 @@ console.log('O OK');
   eq(ph, [true, true], 'P. fiche produit (mobile) : « 0 = aucune attente » entier');
 }
 console.log('P OK');
+
+// ---------------------------------------------------------------- Q. PDF Bilan complet et Bilan de lactation : barres en vert #357f4b, pic en vert foncé #2f6e44, plus de vert pâle #8fb89c
+{
+  const p = await (await browser.newContext({ viewport: { width: 390, height: 900 } })).newPage();
+  await p.clock.setFixedTime(new Date('2026-10-03T09:00:00'));
+  await p.goto(URL_APP, { waitUntil: 'load' }); await p.waitForTimeout(300);
+  await p.evaluate(`window.__jeuRegistre = ${jeuRegistre.toString()}`); await p.evaluate(installerCasPdf);
+  const dir = mkdtempSync(path.join(tmpdir(), 'ovilog-q-'));
+  for (const cas of ['bilan_complet', 'bilan_lactation']) {
+    const b64 = await p.evaluate(async c => { const o = await window.CAS_PDF[c](); let t = ''; for (const v of o) t += String.fromCharCode(v); return btoa(t); }, cas);
+    const f = path.join(dir, cas + '.pdf'); writeFileSync(f, Buffer.from(b64, 'base64'));
+    const r = spawnSync('python3', ['-I', '-c', "import sys, json, pymupdf as m\nd = m.open(sys.argv[1]); s = set()\nfor pg in d:\n    for dr in pg.get_drawings():\n        if dr.get('fill'): s.add('%02x%02x%02x' % tuple(round(c * 255) for c in dr['fill'][:3]))\nprint(json.dumps(sorted(s)))", f], { encoding: 'utf8' });
+    const fills = JSON.parse(r.stdout);
+    const pres = hex => fills.some(x => [0, 2, 4].every(i => Math.abs(parseInt(x.slice(i, i + 2), 16) - parseInt(hex.slice(i, i + 2), 16)) <= 3));
+    check(!pres('8fb89c') && pres('357f4b') && pres('2f6e44'), 'Q. PDF ' + cas + ' : barres vertes, pic vert foncé, plus de #8fb89c : ' + fills.join(' '));
+  }
+  await p.context().close();
+}
+console.log('Q OK');
 
 await browser.close();
 console.log('OK');

@@ -23,7 +23,7 @@ let n = 0;
 function lire(octets) { const f = path.join(dir, 'l' + (++n) + '.pdf'); writeFileSync(f, Buffer.from(octets)); const r = spawnSync('python3', ['-I', '-c', PY, f], { encoding: 'utf8', maxBuffer: 1 << 28 }); if (r.status !== 0) throw new Error('PyMuPDF : ' + r.stderr.slice(0, 300)); return JSON.parse(r.stdout); }
 const proche = (c, rgb, tol = 3) => [0, 1, 2].every(i => Math.abs(c[i] - rgb[i]) <= tol);
 const hex = h => [0, 2, 4].map(i => parseInt(h.slice(1 + i, 3 + i), 16));
-const VERT = hex('#357f4b'), PALE = hex('#357f4b').map(v => Math.round(v * 0.55 + 255 * 0.45));
+const VERT = hex('#357f4b'), PALE = hex('#357f4b').map(v => Math.round(v * 0.55 + 255 * 0.45)), VFONCE = hex('#2f6e44');   // audit charte Q : barres vert #357f4b, pic vert foncé #2f6e44 (plus de vert pâle)
 const browser = await chromium.launch(LAUNCH);
 async function ouvrir(bureau) {
   const page = await (await browser.newContext({ viewport: bureau ? { width: 1440, height: 1000 } : { width: 390, height: 900 } })).newPage();
@@ -52,11 +52,11 @@ const r = lire(Buffer.from(bp, 'base64'));
 eq([r.pages, Math.round(r.taille[0]), Math.round(r.taille[1])], [1, 595, 842], 'une seule page A4 portrait');
 for (const t of ['Bilan de lactation', 'Litrage par mois', 'Brebis présentes, moyenne mensuelle', 'en milliers de litres', 'moyenne 3', '4,2', '5,1']) check(r.texte.includes(t), 'texte « ' + t + ' » présent dans le PDF');
 for (const m of ['Oct', 'Nov', 'Déc', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep']) check(r.texte.includes(m), 'mois ' + m + ' en abscisse');
-const barres = r.fills.filter(f => f[3] > 25 && f[3] < 45 && f[4] > 0.9 && f[4] < 90 && (proche(f, VERT) || proche(f, PALE)));
+const barres = r.fills.filter(f => f[3] > 25 && f[3] < 45 && f[4] > 0.9 && f[4] < 90 && (proche(f, VERT) || proche(f, VFONCE)));
 eq(barres.length, 14, 'barres : 2 mois de tank + 12 mois d\'effectif');
-eq(barres.filter(f => proche(f, VERT)).length, 1, 'une seule barre en vert plein : le mois de pointe du litrage (janvier, 5,1)');
+eq(barres.filter(f => proche(f, VFONCE)).length, 1, 'une seule barre en vert foncé : le mois de pointe du litrage (janvier, 5,1) ; les autres en vert de la charte');
 const hauteurs = barres.slice(0, 2).map(f => f[4]); check(hauteurs[0] < hauteurs[1] && Math.abs(hauteurs[0] / hauteurs[1] - 4200 / 5100) < 0.03, 'hauteurs proportionnelles aux litres : ' + hauteurs.join(' / '));
-console.log('OK 1 PDF : 1 page A4, tuiles + tableau + deux histogrammes (14 barres, pointe en vert plein, moyenne en pointillé), identique sur PC et mobile.');
+console.log('OK 1 PDF : 1 page A4, tuiles + tableau + deux histogrammes (14 barres, pointe en vert foncé, moyenne en pointillé), identique sur PC et mobile.');
 
 // ================================================================ 2. résumé de campagne : mêmes chiffres que la page PC, sur PC comme sur mobile
 const [rp, rm] = await les2(() => {
