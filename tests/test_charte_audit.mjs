@@ -123,5 +123,18 @@ console.log('D OK');
 }
 console.log('E OK');
 
+// ---------------------------------------------------------------- F. Puces PC (.pc-seg2) : sélection en vert pastel quelle que soit la variante, libellé jamais coupé
+{
+  await ecran(pc, "render('sanitaire')");
+  await pc.click('.cs-type[data-val="Traitement"]'); await pc.waitForTimeout(100);
+  const t = await pc.evaluate(() => [...document.querySelectorAll('.cs-type')].map(b => { const c = getComputedStyle(b); return b.textContent.trim() + '|' + (b.scrollWidth > b.clientWidth + 1 ? 'COUPE' : 'entier') + '|' + (b.classList.contains('selected') ? c.backgroundColor + '|' + c.color : ''); }));
+  check(t.every(x => x.includes('|entier|')), 'F. Carnet sanitaire (PC) : « Vaccin », « Traitement », « Autre » entiers : ' + JSON.stringify(t));
+  check(t.some(x => x.startsWith('Traitement') && x.endsWith('rgb(227, 243, 230)|rgb(36, 97, 58)')), 'F. « Traitement » sélectionné en vert pastel : ' + JSON.stringify(t));
+  await ecran(pc, "DB.exploitation = Object.assign({}, DB.exploitation, { elevageBio: true }); render('traitements-12-mois')");
+  const v = await pc.evaluate(() => { const b = document.querySelector('#s12-vue-animaux.selected, #s12-vue-interv.selected'), c = getComputedStyle(b); return c.backgroundColor + '|' + c.color; });
+  eq(v, 'rgb(227, 243, 230)|rgb(36, 97, 58)', 'F. Traitements 12 mois (PC) : vue sélectionnée en vert pastel');
+}
+console.log('F OK');
+
 await browser.close();
 console.log('OK');
