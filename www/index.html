@@ -6064,11 +6064,24 @@ let bilanCampagneTab = 'incoherences';
 /* Réglage de COMPTE « Bilan économique » (bilanEconomiqueActif, synchronisé via META_FIELDS). Faux : l'onglet « Bilan économique » de Bilan de campagne, le lien « Prix du lait, bonus et
    pénalités » de la Qualité du lait et la page « Bilan économique » du rapport PDF disparaissent ; la Qualité du lait (prélèvements, grades, Super A, exports) reste. Rien n'est supprimé :
    tank, prélèvements, pénalités et paramètres de prix restent en base et reviennent tels quels à la réactivation. Réglage ABSENT (compte antérieur à ce réglage) : actif seulement s'il y a
-   déjà des données de lait ; un compte neuf reçoit explicitement « faux » à sa création (compteVideConfirme), donc il n'apparaît pas quand l'exploitant saisit son premier relevé. */
+   déjà des données de lait ; un compte neuf reçoit explicitement « faux » à sa création (compteVideConfirme), donc il n'apparaît pas quand l'exploitant saisit son premier relevé ; son interrupteur n'existe pas non plus (voir bilanEconomiqueDisponible). */
 function bilanEconomiqueActif(base) {
   base = base || DB;
+  if (!bilanEconomiqueDisponible(base)) return false;   // compte neuf : jamais actif, même si une valeur « vrai » arrivait d'ailleurs
   if (typeof base.bilanEconomiqueActif === 'boolean') return base.bilanEconomiqueActif;
-  return ['laitTank', 'prelevementsQualite', 'penalitesBacterio'].some(k => Array.isArray(base[k]) && base[k].length > 0);
+  return baseADesDonneesLait(base);
+}
+function baseADesDonneesLait(base) { return ['laitTank', 'prelevementsQualite', 'penalitesBacterio'].some(k => Array.isArray(base[k]) && base[k].length > 0); }
+/* Réglage de COMPTE « Bilan économique disponible » (bilanEconomiqueDisponible, synchronisé via META_FIELDS) : l'interrupteur « Afficher le Bilan économique » de
+   Paramètres › Exploitation n'existe que sur un compte disponible, un compte neuf ne peut donc jamais l'activer. Faux écrit à la création d'un compte neuf
+   (compteVideConfirme) ; vrai écrit dès que l'interrupteur est touché (il ne disparaît donc jamais pour qui l'a). ABSENT (compte antérieur à ce réglage) :
+   disponible si le Bilan économique est explicitement actif, ou s'il n'a jamais été désactivé et que le compte avait déjà des données de lait ; un compte
+   créé avant ce réglage avec « faux » explicite (compte neuf) reste non disponible, même après ses premiers relevés. */
+function bilanEconomiqueDisponible(base) {
+  base = base || DB;
+  if (typeof base.bilanEconomiqueDisponible === 'boolean') return base.bilanEconomiqueDisponible;
+  if (base.bilanEconomiqueActif === true) return true;
+  return base.bilanEconomiqueActif !== false && baseADesDonneesLait(base);
 }
 let bilanLactationCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan de lactation, voir bilanLactationHtml
 let bilanEconomiqueCampagneAffichee = null; // campagne consultée dans le sous-onglet Bilan économique, voir bilanEconomiqueHtml
@@ -27348,14 +27361,15 @@ function renderParametresExploitation(content) {
         <div class="prm-note">3 par défaut : au-delà, l'animal perd le statut bio. Signalement seulement, rien n'est bloqué.</div>
       </div>
     </div>`;
-  const carteEco = `
+  const carteEco = !bilanEconomiqueDisponible() ? '' : `
     <div class="card" id="card-bilan-economique">
       <div class="prm-titre">Bilan économique</div>
       <label class="prm-case"><input type="checkbox" id="f-exp-bilan-eco"${bilanEconomiqueActif() ? ' checked' : ''}><span>Afficher le Bilan économique</span></label>
       <div class="prm-note">Prix du lait, bonus et pénalités en euros, dans Bilan de campagne et dans le rapport PDF. Désactivé, ils sont masqués ; rien n'est supprimé et tout revient à la réactivation.</div>
     </div>`;
   content.innerHTML = prmColonnesHtml(carteIdentite, carteSynchro + carteBio + carteEco);
-  document.getElementById('f-exp-bilan-eco').onchange = (ev) => { DB.bilanEconomiqueActif = ev.target.checked; saveData(DB); };   // réversible, enregistré tout de suite
+  const caseEco = document.getElementById('f-exp-bilan-eco');   // absente sur un compte neuf (voir bilanEconomiqueDisponible)
+  if (caseEco) caseEco.onchange = (ev) => { DB.bilanEconomiqueActif = ev.target.checked; DB.bilanEconomiqueDisponible = true; saveData(DB); };   // réversible, enregistré tout de suite ; l'interrupteur reste disponible
 
   document.getElementById('btn-sync-action').onclick = () => {
     // Paramètres n'est accessible qu'une fois connecté (voir "Écran
@@ -29555,6 +29569,8 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', '
   'reproSeuilMiseBasMois', 'schemaLots',
   // Réglage de compte « Bilan économique » (voir bilanEconomiqueActif) : absent = déduit des données de lait ; un compte neuf reçoit « faux »
   'bilanEconomiqueActif',
+  // Interrupteur du Bilan économique disponible sur ce compte (voir bilanEconomiqueDisponible) : faux pour un compte neuf
+  'bilanEconomiqueDisponible',
   // Drapeau de migration CÔTÉ CLOUD (jamais localStorage seul) -- voir
   // migrerRegistreVersCollection : doit être visible de tous les appareils
   // du compte, sinon un appareil qui vient de se réinstaller relancerait la
@@ -30377,7 +30393,8 @@ async function compteVideConfirme() {
   initCompteVideEnCours = true;
   try {
     const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
-    if (typeof DB.bilanEconomiqueActif !== 'boolean') DB.bilanEconomiqueActif = false;   // compte neuf : Bilan économique masqué (réactivable dans Paramètres)
+    if (typeof DB.bilanEconomiqueActif !== 'boolean') DB.bilanEconomiqueActif = false;   // compte neuf : Bilan économique masqué
+    if (typeof DB.bilanEconomiqueDisponible !== 'boolean') DB.bilanEconomiqueDisponible = false;   // … et son interrupteur absent de Paramètres : un compte neuf ne peut pas l'activer
     const record = metaRecordPourCloud(DB);
     const cree = await runTransaction(fbDb, async tx => {
       const snap = await tx.get(metaRef);

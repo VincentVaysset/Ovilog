@@ -90,7 +90,8 @@ for (const pc of [false, true]) {
 for (const pc of [false, true]) {
   const nom = pc ? 'PC' : 'MOBILE';
   const page = await ouvrir(pc);
-  await page.evaluate(() => { DB.bilanEconomiqueActif = false; parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
+  // compte qui a le Bilan économique (interrupteur disponible, voir test_bilan_eco_interrupteur) et qui l'a désactivé
+  await page.evaluate(() => { DB.bilanEconomiqueActif = false; DB.bilanEconomiqueDisponible = true; parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
   await page.waitForSelector('#f-exp-bilan-eco');
   check(!(await page.isChecked('#f-exp-bilan-eco')), nom + ' : interrupteur « Afficher le Bilan économique » décoché');
   const sauvegardesAvant = await page.evaluate(() => window.__saves);
@@ -107,7 +108,7 @@ for (const pc of [false, true]) {
   eq(await page.evaluate(() => window.__donneesPrix() === window.__avantReglage), true, nom + ' : données identiques avant désactivation et après réactivation');
   await page.evaluate(() => { parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
   await page.uncheck('#f-exp-bilan-eco');
-  eq(await page.evaluate(() => DB.bilanEconomiqueActif), false, nom + ' : désactivable de nouveau');
+  eq(await page.evaluate(() => [DB.bilanEconomiqueActif, DB.bilanEconomiqueDisponible, !!document.getElementById('f-exp-bilan-eco')]), [false, true, true], nom + ' : désactivable de nouveau, l\'interrupteur reste là');
   console.log('OK 3 ' + nom + ' : réactivation dans Paramètres sans rien perdre, et nouvelle désactivation.');
   await page.context().close();
 }
@@ -121,6 +122,7 @@ for (const pc of [false, true]) {
   await h.attendreServeur(dev.uid, 'meta', r => r.exists && r.data, 'meta du compte neuf');
   const meta = await h.serveur(dev.uid, 'meta');
   eq(meta.data.bilanEconomiqueActif, false, 'compte neuf : bilanEconomiqueActif = false sur le serveur');
+  eq(meta.data.bilanEconomiqueDisponible, false, 'compte neuf : bilanEconomiqueDisponible = false sur le serveur (interrupteur absent)');
   // il saisit ensuite son premier relevé de tank : le Bilan économique ne doit PAS apparaître tout seul
   await dev.page.evaluate(() => { DB.laitTank = [{ date: '2026-10-02', quantite: 120 }]; bilanCampagneTab = 'incoherences'; render('bilan-campagne'); });
   check(!(await dev.page.evaluate(() => bilanEconomiqueActif())), 'compte neuf : après son premier relevé de tank, le Bilan économique reste masqué');
