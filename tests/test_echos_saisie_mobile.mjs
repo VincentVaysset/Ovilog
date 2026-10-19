@@ -55,6 +55,8 @@ function E_(n) { return '250016299' + '9' + 3 + String(n).padStart(5, '0'); }
 await page.waitForSelector('#carte-echo-brebis');
 const c1 = await page.evaluate(() => ({ prec: document.getElementById('echo-precedente').textContent, texte: document.getElementById('carte-echo-brebis').textContent.replace(/\s+/g, ' '), alerteLot: !!document.getElementById('alerte-lot-echo'),
   barre: [...document.querySelectorAll('.mn-barre .btn')].map(b => b.textContent), stades: [...document.querySelectorAll('.stade-opt')].map(b => b.dataset.val), compt: !document.getElementById('nombre-agneaux-block').classList.contains('hidden') }));
+const coulPrec = await page.evaluate(() => { const s = getComputedStyle(document.getElementById('echo-precedente')); return [s.backgroundColor, s.color]; });
+eq(coulPrec, ['rgb(251, 238, 215)', 'rgb(138, 84, 19)'], '« Précédente : Vide » en ambre comme « Vide » partout (fond ambre pastel, texte ambre foncé), jamais rouge');
 check(/Précédente : Vide/.test(c1.prec) && /écho du 27-09-2026/.test(c1.texte), 'carte brebis : « Précédente : Vide » et date de l\'écho : ' + JSON.stringify(c1));
 check(c1.alerteLot && /n'est pas dans le lot « Lot IA test »/.test(await page.evaluate(() => document.getElementById('alerte-lot-echo').textContent)), 'brebis hors du lot : alerte (jamais refusée)');
 eq(c1.barre.slice(0, 2), ['Passer', 'Enregistrer et suivante'], 'barre fixe'); eq(c1.stades, ['Début', 'Milieu', 'Fin', 'Vide'], 'stades de la monte naturelle + Vide (vocabulaire déduit de la brebis, jamais choisi)'); check(!c1.compt, 'comptage masqué tant qu\'aucun résultat');
