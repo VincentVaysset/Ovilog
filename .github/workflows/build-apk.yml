@@ -68,11 +68,13 @@ jobs:
     # GitHub Actions interdit toute référence au contexte "secrets" dans un
     # "if:" (job ou step) — "Unrecognized named-value: 'secrets'"
     # (constaté à l'exécution sur Logisol). Contournement standard :
-    # recopier le secret dans une variable d'environnement ICI (où
-    # "secrets" reste autorisé), puis ne tester que cette variable dans
-    # les "if:" des étapes ci-dessous.
+    # recopier ICI (où "secrets" reste autorisé) la présence du secret
+    # keystore EXISTANT — KEYSTORE_BASE64, celui qu'utilisait déjà
+    # l'ancien workflow (avec KEYSTORE_PASSWORD, KEY_ALIAS et
+    # KEY_PASSWORD) ; AUCUN nouveau secret à créer — puis ne tester que
+    # cette variable dans les "if:" des étapes ci-dessous.
     env:
-      HAS_KEYSTORE_SECRET: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      KEYSTORE_PRESENT: ${{ secrets.KEYSTORE_BASE64 != '' }}
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v4
@@ -128,13 +130,29 @@ jobs:
       - name: Rendre gradlew exécutable
         run: chmod +x android/gradlew
 
+      - name: Refuser un build sans keystore sur main
+        # Sur main, le build publie une Release publique qui alimente la
+        # mise à jour in-app. Sans keystore, Gradle ne lève PAS d'erreur :
+        # il produit silencieusement un APK non signé, impossible à
+        # installer par-dessus l'existante (incident Logisol v53). Sur
+        # main, un keystore absent ou vide arrête donc le job AVANT le
+        # build, avec un message explicite — jamais d'APK non signé
+        # publié, quel que soit le chemin. Les branches de travail
+        # (claude/**, vibe/**) ne publient aucune Release : l'artefact
+        # non signé y reste acceptable pour test.
+        if: github.ref == 'refs/heads/main' && env.KEYSTORE_PRESENT != 'true'
+        run: |
+          echo "::error::Secret KEYSTORE_BASE64 absent ou vide alors que ce build main publierait une Release — refus de produire un APK non signé."
+          exit 1
+
       - name: Décoder le keystore de signature (secret GitHub)
         # Conditionnel (leçon de Logisol) : absent sur une PR venant d'un
-        # fork (les secrets n'y sont jamais exposés) ou si le secret n'est
-        # pas configuré, le fichier n'est simplement pas créé — build.gradle
-        # retombe sur un build non signé et la vérification ci-dessous est
-        # sautée, plutôt que d'échouer sans raison.
-        if: ${{ env.HAS_KEYSTORE_SECRET == 'true' }}
+        # fork (les secrets n'y sont jamais exposés) ou non configuré sur
+        # une branche de travail, le fichier n'est simplement pas créé —
+        # build.gradle retombe alors sur un APK non signé, acceptable
+        # hors main (l'étape précédente a déjà fait échouer main dans ce
+        # cas).
+        if: ${{ env.KEYSTORE_PRESENT == 'true' }}
         working-directory: android/app
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ovilog-release.keystore
 
@@ -160,7 +178,7 @@ jobs:
         # attendu, cette étape échoue explicitement si le seul .apk produit
         # porte encore le suffixe « unsigned », plutôt que de laisser
         # partir en Release un APK non installable.
-        if: ${{ env.HAS_KEYSTORE_SECRET == 'true' }}
+        if: ${{ env.KEYSTORE_PRESENT == 'true' }}
         run: |
           if ls android/app/build/outputs/apk/release/*unsigned*.apk >/dev/null 2>&1; then
             echo "::error::APK non signé produit alors qu'un keystore était attendu — OVILOG_KEYSTORE_PATH ne résout probablement pas vers le bon fichier (voir build.gradle)."
