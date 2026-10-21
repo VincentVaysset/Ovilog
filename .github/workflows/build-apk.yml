@@ -5,10 +5,45 @@ on:
     branches:
       - main
       - 'claude/**'
+      - 'vibe/**'
   workflow_dispatch: {}
 
 jobs:
+  tests:
+    # Batterie de non-régression AVANT tout build : un test rouge doit
+    # empêcher l'APK (et la Release) de partir, pas être découvert après
+    # coup sur le téléphone. Jusqu'ici elle n'était jouée que localement.
+    name: Batterie de non-régression (tests/)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Installer la suite de tests (Playwright + Chromium)
+        # tests/ n'a pas de package-lock.json : npm install (et non npm ci).
+        # --with-deps installe aussi les bibliothèques système dont
+        # Chromium a besoin sur le runner.
+        working-directory: tests
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Jouer la batterie complète
+        # run_all.sh sert www/ sur le port 8998 si rien n'y répond
+        # (python3 http.server, présent sur ubuntu-latest), exécute tous
+        # les tests/test_*.mjs puis la double passe de fuseaux horaires
+        # (UTC + Europe/Paris, voir run_all.sh). Un seul échec fait
+        # échouer ce job — donc le build et la Release.
+        run: bash tests/run_all.sh
+
   build:
+    # Aucun build (ni Release) tant que la batterie n'est pas verte.
+    needs: tests
     runs-on: ubuntu-latest
     # Nécessaire pour que l'étape "Publier la Release GitHub" ci-dessous
     # puisse créer une release + y attacher l'APK avec le GITHUB_TOKEN
@@ -17,6 +52,14 @@ jobs:
     # GITHUB_TOKEN par défaut en lecture seule.
     permissions:
       contents: write
+    # GitHub Actions interdit toute référence au contexte "secrets" dans un
+    # "if:" (job ou step) — "Unrecognized named-value: 'secrets'"
+    # (constaté à l'exécution sur Logisol). Contournement standard :
+    # recopier le secret dans une variable d'environnement ICI (où
+    # "secrets" reste autorisé), puis ne tester que cette variable dans
+    # les "if:" des étapes ci-dessous.
+    env:
+      HAS_KEYSTORE_SECRET: ${{ secrets.KEYSTORE_BASE64 != '' }}
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v4
@@ -48,11 +91,13 @@ jobs:
           packages: 'platform-tools'
 
       - name: Installer les dépendances npm
-        # --legacy-peer-deps : bluetooth-serial déclare un peerDependency
-        # @capacitor/core ^4.0.0 obsolète dans son package.json publié (le
-        # projet est en Capacitor 6) — l'API JS du plugin reste compatible,
-        # seule cette métadonnée n'a pas été mise à jour par le mainteneur.
-        run: npm install --legacy-peer-deps
+        # npm ci (installation verrouillée sur package-lock.json : builds
+        # reproductibles) au lieu de npm install. --legacy-peer-deps :
+        # bluetooth-serial déclare un peerDependency @capacitor/core
+        # ^4.0.0 obsolète dans son package.json publié (le projet est en
+        # Capacitor 6) — l'API JS du plugin reste compatible, seule cette
+        # métadonnée n'a pas été mise à jour par le mainteneur.
+        run: npm ci --legacy-peer-deps
 
       - name: Injecter le numéro de version (date + hash court du commit)
         # Remplace la sentinelle BUILD_VERSION dans www/index.html sur la
@@ -71,6 +116,12 @@ jobs:
         run: chmod +x android/gradlew
 
       - name: Décoder le keystore de signature (secret GitHub)
+        # Conditionnel (leçon de Logisol) : absent sur une PR venant d'un
+        # fork (les secrets n'y sont jamais exposés) ou si le secret n'est
+        # pas configuré, le fichier n'est simplement pas créé — build.gradle
+        # retombe sur un build non signé et la vérification ci-dessous est
+        # sautée, plutôt que d'échouer sans raison.
+        if: ${{ env.HAS_KEYSTORE_SECRET == 'true' }}
         working-directory: android/app
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ovilog-release.keystore
 
@@ -86,11 +137,33 @@ jobs:
             -PappVersionCode=${{ github.run_number }} \
             -PappVersionName=1.0.${{ github.run_number }}
 
+      - name: Vérifier que l'APK est réellement signé
+        # Un keystore mal résolu (chemin faux, fichier absent) ne fait PAS
+        # échouer assembleRelease — build.gradle retombe silencieusement sur
+        # un APK non signé, build « réussi » en apparence mais impossible à
+        # installer par-dessus l'existant. C'est exactement l'incident vécu
+        # sur Logisol (release v53) : mêmes if silencieux dans les deux
+        # build.gradle, mêmes causes possibles ici. Dès qu'un keystore est
+        # attendu, cette étape échoue explicitement si le seul .apk produit
+        # porte encore le suffixe « unsigned », plutôt que de laisser
+        # partir en Release un APK non installable.
+        if: ${{ env.HAS_KEYSTORE_SECRET == 'true' }}
+        run: |
+          if ls android/app/build/outputs/apk/release/*unsigned*.apk >/dev/null 2>&1; then
+            echo "::error::APK non signé produit alors qu'un keystore était attendu — OVILOG_KEYSTORE_PATH ne résout probablement pas vers le bon fichier (voir build.gradle)."
+            exit 1
+          fi
+
       - name: Publier l'APK comme artefact téléchargeable
         uses: actions/upload-artifact@v4
         with:
           name: ovilog-apk-v1.0.${{ github.run_number }}
-          path: android/app/build/outputs/apk/release/app-release.apk
+          # Motif générique plutôt qu'un nom figé : robuste au nommage
+          # exact que produit Gradle (leçon de Logisol : un chemin figé a
+          # déjà fait échouer l'upload malgré un build pourtant réussi).
+          # if-no-files-found: error : jamais d'artefact vide en silence.
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
           retention-days: 30
 
       - name: Publier la Release GitHub (source de la mise à jour in-app)
@@ -107,8 +180,8 @@ jobs:
         # propose que les versions non pre-release). Pour livrer une version :
         # GitHub > Releases > modifier la version voulue > décocher "Set as a
         # pre-release" (et cocher "Set as the latest release"). Les autres
-        # builds (branches claude/**, lancement manuel, autres branches) ne
-        # produisent que l'artefact ci-dessus, jamais de Release.
+        # builds (branches claude/**, vibe/**, lancement manuel, autres
+        # branches) ne produisent que l'artefact ci-dessus, jamais de Release.
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
@@ -129,7 +202,7 @@ jobs:
             Build automatique — ${{ github.ref_name }}@${{ github.sha }}
 
             ${{ github.event.head_commit.message }}
-          files: android/app/build/outputs/apk/release/app-release.apk
+          files: android/app/build/outputs/apk/release/*.apk
 
   build-windows:
     # Job séparé (runner + toolchain distincts) : n'installe rien à la
@@ -144,8 +217,10 @@ jobs:
     # conflit/duplication) ; en séquence, ce job-ci se contente d'ajouter
     # ses fichiers à la Release déjà créée par le job Android.
     # `if: always()` : tourne même si le job Android a échoué, pour ne
-    # jamais bloquer silencieusement la sortie de l'installeur Windows à
-    # cause d'un problème côté Android sans rapport.
+    # jamais bloquer silencieusement la sortie de l'INSTALLEUR (artefact)
+    # à cause d'un problème côté Android sans rapport. La PUBLICATION dans
+    # la Release est une autre affaire : voir l'étape de publication
+    # ci-dessous, désormais conditionnée à la réussite du job Android.
     needs: build
     if: always()
     runs-on: windows-latest
@@ -187,9 +262,9 @@ jobs:
       - name: Builder l'installeur Windows (NSIS)
         working-directory: electron
         # --publish never : la publication vers la Release GitHub se fait
-        # ci-dessous via softprops/action-gh-release@v2 (comme pour
-        # l'APK), pas via le mécanisme de publication propre à
-        # electron-builder — un seul chemin de publication à maintenir.
+        # ci-dessous via softprops/action-gh-release@v2 (comme pour l'APK),
+        # pas via le mécanisme de publication propre à electron-builder —
+        # un seul chemin de publication à maintenir.
         run: npm run dist
 
       - name: Publier l'installeur comme artefact téléchargeable
@@ -203,14 +278,18 @@ jobs:
           retention-days: 30
 
       - name: Publier sur la Release GitHub (source d'electron-updater)
-        # Même canal stable que l'APK : publié seulement sur un push de main,
-        # toujours en pre-release (promotion à la main, voir ci-dessus).
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         # latest.yml et le .blockmap sont indispensables : c'est ce que
         # lit electron-updater (provider "github") pour savoir qu'une
         # nouvelle version existe et où télécharger l'installeur — sans
         # eux, seul l'exe serait présent sur la Release mais jamais
         # détecté automatiquement par l'appli installée.
+        # Condition élargie (nouveau) : plus jamais de Release si le job
+        # Android (batterie de tests + build APK) n'a pas réussi. Sans
+        # elle, un échec côté Android laissait ce job créer SEUL la
+        # Release v<n> avec le seul installeur Windows : une version
+        # « publiée » dont l'APK n'existe pas, que electron-updater et
+        # l'appli installée proposeraient quand même.
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.build.result == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
