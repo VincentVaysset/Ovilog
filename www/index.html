@@ -17106,6 +17106,16 @@ function openAutoLot(id, nom, membres) {
    Lot de reproduction : membres écrits dans le journal (voir ajouterEvenementLot) + évènement modesRepro sur chaque animal, comme l'écran mobile. */
 const LOTS_ONGLETS = [['echos', 'Échographies'], ['controles', 'Contrôles'], ['lactations', 'Lactations et classes'], ['ia', 'Réussite à l\'IA'], ['misesbas', 'Mises bas']];
 let lotsPcEtat = null, lotsPcRedessin = false, lotsPcMinuterieLE = null;
+/* Position des listes à chaque redessin du Chantier de tri (PC) : le tableau défile dans son propre cadre (.lt-scroll), recréé à chaque redessin --
+   sans ceci, cocher une brebis en bas de liste ramenait la liste en haut. Positions relevées dans l'ordre des cadres, remises après le redessin. */
+function capturerDefilementsLots() {
+  return { cadres: [...document.querySelectorAll('#app .lt-scroll')].map(n => n.scrollTop), page: document.scrollingElement ? document.scrollingElement.scrollTop : 0 };
+}
+function restaurerDefilementsLots(d) {
+  if (!d) return;
+  document.querySelectorAll('#app .lt-scroll').forEach((n, i) => { if (d.cadres[i]) n.scrollTop = d.cadres[i]; });
+  if (document.scrollingElement && document.scrollingElement.scrollTop !== d.page) document.scrollingElement.scrollTop = d.page;
+}
 function filtresLotsVides() {
   return { q: '', millesime: '', statut: '', dansLot: '',
     ctrlCampagne: '', anomalieAny: false, anomalie: { 1: '', 2: '', 3: '' }, lait: { 1: ['', ''], 2: ['', ''], 3: ['', ''] },
@@ -17370,7 +17380,7 @@ function lotsExistantsPcHtml(conteneur) {
       <div style="overflow-x:auto;"><table class="pc-t" id="le-table"><tr><th class="l" style="text-align:left;">Nom</th><th style="text-align:left;">Type</th><th style="text-align:left;">Cible</th><th>Animaux</th><th>Date</th><th>Mises bas (campagne)</th><th style="text-align:right;">Actions</th></tr>
       ${liste.map(l => { const d = dateAfficheeLot(l), c = l.type === 'reproduction' ? campagneMisesBasDuLot(l) : null; return `<tr data-id="${l.id}"><td style="text-align:left;"><b>${l.nom}</b></td><td style="text-align:left;">${pcPill(TON_TYPE_LOT[typeLotPc(l)], LIB_TYPE_LOT[typeLotPc(l)])}</td><td style="text-align:left;">${l.type === 'reproduction' ? l.cible : 'Brebis'}</td><td>${(l.membres || []).length}</td><td>${d.texte}${d.lutte ? ' <small style="color:var(--text-muted);">(lutte)</small>' : ''}</td><td>${c === null ? '<span style="color:var(--text-muted);">—</span>' : libCampagneAffichee(c) + (l.campagneMisesBasDeduite ? ' <small style="color:var(--text-muted);" title="Déduite de la date du lot">(déduite)</small>' : '')}</td><td style="text-align:right;white-space:nowrap;"><button type="button" class="btn btn-secondary le-modifier" data-id="${l.id}" style="width:auto;padding:4px 10px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary le-excel" data-id="${l.id}" style="width:auto;padding:4px 10px;font-size:12px;">Export Excel</button> <button type="button" class="btn btn-secondary le-suppr" data-id="${l.id}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`; }).join('') || '<tr><td colspan="7" class="l" style="color:var(--text-muted);padding:14px 10px;text-align:left;">Aucun lot ne correspond aux filtres.</td></tr>'}</table></div>
       <p class="brd-note" style="margin:10px 0 0;">Supprimer demande toujours une confirmation. « Chercher en bergerie » reste sur mobile ; le lot y est visible dès la synchronisation.</p></div>`;
-  const redessiner = () => { if (lotsPcRedessin) return; lotsPcRedessin = true; const sv = capturerSaisieEnCours(); try { renderLotsPc(); restaurerSaisieEnCours(sv); } finally { lotsPcRedessin = false; } };
+  const redessiner = () => { if (lotsPcRedessin) return; lotsPcRedessin = true; const sv = capturerSaisieEnCours(), df = capturerDefilementsLots(); try { renderLotsPc(); restaurerSaisieEnCours(sv); restaurerDefilementsLots(df); } finally { lotsPcRedessin = false; } };
   conteneur.querySelectorAll('.le-type').forEach(b => { b.onclick = () => { T.types[b.dataset.k] = !T.types[b.dataset.k]; redessiner(); }; });
   conteneur.querySelector('#le-campagne').onchange = ev => { T.campagne = ev.target.value; redessiner(); };
   conteneur.querySelector('#le-q').addEventListener('input', ev => { T.q = ev.target.value; clearTimeout(lotsPcMinuterieLE); lotsPcMinuterieLE = setTimeout(redessiner, 250); });
@@ -17483,7 +17493,7 @@ function renderLotsPc() {
   const lot = E.lotId ? (DB.lots || []).find(l => l.id === E.lotId) : null;
   if (E.lotId && !lot) { E.lotId = null; }
   const planifier = (() => { let t = null; const tic = () => { if (saisieDateEnCours()) { t = setTimeout(tic, 300); return; } t = null; redessiner(); }; return () => { clearTimeout(t); t = setTimeout(tic, 300); }; })();      // champs de saisie : l'état suit CHAQUE frappe, le redessin est différé (jamais entre le clic dans un autre champ et son focus)
-  const redessiner = () => { if (lotsPcRedessin) return; lotsPcRedessin = true; const sv = capturerSaisieEnCours(); try { renderLotsPc(); restaurerSaisieEnCours(sv); } finally { lotsPcRedessin = false; } };      // pas de redessin imbriqué ; saisie en cours conservée
+  const redessiner = () => { if (lotsPcRedessin) return; lotsPcRedessin = true; const sv = capturerSaisieEnCours(), df = capturerDefilementsLots(); try { renderLotsPc(); restaurerSaisieEnCours(sv); restaurerDefilementsLots(df); } finally { lotsPcRedessin = false; } };      // pas de redessin imbriqué ; saisie en cours conservée
   const barre = `<div class="pc-onglets"><button type="button" class="opt-btn selected" id="lt-tab-lots">Lots</button><button type="button" class="opt-btn" id="lt-tab-agnelles">Tri des agnelles</button></div>`;
   const seg = (id, opts, val) => `<div class="pc-seg2" id="${id}">${opts.map(([v, l]) => `<button type="button" class="opt-btn${val === v ? ' selected' : ''}" data-val="${v}">${l}</button>`).join('')}</div>`;
   const entete = `<div style="margin-bottom:12px;"><p style="margin:0;font-size:13px;color:var(--text-muted);">Campagne ${libCampagneAffichee(DB.campagneDebut)} · préparer les lots ici, les utiliser en bergerie sur mobile</p></div>`;
