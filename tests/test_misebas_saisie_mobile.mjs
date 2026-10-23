@@ -89,6 +89,7 @@ eq(a101[0].lambs.map(l => l.sexe), ['Mort-né', 'Mâle'], 'agneaux : mort-né pu
 eq([a101[0].lambs[0].sexeMortNe, a101[0].lambs[0].eid, (a101[0].lambs[0].sanitaire || []).length], ['Femelle', undefined, 0], 'mort-né : sexe facultatif conservé, ni EID ni Séléphérol');
 check(a101[0].lambs[1].eid === L_(1) && a101[0].lambs[1].adopte === true && a101[0].lambs[1].adoptiveEid === E_(102) && a101[0].lambs[1].sanitaire[0].produit === 'Séléphérol' && a101[0].lambs[1].sanitaire[0].dose === '2 cc', 'agneau vivant : EID, mère adoptive, Séléphérol 2 cc automatique');
 eq([a101[0].date, a101[0].campagne], ['2026-10-02', 2026], 'date et campagne');
+await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'scan-misebas', null, { timeout: 2000 }).catch(() => {});   // focus posé à l'image suivante (requestAnimationFrame)
 const c1 = await page.evaluate(() => ({ txt: document.getElementById('mb-confirmation').innerText.replace(/\s+/g, ' ').trim(), fond: getComputedStyle(document.getElementById('mb-confirmation')).backgroundColor, scan: document.getElementById('scan-misebas').value, actif: document.activeElement.id, form: !!document.getElementById('mb-formulaire'), barre: !!document.querySelector('.mn-barre') }));
 eq(c1.txt, 'Mise bas enregistrée n°00101 · 1 mâle, 1 femelle mort-née Annuler cette saisie', 'confirmation verte (résumé de la maquette)');
 check(c1.fond === 'rgb(227, 243, 230)', 'confirmation sur fond vert pastel de la charte : ' + c1.fond);
