@@ -38,13 +38,15 @@ const EXISTANTE = '250016299' + '9' + 3 + '00101';
     const sans = (() => { const sauve = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = ''; const x = f('61001'); DB.exploitation.indicatifMarquage = sauve; return x; })();
     const repli = (() => { const sauve = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = ''; DB.exploitation.prefixeEid = '162991'; const x = f('61001'); DB.exploitation.indicatifMarquage = sauve; DB.exploitation.prefixeEid = ''; return x; })();
     const court = (() => { const sauve = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = '1629'; const x = f('61001'); DB.exploitation.indicatifMarquage = sauve; return x; })();
-    return { cinq: f('61001'), espaces: f('162991 61001'), onze: f('16299161001'), annee: f('71001'), bippe: f('250016299161001'), libre: f('ABC12'), quatre: f('6100'), vide: f(''), sans, repli, court, ageNaissance: anneeNaissance(f('61001').eid) };
+    return { cinq: f('61001'), espaces: f('162991 61001'), onze: f('16299161001'), annee: f('51001'), campagne: f('71001'), campagneAout: f('71001', '2026-08-15'), civile: f('61001', '2026-11-20'), bippe: f('250016299161001'), libre: f('ABC12'), quatre: f('6100'), vide: f(''), sans, repli, court, ageNaissance: anneeNaissance(f('61001').eid) };
   });
   eq(r.cinq.eid, '250016299161001', '5 chiffres : EID complet reconstitué (2500 + 162991 + 61001)');
   check(r.cinq.auto && r.cinq.national === '162991 61001' && !r.cinq.alerte && !r.cinq.erreur, 'n° national affiché, aucune alerte quand le chiffre d\'année colle à la date : ' + JSON.stringify(r.cinq));
   eq(r.espaces.eid, '250016299161001', 'n° national avec espace (162991 61001)');
   eq(r.onze.eid, '250016299161001', 'n° national sans espace (11 chiffres)');
-  check(r.annee.eid === '250016299171001' && /chiffre d'année du n° \(7\).*2026/.test(r.annee.alerte) && !r.annee.erreur, 'chiffre d\'année différent : ALERTE seulement (n° gardé) : ' + JSON.stringify(r.annee));
+  check(r.annee.eid === '250016299151001' && /chiffre d'année du n° \(5\).*campagne 2027.*2026/.test(r.annee.alerte) && !r.annee.erreur, 'chiffre d\'année ni campagne ni année civile : ALERTE seulement (n° gardé) : ' + JSON.stringify(r.annee));
+  check(!r.campagne.alerte && !r.civile.alerte, 'né en octobre-novembre 2026 (campagne 2027) : boucle en 7 (campagne) ou en 6 (année civile) acceptée sans alerte : ' + JSON.stringify([r.campagne, r.civile]));
+  check(/\(7\).*campagne 2026\.$/.test(r.campagneAout.alerte || ''), 'né en août 2026 (campagne 2026) : une boucle en 7 donne l\'alerte : ' + JSON.stringify(r.campagneAout));
   check(r.bippe.eid === '250016299161001' && !r.bippe.auto, 'EID bippé de 15 chiffres : inchangé');
   check(r.libre.eid === 'ABC12' && !r.libre.auto && r.quatre.eid === '6100' && !r.quatre.auto, 'saisie libre ou 4 chiffres : gardée telle quelle');
   check(r.vide.eid === '' && !r.vide.auto, 'vide : rien');
@@ -84,9 +86,12 @@ for (const desktop of [false, true]) {
   await page.click('#btn-valider-misebas');
   check(/même EID/.test(await page.evaluate(() => document.getElementById('err').textContent)), nom + ' : deux agneaux avec le même n° dans la portée : refusé');
   // alerte de chiffre d'année : visible, jamais bloquante
-  await page.fill('.eid-input-rapide[data-id="1"]', '71002');
+  await page.fill('.eid-input-rapide[data-id="1"]', '51002');
   a = await aper(1);
-  check(/chiffre d'année du n° \(7\)/.test(a.texte) && /ambre/.test(a.couleur || 'var(--ch-ambre-texte)'), nom + ' : alerte discrète sur le chiffre d\'année : ' + JSON.stringify(a));
+  check(/chiffre d'année du n° \(5\)/.test(a.texte) && /ambre/.test(a.couleur || 'var(--ch-ambre-texte)'), nom + ' : alerte discrète sur le chiffre d\'année : ' + JSON.stringify(a));
+  // boucle au chiffre de la campagne (2 octobre 2026 = campagne 2027) : aucune alerte
+  await page.fill('.eid-input-rapide[data-id="1"]', '71002');
+  check(!/chiffre d'année/.test((await aper(1)).texte), nom + ' : boucle en 7 pour la campagne 2027 : aucune alerte');
   // la date suit : en la passant à 2027 l'alerte disparaît pour 71002 et apparaît pour 61001
   await page.fill('#f-date-rapide', '2027-01-10'); await page.dispatchEvent('#f-date-rapide', 'change');
   eq(await page.evaluate(() => [/chiffre d'année/.test(document.querySelector('.eid-preview-rapide[data-id="0"]').textContent), /chiffre d'année/.test(document.querySelector('.eid-preview-rapide[data-id="1"]').textContent)]), [true, false], nom + ' : l\'alerte suit la date de naissance');

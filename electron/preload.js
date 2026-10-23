@@ -63,6 +63,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // -- removeAllListeners avant d'ajouter le nouveau garantit qu'un seul
   // abonné reste actif (celui de l'écran actuellement affiché), plutôt
   // que d'accumuler un callback par visite de l'écran Paramètres.
+  // Rend le focus clavier à la fenêtre après une boîte native alert/confirm (voir ipcMain.on('ovilog-refocus') dans main.js).
+  refocus: () => ipcRenderer.send('ovilog-refocus'),
   onUpdateStatus: (callback) => {
     ipcRenderer.removeAllListeners('ovilog-update-status');
     ipcRenderer.on('ovilog-update-status', (event, statut) => callback(statut));

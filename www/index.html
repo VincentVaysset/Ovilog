@@ -1584,16 +1584,24 @@ function libelleVersion() {
    fonction renvoie false, y compris dans un navigateur de test classique. */
 /* Saisie en cours : mémorise le champ actif (id, valeur, sélection) avant un redessin déclenché par la synchro ou par un filtre, et le rétablit après -- sans quoi
    la valeur tapée et le focus sont perdus (le champ est recréé). Ne concerne que les champs avec un id, de la même vue ; jamais les cases, boutons ni listes. */
+/* Champs sans id mais repérés par une classe + data-id (n° des agneaux, mère adoptive…) : retrouvés par ce couple après le redessin. */
+function selecteurSaisieEnCours(a) {
+  if (a.id) return '#' + CSS.escape(a.id);
+  const cls = a.classList && a.classList[0], dataId = a.getAttribute('data-id');
+  return cls && dataId !== null ? '.' + CSS.escape(cls) + '[data-id="' + CSS.escape(dataId) + '"]' : null;
+}
 function capturerSaisieEnCours() {
   const a = document.activeElement, zone = document.getElementById('app');
-  if (!a || !a.id || !zone || !zone.contains(a) || !/^(INPUT|TEXTAREA)$/.test(a.tagName) || ['checkbox', 'radio', 'button', 'submit', 'file', 'range', 'color'].includes(a.type)) return null;
+  if (!a || !zone || !zone.contains(a) || !/^(INPUT|TEXTAREA)$/.test(a.tagName) || ['checkbox', 'radio', 'button', 'submit', 'file', 'range', 'color'].includes(a.type)) return null;
+  const selecteur = selecteurSaisieEnCours(a);
+  if (!selecteur) return null;
   let ss = null, se = null;
   try { ss = a.selectionStart; se = a.selectionEnd; } catch (e) { /* champ numérique ou date : pas de sélection */ }
-  return { id: a.id, tag: a.tagName, valeur: a.value, ss, se, vue: currentView };
+  return { selecteur, tag: a.tagName, valeur: a.value, ss, se, vue: currentView };
 }
 function restaurerSaisieEnCours(saisie) {
   if (!saisie || currentView !== saisie.vue) return;
-  const n = document.getElementById(saisie.id);
+  const n = document.querySelector(saisie.selecteur);
   if (!n || n.tagName !== saisie.tag) return;
   if (n.value !== saisie.valeur) n.value = saisie.valeur;
   n.focus();
@@ -1618,6 +1626,16 @@ function isDesktopMode() {
 // plus bas, dont l'effet est neutralisé par cette classe sur desktop (le
 // panneau reste affiché quoi qu'il arrive, comme une vraie sidebar).
 document.body.classList.toggle('desktop-shell', isDesktopMode());
+/* PC (Electron, Windows) : après une boîte native alert() ou confirm(), les champs peuvent ne plus recevoir la frappe tant que la fenêtre n'a pas
+   perdu puis repris le focus (bug connu d'Electron). Chaque boîte est donc suivie d'un rappel du focus à la fenêtre (electronAPI.refocus, voir
+   electron/main.js). Le comportement des boîtes (texte, réponse de confirm) est inchangé ; rien ne change hors PC. */
+(function reparerFocusApresBoiteNative() {
+  if (!isDesktopMode() || !window.electronAPI || typeof window.electronAPI.refocus !== 'function') return;
+  const refocus = () => { try { window.electronAPI.refocus(); } catch (e) { /* ignoré */ } };
+  const alertNatif = window.alert.bind(window), confirmNatif = window.confirm.bind(window);
+  window.alert = function (msg) { try { return alertNatif(msg); } finally { refocus(); } };
+  window.confirm = function (msg) { try { return confirmNatif(msg); } finally { refocus(); } };
+})();
 
 /* ---------- Stockage local ---------- */
 const DB_KEY = 'troupeau_data_v1';
@@ -2497,8 +2515,13 @@ function resoudreEidAgneau(saisie, dateISO) {
   }
   if (!eid) return { eid: brut, auto: false };
   const res = { eid, auto: true, national: eid.slice(4, 10) + ' ' + eid.slice(10) };
-  const annee = parseInt(String(dateISO || '').slice(0, 4), 10);
-  if (annee && parseInt(eid.charAt(10), 10) !== annee % 10) res.alerte = "Le chiffre d'année du n° (" + eid.charAt(10) + ") ne correspond pas à la date de naissance (" + annee + ").";
+  // Chiffre d'année : les boucles d'une campagne portent le chiffre de la CAMPAGNE (nommée par son année de fin : un agneau né en novembre 2026,
+  // campagne 2027, est bouclé en 7). Le chiffre de l'année civile de naissance reste accepté aussi ; alerte seulement s'il ne colle à aucun des deux.
+  const date = String(dateISO || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const annee = parseInt(date.slice(0, 4), 10), campagne = campagneAnneeDebutPourDate(date) + 1, chiffre = parseInt(eid.charAt(10), 10);
+    if (chiffre !== annee % 10 && chiffre !== campagne % 10) res.alerte = "Le chiffre d'année du n° (" + eid.charAt(10) + ") ne correspond pas à la campagne " + campagne + (campagne !== annee ? ' ni à l\'année de naissance (' + annee + ')' : '') + '.';
+  }
   return res;
 }
 /* Un numéro déjà enregistré l'est peut-être sous une AUTRE forme (anciennes fiches : EID sur 11 chiffres, avec ou sans espaces). Aucun numéro enregistré n'est jamais modifié ni converti ;
@@ -30103,7 +30126,19 @@ saveData = function(data) {
    propre écriture confirmée) : met à jour DB + le cache local + l'écran
    affiché, sans redéclencher un envoi vers le cloud (sync.applyingRemote). */
 let redessinSynchroDiffere = false;
+/* Écrans de saisie dont le formulaire en cours ne vit QUE à l'écran (brebis scannée, agneaux, sexe, n° tapés…) : les redessiner sur un écho de synchro
+   remettait le formulaire à zéro sous les doigts (le champ où l'on tapait disparaissait). Sur ces écrans, les données reçues sont appliquées tout de suite
+   (DB et stockage local : contrôles de doublons et d'agnelage déjà enregistré toujours à jour), mais l'écran n'est pas reconstruit ; il se rafraîchit
+   à l'enregistrement ou au changement d'écran. */
+function vueDeSaisieEnCours(vue) {
+  return /^(add|edit)-/.test(vue || '') || vue === 'misebas-rapide' || vue === 'echo-rapide';
+}
 function applyRemoteUpdate(mutatorFn) {
+  if (vueDeSaisieEnCours(currentView)) {
+    sync.applyingRemote = true;
+    try { mutatorFn(); localStorage.setItem(DB_KEY, JSON.stringify(DB)); } finally { sync.applyingRemote = false; }
+    return;
+  }
   if (saisieDateEnCours()) {
     // les données sont appliquées tout de suite, l'écran attend la fin de la frappe (voir saisieDateEnCours)
     sync.applyingRemote = true;
@@ -30130,6 +30165,7 @@ function applyRemoteUpdate(mutatorFn) {
   }
 }
 window.__redessinSynchro = () => applyRemoteUpdate(() => {});      // même chemin qu'un instantané distant (utilisé par les tests de saisie)
+window.__appliquerSynchro = (mutatorFn) => applyRemoteUpdate(mutatorFn);   // idem, avec une donnée distante (tests de saisie pendant une synchro)
 
 /* Report des instantanés Firestore pendant une opération groupée locale
    (voir operationGroupeeEnCours, posé par executerChangementCampagne) --
