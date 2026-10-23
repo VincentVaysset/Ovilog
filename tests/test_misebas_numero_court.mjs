@@ -75,6 +75,8 @@ for (const desktop of [false, true]) {
   let a = await aper(0);
   check(a.texte === "Né dans l'élevage : 162991 61001" && (desktop || a.pastille === 'N° complété'), nom + ' : aperçu « Né dans l\'élevage : 162991 61001 »' + (desktop ? '' : ' + pastille « N° complété »') + ' : ' + JSON.stringify(a));
   await page.click('#add-lamb-rapide');
+  a = await aper(0);
+  check(a.texte === "Né dans l'élevage : 162991 61001" && (desktop || a.pastille === 'N° complété'), nom + ' : l\'aperçu de l\'agneau 1 reste affiché après l\'ajout d\'un agneau : ' + JSON.stringify(a));
   await sexe(1, 'Femelle');
   await page.fill('.eid-input-rapide[data-id="1"]', '162991 61002');
   // doublon dans la même portée
