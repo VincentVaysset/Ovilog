@@ -101,7 +101,7 @@ for (const desktop of [false, true]) {
   const ag = await page.evaluate(() => DB.brebis.find(b => b.id.endsWith('00101')).agnelages);
   check(ag.length === 1 && ag[0].lambs.map(l => l.eid).join() === '250016299161001,250016299161002', nom + ' : EID complets enregistrés : ' + JSON.stringify(ag.map(x => x.lambs.map(l => l.eid))));
   const mouv = await page.evaluate(() => JSON.stringify(DB.brebis.find(b => b.id.endsWith('00101')).agnelages[0].lambs.map(l => (l.mouvements || []).length + ':' + (l.sanitaire || []).length)));
-  check(/"\d+:1"/.test(mouv), nom + ' : Séléphérol toujours ajouté à chaque agneau vivant : ' + mouv);
+  check(JSON.parse(mouv).every(x => /^\d+:0$/.test(x)), nom + ' : aucun soin ajouté d\'office aux agneaux (un soin se saisit par le Carnet sanitaire) : ' + mouv);
 
   // l'EID reconstitué est unique sur toute la base : un second agneau avec le même n° est refusé
   await page.evaluate(() => { resetMisebasRapideSession(); render('misebas-rapide'); });

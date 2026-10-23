@@ -1,6 +1,6 @@
 /* Neutralité d'un compte neuf : rien de l'élevage du concepteur ne doit apparaître chez un autre exploitant. Exemples d'EID neutres (250 000000 000000) dans les champs de saisie ;
    modèles Excel d'import embarqués (et leurs copies de tests/fixtures/modeles) sans EID, numéros ni nom de personne réels ; listes de départ vides pour vaccins et antiparasitaires ;
-   aucun prix de référence négocié dans un compte neuf (mais un compte qui a déjà des données de lait garde le sien) ; sauvegarde automatique Android désactivée.
+   aucun prix de référence négocié dans un compte neuf (mais un compte qui a déjà des données de lait garde le sien) ; aucun soin ajouté d'office à la naissance ; sauvegarde automatique Android désactivée.
    Jeu synthétique, aucune donnée réelle. */
 import { chromium } from 'playwright';
 import { readFileSync } from 'fs';
@@ -61,6 +61,18 @@ eq(ancien, [[1580, 130]], 'compte existant avec données de lait : prix de réf�
 const ecrans = await page.evaluate(() => { DB = migrateData({}); saveData = () => true; const erreurs = []; for (const v of ['sanitaire', 'produits-delais']) { try { render(v); } catch (e) { erreurs.push(v + ': ' + e.message); } } return erreurs; });
 eq(ecrans, [], 'écrans Carnet sanitaire et Produits avec listes vides : aucune erreur');
 console.log('OK 4 compte neuf : listes vides, aucun prix négocié ; compte avec lait : prix conservé.');
+// ---- 4 bis. aucun soin ajouté d'office à la naissance (plus de Séléphérol automatique) : une mise bas n'écrit aucun soin, et aucun texte ne l'annonce
+const naissance = await page.evaluate(() => {
+  DB = migrateData({}); saveData = () => true; DB.campagneDebut = 2026; DB.campagneInitialisee = true;
+  DB.exploitation = Object.assign(DB.exploitation || {}, { indicatifMarquage: '000000' });
+  const brebis = { id: 'b1', eid: '250000000000001', statut: 'active', agnelages: [], sanitaire: [], mouvements: [] };
+  DB.brebis = [brebis];
+  const r = construireAgnelageMiseBas(brebis, { date: '2026-10-05', codeRepro: 'MN', lambs: [{ sexe: 'Mâle', eid: '250000000000101' }, { sexe: 'Femelle', eid: '250000000000102' }, { sexe: 'Mort-né' }] });
+  return r.erreur || JSON.stringify(r.agnelage.lambs.map(l => (l.sanitaire || []).length));
+});
+eq(naissance, '[0,0,0]', 'compte neuf : une mise bas n\'ajoute aucun soin aux agneaux');
+check(!/Injection systématique|ajouté à chaque agneau vivant|2 cc administré|Créer la fiche Séléphérol/.test(source), 'aucun soin d\'office ni texte qui l\'annonce dans l\'appli');
+console.log('OK 4 bis : aucun soin ajouté d\'office à la naissance.');
 await browser.close();
 
 // ---- 5. Android : pas de sauvegarde automatique de la base locale

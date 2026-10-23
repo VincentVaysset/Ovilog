@@ -192,24 +192,23 @@ check(/délai d'attente lait jusqu'au 04-10-2026/.test(await page.evaluate(() =>
 await page.evaluate(() => { window.electronAPI.isDesktop = true; });
 console.log('OK 9 mobile : en bio, délai appliqué figé dans le soin, ancien soin = légal doublé ; hors bio calcul d\'origine.');
 
-// ================================================================ 10. Séléphérol : copie des délais appliqués
+// ================================================================ 10. Séléphérol : plus de soin d'office ; un ANCIEN soin sans copie de délais est lu d'après la fiche (bio ×2)
 await jeu(true);
 const sel = await page.evaluate(() => {
-  const sans = delaisSelepherolSnapshot();
+  const ancien = { type: 'Traitement', produit: 'Séléphérol', dose: '2 cc', date: '2026-10-01' };
+  const jours = e => e.dates.venteDes ? Math.round((new Date(e.dates.venteDes) - new Date(ancien.date)) / 86400000) : null;
+  const sans = datesEffectivesSoin(ancien);
   DB.produitsInfo['Séléphérol'] = { posologie: '2 cc', delaiAttente: 0, delaiLait: 0, delaiViande: 28, surOrdonnance: false, reserveVeterinaire: false };
   DB.produits.autres.push('Séléphérol');
-  const confirmer = delaisSelepherolSnapshot();
-  DB.produitsInfo['Séléphérol'].minimum48hBio = 'oui';
-  const oui = delaisSelepherolSnapshot();
+  const bio = datesEffectivesSoin(ancien);
   DB.exploitation.elevageBio = false;
-  const horsBio = delaisSelepherolSnapshot();
-  return { sans, confirmer, oui, horsBio };
+  const horsBio = datesEffectivesSoin(ancien);
+  return { snapshotRetire: typeof delaisSelepherolSnapshot === 'undefined', sans: [sans.source, sans.dates.venteDes || null], bio: [bio.source, jours(bio)], horsBio: [horsBio.source, jours(horsBio)] };
 });
-check(JSON.stringify(sel.sans) === '{}', 'sans fiche : rien copié');
-check(sel.confirmer.bio === true && sel.confirmer.delaiViandeJours === 56 && sel.confirmer.delaiLaitJours === 0 && sel.confirmer.min48hAConfirmer === true && sel.confirmer.delaiViandeLegalJours === 28, 'bio, lait 0, minimum 48 h à confirmer (défaut « autres ») : lait 0, viande 56, mention : ' + JSON.stringify(sel.confirmer));
-check(sel.oui.delaiLaitJours === 2 && sel.oui.delaiViandeJours === 56 && !sel.oui.min48hAConfirmer, 'minimum 48 h = oui : lait 2 j');
-check(sel.horsBio.bio === false && sel.horsBio.delaiViandeJours === 28 && sel.horsBio.delaiLaitJours === 0, 'hors bio : légaux');
-console.log('OK 10 Séléphérol : délais appliqués copiés sur le soin (bio ×2, minimum 48 h selon sa fiche).');
+check(sel.snapshotRetire, 'plus aucune copie de délais propre au Séléphérol (aucun soin d\'office)');
+check(JSON.stringify(sel.sans) === '["aucune",null]', 'ancien soin Séléphérol sans fiche : aucune date inventée : ' + JSON.stringify(sel.sans));
+check(sel.bio[0] === 'fiche' && sel.horsBio[0] === 'fiche' && sel.horsBio[1] === 28 + 1 && sel.bio[1] === 56 + 1, 'ancien soin Séléphérol : délais lus sur la fiche (viande 28 j, vente le lendemain), doublés en bio (56 j) : ' + JSON.stringify(sel));
+console.log('OK 10 Séléphérol : plus de copie d\'office ; un ancien soin sans délais est lu d\'après la fiche (bio ×2).');
 
 // ================================================================ 11. l'alerte de vente utilise les délais appliqués
 await jeu(true);

@@ -1,5 +1,5 @@
 /* Mise bas rapide (MOBILE), maquette « Grands écrans de saisie » : tuiles Mises bas / Agneaux nés / Restantes, scan de la brebis, date, une carte par agneau (EID, Mâle / Femelle en segmenté, mort-né sans EID avec sexe
-   facultatif, adoption vers une brebis ACTIVE seulement, Séléphérol 2 cc automatique sur chaque agneau vivant), barre fixe « Annuler | Enregistrer et suivante ». Après l'enregistrement : confirmation verte avec « Annuler cette saisie »
+   facultatif, adoption vers une brebis ACTIVE seulement, aucun soin ajouté d'office), barre fixe « Annuler | Enregistrer et suivante ». Après l'enregistrement : confirmation verte avec « Annuler cette saisie »
    (un geste, SANS confirmation), puis « Dernières saisies » modifiables d'un toucher. Blocage rouge si la brebis a déjà mis bas (« Ouvrir la fiche » / « Autre brebis »). Alertes discrètes : date future (à confirmer), vide définitive.
    Enchaînement « Enregistrer et suivante ». Jeu synthétique, aucune donnée réelle. Les règles métier elles-mêmes : test_misebas_regles_communes. */
 import { chromium } from 'playwright';
@@ -48,8 +48,8 @@ eq(depart.der, ['n°00200 01-10-2026 · 1 mâle, 1 femelle Double', 'n°00201 30
 await saisir(E_(101));
 await page.waitForSelector('#mb-formulaire');
 const f1 = await page.evaluate(() => ({ nm: document.querySelector('#mb-formulaire span').textContent, date: document.getElementById('f-date-rapide').value, repro: document.querySelector('.repro-code-opt-rapide.active').dataset.val, agneaux: document.querySelectorAll('.mb-ag').length, titre: document.getElementById('mb-nb-agneaux').textContent,
-  barre: [...document.querySelectorAll('.mn-barre .btn')].map(b => b.textContent), alertes: document.querySelectorAll('#mb-alertes .mb-msg').length, note: /Séléphérol 2 cc ajouté à chaque agneau vivant/.test(document.getElementById('app').textContent), dern: !!document.getElementById('mb-dernieres'), marq: !!document.querySelector('[data-brebis-trouvee]') }));
-eq([f1.nm, f1.date, f1.agneaux, f1.titre, f1.alertes, f1.note, f1.dern, f1.marq], ['n°00101', '2026-10-02', 1, 'Agneaux · 1', 0, true, false, true], 'formulaire : brebis, date du jour, un agneau, aucun message tant qu\'aucune règle ne se déclenche');
+  barre: [...document.querySelectorAll('.mn-barre .btn')].map(b => b.textContent), alertes: document.querySelectorAll('#mb-alertes .mb-msg').length, note: /Séléphérol|ajouté à chaque agneau/.test(document.getElementById('app').textContent), dern: !!document.getElementById('mb-dernieres'), marq: !!document.querySelector('[data-brebis-trouvee]') }));
+eq([f1.nm, f1.date, f1.agneaux, f1.titre, f1.alertes, f1.note, f1.dern, f1.marq], ['n°00101', '2026-10-02', 1, 'Agneaux · 1', 0, false, false, true], 'formulaire : brebis, date du jour, un agneau, aucun message tant qu\'aucune règle ne se déclenche, plus aucune mention de soin d\'office');
 eq(f1.barre, ['Annuler', 'Enregistrer et suivante'], 'barre fixe');
 // ---- sans sexe : message
 await page.click('#btn-valider-misebas');
@@ -86,8 +86,8 @@ await page.waitForSelector('#mb-confirmation');
 const a101 = await ag(101);
 eq(a101.length, 1, 'une mise bas enregistrée');
 eq(a101[0].lambs.map(l => l.sexe), ['Mort-né', 'Mâle'], 'agneaux : mort-né puis mâle');
-eq([a101[0].lambs[0].sexeMortNe, a101[0].lambs[0].eid, (a101[0].lambs[0].sanitaire || []).length], ['Femelle', undefined, 0], 'mort-né : sexe facultatif conservé, ni EID ni Séléphérol');
-check(a101[0].lambs[1].eid === L_(1) && a101[0].lambs[1].adopte === true && a101[0].lambs[1].adoptiveEid === E_(102) && a101[0].lambs[1].sanitaire[0].produit === 'Séléphérol' && a101[0].lambs[1].sanitaire[0].dose === '2 cc', 'agneau vivant : EID, mère adoptive, Séléphérol 2 cc automatique');
+eq([a101[0].lambs[0].sexeMortNe, a101[0].lambs[0].eid, (a101[0].lambs[0].sanitaire || []).length], ['Femelle', undefined, 0], 'mort-né : sexe facultatif conservé, ni EID ni soin');
+check(a101[0].lambs[1].eid === L_(1) && a101[0].lambs[1].adopte === true && a101[0].lambs[1].adoptiveEid === E_(102) && a101[0].lambs[1].sanitaire.length === 0, 'agneau vivant : EID, mère adoptive, aucun soin d\'office');
 eq([a101[0].date, a101[0].campagne], ['2026-10-02', 2026], 'date et campagne');
 await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'scan-misebas', null, { timeout: 2000 }).catch(() => {});   // focus posé à l'image suivante (requestAnimationFrame)
 const c1 = await page.evaluate(() => ({ txt: document.getElementById('mb-confirmation').innerText.replace(/\s+/g, ' ').trim(), fond: getComputedStyle(document.getElementById('mb-confirmation')).backgroundColor, scan: document.getElementById('scan-misebas').value, actif: document.activeElement.id, form: !!document.getElementById('mb-formulaire'), barre: !!document.querySelector('.mn-barre') }));
@@ -117,7 +117,7 @@ await page.click('.remove-lamb-rapide[data-id="1"]');
 eq(await page.evaluate(() => document.querySelectorAll('.mb-ag').length), 1, 'Retirer cet agneau');
 await page.click('#btn-valider-misebas'); await page.waitForSelector('#mb-confirmation');
 eq([(await ag(102)).length, (await ag(103)).length, await page.evaluate(() => misebasRapideCount)], [1, 1, 2], 'deux mises bas enchaînées, compteur de session 2');
-check((await ag(103))[0].lambs[0].eid === L_(2) && (await ag(103))[0].lambs[0].sanitaire[0].produit === 'Séléphérol', 'EID et Séléphérol de l\'agneau enregistrés');
+check((await ag(103))[0].lambs[0].eid === L_(2) && (await ag(103))[0].lambs[0].sanitaire.length === 0, 'EID de l\'agneau enregistré, sans soin d\'office');
 
 // ================================================================ 6. blocage rouge : déjà mis bas
 await saisir(E_(200)); await page.waitForSelector('#mb-blocage');
@@ -154,5 +154,5 @@ await page.click('#btn-cancel-unknown-mb');
 await page.waitForSelector('#mb-dernieres');
 await page.click('#mb-dernieres .mb-der:first-child');
 eq(await page.evaluate(() => [currentView, DB.brebis.find(b => b.id === currentSheepId).eid === E(3, 104) || DB.brebis.find(b => b.id === currentSheepId).eid === E(3, 103) || true, editContext && editContext.kind]), ['add-agnelage', true, 'agnelages'], 'toucher une ligne ouvre la modification de cette mise bas');
-console.log('OK : mise bas rapide mobile (tuiles, formulaire, mort-né et sexe facultatif, adoption, Séléphérol, confirmation verte, annulation sans confirmation, enchaînement, blocage, alertes, dernières saisies).');
+console.log('OK : mise bas rapide mobile (tuiles, formulaire, mort-né et sexe facultatif, adoption, aucun soin d\'office, confirmation verte, annulation sans confirmation, enchaînement, blocage, alertes, dernières saisies).');
 await browser.close();

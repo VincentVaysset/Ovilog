@@ -1,8 +1,8 @@
 /* Carnet sanitaire PC, alertes (information SEULEMENT, jamais bloquantes, jamais de correction automatique) :
    - vente / autoconsommation (et « Vendu » d'un agneau) d'un animal encore sous délai viande, comparée à la DATE du mouvement ;
      « Vente reproduction », « Morte », « Perte » : aucune alerte ; mouvement individuel (brebis), collectif, agneau, agnelle ;
-   - Séléphérol : traitement comme un autre (délais depuis sa fiche, jamais créée d'office, « — » + alerte pour créer la fiche, délais
-     obligatoires, copiés sur le soin à la création) ;
+   - Séléphérol : produit comme un autre, jamais ajouté d'office à la naissance ni proposé par une alerte ou une carte ; un ANCIEN soin
+     Séléphérol sans copie de délais est lu d'après la fiche (créée par l'éleveur, parcours classique) ;
    - import contrôle laitier : liste (sans rien modifier) des contrôles tombant pendant un délai d'attente du lait (PC) ;
    - mobile : alerte de vente aussi (individuel, collectif, agneau, agnelle), jamais bloquante ; sans alerte l'écran reste identique (test_alertes_mobile_reference).
    saveData est REMPLACÉ par un compteur (rien n'est persisté). Jeu synthétique, aucun EID réel. */
@@ -102,23 +102,15 @@ await page.click('.mv-type[data-val="Morte"]');
 check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'collectif Morte : pas d\'alerte');
 console.log('OK 3 mouvement collectif : seuls les animaux sélectionnés sous délai sont listés, mis à jour avec la date et le type.');
 
-// ================================================================ 4. agneau vendu + Séléphérol (fiche absente puis créée)
+// ================================================================ 4. agneau vendu + ancien soin Séléphérol (sans fiche, puis fiche créée par le parcours classique)
 await page.evaluate(() => { const l = DB.brebis[1].agnelages[0].lambs[0]; window.__lamb = l; showLambSortieModal(l, 'vendu', () => {}); });
 await page.waitForSelector('#lambsortie-date');
-al = await page.evaluate(() => { const e = document.getElementById('alerte-selepherol'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
-check(al && /Séléphérol/.test(al) && /inconnu/.test(al) && /Créer la fiche/.test(al) && await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'Séléphérol sans fiche : « — » (aucune date), alerte pour créer la fiche, rien d\'inventé : ' + al);
+check(await page.evaluate(() => !document.getElementById('alerte-selepherol') && !document.getElementById('btn-creer-fiche-selepherol') && !document.getElementById('alerte-vente-delai')), 'ancien soin Séléphérol sans fiche : aucune alerte, aucun bouton « Créer la fiche Séléphérol », rien d\'inventé');
 check(await page.evaluate(() => !JSON.stringify(DB.produitsInfo).includes('Séléphérol') && !JSON.stringify(DB.produits).includes('Séléphérol')), 'aucune fiche créée d\'office');
-await page.click('#btn-creer-fiche-selepherol');
-await page.waitForSelector('#fp-ok');
-check(await page.evaluate(() => document.getElementById('fp-nom').value === 'Séléphérol'), 'fiche proposée au nom de Séléphérol');
-await page.click('#fp-ok');
-check(/délai viande est obligatoire/.test(await page.evaluate(() => document.getElementById('fp-err').textContent)), 'délais obligatoires : refusé sans délai');
-await page.fill('#fp-viande', '28'); await page.fill('#fp-lait', '0');
-await page.click('#fp-ok');
-await page.waitForFunction(() => !document.getElementById('fp-ok'));
+await page.evaluate(() => { DB.produits.autres.push('Séléphérol'); ecrireFicheProduit('Séléphérol', { posologie: '', delaiLait: 0, delaiViande: 28, surOrdonnance: false, reserveVeterinaire: false }); });
+await page.fill('#lambsortie-date', '2026-10-05');
 al = await page.evaluate(() => { const e = document.getElementById('alerte-vente-delai'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
-check(al && /Agneau n°00801 est encore sous délai/.test(al) && /Séléphérol/.test(al) && /24-10-2026/.test(al) && await page.evaluate(() => !document.getElementById('alerte-selepherol')), 'fiche créée (viande 28, lait 0) : alerte de vente de l\'agneau, vente dès le 24/10 (25/09 + 28 + 1) : ' + al);
-check(await page.evaluate(() => DB.produits.autres.includes('Séléphérol') && ficheProduit('Séléphérol').complete), 'fiche créée par l\'éleveur dans « Autre »');
+check(al && /Agneau n°00801 est encore sous délai/.test(al) && /Séléphérol/.test(al) && /24-10-2026/.test(al), 'fiche créée par l\'éleveur (viande 28, lait 0) : l\'ancien soin est lu d\'après la fiche, alerte de vente de l\'agneau : ' + al);
 await page.fill('#lambsortie-date', '2026-10-24');
 check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'le 23/10 : plus d\'alerte');
 await page.fill('#lambsortie-date', '2026-10-05');
@@ -128,11 +120,11 @@ await page.waitForFunction(() => window.__lamb.mouvements.some(x => x.type === '
 check(await page.evaluate(() => window.__lamb.mouvements.find(x => x.type === 'Vendu').date === '2026-10-05'), 'vente de l\'agneau enregistrée malgré l\'alerte, date non corrigée');
 // le soin Séléphérol existant n'a pas été modifié
 check(await page.evaluate(() => { const s = window.__lamb.sanitaire[0]; return s.dureeJours === undefined && s.delaiViandeJours === undefined; }), 'le soin Séléphérol déjà enregistré n\'est pas modifié (lu d\'après la fiche à l\'affichage seulement)');
-console.log('OK 4 agneau + Séléphérol : sans fiche = « — » et alerte pour créer la fiche ; délais obligatoires ; fiche créée = alerte de vente des agneaux ; vente jamais bloquée.');
+console.log('OK 4 agneau + ancien Séléphérol : sans fiche, ni alerte ni bouton d\'office ; fiche créée par l\'éleveur = alerte de vente ; vente jamais bloquée.');
 
 // ================================================================ 5. modifier la fiche ne change pas un soin qui a sa copie ; snapshot à la création
 const sn = await page.evaluate(() => {
-  const avant = delaisSelepherolSnapshot();
+  const avant = { dureeJours: 1, bio: false, delaiLaitLegalJours: 0, delaiViandeLegalJours: 28, delaiLaitJours: 0, delaiViandeJours: 28 };   // soin enregistré avec sa copie de délais
   const soinCopie = Object.assign({ type: 'Traitement', produit: 'Séléphérol', date: '2026-09-25', dose: '2 cc' }, avant);
   const lamb = { eid: 'x', sanitaire: [soinCopie] };
   ecrireFicheProduit('Séléphérol', { posologie: '', delaiLait: 0, delaiViande: 5, surOrdonnance: false, reserveVeterinaire: false });
@@ -152,9 +144,9 @@ await page.fill('#f-date-rapide', '2026-10-01'); await page.dispatchEvent('#f-da
 await page.click('.repro-code-opt-rapide[data-val="IA"]');
 await page.click('#btn-valider-misebas');
 await page.waitForFunction(() => DB.brebis[0].agnelages.length > window.__avantNaissance);
-const nais = await page.evaluate(() => JSON.parse(JSON.stringify(DB.brebis[0].agnelages[DB.brebis[0].agnelages.length - 1].lambs[0].sanitaire[0])));
-check(nais.produit === 'Séléphérol' && nais.dose === '2 cc' && nais.dureeJours === 1 && nais.delaiViandeJours === 28 && nais.delaiLaitJours === 0, 'Séléphérol de naissance : délais de la fiche copiés sur le soin : ' + JSON.stringify(nais));
-console.log('OK 6 naissance : le Séléphérol automatique copie les délais de la fiche (sans fiche : aucun champ ajouté, vérifié en 4).');
+const nais = await page.evaluate(() => JSON.parse(JSON.stringify(DB.brebis[0].agnelages[DB.brebis[0].agnelages.length - 1].lambs[0].sanitaire)));
+check(Array.isArray(nais) && nais.length === 0, 'naissance : aucun soin ajouté d\'office, même avec une fiche Séléphérol complète : ' + JSON.stringify(nais));
+console.log('OK 6 naissance : aucun soin d\'office (le Séléphérol se saisit par le Carnet sanitaire).');
 
 // ================================================================ 7. agnelle vendue (bouton « Vendre ») et mobile
 await page.evaluate(() => { window.__ag = DB.agnelles[0]; showVendreAgnelleModal(window.__ag, () => {}); });
@@ -199,21 +191,13 @@ const venteMobile = await page.evaluate(async () => {
 check(venteMobile === '2026-10-10', 'mobile : vente enregistrée malgré l\'alerte, date non corrigée : ' + venteMobile);
 console.log('OK 7 agnelle : alerte de vente ; mobile : alerte aussi (individuel, collectif, agneau, agnelle), jamais bloquante, aucune zone sans alerte.');
 
-// ================================================================ 8. carte « Séléphérol à créer » dans Produits et délais
+// ================================================================ 8. « Produits et délais » : aucune carte Séléphérol, même s'il a été utilisé sans fiche
 await jeu();
-await page.evaluate(() => { DB.brebis[1].agnelages[0].lambs[0].sanitaire = []; render('produits-delais'); });
+await page.evaluate(() => { DB.brebis[1].agnelages[0].lambs[0].sanitaire = [{ type: 'Traitement', produit: 'Séléphérol', dose: '2 cc', date: '2026-09-25' }]; render('produits-delais'); });
 await page.waitForSelector('#pc-produits-delais');
-check(await page.evaluate(() => !document.getElementById('pd-selepherol')), 'sans Séléphérol utilisé : pas de carte');
-await page.evaluate(() => { DB.brebis[1].agnelages[0].lambs[0].sanitaire.push({ type: 'Traitement', produit: 'Séléphérol', dose: '2 cc', date: '2026-09-25' }); render('produits-delais'); });
-check(await page.evaluate(() => !!document.getElementById('pd-selepherol') && /Rien n'est créé d'office/.test(document.getElementById('pd-selepherol').textContent)), 'Séléphérol utilisé sans fiche : carte « fiche à créer », rien créé d\'office');
-check(await page.evaluate(() => !JSON.stringify(DB.produits).includes('Séléphérol') && window.__saves === 0), 'toujours aucune fiche, rien écrit');
-await page.click('#pd-creer-selepherol');
-await page.waitForSelector('#fp-ok');
-await page.fill('#fp-viande', '0'); await page.fill('#fp-lait', '0');
-await page.click('#fp-ok');
-await page.waitForFunction(() => !!document.getElementById('pc-produits-delais') && !document.getElementById('pd-selepherol'));
-check(await page.evaluate(() => ficheProduit('Séléphérol').complete && ficheProduit('Séléphérol').delaiViande === 0), 'fiche Séléphérol créée avec délais 0 / 0 (0 autorisé), carte disparue');
-console.log('OK 8 « Produits et délais » : carte Séléphérol seulement s\'il est utilisé et sans fiche ; délais 0 autorisés.');
+check(await page.evaluate(() => !document.getElementById('pd-selepherol') && !/Séléphérol/.test(document.getElementById('pc-produits-delais').textContent)), 'ancien Séléphérol utilisé sans fiche : aucune carte ni mention, c\'est un produit comme un autre');
+check(await page.evaluate(() => !JSON.stringify(DB.produits).includes('Séléphérol') && window.__saves === 0), 'aucune fiche créée, rien écrit');
+console.log('OK 8 « Produits et délais » : plus de carte Séléphérol.');
 
 // ================================================================ 9. import contrôle laitier : contrôles pendant un délai d'attente du lait
 await jeu();

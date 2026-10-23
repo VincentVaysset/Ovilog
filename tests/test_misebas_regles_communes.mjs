@@ -1,6 +1,6 @@
 /* Règles COMMUNES de la saisie des mises bas (mobile ET PC : une seule fonction métier) : controlesMiseBas (bloquer : déjà mis bas ; alerter : date future, vide définitive ; rien d'autre),
    chercherBrebisMiseBas (trouvée, ambiguë, inconnue, EID pris ailleurs), construireAgnelageMiseBas (au moins un agneau, sexe obligatoire, doublon d'EID, EID déjà utilisé, mort-né sans EID mais avec
-   sexe facultatif sexeMortNe, adoption vers une brebis ACTIVE seulement, Séléphérol 2 cc sur chaque agneau vivant et jamais sur un mort-né), annulation en un geste, résumé « 1 mâle, 1 femelle mort-née »,
+   sexe facultatif sexeMortNe, adoption vers une brebis ACTIVE seulement, aucun soin ajouté d'office, ni sur un agneau vivant ni sur un mort-né), annulation en un geste, résumé « 1 mâle, 1 femelle mort-née »,
    statistiques des tuiles (Mâles + Femelles vivants + Morts-nés = Agneaux nés ; attendues = présentes − vides définitives présentes). Jeu synthétique. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
@@ -58,8 +58,8 @@ const ag = b1.ok.agnelage; check(!!ag && !b1.ok.erreur, 'portée valide accepté
 eq(ag.lambs.map(l => l.sexe), ['Mâle', 'Mort-né', 'Mort-né', 'Femelle'], 'sexes');
 check(ag.lambs[0].adopte === true && !!ag.lambs[0].adoptiveEid, 'adoption : mère adoptive enregistrée');
 eq([ag.lambs[1].sexeMortNe, ag.lambs[2].sexeMortNe], ['Femelle', undefined], 'sexe du mort-né : champ facultatif');
-check(ag.lambs[1].eid === undefined && !(ag.lambs[1].sanitaire || []).length && !(ag.lambs[2].sanitaire || []).length, 'mort-né : jamais d\'EID ni de Séléphérol');
-check([0, 3].every(i => ag.lambs[i].sanitaire.length === 1 && ag.lambs[i].sanitaire[0].produit === 'Séléphérol' && ag.lambs[i].sanitaire[0].dose === '2 cc' && ag.lambs[i].sanitaire[0].date === '2026-10-05'), 'Séléphérol 2 cc automatique sur chaque agneau vivant, à la date de mise bas');
+check(ag.lambs[1].eid === undefined && !(ag.lambs[1].sanitaire || []).length && !(ag.lambs[2].sanitaire || []).length, 'mort-né : jamais d\'EID ni de soin');
+check([0, 3].every(i => Array.isArray(ag.lambs[i].sanitaire) && ag.lambs[i].sanitaire.length === 0), 'agneau vivant : aucun soin ajouté d\'office (plus de Séléphérol automatique), un soin se saisit par le Carnet sanitaire');
 eq([ag.campagne, ag.codeRepro], [2026, 'MN'], 'campagne et repro');
 eq(await ev(a => resumeAgnelage(a), ag), '1 mâle, 1 femelle, 1 femelle mort-née, 1 mort-né', 'résumé');
 eq(await ev(() => resumeAgnelage({ lambs: [{ sexe: 'Mâle' }, { sexe: 'Mort-né', sexeMortNe: 'Femelle' }] })), '1 mâle, 1 femelle mort-née', 'résumé de la maquette');
@@ -82,5 +82,5 @@ const st = await ev(() => { const rows = misebasCampagneRows(); const x = miseBa
 eq([st.misesBas, st.nes, st.m, st.f, st.mn], [1, 2, 1, 1, 0], 'tuiles : mises bas, agneaux nés, mâles, femelles, morts-nés');
 check(st.m + st.f + st.mn === st.nes, 'Mâles + Femelles (vivants) + Morts-nés = Agneaux nés');
 eq([st.att, st.rest, st.coh], [4, 3, 3], 'attendues = présentes − vides définitives présentes (même calcul que l\'Accueil PC et le Bilan)');
-console.log('OK : règles communes de la saisie des mises bas (contrôles, constructeur, mort-né, adoption, Séléphérol, annulation en un geste, tuiles).');
+console.log('OK : règles communes de la saisie des mises bas (contrôles, constructeur, mort-né, adoption, aucun soin d\'office, annulation en un geste, tuiles).');
 await browser.close();

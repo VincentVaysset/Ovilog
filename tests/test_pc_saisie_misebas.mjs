@@ -114,7 +114,7 @@ await page.click('#btn-valider-misebas');
 await page.waitForFunction(() => window.__saves >= 1 && !document.getElementById('f-date-rapide'));
 const ag = await page.evaluate(() => JSON.parse(JSON.stringify(DB.brebis.find(b => b.eid === E(3, 101)).agnelages)));
 check(ag.length === 1 && ag[0].campagne === 2026 && ag[0].date === '2026-11-15' && ag[0].codeRepro === 'IA' && ag[0].codeSieolRepro === 1, 'agnelage : campagne 2026, date, repro IA : ' + JSON.stringify(ag[0]).slice(0, 200));
-check(ag[0].lambs.map(l => l.sexe).join() === 'Mâle,Femelle' && ag[0].lambs.every(l => l.eid === '' && l.sanitaire.length === 1 && l.sanitaire[0].produit === 'Séléphérol' && l.sanitaire[0].dose === '2 cc' && l.sanitaire[0].date === '2026-11-15'), 'agneaux : Mâle + Femelle, Séléphérol 2 cc comme sur mobile : ' + JSON.stringify(ag[0].lambs));
+check(ag[0].lambs.map(l => l.sexe).join() === 'Mâle,Femelle' && ag[0].lambs.every(l => l.eid === '' && l.sanitaire.length === 0), 'agneaux : Mâle + Femelle, aucun soin d\'office comme sur mobile : ' + JSON.stringify(ag[0].lambs));
 k = await kpis();
 check(k['Mises bas'][0] === '3' && k['Agneaux nés'][0] === '5' && k['Restantes'][0] === '5', 'indicateurs mis à jour : 3 mises bas, 5 agneaux, 5 restantes : ' + JSON.stringify(k));
 check(await page.evaluate(() => /1 mise bas saisie dans cette session/.test(document.querySelector('.brd-sub').textContent)), 'compteur de session');
@@ -122,7 +122,7 @@ const ligneNouvelle = await page.evaluate(() => [...document.querySelectorAll('#
 check(ligneNouvelle, 'la mise bas apparaît dans le tableau');
 const av = await page.evaluate(() => document.querySelector('#pc-saisie-misebas .pc-legend').parentElement.textContent.replace(/\s+/g, ' '));
 check(/37,5 % réalisé/.test(av) && !/brebis à mettre bas/.test(av) && /Portées : 1 simple, 2 doubles/.test(av), 'avancement (« restantes / attendues » n\'est dit que par la tuile) : ' + av);
-console.log('OK 4 validation : agnelage enregistré (campagne, date, repro IA, 2 agneaux, Séléphérol 2 cc) ; indicateurs, tableau et avancement mis à jour.');
+console.log('OK 4 validation : agnelage enregistré (campagne, date, repro IA, 2 agneaux, aucun soin d\'office) ; indicateurs, tableau et avancement mis à jour.');
 
 // ================================================================ 5. contrôles : déjà une mise bas, inconnue, vide définitive
 await saisir('00200');
@@ -175,14 +175,14 @@ await page.click('#add-lamb-rapide'); await sexe(1, 'Femelle'); await page.check
 await page.click('#btn-valider-misebas');
 await page.waitForSelector('#mb-confirmation');
 const a103 = await page.evaluate(() => JSON.parse(JSON.stringify(DB.brebis.find(b => b.eid === E(3, 103)).agnelages[0])));
-check(a103.lambs[0].eid === En(4, 1) && a103.lambs[0].adopte === true && a103.lambs[0].adoptiveEid === En(3, 104) && a103.lambs[0].sanitaire[0].produit === 'Séléphérol', 'agneau : EID tapé, mère adoptive, Séléphérol : ' + JSON.stringify(a103.lambs[0]).slice(0, 220));
-check(a103.lambs[1].sexe === 'Mort-né' && a103.lambs[1].sexeMortNe === 'Femelle' && a103.lambs[1].eid === undefined && !(a103.lambs[1].sanitaire || []).length, 'mort-né : sexe facultatif conservé (sexeMortNe), jamais d\'EID ni de Séléphérol');
+check(a103.lambs[0].eid === En(4, 1) && a103.lambs[0].adopte === true && a103.lambs[0].adoptiveEid === En(3, 104) && a103.lambs[0].sanitaire.length === 0, 'agneau : EID tapé, mère adoptive, aucun soin d\'office : ' + JSON.stringify(a103.lambs[0]).slice(0, 220));
+check(a103.lambs[1].sexe === 'Mort-né' && a103.lambs[1].sexeMortNe === 'Femelle' && a103.lambs[1].eid === undefined && !(a103.lambs[1].sanitaire || []).length, 'mort-né : sexe facultatif conservé (sexeMortNe), jamais d\'EID ni de soin');
 check(await page.evaluate(() => /Mise bas enregistrée/.test(document.getElementById('mb-confirmation').innerText) && /1 mâle, 1 femelle mort-née/.test(document.getElementById('mb-confirmation').innerText)), 'confirmation verte avec le résumé');
 confirms.length = 0;
 await page.click('#btn-annuler-derniere');
 await page.waitForSelector('#mb-annulee');
 check(confirms.length === 0 && await page.evaluate(() => DB.brebis.find(b => b.eid === E(3, 103)).agnelages.length) === 0, '« Annuler cette saisie » : un geste, sans confirmation');
-console.log('OK 7 saisie complète au clavier : EID tapé, adoption (brebis active seulement), mort-né sans boucle avec sexe facultatif, Séléphérol, annulation en un geste.');
+console.log('OK 7 saisie complète au clavier : EID tapé, adoption (brebis active seulement), mort-né sans boucle avec sexe facultatif, aucun soin d\'office, annulation en un geste.');
 
 // ================================================================ 8. mise en page : carte « Nouvelle mise bas » AU-DESSUS de « Dernières mises bas » (pleine largeur), 10 dernières + « Voir toutes », aucun tableau coupé ni défilant à 1200 et 1400 px
 await page.evaluate(() => {
