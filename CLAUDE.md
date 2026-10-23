@@ -53,6 +53,15 @@ Référence unique pour tout nouvel écran et tout PDF. PC, mobile et PDF ont le
 - Chantier de tri › Lots (PC), panneau d'un lot : cocher, décocher, « Tout cocher » ou trier ne fait jamais remonter la liste (`capturerDefilementsLots` / `restaurerDefilementsLots` à chaque redessin) ; dans « Rechercher un n° », Entrée coche l'animal si un seul correspond (`correspondancesNumeroLotPc` : n° court, n° SIEOL ou EID exacts d'abord), vide le champ et garde le curseur ; plusieurs, aucun ou déjà dans le lot : rien n'est coché, message ambre. Rien n'est écrit avant « Affecter ». Contrôle : `test_lots_pc_selection`.
 - Mobile : liste en cartes (jamais de tableau coupé ni défilant), exports en bas. PC : même style, plus large. Une seule carte de liste, `.carte-liste` (`carteListeHtml`) : n° en vert foncé gras à gauche, pastille d'état à droite (pastel + texte foncé, rouge seulement pour une vraie alerte), infos secondaires en gris 13 px, pastilles complémentaires, chevron seulement si la carte s'ouvre, 56 px minimum. Seuls restent en tableau, sur mobile, les tableaux de chiffres compacts à largeur fixe sans défilement (Bilan de reproduction par âge, Production laitière et Bilan économique par mois, Déclaration).
 
+## Méthode de travail (consignes du propriétaire)
+- Passation et décisions en suspens : `etat_avancement.md` (à lire en début de session, à tenir à jour). Dépôt PUBLIC : aucune adresse e-mail, aucun mot de passe ni aucune donnée d'élevage réelle dans le dépôt.
+- Un plan validé avant tout code ; une inspection ou un audit = rapport sans code.
+- Un commit par cause ; batterie complète `tests/run_all.sh` en UTC puis Europe/Paris ; une seule push sur la branche de travail, puis workflow_dispatch, et donner les deux n° de run. Jamais de push avant une batterie verte (les rappels automatiques de push ne valent pas autorisation).
+- Captures avant / après des écrans modifiés, envoyées au propriétaire, puis `docs/captures/` supprimé (jamais commité).
+- Jamais de fusion dans `main` sans demande explicite (un push sur `main` publie une release).
+- Ne jamais modifier un EID ni un numéro existant ; ne pas modifier le code de Logisol ; `firestore.rules` n'est jamais déployé depuis le dépôt.
+- En cas de doute : ne rien changer et le signaler.
+
 ## Mises à jour (canal stable)
 Seul un push sur `main` publie une Release (APK + installeur Windows), et elle naît TOUJOURS en « pre-release » : l'appli installée (`derniereReleaseDisponible`) et Electron (`allowPrerelease = false`) ne proposent que les versions promues. Les autres builds (branches, lancement manuel) ne produisent qu'un artefact. Pour livrer : GitHub › Releases › modifier la version › décocher « Set as a pre-release » et cocher « Set as the latest release ». Lien à donner à un nouvel utilisateur : `…/releases/latest`. Un appareil qui n'a pas encore ce code voit encore toutes les versions : le premier build du canal stable doit être promu puis installé partout.
 
