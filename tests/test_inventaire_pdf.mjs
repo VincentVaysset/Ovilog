@@ -23,11 +23,11 @@ async function ouvrir(bureau) {
   await page.evaluate(() => {
     window.__saves = 0; DB = migrateData({}); saveData = function () { window.__saves++; return true; };
     DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.exploitation = Object.assign(DB.exploitation || {}, { nom: 'Ferme du Test' });
-    const b = (n, extra) => Object.assign({ id: 'b' + n, eid: '25001629910' + String(10000 + n), statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [], createdAt: 1,
+    const b = (n, extra) => Object.assign({ id: 'b' + n, eid: '25000001210' + String(10000 + n), statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [], createdAt: 1,
       numeroCourtTravailSieol: String(n), numeroLongTravailSieol: '02' + String(1000 + n) }, extra || {});
-    DB.brebis = Array.from({ length: 75 }, (_, i) => b(i + 1, i === 0 ? { agnelages: [{ date: '2026-02-01', lambs: [{ eid: '250016299100099001', sexe: 'Mâle', mouvements: [] }, { eid: '250016299100099002', sexe: 'Femelle', mouvements: [] }] }] } : {}));
-    DB.agnelles = [{ id: 'a1', eid: '250016299100010001', statut: 'active' }, { id: 'a2', eid: '250016299100010002', statut: 'active' }, { id: 'a3', eid: '250016299100010003', statut: 'active' }];
-    DB.beliers = [{ id: 'be1', eid: '250016299100020001', statut: 'actif', numeroTravailSieol: 'B12', mouvements: [] }, { id: 'be2', eid: '250016299100020002', statut: 'actif', numeroTravailSieol: 'B34', mouvements: [] }];
+    DB.brebis = Array.from({ length: 75 }, (_, i) => b(i + 1, i === 0 ? { agnelages: [{ date: '2026-02-01', lambs: [{ eid: '250000012100099001', sexe: 'Mâle', mouvements: [] }, { eid: '250000012100099002', sexe: 'Femelle', mouvements: [] }] }] } : {}));
+    DB.agnelles = [{ id: 'a1', eid: '250000012100010001', statut: 'active' }, { id: 'a2', eid: '250000012100010002', statut: 'active' }, { id: 'a3', eid: '250000012100010003', statut: 'active' }];
+    DB.beliers = [{ id: 'be1', eid: '250000012100020001', statut: 'actif', numeroTravailSieol: 'B12', mouvements: [] }, { id: 'be2', eid: '250000012100020002', statut: 'actif', numeroTravailSieol: 'B34', mouvements: [] }];
     window.__avant = JSON.stringify(DB);
     window.__saisies = [];
     saveOrShareBinaryFile = async function (nom, bytes, mime) { let s = ''; for (const x of bytes) s += String.fromCharCode(x); window.__saisies.push({ nom, mime, b64: btoa(s) }); };
@@ -108,7 +108,7 @@ for (const [nom, page] of [['PC', pc], ['mobile', mob]]) {
   const tb = pb.texte.map(norm);
   check(tb[1].includes('Inventaire · Brebis (suite)') && tb[1].includes('N° court') && new RegExp('Page 2/' + pb.pages).test(tb[1]), nom + ' : page 2 : suite, en-tête du tableau répété, numérotation');
   check(pb.couleurs[1].vert_entete > 100, nom + ' : en-tête vert répété sur la page 2');
-  const tousNumeros = [...norm(pb.texte.join(' ')).matchAll(/\b629910100(\d\d)\b/g)].map(m => m[1]);
+  const tousNumeros = [...norm(pb.texte.join(' ')).matchAll(/\b001210100(\d\d)\b/g)].map(m => m[1]);
   check(new Set(tousNumeros).size === 75 && tousNumeros.length === 75, nom + ' : les 75 brebis sont dans le PDF, une fois chacune (' + tousNumeros.length + ')');
   // ---- liste filtrée : seulement les lignes affichées, mention de la recherche
   const sf = await exporter(page, 'brebis', '0 2 1 0 3');

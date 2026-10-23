@@ -8,7 +8,7 @@ const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + '
 const browser = await chromium.launch(LAUNCH);
 function jeu() {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (n) => '25001629998' + String(n).padStart(4, '0');
+  const eid = (n) => '25000001298' + String(n).padStart(4, '0');
   let k = 0;
   const fiche = (id, o) => Object.assign({ id, eid: eid(++k), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   const e = (type, stade, o) => Object.assign({ date: '2026-08-01', campagne: 2026, type, stade }, o || {});

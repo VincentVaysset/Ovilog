@@ -72,13 +72,13 @@ await d1.page.evaluate(() => {
   DB.exploitation.campagneMoisDebut = 10;
   DB.exploitation.campagneJourDebut = 1;
   DB.brebis = [
-    { id: 'sync1', eid: '250016299911001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
-    { id: 'sync2', eid: '250016299911002', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
+    { id: 'sync1', eid: '250000012911001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
+    { id: 'sync2', eid: '250000012911002', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
   ];
   DB.beliers = [];
   DB.agnelles = [
-    { id: 'syncA1', eid: '250016299911003', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] },
-    { id: 'syncA2', eid: '250016299911004', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }
+    { id: 'syncA1', eid: '250000012911003', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] },
+    { id: 'syncA2', eid: '250000012911004', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }
   ];
   DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
   saveData(DB);
@@ -165,7 +165,7 @@ console.log('OK: après la bascule, les 2 appareils convergent vers un état STR
 // l'opération groupée (voir operationGroupeeEnCours/drainPendingRemoteUpdates).
 // ============================================================
 await d1.page.evaluate(() => {
-  DB.agnelles = [{ id: 'syncA3', eid: '250016299911005', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }];
+  DB.agnelles = [{ id: 'syncA3', eid: '250000012911005', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }];
   saveData(DB);
 });
 await waitFor(d2.page, () => (DB.agnelles||[]).length === 1, { timeout: 20000, label: 'device 2 voit la nouvelle agnelle avant le test de course' });

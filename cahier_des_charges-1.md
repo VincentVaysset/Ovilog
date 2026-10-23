@@ -11,7 +11,7 @@
 
 ## 1. Fiche brebis
 
-- N° EID complet (scan LPR), **numéro officiel = les 5 derniers chiffres de l'EID** (ex: EID `250 016299131098` → numéro officiel `31098`), année de naissance (calculée depuis l'EID comme dans le fichier Excel actuel), race
+- N° EID complet (scan LPR), **numéro officiel = les 5 derniers chiffres de l'EID** (ex: EID `250 000012131098` → numéro officiel `31098`), année de naissance (calculée depuis l'EID comme dans le fichier Excel actuel), race
 - Statut : active / réformée / morte / vendue
 - Historique complet consultable en un écran : reproduction, agnelages, sanitaire, contrôle laitier, mouvements
 

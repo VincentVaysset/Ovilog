@@ -20,7 +20,7 @@ await page.evaluate(() => {
   DB = migrateData({});
   window.__saves = 0;
   const o = saveData; saveData = function (...a) { window.__saves++; return o.apply(this, a); };
-  const fiche = (n, o) => Object.assign({ id: 'f' + n, eid: '2500162999' + String(n).padStart(6, '0'), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
+  const fiche = (n, o) => Object.assign({ id: 'f' + n, eid: '2500000129' + String(n).padStart(6, '0'), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   // campagne 2027 (interne 2026) : 10 mises bas (8 simples + 2 doubles) = 12 nés (6 F, 5 M, 1 mort-né), 1 adopté, + 2 vides
   const brebis = [];
   for (let i = 0; i < 10; i++) {

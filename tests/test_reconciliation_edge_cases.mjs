@@ -102,7 +102,7 @@ async function getUidViaFetchInterception(page) {
     DB.brebis = recs; DB.beliers = []; DB.agnelles = [];
     DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
     saveData(DB);
-  }, [brebisVide('s1', '250016299960001'), brebisVide('s2', '250016299960002'), brebisVide('s3', '250016299960003')]);
+  }, [brebisVide('s1', '250000012960001'), brebisVide('s2', '250000012960002'), brebisVide('s3', '250000012960003')]);
   await d1.page.waitForTimeout(500); // laisse le push initial (bootstrapDevice, cloud vide) se confirmer
 
   const uid = await getUidViaFetchInterception(d1.page);
@@ -182,11 +182,11 @@ async function getUidViaFetchInterception(page) {
   // en doublon (même EID pattern qu'un vrai incident de bascule), toutes
   // réellement synchronisées avant l'incident -- device ET cloud d'accord.
   const fichesAvecDoublons = [
-    brebisVide('sain-1', '250016299970001'), brebisVide('sain-2', '250016299970002'),
-    brebisVide('sain-3', '250016299970003'), brebisVide('sain-4', '250016299970004'),
-    brebisVide('sain-5', '250016299970005'),
-    brebisVide('doublon-1', '250016299970006'), brebisVide('doublon-2', '250016299970007'),
-    brebisVide('doublon-3', '250016299970008')
+    brebisVide('sain-1', '250000012970001'), brebisVide('sain-2', '250000012970002'),
+    brebisVide('sain-3', '250000012970003'), brebisVide('sain-4', '250000012970004'),
+    brebisVide('sain-5', '250000012970005'),
+    brebisVide('doublon-1', '250000012970006'), brebisVide('doublon-2', '250000012970007'),
+    brebisVide('doublon-3', '250000012970008')
   ];
   await d1.page.evaluate((recs) => {
     DB.campagneDebut = 2026; DB.campagneInitialisee = true;
@@ -276,7 +276,7 @@ async function getUidViaFetchInterception(page) {
     DB.brebis = [rec]; DB.beliers = []; DB.agnelles = [];
     DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
     saveData(DB);
-  }, brebisVide('partagee', '250016299980001'));
+  }, brebisVide('partagee', '250000012980001'));
   await d1.page.waitForTimeout(500);
 
   const d2 = await newDevicePage();

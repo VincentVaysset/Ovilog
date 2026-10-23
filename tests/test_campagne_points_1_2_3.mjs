@@ -37,10 +37,10 @@ function baseDb() {
   return {
     campagneDebut: 2026, campagneDateDemarrage: '2025-10-01', campagneInitialisee: true,
     brebis: [
-      { id: 's1', eid: '250016299930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
+      { id: 's1', eid: '250000012930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
     ],
     agnelles: [
-      { id: 'a1', eid: '250016299930002', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }
+      { id: 'a1', eid: '250000012930002', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }
     ],
     registre: { brebis: {}, beliers: {}, agnelles: {} }
   };
@@ -193,7 +193,7 @@ await page.evaluate(() => {
 // Plan "Export SAF" : plus aucun partage automatique en tâche de fond -- writeAutoBackupFile
 // n'écrit que la copie interne.
 const r1 = await page.evaluate(async () => {
-  DB.brebis = [{ id: 'sp1', eid: '250016299930010', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
+  DB.brebis = [{ id: 'sp1', eid: '250000012930010', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
   DB.agnelles = [];
   DB.campagneDebut = 2030;
   const r = await writeAutoBackupFile('test-partage.json', DB);

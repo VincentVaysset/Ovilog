@@ -21,7 +21,7 @@ async function ouvrir(pc) {
     DB = migrateData({});
     window.__saves = 0;
     const o = saveData; saveData = function (...a) { window.__saves++; return o.apply(this, a); };
-    const eid = (c, n) => '2500162999' + c + String(n).padStart(4, '0');
+    const eid = (c, n) => '2500000129' + c + String(n).padStart(4, '0');
     const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
     const mb = (d, lambs, camp) => ({ date: d, campagne: camp === undefined ? 2026 : camp, lambs });
     const L = (sexe, o) => Object.assign({ sexe }, o || {});
@@ -59,7 +59,7 @@ const page = await ouvrir(false);
 await page.evaluate(() => jeuLait(true));
 const avant = await page.evaluate(() => JSON.stringify(DB));
 const r = await page.evaluate(() => JSON.parse(JSON.stringify(brebisMiseBasSansControleLaitier(2026))));
-const num = n => '2500162999' + '6' + String(n).padStart(4, '0');
+const num = n => '2500000129' + '6' + String(n).padStart(4, '0');
 const cles = r.liste.map(l => parseInt(l.eid.slice(-4), 10));
 check(r.controleImporte === true, 'contrôle importé détecté');
 check(JSON.stringify(cles) === JSON.stringify([2, 10, 3, 4, 8]), 'liste : B, M (signaux forts, par date) puis C, D, H (par date) : ' + JSON.stringify(cles));

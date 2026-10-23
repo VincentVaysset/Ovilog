@@ -15,7 +15,7 @@ await page.goto(URL_APP, { waitUntil: 'load' });
 await page.waitForTimeout(300);
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 
-const M = { m1: '250016299930005', m2: '250016299910002', m3: '250016299910001', m4: '250016299950003', m5: '250016299930001' };
+const M = { m1: '250000012930005', m2: '250000012910002', m3: '250000012910001', m4: '250000012950003', m5: '250000012930001' };
 const fiche = (id, eid, extra) => Object.assign({ id, eid, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }, extra || {});
 async function preparer(avecSieol) {
   await page.evaluate(({ M, avecSieol }) => {
@@ -104,7 +104,7 @@ console.log('OK remise à zéro : refus = rien ne change ; confirmation = 0 / 5 
 await preparer(true);
 e = await etat();
 check(e.entetes.includes('N° SIEOL'), 'colonne SIEOL attendue quand un membre a un numéro');
-const sieolCell = await page.evaluate(() => document.querySelector('.lot-ligne[data-eid="250016299910002"] .carte-liste-l2').textContent.replace('N° SIEOL :', '').trim());
+const sieolCell = await page.evaluate(() => document.querySelector('.lot-ligne[data-eid="250000012910002"] .carte-liste-l2').textContent.replace('N° SIEOL :', '').trim());
 check(sieolCell === '543', 'n° SIEOL affiché pour le membre concerné, obtenu ' + sieolCell);
 console.log('OK SIEOL : colonne affichée uniquement quand au moins un membre a un numéro (543 pour le n°10002).');
 

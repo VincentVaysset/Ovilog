@@ -22,11 +22,11 @@ await page.evaluate(() => {
   DB.exploitation.campagneMoisDebut = 10;
   DB.exploitation.campagneJourDebut = 1;
   DB.brebis = [
-    { id: 's1', eid: '250016299900001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
-    { id: 's2', eid: '250016299900002', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
+    { id: 's1', eid: '250000012900001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
+    { id: 's2', eid: '250000012900002', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
   ];
   DB.agnelles = [
-    { id: 'a1', eid: '250016299900003', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }
+    { id: 'a1', eid: '250000012900003', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }
   ];
   DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
   saveData(DB);
@@ -55,7 +55,7 @@ console.log('OK: bascule normale -- comptage exact, agnelles converties.');
 // 2) Verrou de ré-entrance : deux appels concurrents, un seul doit réussir.
 // ============================================================
 await page.evaluate(() => {
-  DB.agnelles = [{ id: 'a2', eid: '250016299900004', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }];
+  DB.agnelles = [{ id: 'a2', eid: '250000012900004', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }];
   saveData(DB);
 });
 const [r1, r2] = await page.evaluate(async () => {
@@ -75,25 +75,25 @@ await page.evaluate(() => {
   DB.campagneDebut = 2026;
   DB.campagneInitialisee = true;
   DB.brebis = [
-    { id: 'sExist', eid: '250016299900010', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
+    { id: 'sExist', eid: '250000012900010', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
   ];
   DB.agnelles = [
-    { id: 'agConflit', eid: '250016299900010', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }, // EID en conflit
-    { id: 'agOk', eid: '250016299900011', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }
+    { id: 'agConflit', eid: '250000012900010', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }, // EID en conflit
+    { id: 'agOk', eid: '250000012900011', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }
   ];
   saveData(DB);
 });
 const r3 = await page.evaluate(async () => await executerChangementCampagne());
 if (!r3.ok) throw new Error('FAIL: la bascule doit réussir malgré un conflit ponctuel, obtenu ' + JSON.stringify(r3));
-if (r3.agnellesEnConflit.length !== 1 || r3.agnellesEnConflit[0].eid !== '250016299900010') {
-  throw new Error('FAIL: 1 agnelle en conflit attendue (EID 250016299900010), obtenu ' + JSON.stringify(r3.agnellesEnConflit));
+if (r3.agnellesEnConflit.length !== 1 || r3.agnellesEnConflit[0].eid !== '250000012900010') {
+  throw new Error('FAIL: 1 agnelle en conflit attendue (EID 250000012900010), obtenu ' + JSON.stringify(r3.agnellesEnConflit));
 }
 const etat3 = await page.evaluate(() => ({
-  totalBrebisAvecCetEid: DB.brebis.filter(s => s.eid === '250016299900010').length,
+  totalBrebisAvecCetEid: DB.brebis.filter(s => s.eid === '250000012900010').length,
   agnellesRestantes: DB.agnelles.map(a => a.eid)
 }));
 if (etat3.totalBrebisAvecCetEid !== 1) throw new Error('FAIL: aucun doublon ne doit être créé pour un EID en conflit, obtenu ' + etat3.totalBrebisAvecCetEid + ' fiche(s).');
-if (JSON.stringify(etat3.agnellesRestantes) !== JSON.stringify(['250016299900010'])) {
+if (JSON.stringify(etat3.agnellesRestantes) !== JSON.stringify(['250000012900010'])) {
   throw new Error('FAIL: l\'agnelle en conflit doit rester dans DB.agnelles pour résolution manuelle, obtenu ' + JSON.stringify(etat3.agnellesRestantes));
 }
 console.log('OK: anti-doublon EID -- une agnelle en conflit n\'est jamais dupliquée, reste dans l\'inventaire Agnelles.');
@@ -112,8 +112,8 @@ console.log('OK: writeAutoBackupFile retourne bien {ok, raison} (plus un simple 
 await page.evaluate(() => {
   DB.campagneDebut = 2027;
   DB.campagneInitialisee = true;
-  DB.brebis = [{ id: 'sX', eid: '250016299900020', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
-  DB.agnelles = [{ id: 'agX', eid: '250016299900021', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }];
+  DB.brebis = [{ id: 'sX', eid: '250000012900020', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
+  DB.agnelles = [{ id: 'agX', eid: '250000012900021', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }];
   saveData(DB);
   render('confirmation-nouvelle-campagne');
 });

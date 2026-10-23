@@ -11,13 +11,15 @@ const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + '
 const source = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
 const dossier = new URL('./fixtures/modeles/', import.meta.url).pathname;
 const MODELES = ['Modele_Correspondance_SIEOL.xlsx', 'Modele_Controle_Laitier.xlsx', 'Modele_Lactation_CLS.xlsx', 'Modele_Lactation_CLO.xlsx', 'Modele_Nouveaux_Animaux.xlsx'];
-// Préfixes de cheptel / noms qui n'ont rien à faire dans un modèle livré à tous
-const INTERDITS = /1629\d\d|1635\d\d|1619\d\d|1640\d\d|1648\d\d|1651\d\d|Vaysset|Vincent|18013|18005|19005|19006|19008/i;
+// Règle générale, sans citer aucun élevage : l'indicatif (6 chiffres devant le n° individuel) de tout EID d'exemple commence par 00,
+// qui n'est le département d'aucun élevage réel ; et les métadonnées du fichier ne portent que « Ovilog » (ou l'outil qui l'a produit)
+const EID_REEL = c => (c.match(/\d{11,15}/g) || []).some(n => !/^00/.test(n.slice(-11)));
+const AUTEURS_PERMIS = ['Ovilog', 'openpyxl'];
 
 // ---- 1. champs de saisie : exemples d'EID neutres
 const placeholders = [...source.matchAll(/placeholder="([^"]*)"/g)].map(m => m[1]);
-check(!placeholders.some(p => /1629\d\d|016299/.test(p)), 'aucun exemple de saisie ne porte l\'indicatif d\'un élevage réel : ' + placeholders.filter(p => /\d{6}/.test(p)).join(' | '));
-check(!/\(ex ?: ?1629\d\d\)/.test(source), 'aucun texte d\'aide ne cite l\'indicatif d\'un élevage réel comme exemple');
+check(!placeholders.some(p => /\b(?!00)\d{6}\b/.test(p.replace(/^ex: 250043$/, '')  /* n° long SIEOL, pas un indicatif */)), 'aucun exemple de saisie ne porte un indicatif réel (hors 00…) : ' + placeholders.filter(p => /\d{6}/.test(p)).join(' | '));
+check(!/\(ex ?: ?(?!00)\d{6}\)/.test(source), 'aucun texte d\'aide ne cite un indicatif réel (hors 00…) comme exemple');
 check(placeholders.filter(p => p === 'ex: 250 000000 000000').length === 4, 'les 4 champs d\'EID montrent l\'exemple neutre « ex: 250 000000 000000 »');
 
 // ---- 2. modèles Excel : contenu (chaînes + métadonnées) lu avec python (zip) sur les copies de tests
@@ -30,9 +32,10 @@ print(json.dumps({'chaines': re.findall(r'<t[^>]*>([^<]*)</t>', ss), 'core': cor
 `, dossier + fichier], { encoding: 'utf8' }));
 for (const f of MODELES) {
   const m = lecture(f);
-  const trouve = m.chaines.filter(c => INTERDITS.test(c));
-  check(trouve.length === 0, f + ' : aucun EID, n° ni nom réel dans le modèle : ' + JSON.stringify(trouve));
-  check(!INTERDITS.test(m.core), f + ' : métadonnées du fichier sans nom de personne : ' + m.core.replace(/xmlns:\w+="[^"]*"\s*/g, '').slice(0, 300));
+  const trouve = m.chaines.filter(EID_REEL);
+  check(trouve.length === 0, f + ' : aucun EID d\'exemple avec un indicatif réel (hors 00…) : ' + JSON.stringify(trouve));
+  const auteurs = [...m.core.matchAll(/<(?:dc:creator|cp:lastModifiedBy)>([^<]*)</g)].map(x => x[1]);
+  check(auteurs.every(a => AUTEURS_PERMIS.includes(a)), f + ' : métadonnées du fichier sans nom de personne : ' + JSON.stringify(auteurs));
 }
 console.log('OK 2 modèles Excel : aucun EID, n° ni nom réel (contenu et métadonnées).');
 

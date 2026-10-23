@@ -18,7 +18,7 @@ await page.waitForTimeout(300);
 await page.evaluate(() => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
-  window.E = (d, n) => '2500162991' + d + String(n).padStart(4, '0');
+  window.E = (d, n) => '2500000456' + d + String(n).padStart(4, '0');
   const f = (d, n) => ({ id: 'b' + d + n, eid: E(d, n), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] });
   DB.brebis = [];
   for (let n = 1; n <= 60; n++) DB.brebis.push(f(8, n));
@@ -64,7 +64,7 @@ const entree = async v => { await page.fill('#lt-q', v); await page.press('#lt-q
 await entree('80045');
 eq([await coche([8, 45]), await champ(), await msg()], [true, ['', 'lt-q'], ['ok', 'n°80045 cochée · 1 sélectionnée']], 'un seul résultat : cochée, champ vidé, curseur gardé, message vert');
 check(await page.evaluate(() => document.querySelector('#lt-table tr[data-eid="' + E(8, 45) + '"] input').checked), 'la case de n°80045 est cochée dans la liste (filtre vidé)');
-await entree('2500162991 80046');
+await entree('2500000456 80046');
 eq([await coche([8, 46]), (await msg())[0]], [true, 'ok'], 'EID complet tapé (avec espace) : coché');
 // plusieurs : rien de coché, liste filtrée sur la saisie
 await entree('0012');

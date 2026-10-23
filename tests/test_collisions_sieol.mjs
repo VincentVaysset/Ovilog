@@ -13,7 +13,7 @@ page.on('dialog', d => d.accept());
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(300);
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
-const E = { x: '250016299930001', y: '250016299940002', z: '250016299950003' };
+const E = { x: '250000012930001', y: '250000012940002', z: '250000012950003' };
 async function preparer() {
   await page.evaluate((E) => {
     const f = (id, eid, extra) => Object.assign({ id, eid, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }, extra || {});

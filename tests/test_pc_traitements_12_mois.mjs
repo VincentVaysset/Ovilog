@@ -17,7 +17,7 @@ await page.goto(URL_APP, { waitUntil: 'load' });
 await page.waitForTimeout(300);
 const jeu = (bio, nombreAnimauxUn) => page.evaluate(([bio, nbUn]) => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
   DB.exploitation = Object.assign({}, DB.exploitation, { elevageBio: !!bio });

@@ -62,7 +62,7 @@ await d1.page.evaluate(() => {
   DB.campagneDebut = 2026;
   DB.campagneInitialisee = true;
   DB.brebis = [
-    { id: 'reg1', eid: '250016299940001', statut: 'active', createdAt: 1, dateEntree: '2023-01-01', echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: '2023-01-01' }], controleLaitier: [], modesRepro: [] }
+    { id: 'reg1', eid: '250000012940001', statut: 'active', createdAt: 1, dateEntree: '2023-01-01', echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: '2023-01-01' }], controleLaitier: [], modesRepro: [] }
   ];
   DB.beliers = [];
   DB.agnelles = [];
@@ -102,8 +102,8 @@ console.log('OK 1/5 ÉCHOGRAPHIE : saisie via l\'écran réel sur le device 1, s
 await d1.page.evaluate(() => {
   const s = DB.brebis.find(x => x.id === 'reg1');
   s.agnelages.push({ id: 'agnelage1', date: '2026-02-01', campagne: 2026, codeRepro: 'MN', lambs: [
-    { eid: '250016299940101', sexe: 'Femelle', sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-02-01' }], notes: [] },
-    { eid: '250016299940102', sexe: 'Mâle', sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-02-01' }], notes: [] }
+    { eid: '250000012940101', sexe: 'Femelle', sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-02-01' }], notes: [] },
+    { eid: '250000012940102', sexe: 'Mâle', sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-02-01' }], notes: [] }
   ] });
   saveData(DB);
 });
@@ -150,7 +150,7 @@ console.log('OK 4/5 TRAITEMENT : soin sanitaire synchronisé et visible sur le d
 await d1.page.evaluate(() => {
   for (let i = 0; i < 5; i++) {
     DB.brebis.push({
-      id: 'import' + i, eid: '25001629994050' + i, statut: 'active', createdAt: Date.now(),
+      id: 'import' + i, eid: '25000001294050' + i, statut: 'active', createdAt: Date.now(),
       dateEntree: '2026-01-01', echographies: [], agnelages: [], sanitaire: [], controleLaitier: [], modesRepro: [],
       mouvements: [{ type: 'Entrée', cause: 'Import Nouveaux animaux (née)', date: '2026-01-01' }]
     });

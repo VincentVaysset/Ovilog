@@ -21,8 +21,8 @@ async function ouvrir(desktop) {
     DB = migrateData({}); saveData = function () { return true; };
     const fiche = (e) => ({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] });
     DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
-    DB.exploitation.indicatifMarquage = '162991';
-    DB.brebis = [fiche('250016299150975')]; DB.beliers = []; DB.agnelles = []; DB.lots = [];
+    DB.exploitation.indicatifMarquage = '000121';
+    DB.brebis = [fiche('250000012150975')]; DB.beliers = []; DB.agnelles = []; DB.lots = [];
   });
   return page;
 }
@@ -53,13 +53,13 @@ for (const desktop of [true, false]) {
   await page.click('.sexe-opt-rapide[data-id="0"][data-val="Femelle"]');
   await page.click(sel); await page.keyboard.press('End');
   // une autre tablette ajoute une brebis pendant la saisie : la donnée arrive, l'écran de saisie ne bouge pas
-  await page.evaluate(() => window.__appliquerSynchro(() => { DB.brebis.push(Object.assign({}, DB.brebis[0], { id: 'distante', eid: '250016299150976' })); }));
+  await page.evaluate(() => window.__appliquerSynchro(() => { DB.brebis.push(Object.assign({}, DB.brebis[0], { id: 'distante', eid: '250000012150976' })); }));
   await page.keyboard.type('01');
   const r = await page.evaluate(sel => { const c = document.querySelector(sel); return c && { valeur: c.value, focus: document.activeElement === c, femelle: !!document.querySelector('.sexe-opt-rapide[data-id="0"][data-val="Femelle"].active'), recue: DB.brebis.some(b => b.id === 'distante') }; }, sel);
   check(r && r.valeur === '61001' && r.focus, nom + ' : pendant une synchro, le champ du n° reste là, garde le focus et la frappe continue : ' + JSON.stringify(r));
   check(r.femelle && r.recue, nom + ' : le formulaire en cours est intact (sexe choisi) et la donnée distante est bien reçue : ' + JSON.stringify(r));
   await page.click('#btn-valider-misebas');
-  check(await page.evaluate(() => DB.brebis[0].agnelages.length === 1 && DB.brebis[0].agnelages[0].lambs[0].eid === '250016299161001'), nom + ' : la mise bas s\'enregistre normalement ensuite');
+  check(await page.evaluate(() => DB.brebis[0].agnelages.length === 1 && DB.brebis[0].agnelages[0].lambs[0].eid === '250000012161001'), nom + ' : la mise bas s\'enregistre normalement ensuite');
   // hors écran de saisie, la synchro redessine toujours l'écran (comportement inchangé)
   await page.evaluate(() => { window.__rendus = 0; const r0 = render; render = function () { window.__rendus++; return r0.apply(this, arguments); }; currentView = "home"; window.__appliquerSynchro(() => {}); });
   check(await page.evaluate(() => window.__rendus === 1), nom + ' : hors saisie, la synchro redessine l\'écran comme avant');

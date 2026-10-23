@@ -13,7 +13,7 @@ const browser = await chromium.launch(LAUNCH);
 
 function jeu() {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   window.EID = eid;
   let compteur = 0;
   const fiche = (id, o) => Object.assign({ id, eid: eid(8, ++compteur), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
@@ -198,7 +198,7 @@ console.log('OK 8 filtres de l\'écran, détail : recherche, résultat, comptage
 
 // ================================================================ 9. pagination par 20 ; Modifier / Suppr. ; aucune écriture à l'affichage
 await pc.evaluate(() => {
-  const eid = (n) => '2500162999800' + String(n).padStart(3, '0') + '0';
+  const eid = (n) => '2500000129800' + String(n).padStart(3, '0') + '0';
   for (let i = 0; i < 12; i++) DB.brebis.push({ id: 'Z' + i, eid: eid(300 + i), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] });
   window.__avant = JSON.stringify(DB); window.__saves = 0; render('echo-rapide');
 });

@@ -20,17 +20,17 @@ for (const bureau of [true, false]) {
   const jeu = () => page.evaluate(() => {
     window.__saves = 0; DB = migrateData({}); saveData = function () { window.__saves++; return true; };
     DB.campagneDebut = 2026; DB.campagneInitialisee = true;
-    DB.acheteurs = ['Natera', 'Bio Plus']; DB.causesMortalite = ['Mammite', 'Gonflée', MOTIF_MAJ_INVENTAIRE]; DB.intervenants = ['Vincent Vaysset', 'Clément Galibert'];
+    DB.acheteurs = ['Acheteur C', 'Acheteur D']; DB.causesMortalite = ['Mammite', 'Gonflée', MOTIF_MAJ_INVENTAIRE]; DB.intervenants = ['Intervenant A', 'Intervenant B'];
     DB.casParticuliers = ['Pseudogestation', 'Avortée']; DB.categoriesNotes = ['Boiterie', 'Sinus']; DB.typesJournal = ['Lutte', 'Tonte'];
-    const brebis = (n, extra) => Object.assign({ id: 'b' + n, eid: '250 0162991000' + n, statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [] }, extra);
+    const brebis = (n, extra) => Object.assign({ id: 'b' + n, eid: '250 0000121000' + n, statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [] }, extra);
     DB.brebis = [
-      brebis(1, { mouvements: [{ type: 'Vendu', acheteur: 'Natera', date: '2026-05-01' }, { type: 'Morte', cause: 'Mammite', date: '2026-05-02' }], sanitaire: [{ type: 'Vaccin', intervenant: 'Vincent Vaysset', date: '2026-04-01' }], echographies: [{ date: '2026-03-01', special: 'Avortée' }], notes: [{ categorie: 'Boiterie', texte: 'x' }] }),
-      brebis(2, { mouvements: [{ type: 'Vendu', acheteur: 'Natera', date: '2026-05-03' }, { type: 'Morte', cause: MOTIF_MAJ_INVENTAIRE, date: '2026-05-04' }], agnelages: [{ date: '2026-01-01', lambs: [{ eid: 'l1', mouvements: [{ type: 'Vendu', acheteur: 'Natera', date: '2026-04-04' }], sanitaire: [{ intervenant: 'Vincent Vaysset' }], notes: [{ categorie: 'Boiterie' }] }] }] })];
-    DB.beliers = [{ id: 'be1', eid: '250 0162991000b1', statut: 'actif', mouvements: [], sanitaire: [], notes: [{ categorie: 'Boiterie', texte: 'bélier' }] }];
-    DB.agnelles = []; DB.mouvementsCollectifs = [{ id: 'mc1', type: 'Vente', acheteur: 'Natera', date: '2026-05-01', membres: [] }, { id: 'mc2', type: 'Morte', cause: 'Mammite', date: '2026-05-02', membres: [] }];
-    DB.traitementsCollectifs = [{ id: 'tc1', intervenant: 'Vincent Vaysset', produit: 'X', membres: [] }];
+      brebis(1, { mouvements: [{ type: 'Vendu', acheteur: 'Acheteur C', date: '2026-05-01' }, { type: 'Morte', cause: 'Mammite', date: '2026-05-02' }], sanitaire: [{ type: 'Vaccin', intervenant: 'Intervenant A', date: '2026-04-01' }], echographies: [{ date: '2026-03-01', special: 'Avortée' }], notes: [{ categorie: 'Boiterie', texte: 'x' }] }),
+      brebis(2, { mouvements: [{ type: 'Vendu', acheteur: 'Acheteur C', date: '2026-05-03' }, { type: 'Morte', cause: MOTIF_MAJ_INVENTAIRE, date: '2026-05-04' }], agnelages: [{ date: '2026-01-01', lambs: [{ eid: 'l1', mouvements: [{ type: 'Vendu', acheteur: 'Acheteur C', date: '2026-04-04' }], sanitaire: [{ intervenant: 'Intervenant A' }], notes: [{ categorie: 'Boiterie' }] }] }] })];
+    DB.beliers = [{ id: 'be1', eid: '250 0000121000b1', statut: 'actif', mouvements: [], sanitaire: [], notes: [{ categorie: 'Boiterie', texte: 'bélier' }] }];
+    DB.agnelles = []; DB.mouvementsCollectifs = [{ id: 'mc1', type: 'Vente', acheteur: 'Acheteur C', date: '2026-05-01', membres: [] }, { id: 'mc2', type: 'Morte', cause: 'Mammite', date: '2026-05-02', membres: [] }];
+    DB.traitementsCollectifs = [{ id: 'tc1', intervenant: 'Intervenant A', produit: 'X', membres: [] }];
     DB.journal = [{ date: '2026-03-01', type: 'Tonte', texte: 't' }, { date: '2026-03-02', type: 'Tonte', texte: 't2' }, { date: '2026-03-05', type: 'Lutte', texte: 'l' }];
-    DB.registre = { brebis: { 'x': { eid: 'x', mouvements: [{ type: 'Vendu', acheteur: 'Natera', date: '2024-05-01' }], sanitaire: [{ intervenant: 'Vincent Vaysset' }], echographies: [{ special: 'Avortée' }] } }, beliers: {}, agnelles: {} };
+    DB.registre = { brebis: { 'x': { eid: 'x', mouvements: [{ type: 'Vendu', acheteur: 'Acheteur C', date: '2024-05-01' }], sanitaire: [{ intervenant: 'Intervenant A' }], echographies: [{ special: 'Avortée' }] } }, beliers: {}, agnelles: {} };
     DB.notesArchiveesBrebis = { 'z': [{ categorie: 'Boiterie' }] };
     window.__avant = JSON.stringify({ reg: DB.registre, arch: DB.notesArchiveesBrebis });
     prmListeSel = null; prmListeRenom = null; parametresTab = 'listes'; parametresRubrique = 'listes'; render('parametres');
@@ -46,9 +46,9 @@ for (const bureau of [true, false]) {
   check(await page.evaluate(() => document.querySelectorAll('.prm-liste .input-add-liste').length === 6 && [...document.querySelectorAll('.btn-add-liste')].every(b => b.textContent === 'Ajouter')), nom + ' : un champ « Ajouter une valeur » + bouton Ajouter par carte');
   // ---- 2. clic sur une valeur : Renommer / Retirer
   check(await page.evaluate(() => !document.querySelector('.prm-renommer')), nom + ' : pas d\'actions avant le clic');
-  await page.click(val('acheteurs', 'Natera'));
+  await page.click(val('acheteurs', 'Acheteur C'));
   check(await page.evaluate(() => !!document.querySelector('.prm-renommer') && !!document.querySelector('.prm-retirer')), nom + ' : clic sur une valeur -> Renommer et Retirer');
-  await page.click(val('acheteurs', 'Natera'));
+  await page.click(val('acheteurs', 'Acheteur C'));
   check(await page.evaluate(() => !document.querySelector('.prm-renommer')), nom + ' : second clic referme');
   // ---- 3. valeur protégée
   await page.click(val('causesMortalite', 'Mise à jour inventaire'));
@@ -56,31 +56,31 @@ for (const bureau of [true, false]) {
   eq(await page.evaluate(() => [renommerValeurListe('causesMortalite', MOTIF_MAJ_INVENTAIRE, 'Autre').ok, DB.causesMortalite.includes(MOTIF_MAJ_INVENTAIRE)]), [false, true], nom + ' : refusé aussi au niveau du code');
   console.log('OK ' + nom + ' : 6 listes (module, nombre), étiquettes, actions au clic, valeur protégée.');
   // ---- 4. renommer : refus, accord, au clavier
-  await page.click(val('acheteurs', 'Natera')); await page.click('.prm-renommer');
-  await page.fill('.prm-renom-input', ''); await page.click('.prm-renom-input'); await page.keyboard.type('Natéra Bio', { delay: 25 });
+  await page.click(val('acheteurs', 'Acheteur C')); await page.click('.prm-renommer');
+  await page.fill('.prm-renom-input', ''); await page.click('.prm-renom-input'); await page.keyboard.type('Acheteur C Bio', { delay: 25 });
   reponse = false; confirms.length = 0; await page.click('.prm-renom-ok');
-  check(confirms.length === 1 && /Renommer « Natera » en « Natéra Bio »/.test(confirms[0]) && /4 enregistrement\(s\) actif\(s\)/.test(confirms[0]) && /registre d'élevage archivé \(1 enregistrement\(s\)\) reste tel/.test(confirms[0]), nom + ' : confirmation avec le nombre (3 mouvements + 1 collectif = 4) et le registre inchangé : ' + confirms[0]);
-  check(await page.evaluate(() => DB.acheteurs.includes('Natera') && DB.brebis[0].mouvements[0].acheteur === 'Natera' && window.__saves === 0), nom + ' : refus = rien modifié');
+  check(confirms.length === 1 && /Renommer « Acheteur C » en « Acheteur C Bio »/.test(confirms[0]) && /4 enregistrement\(s\) actif\(s\)/.test(confirms[0]) && /registre d'élevage archivé \(1 enregistrement\(s\)\) reste tel/.test(confirms[0]), nom + ' : confirmation avec le nombre (3 mouvements + 1 collectif = 4) et le registre inchangé : ' + confirms[0]);
+  check(await page.evaluate(() => DB.acheteurs.includes('Acheteur C') && DB.brebis[0].mouvements[0].acheteur === 'Acheteur C' && window.__saves === 0), nom + ' : refus = rien modifié');
   reponse = true; await page.click('.prm-renom-ok'); await page.waitForTimeout(100);
   const r = await page.evaluate(() => ({ liste: DB.acheteurs, m1: DB.brebis[0].mouvements[0].acheteur, m2: DB.brebis[1].mouvements[0].acheteur, lamb: DB.brebis[1].agnelages[0].lambs[0].mouvements[0].acheteur, col: DB.mouvementsCollectifs[0].acheteur, reg: DB.registre.brebis.x.mouvements[0].acheteur, saves: window.__saves }));
-  eq([r.liste, r.m1, r.m2, r.lamb, r.col, r.reg, r.saves], [['Natéra Bio', 'Bio Plus'], 'Natéra Bio', 'Natéra Bio', 'Natéra Bio', 'Natéra Bio', 'Natera', 1], nom + ' : liste + 4 enregistrements actifs renommés, registre archivé inchangé, une écriture, ordre conservé');
-  eq(await valeurs('acheteurs'), ['Natéra Bio', 'Bio Plus'], nom + ' : étiquettes mises à jour');
+  eq([r.liste, r.m1, r.m2, r.lamb, r.col, r.reg, r.saves], [['Acheteur C Bio', 'Acheteur D'], 'Acheteur C Bio', 'Acheteur C Bio', 'Acheteur C Bio', 'Acheteur C Bio', 'Acheteur C', 1], nom + ' : liste + 4 enregistrements actifs renommés, registre archivé inchangé, une écriture, ordre conservé');
+  eq(await valeurs('acheteurs'), ['Acheteur C Bio', 'Acheteur D'], nom + ' : étiquettes mises à jour');
   // ---- 5. autres listes : intervenants, échos, notes (béliers inclus), journal, causes
   const renomme = async (cle, ancien, nouveau) => { await page.click(val(cle, ancien)); await page.click(`#liste-${cle} .prm-renommer`); await page.fill('.prm-renom-input', nouveau); await page.press('.prm-renom-input', 'Enter'); await page.waitForTimeout(80); };
-  await renomme('intervenants', 'Vincent Vaysset', 'Vincent V.');
+  await renomme('intervenants', 'Intervenant A', 'Interv. A');
   await renomme('casParticuliers', 'Avortée', 'Avortement');
   await renomme('categoriesNotes', 'Boiterie', 'Boiteries');
   await renomme('typesJournal', 'Tonte', 'Tonte annuelle');
   await renomme('causesMortalite', 'Mammite', 'Mammite aiguë');
   const r2 = await page.evaluate(() => ({ soin: DB.brebis[0].sanitaire[0].intervenant, soinLamb: DB.brebis[1].agnelages[0].lambs[0].sanitaire[0].intervenant, tc: DB.traitementsCollectifs[0].intervenant, echo: DB.brebis[0].echographies[0].special, note: DB.brebis[0].notes[0].categorie, noteLamb: DB.brebis[1].agnelages[0].lambs[0].notes[0].categorie, noteBelier: DB.beliers[0].notes[0].categorie, jr: DB.journal.map(e => e.type), cause: DB.brebis[0].mouvements[1].cause, cc: DB.mouvementsCollectifs[1].cause, listes: [DB.intervenants[0], DB.casParticuliers[1], DB.categoriesNotes[0], DB.typesJournal[1], DB.causesMortalite[0]] }));
-  eq(r2, { soin: 'Vincent V.', soinLamb: 'Vincent V.', tc: 'Vincent V.', echo: 'Avortement', note: 'Boiteries', noteLamb: 'Boiteries', noteBelier: 'Boiteries', jr: ['Tonte annuelle', 'Tonte annuelle', 'Lutte'], cause: 'Mammite aiguë', cc: 'Mammite aiguë', listes: ['Vincent V.', 'Avortement', 'Boiteries', 'Tonte annuelle', 'Mammite aiguë'] }, nom + ' : soins, traitements collectifs, échos, notes (fiches, agneaux, béliers), journal, causes renommés');
+  eq(r2, { soin: 'Interv. A', soinLamb: 'Interv. A', tc: 'Interv. A', echo: 'Avortement', note: 'Boiteries', noteLamb: 'Boiteries', noteBelier: 'Boiteries', jr: ['Tonte annuelle', 'Tonte annuelle', 'Lutte'], cause: 'Mammite aiguë', cc: 'Mammite aiguë', listes: ['Interv. A', 'Avortement', 'Boiteries', 'Tonte annuelle', 'Mammite aiguë'] }, nom + ' : soins, traitements collectifs, échos, notes (fiches, agneaux, béliers), journal, causes renommés');
   check(await page.evaluate(() => JSON.stringify({ reg: DB.registre, arch: DB.notesArchiveesBrebis }) === window.__avant), nom + ' : registre archivé et notes archivées strictement inchangés');
   console.log('OK ' + nom + ' : renommage (confirmation, refus, accord, clavier) sur les 6 listes ; registre archivé intact.');
   // ---- 6. fusion si le nom existe
-  await page.click(val('acheteurs', 'Natéra Bio')); await page.click('#liste-acheteurs .prm-renommer'); await page.fill('.prm-renom-input', 'Bio Plus');
+  await page.click(val('acheteurs', 'Acheteur C Bio')); await page.click('#liste-acheteurs .prm-renommer'); await page.fill('.prm-renom-input', 'Acheteur D');
   confirms.length = 0; await page.click('.prm-renom-ok'); await page.waitForTimeout(100);
   check(/existe déjà/.test(confirms[0] || '') && /Fusionner/.test(confirms[0]), nom + ' : fusion annoncée : ' + confirms[0]);
-  eq(await page.evaluate(() => [DB.acheteurs, DB.brebis[0].mouvements[0].acheteur, DB.mouvementsCollectifs[0].acheteur]), [['Bio Plus'], 'Bio Plus', 'Bio Plus'], nom + ' : fusion : une seule valeur, enregistrements sur la valeur existante');
+  eq(await page.evaluate(() => [DB.acheteurs, DB.brebis[0].mouvements[0].acheteur, DB.mouvementsCollectifs[0].acheteur]), [['Acheteur D'], 'Acheteur D', 'Acheteur D'], nom + ' : fusion : une seule valeur, enregistrements sur la valeur existante');
   // ---- 7. retirer : confirmation, enregistrements conservés
   await page.click(val('typesJournal', 'Lutte')); reponse = false; confirms.length = 0; await page.click('.prm-retirer');
   check(/Utilisé dans 1 fiche/.test(confirms[0]) && await page.evaluate(() => DB.typesJournal.includes('Lutte')), nom + ' : retrait refusé = rien : ' + confirms[0]);
@@ -90,7 +90,7 @@ for (const bureau of [true, false]) {
   await page.click('.input-add-liste[data-list="intervenants"]'); await page.keyboard.type('Dr Martin', { delay: 25 }); await page.click('.btn-add-liste[data-list="intervenants"]'); await page.waitForTimeout(80);
   await page.click('.input-add-liste[data-list="intervenants"]'); await page.keyboard.type('Dr Dupont', { delay: 25 }); await page.keyboard.press('Enter'); await page.waitForTimeout(80);
   await page.click('.input-add-liste[data-list="intervenants"]'); await page.keyboard.type('dr martin', { delay: 25 }); await page.keyboard.press('Enter'); await page.waitForTimeout(80);
-  eq(await page.evaluate(() => DB.intervenants), ['Vincent V.', 'Clément Galibert', 'Dr Martin', 'Dr Dupont'], nom + ' : ajout par bouton et par Entrée, doublon (casse près) ignoré');
+  eq(await page.evaluate(() => DB.intervenants), ['Interv. A', 'Intervenant B', 'Dr Martin', 'Dr Dupont'], nom + ' : ajout par bouton et par Entrée, doublon (casse près) ignoré');
   console.log('OK ' + nom + ' : fusion, retrait (enregistrements conservés), ajout au clavier.');
   await page.context().close();
 }

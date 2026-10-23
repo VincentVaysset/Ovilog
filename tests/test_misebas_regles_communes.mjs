@@ -15,7 +15,7 @@ await page.waitForTimeout(300);
 
 await page.evaluate(() => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; return true; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   window.E = eid;
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;

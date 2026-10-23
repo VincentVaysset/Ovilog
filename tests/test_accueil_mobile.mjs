@@ -10,7 +10,7 @@ const browser = await chromium.launch(LAUNCH);
 
 function jeu(mode) {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   window.EID = eid;
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
@@ -25,8 +25,8 @@ function jeu(mode) {
     E.agnelages = [{ date: '2026-09-20', campagne: 2026, lambs: [{ eid: eid(6, 810), sexe: 'Mâle', sanitaire: [], statutFinal: 'vendu', mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-09-20' }, { type: 'Vendu', acheteur: 'X', date: '2026-10-01' }] }] }];
     const S = fiche(eid(7, 5), { id: 'S', sanitaire: [{ type: 'Traitement', sousType: 'Antibiotique', produit: 'Intramicine', date: '2026-09-30', quantiteCc: 8, intervenant: 'Éleveur', dureeJours: 1, bio: false }] });   // sous délai
     DB.brebis = [A, E, S, fiche(eid(9, 59), { id: 'B' }), fiche(eid(0, 33), { id: 'C' }),
-      fiche(eid(9, 99), { id: 'M', statut: 'vendue', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', acheteur: 'Natera', date: '2026-09-01' }] })];
-    DB.beliers = [fiche(eid(9, 90), { id: 'bel1', statut: 'actif' }), fiche(eid(8, 91), { id: 'bel2', statut: 'actif' }), fiche(eid(9, 92), { id: 'bel3', statut: 'vendu', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente reproduction', acheteur: 'Bio Plus', date: '2026-10-02' }] })];
+      fiche(eid(9, 99), { id: 'M', statut: 'vendue', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', acheteur: 'Acheteur C', date: '2026-09-01' }] })];
+    DB.beliers = [fiche(eid(9, 90), { id: 'bel1', statut: 'actif' }), fiche(eid(8, 91), { id: 'bel2', statut: 'actif' }), fiche(eid(9, 92), { id: 'bel3', statut: 'vendu', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente reproduction', acheteur: 'Acheteur D', date: '2026-10-02' }] })];
     DB.agnelles = [fiche(eid(5, 41), { id: 'ag1' }), fiche(eid(5, 42), { id: 'ag2' }), fiche(eid(5, 43), { id: 'ag3' })];
   }
   window.__avant = JSON.stringify(DB); window.__saves = 0;
@@ -99,7 +99,7 @@ console.log('OK 4 tout à 0 : pastilles grises, prolificité « — ».');
 // ================================================================ 5. « Dernière échographie » : règle (écho postérieure à la dernière mise bas), Résultat / Comptage
 function jeuEcho() {
   window.__jeu('zero');
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   const fiche = (id, o) => Object.assign({ id, eid: eid(8, Number(id.replace(/\D/g, '')) || 1), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   const e = (date, o) => Object.assign({ date, campagne: 2026 }, o);
   const mb = (date) => [{ date, campagne: 2026, lambs: [{ eid: eid(6, 999), sexe: 'Mâle', sanitaire: [], mouvements: [] }] }];
@@ -148,7 +148,7 @@ console.log('OK 5bis Comptage : 1 / 2 / 3 et + / Sans comptage, aucune écriture
 // plusieurs lots IA / Éponge : leurs stades s'additionnent dans « Lots IA / Éponge » ; lignes à 0 masquées ; groupe vide masqué ; Vide définitive et Avortée / pseudogestation absentes à 0
 await m.evaluate(() => {
   window.__jeu('zero');
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   const e = (stade) => ({ date: '2026-08-01', campagne: 2026, type: 'stade', stade });
   const b = (id, stade, lotId, mode) => ({ id, eid: eid(8, Number(id.replace(/\D/g, ''))), statut: 'active', createdAt: 1, echographies: [e(stade)], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: lotId ? [{ mode, lotId, date: '2026-07-01', campagne: 2026 }] : [] });
   DB.brebis = [b('A1', 'IA', 'IA1', 'IA'), b('A2', 'IA', 'IA2', 'IA'), b('A3', 'Retour 1', 'EP1', 'EP'), b('A4', 'Retour 1', 'IA1', 'IA'), b('A5', 'Tardive', 'EP1', 'EP'), b('M1', 'Début', null)];

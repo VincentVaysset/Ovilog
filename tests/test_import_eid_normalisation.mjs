@@ -18,14 +18,14 @@ await page.waitForTimeout(300);
 await page.evaluate(() => {
   DB = migrateData({}); saveData = function () { return true; };
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
-  DB.exploitation.indicatifMarquage = '162991';
-  DB.brebis = [{ id: 'ancienne', eid: '16299153003', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];   // fiche ANCIENNE, enregistrée sur 11 chiffres
+  DB.exploitation.indicatifMarquage = '000121';
+  DB.brebis = [{ id: 'ancienne', eid: '00012153003', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];   // fiche ANCIENNE, enregistrée sur 11 chiffres
   DB.beliers = []; DB.agnelles = []; DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
 });
 
 // ---- 1. la fonction pure
-const pur = await page.evaluate(() => ['16299151001', '16299 15 1001', '250016299151001', '2500 16299 151001', '1629915100', '250016299151', 'ABC1629915', '16299151001x', '', '  '].map(v => normaliserEidImport(v)));
-eq(pur.map(r => [r.eid, r.valide]), [['250016299151001', true], ['250016299151001', true], ['250016299151001', true], ['250016299151001', true], ['1629915100', false], ['250016299151', false], ['ABC1629915', false], ['16299151001x', false], ['', true], ['', true]], 'normaliserEidImport : 11 ou 15 chiffres acceptés (espaces ignorés), le reste invalide');
+const pur = await page.evaluate(() => ['00012151001', '00012 15 1001', '250000012151001', '2500 00012 151001', '0001215100', '250000012151', 'ABC0001215', '00012151001x', '', '  '].map(v => normaliserEidImport(v)));
+eq(pur.map(r => [r.eid, r.valide]), [['250000012151001', true], ['250000012151001', true], ['250000012151001', true], ['250000012151001', true], ['0001215100', false], ['250000012151', false], ['ABC0001215', false], ['00012151001x', false], ['', true], ['', true]], 'normaliserEidImport : 11 ou 15 chiffres acceptés (espaces ignorés), le reste invalide');
 
 // ---- 2. import par le vrai écran
 const fichier = async (feuilles) => {
@@ -44,18 +44,18 @@ const confirmer = async () => { dialogues.length = 0; await page.click('#btn-con
 
 await importer([
   { name: 'Brebis', rows: [...entete,
-    ['née', '16299151001', '12-09-2025', 'actif', '', '', '', ''],            // 11 chiffres, née 2025
-    ['née', '250016299152002', '03-09-2025', 'actif', '', '', '', ''],        // 15 chiffres
+    ['née', '00012151001', '12-09-2025', 'actif', '', '', '', ''],            // 11 chiffres, née 2025
+    ['née', '250000012152002', '03-09-2025', 'actif', '', '', '', ''],        // 15 chiffres
     ['née', 'ABC123', '03-09-2025', 'actif', '', '', '', ''],                 // invalide
-    ['née', '1629915', '03-09-2025', 'actif', '', '', '', ''],                // invalide (7 chiffres)
-    ['achetée', '16480023987', '03-01-2026', 'actif', '', '', '', ''],        // autre indicatif, achetée : aucun avertissement
-    ['née', '16480023988', '03-01-2026', 'actif', '', '', '', ''],            // autre indicatif, née : avertissement ambre
-    ['née', '250016299153003', '03-09-2025', 'actif', '', '', '', ''] ] },    // 15 chiffres, fiche ancienne en 11 chiffres : doublon
-  { name: 'Béliers', rows: [...entete, ['achetée', '16512298877', '05-09-2026', 'actif', '', '', '']] },
-  { name: 'Agnelles', rows: [...entete, ['née', '16299155102', '01-09-2026', '', '', '', '']] }
+    ['née', '0001215', '03-09-2025', 'actif', '', '', '', ''],                // invalide (7 chiffres)
+    ['achetée', '00078023987', '03-01-2026', 'actif', '', '', '', ''],        // autre indicatif, achetée : aucun avertissement
+    ['née', '00078023988', '03-01-2026', 'actif', '', '', '', ''],            // autre indicatif, née : avertissement ambre
+    ['née', '250000012153003', '03-09-2025', 'actif', '', '', '', ''] ] },    // 15 chiffres, fiche ancienne en 11 chiffres : doublon
+  { name: 'Béliers', rows: [...entete, ['achetée', '00089298877', '05-09-2026', 'actif', '', '', '']] },
+  { name: 'Agnelles', rows: [...entete, ['née', '00012155102', '01-09-2026', '', '', '', '']] }
 ]);
 const ap = await apercu();
-check(/EID invalide \("ABC123", attendu 11 ou 15 chiffres\)/.test(ap) && /EID invalide \("1629915"/.test(ap), 'aperçu : motif « EID invalide » pour les deux lignes non conformes : ' + ap.slice(0, 600));
+check(/EID invalide \("ABC123", attendu 11 ou 15 chiffres\)/.test(ap) && /EID invalide \("0001215"/.test(ap), 'aperçu : motif « EID invalide » pour les deux lignes non conformes : ' + ap.slice(0, 600));
 check(/Indicatif différent de l'exploitation \(1\)/.test(ap) && /Lignes : 10\./.test(ap), 'aperçu : avertissement indicatif pour la seule « née » d\'un autre indicatif (ligne 10, pas la ligne 9 « achetée ») : ' + ap.slice(0, 900));
 const ambre = await page.evaluate(() => { const e = document.getElementById('import-avertissement-indicatif'); const ref = document.createElement('i'); ref.style.background = 'var(--ch-ambre-pastel)'; document.body.appendChild(ref); const att = getComputedStyle(ref).backgroundColor; ref.remove(); return e ? { fond: getComputedStyle(e).backgroundColor, attendu: att, nb: document.querySelectorAll('#import-avertissement-indicatif').length } : null; });
 check(ambre && ambre.fond === ambre.attendu && ambre.nb === 1, 'avertissement présenté dans un encart ambre de la charte (fond --ch-ambre-pastel), un seul : ' + JSON.stringify(ambre));
@@ -63,14 +63,14 @@ check(/Seront créées \(4\)/.test(ap), 'brebis à créer : 11 chiffres, 15 chif
 const retour = await confirmer();
 eq(retour, '6 nouvelle(s) fiche(s) créée(s), 0 fiche(s) existante(s) complétée(s).', 'message de fin (4 brebis + 1 bélier + 1 agnelle, la fiche ancienne reconnue comme doublon)');
 const eids = await page.evaluate(() => ({ brebis: DB.brebis.map(b => b.eid), beliers: DB.beliers.map(b => b.eid), agnelles: DB.agnelles.map(a => a.eid) }));
-eq(eids.brebis, ['16299153003', '250016299151001', '250016299152002', '250016480023987', '250016480023988'], 'brebis : toutes enregistrées sur 15 chiffres (la fiche ancienne reste telle quelle, aucun doublon créé pour 250016299153003)');
-eq([eids.beliers, eids.agnelles], [['250016512298877'], ['250016299155102']], 'béliers et agnelles aussi sur 15 chiffres');
+eq(eids.brebis, ['00012153003', '250000012151001', '250000012152002', '250000078023987', '250000078023988'], 'brebis : toutes enregistrées sur 15 chiffres (la fiche ancienne reste telle quelle, aucun doublon créé pour 250000012153003)');
+eq([eids.beliers, eids.agnelles], [['250000089298877'], ['250000012155102']], 'béliers et agnelles aussi sur 15 chiffres');
 
 // ---- 3. effets : âge juste, animal retrouvé au bip
 const effets = await page.evaluate(() => {
-  const b = DB.brebis.find(x => x.eid === '250016299151001');
-  return { annee: anneeNaissance(b.eid), age: age(b.eid), bip: trouverUnParEidOuNumero(DB.brebis, '250016299151001').statut, bipEspaces: trouverUnParEidOuNumero(DB.brebis, '2500 16299 151001').statut,
-    bipDoublon: verifierEidUnique('250016299151001') ? 'bloqué' : 'libre', mouvement: b.mouvements[0] && b.mouvements[0].date, dateEntree: b.dateEntree };
+  const b = DB.brebis.find(x => x.eid === '250000012151001');
+  return { annee: anneeNaissance(b.eid), age: age(b.eid), bip: trouverUnParEidOuNumero(DB.brebis, '250000012151001').statut, bipEspaces: trouverUnParEidOuNumero(DB.brebis, '2500 00012 151001').statut,
+    bipDoublon: verifierEidUnique('250000012151001') ? 'bloqué' : 'libre', mouvement: b.mouvements[0] && b.mouvements[0].date, dateEntree: b.dateEntree };
 });
 eq([effets.annee, effets.age, effets.bip, effets.bipEspaces, effets.bipDoublon], [2025, 1, 'trouve', 'trouve', 'bloqué'], 'année de naissance lue = 2025 (âge 1), animal retrouvé au bip, EID déjà utilisé détecté');
 
@@ -78,11 +78,11 @@ eq([effets.annee, effets.age, effets.bip, effets.bipEspaces, effets.bipDoublon],
 const avant = await page.evaluate(() => [DB.brebis.length, DB.beliers.length, DB.agnelles.length]);
 await importer([
   { name: 'Brebis', rows: [...entete,
-    ['née', '250016299151001', '12-09-2025', 'actif', '', '', '', ''],        // importée en 11 chiffres, redonnée en 15
-    ['née', '16299152002', '03-09-2025', 'actif', '', '', '', ''],            // importée en 15 chiffres, redonnée en 11
-    ['née', '16299153003', '03-09-2025', 'actif', '', '', '', ''] ] },        // fiche ancienne en 11 chiffres, redonnée en 11
-  { name: 'Béliers', rows: [...entete, ['achetée', '250016512298877', '05-09-2026', 'actif', '', '', '']] },
-  { name: 'Agnelles', rows: [...entete, ['née', '250016299155102', '01-09-2026', '', '', '', '']] }
+    ['née', '250000012151001', '12-09-2025', 'actif', '', '', '', ''],        // importée en 11 chiffres, redonnée en 15
+    ['née', '00012152002', '03-09-2025', 'actif', '', '', '', ''],            // importée en 15 chiffres, redonnée en 11
+    ['née', '00012153003', '03-09-2025', 'actif', '', '', '', ''] ] },        // fiche ancienne en 11 chiffres, redonnée en 11
+  { name: 'Béliers', rows: [...entete, ['achetée', '250000089298877', '05-09-2026', 'actif', '', '', '']] },
+  { name: 'Agnelles', rows: [...entete, ['née', '250000012155102', '01-09-2026', '', '', '', '']] }
 ]);
 const ap2 = await apercu();
 check(!/Seront créées/.test(ap2) && !/EID invalide/.test(ap2), 'réimport 11/15 croisés : plus rien à créer, rien d\'invalide : ' + ap2.slice(0, 500));
@@ -91,8 +91,8 @@ check(bouton, 'réimport : bouton « Confirmer » masqué (rien à écrire)');
 eq(await page.evaluate(() => [DB.brebis.length, DB.beliers.length, DB.agnelles.length]), avant, 'aucune fiche en double après le réimport croisé 11 / 15');
 
 // ---- 5. doublon DANS le fichier (11 puis 15 chiffres) : une seule fiche créée
-await importer([{ name: 'Brebis', rows: [...entete, ['née', '16299159001', '01-09-2026', 'actif', '', '', '', ''], ['née', '250016299159001', '01-09-2026', 'actif', '', '', '', '']] }]);
+await importer([{ name: 'Brebis', rows: [...entete, ['née', '00012159001', '01-09-2026', 'actif', '', '', '', ''], ['née', '250000012159001', '01-09-2026', 'actif', '', '', '', '']] }]);
 await confirmer();
-eq(await page.evaluate(() => DB.brebis.filter(b => b.eid.slice(-11) === '16299159001').length), 1, 'même animal deux fois dans le fichier (11 puis 15 chiffres) : une seule fiche');
+eq(await page.evaluate(() => DB.brebis.filter(b => b.eid.slice(-11) === '00012159001').length), 1, 'même animal deux fois dans le fichier (11 puis 15 chiffres) : une seule fiche');
 await browser.close();
 console.log('OK test_import_eid_normalisation');

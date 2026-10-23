@@ -26,7 +26,7 @@ const cas = [
 await page.evaluate((cas) => {
   const f = (id, eid, extra) => Object.assign({ id, eid, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }, extra || {});
   DB.campagneDebut = 2026; DB.campagneInitialisee = true;
-  DB.brebis = cas.map(([court, date, sexes], i) => f('b' + i, '2500162999' + (3 + (i % 5)) + '000' + i, {
+  DB.brebis = cas.map(([court, date, sexes], i) => f('b' + i, '2500000129' + (3 + (i % 5)) + '000' + i, {
     numeroCourtTravailSieol: court,
     agnelages: [{ date, campagne: 2026, lambs: sexes.map(s => ({ sexe: s })), codeRepro: 'MN' }]
   }));

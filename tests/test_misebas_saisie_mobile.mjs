@@ -17,7 +17,7 @@ await page.waitForTimeout(300);
 
 await page.evaluate(() => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; return true; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   window.E = eid;
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
@@ -30,8 +30,8 @@ await page.evaluate(() => {
   DB.brebis = b; DB.beliers = []; DB.agnelles = []; DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
   resetMisebasRapideSession(); render('misebas-rapide');
 });
-const E_ = (n) => '250016299' + '9' + 3 + String(n).padStart(5, '0');
-const L_ = (n) => '250016299' + '9' + 4 + String(n).padStart(5, '0');
+const E_ = (n) => '250000012' + '9' + 3 + String(n).padStart(5, '0');
+const L_ = (n) => '250000012' + '9' + 4 + String(n).padStart(5, '0');
 const saisir = async (val) => { await page.fill('#scan-misebas', val); await page.press('#scan-misebas', 'Enter'); };
 const tuiles = () => page.evaluate(() => [...document.querySelectorAll('#mb-tuiles .tuile-charte')].map(t => [t.querySelector('.l').textContent, t.querySelector('.n').textContent, t.className.replace('tuile-charte ', '')]));
 const ag = (n) => page.evaluate((n) => JSON.parse(JSON.stringify(DB.brebis.find(b => b.eid === E(3, n)).agnelages)), n);

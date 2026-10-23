@@ -10,14 +10,14 @@ const h = await demarrerHarnais();
 const { check } = h;
 const MDP = 'AuditTest12345!';
 const email = tag => 'pc-' + tag + '-' + Date.now() + '-' + Math.floor(Math.random() * 1e6) + '@ovilog-audit-jetable.test';
-const eid = n => '25001629919' + String(n).padStart(5, '0');
+const eid = n => '25000001219' + String(n).padStart(5, '0');
 
 // Le compte ne doit rien avoir perdu : meta, brebis, lot LC. Aucune écriture reçue, à aucun moment, ne retire le lot LC de meta.lots.
 async function compteIntact(uid, qui) {
   const meta = await h.serveur(uid, 'meta');
   check(meta.exists && meta.data, qui + ' : le document meta du compte existe');
   check((meta.data.lots || []).some(l => l.id === 'LC'), qui + ' : le lot LC est toujours dans meta.lots du compte');
-  check((meta.data.acheteurs || []).includes('Natera'), qui + ' : acheteurs du compte intacts : ' + JSON.stringify(meta.data.acheteurs));
+  check((meta.data.acheteurs || []).includes('Acheteur C'), qui + ' : acheteurs du compte intacts : ' + JSON.stringify(meta.data.acheteurs));
   check((meta.data.causesMortalite || []).includes('Maladie'), qui + ' : causesMortalite du compte intactes');
   check(meta.data.exploitation && meta.data.exploitation.nom === 'GAEC du Compte', qui + ' : nom d\'exploitation du compte intact');
   const brebis = await h.serveur(uid, 'brebis');
@@ -90,9 +90,9 @@ let pairePourB = null;
   await h.reseau(d3, { coupe: true });
   await h.connecter(d3, mail, MDP);
   await h.attendre(d3, () => currentView === 'home' && DB.lots.some(l => l.id === 'LC'), { timeout: 10000, label: 'B2 : appareil déjà appairé : l\'accueil s\'ouvre hors ligne avec ses données' });
-  await d3.page.evaluate(() => { DB.acheteurs.push('Bio Plus'); saveData(DB); });
+  await d3.page.evaluate(() => { DB.acheteurs.push('Acheteur D'); saveData(DB); });
   await h.reseau(d3, { coupe: false });
-  await h.attendreServeur(uid, 'meta', r => (r.data.acheteurs || []).includes('Bio Plus') && (r.data.acheteurs || []).includes('Natera'), 'B2 : la saisie hors ligne part au retour du réseau, sans rien écraser');
+  await h.attendreServeur(uid, 'meta', r => (r.data.acheteurs || []).includes('Acheteur D') && (r.data.acheteurs || []).includes('Acheteur C'), 'B2 : la saisie hors ligne part au retour du réseau, sans rien écraser');
   await compteIntact(uid, 'B2');
   console.log('OK B2 appareil déjà appairé : travail hors ligne possible, saisie envoyée au retour du réseau, rien écrasé.');
 }
@@ -141,12 +141,12 @@ let pairePourB = null;
   const d8 = await h.ouvrir({ desktop: true });
   await d8.page.evaluate(() => {
     const f = (id, e) => ({ id, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [], controleLaitier: [], modesRepro: [] });
-    DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.acheteurs = ['Natera']; DB.exploitation = Object.assign(DB.exploitation || {}, { nom: 'GAEC Neuf' });
-    DB.brebis = [f('n1', '25001629919' + '00031'), f('n2', '25001629919' + '00032'), f('n3', '25001629919' + '00033')]; saveData(DB);
+    DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.acheteurs = ['Acheteur C']; DB.exploitation = Object.assign(DB.exploitation || {}, { nom: 'GAEC Neuf' });
+    DB.brebis = [f('n1', '25000001219' + '00031'), f('n2', '25000001219' + '00032'), f('n3', '25000001219' + '00033')]; saveData(DB);
   });
   await h.inscrire(d8, mail, MDP);
   const uid = (await h.attendre(d8, () => window.OvilogSync.getState().loggedIn, { label: 'D connecté' }), d8.uid);
-  await h.attendreServeur(uid, 'meta', r => r.exists && (r.data.acheteurs || []).includes('Natera') && r.data.exploitation.nom === 'GAEC Neuf', 'D : meta initialisée par le premier appareil');
+  await h.attendreServeur(uid, 'meta', r => r.exists && (r.data.acheteurs || []).includes('Acheteur C') && r.data.exploitation.nom === 'GAEC Neuf', 'D : meta initialisée par le premier appareil');
   await h.attendreServeur(uid, 'brebis', r => Object.keys(r.docs).length === 3, 'D : 3 brebis envoyées');
   const d9 = await h.ouvrir({});
   await h.connecter(d9, mail, MDP);
@@ -202,7 +202,7 @@ let pairePourB = null;
   check(await nbEcritures(uid, d12) === 0, 'F : la saisie faite pendant la lecture n\'est pas envoyée avant la lecture');
   await h.attendre(d12, () => DB.lots.some(l => l.id === 'LC') && !window.__syncAttenteCompte, { timeout: 30000, label: 'F : compte lu' });
   const etat = await d12.page.evaluate(() => ({ ach: DB.acheteurs, sauv: window.__sauvegardes }));
-  check(JSON.stringify(etat.ach) === JSON.stringify(['Natera']), 'F : les données du compte priment : ' + JSON.stringify(etat.ach));
+  check(JSON.stringify(etat.ach) === JSON.stringify(['Acheteur C']), 'F : les données du compte priment : ' + JSON.stringify(etat.ach));
   check(etat.sauv.some(s => s.acheteurs === JSON.stringify(['SaisiePendantLaLecture'])), 'F : sauvegarde locale (contenant la saisie) faite AVANT que la lecture ne la remplace');
   check(d12.dialogues.some(m => /modifications/.test(m) && /sauvegarde/i.test(m)), 'F : message clair à l\'utilisateur (modifications remplacées + sauvegarde) : ' + JSON.stringify(d12.dialogues));
   await compteIntact(uid, 'F');
@@ -218,9 +218,9 @@ let pairePourB = null;
     const f = (id, e, extra) => Object.assign({ id, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [], controleLaitier: [], modesRepro: [] }, extra || {});
     DB.campagneDebut = 2026; DB.campagneInitialisee = true;
     DB.brebis = [
-      f('x1', '25001629919' + '00041'),                                              // nouvelle : doit être envoyée
-      f('x2', '25001629919' + '00001'),                                              // même EID que b1 du compte, id différent : collision
-      f('x3', '25001629919' + '00043', { numeroCourtTravailSieol: '23' })];          // même n° court que b2 du compte : collision
+      f('x1', '25000001219' + '00041'),                                              // nouvelle : doit être envoyée
+      f('x2', '25000001219' + '00001'),                                              // même EID que b1 du compte, id différent : collision
+      f('x3', '25000001219' + '00043', { numeroCourtTravailSieol: '23' })];          // même n° court que b2 du compte : collision
     saveData(DB);
   });
   await h.connecter(d13, mail, MDP);

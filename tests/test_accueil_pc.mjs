@@ -8,13 +8,13 @@ const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + '
 const browser = await chromium.launch(LAUNCH);
 function jeu(avecSousDelai) {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (n) => '25001629996' + String(n).padStart(4, '0');
+  const eid = (n) => '25000001296' + String(n).padStart(4, '0');
   let k = 0;
   const fiche = (id, o) => Object.assign({ id, eid: eid(++k), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   const e = (type, stade, date) => ({ date: date || '2026-08-01', campagne: 2026, type, stade });
   const lamb = (n, sexe, mv, o) => Object.assign({ eid: sexe === 'Mort-né' ? undefined : eid(700 + n), sexe, sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-11-10' }].concat(mv || []) }, o || {});
-  const vendu = (d) => ({ statutFinal: 'vendu', mouvements: null, _mv: { type: 'Vendu', acheteur: 'Natera', date: d } });
-  const lvendu = (n, d) => lamb(n, 'Mâle', [{ type: 'Vendu', acheteur: 'Natera', date: d }], { statutFinal: 'vendu' });
+  const vendu = (d) => ({ statutFinal: 'vendu', mouvements: null, _mv: { type: 'Vendu', acheteur: 'Acheteur C', date: d } });
+  const lvendu = (n, d) => lamb(n, 'Mâle', [{ type: 'Vendu', acheteur: 'Acheteur C', date: d }], { statutFinal: 'vendu' });
   const lmort = (n, sexe, d, cause) => lamb(n, sexe, [{ type: 'Mort', cause: cause, date: d }], { statutFinal: 'mort' });
   const ag = (lambs) => [{ date: '2026-11-10', campagne: 2026, lambs }];
   const morte = (d, cause) => ({ statut: 'morte', mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }, { type: 'Morte', cause, date: d }] });
@@ -56,7 +56,7 @@ eq([D.brebis, D.beliers, D.agnelles, D.agneaux, D.sousDelai], [9, 1, 1, { total:
 eq(D.misesBas, { faites: 4, attendues: 8, restantes: 4, pct: 50, prolificite: 1.75, agneauxNes: 7, mortNes: 1, presentes: 9, videsDefinitivesPresentes: 1 }, 'mises bas : attendues = 9 présentes − 1 vide définitive présente ; restantes = 8 − 4');
 eq(D.repro, { date: '2026-08-20', pleines: 3, vides: 2, videsDefinitives: 1, reussite: 60 }, 'reproduction : écho figée (la vide vendue reste comptée), vide définitive à part, réussite 3 / (3 + 2)');
 eq(D.mouvements.map(m => [m.date, m.lot, m.nb, m.categorie, m.type, m.detail]), [
-  ['2026-11-28', true, 2, 'Brebis', 'Vente', 'Négociant'], ['2026-11-27', false, 1, 'Agneau', 'Vente', 'Natera'], ['2026-11-26', false, 1, 'Brebis', 'Entrée', 'Achat'], ['2026-11-25', false, 1, 'Agneau', 'Vente', 'Natera'],
+  ['2026-11-28', true, 2, 'Brebis', 'Vente', 'Négociant'], ['2026-11-27', false, 1, 'Agneau', 'Vente', 'Acheteur C'], ['2026-11-26', false, 1, 'Brebis', 'Entrée', 'Achat'], ['2026-11-25', false, 1, 'Agneau', 'Vente', 'Acheteur C'],
   ['2026-11-24', false, 1, 'Agneau', 'Morte', 'Non renseignée']], 'derniers mouvements : sorties ET entrées, un lot = une ligne, brebis et agneaux, 5 lignes du plus récent au plus ancien, cause par défaut « Non renseignée »');
 const toutes = await pc.evaluate(() => derniersMouvementsPcData(99));
 eq(toutes.filter(m => m.type === 'Entrée').map(m => [m.date, m.categorie, m.detail]).sort().map(l => l.join('|')), ['2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-10|Agneau|Naissance', '2026-11-26|Brebis|Achat'].sort(), 'entrées de la campagne : l\'achat du 26-11 et les 6 naissances bouclées (le mort-né n\'a pas d\'identifiant) (l\'achat de 2024 est hors campagne)');

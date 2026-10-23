@@ -31,7 +31,7 @@
 ## 4. En attente d'une décision du propriétaire
 
 - **Début de campagne réglable : FAIT sur la branche (non fusionné)** — les mois de la production laitière suivent le début réglé (`moisCampagne`, test `test_campagne_debut_mois`). L'ami trait de décembre à fin juillet : non concerné en pratique.
-- **Jeux de test** : ils utilisent l'indicatif de marquage réel du propriétaire ; proposé (non fait) de le remplacer par un indicatif fictif.
+- **Anonymisation (fait sur la branche)** : tests et documentation n'ont plus que des indicatifs, noms, adresses et numéros fictifs ; `index-7.html` (ancienne copie) supprimé. Restent identifiants, à traiter PLUS TARD et seulement sur demande : le nom du compte GitHub `VincentVaysset` (lien de téléchargement donné à l'ami : renommer seulement avec une version de transition qui pointe vers le nouveau nom, cf. `UPDATE_REPO_OWNER`, publish d'Electron, `test_canal_stable`) et l'adresse e-mail d'auteur dans l'historique des commits (réglage GitHub › Settings › Emails à faire par le propriétaire ; réécriture de l'historique non faite).
 - **Test terrain du module reproduction** jamais fait en conditions réelles : vrai lot IA et vrai lot Éponge, mises bas dans / hors fenêtre, correction manuelle du code Repro, lot créé avant une bascule de campagne et mise bas saisie après.
 
 ## 5. Ce qui existe (résumé ; détail des règles dans `CLAUDE.md`)

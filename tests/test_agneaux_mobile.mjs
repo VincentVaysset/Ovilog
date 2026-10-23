@@ -10,17 +10,17 @@ const browser = await chromium.launch(LAUNCH);
 
 function jeu() {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   window.EID = eid;
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
-  DB.acheteurs = ['Natera', 'Bio Plus']; DB.causesMortalite = ['Pneumonie'];
+  DB.acheteurs = ['Acheteur C', 'Acheteur D']; DB.causesMortalite = ['Pneumonie'];
   const A = fiche(eid(8, 8133), { id: 'A' });
   const nais = { type: 'Entrée', cause: 'Naissance', date: '2026-09-25' };
   A.agnelages = [{ date: '2026-09-25', campagne: 2026, lambs: [
     { eid: eid(6, 801), sexe: 'Mâle', sanitaire: [], mouvements: [nais] },
     { eid: eid(6, 802), sexe: 'Femelle', sanitaire: [], mouvements: [nais] },
-    { eid: eid(6, 803), sexe: 'Mâle', sanitaire: [], statutFinal: 'vendu', mouvements: [nais, { type: 'Vendu', acheteur: 'Natera', date: '2026-10-01' }] },
+    { eid: eid(6, 803), sexe: 'Mâle', sanitaire: [], statutFinal: 'vendu', mouvements: [nais, { type: 'Vendu', acheteur: 'Acheteur C', date: '2026-10-01' }] },
     { eid: eid(6, 804), sexe: 'Femelle', sanitaire: [], statutFinal: 'mort', mouvements: [nais, { type: 'Mort', cause: 'Pneumonie', date: '2026-10-02' }] },
     { eid: eid(6, 805), sexe: 'Mâle', sanitaire: [], statutFinal: 'mort', mouvements: [nais, { type: 'Mort', cause: 'Mort', date: '2025-12-02' }] }] }];
   DB.brebis = [A, fiche(eid(9, 59), { id: 'B' })];
@@ -71,7 +71,7 @@ await m.click('.ag-onglets [data-tab="vendus"]');
 eq(await onglets(m), ['En attente (2)', 'Vendus (1)*', 'Morts (2)'], 'onglet Vendus actif');
 const vd = await m.evaluate(() => ({ nums: [...document.querySelectorAll('.ag-carte .al-num')].map(x => x.textContent), ligne: document.querySelector('.ag-sortie').textContent, p: document.querySelector('.reg-pastille').className + '|' + document.querySelector('.reg-pastille').textContent,
   btns: [...document.querySelectorAll('.ag-carte button')].map(b => b.textContent), contour: getComputedStyle(document.querySelector('.btn-agneau-annuler')).backgroundColor }));
-eq(vd.nums, ['n°00803'], 'agneau vendu'); eq(vd.ligne, 'Vendu le 01/10 · Natera', 'ligne « Vendu le … · acheteur »'); eq(vd.p, 'reg-pastille bleu|Vendu', 'pastille Vendu bleue');
+eq(vd.nums, ['n°00803'], 'agneau vendu'); eq(vd.ligne, 'Vendu le 01/10 · Acheteur C', 'ligne « Vendu le … · acheteur »'); eq(vd.p, 'reg-pastille bleu|Vendu', 'pastille Vendu bleue');
 eq(vd.btns, ['Annuler cette sortie'], 'seul « Annuler cette sortie »'); eq(vd.contour, 'rgb(255, 255, 255)', 'bouton en contour (fond blanc)');
 await m.click('.ag-onglets [data-tab="morts"]');
 const mo = await m.evaluate(() => ({ nums: [...document.querySelectorAll('.ag-carte .al-num')].map(x => x.textContent), lignes: [...document.querySelectorAll('.ag-sortie')].map(x => x.textContent), p: document.querySelector('.reg-pastille').className }));
@@ -83,10 +83,10 @@ console.log('OK 2 Vendus / Morts : ligne de sortie, Annuler cette sortie.');
 await m.click('.ag-onglets [data-tab="attente"]');
 await m.click('.ag-carte >> nth=0 >> .btn-agneau-vendu');
 check(await m.evaluate(() => currentView === 'agneaux' && !!document.getElementById('lambsortie-confirm')), 'Vendu : la fenêtre de vente s\'ouvre, la fiche ne s\'ouvre pas');
-await m.click('#lambsortie-acheteur-list .chip >> text=Natera'); await m.click('#lambsortie-confirm');
+await m.click('#lambsortie-acheteur-list .chip >> text=Acheteur C'); await m.click('#lambsortie-confirm');
 eq(await onglets(m), ['En attente (1)*', 'Vendus (2)', 'Morts (2)'], 'après la vente : effectifs à jour');
 const e1 = await m.evaluate(() => { const l = DB.brebis[0].agnelages[0].lambs[0]; return { f: l.statutFinal, mv: l.mouvements[l.mouvements.length - 1].type + '|' + l.mouvements[l.mouvements.length - 1].acheteur, saves: window.__saves }; });
-eq(e1, { f: 'vendu', mv: 'Vendu|Natera', saves: 1 }, 'écriture : statutFinal + mouvement Vendu + acheteur, un enregistrement');
+eq(e1, { f: 'vendu', mv: 'Vendu|Acheteur C', saves: 1 }, 'écriture : statutFinal + mouvement Vendu + acheteur, un enregistrement');
 await m.click('.ag-carte >> nth=0 >> .btn-agneau-mort'); await m.click('#lambsortie-confirm');
 eq(await onglets(m), ['En attente (0)*', 'Vendus (2)', 'Morts (3)'], 'après la mort : effectifs à jour');
 check(await m.evaluate(() => /Aucun agneau en attente/.test(document.querySelector('.ag-liste').textContent)), 'onglet vide : message');
@@ -112,7 +112,7 @@ await scan(m, await m.evaluate(() => EID(6, 803)));
 check(await m.evaluate(() => agneauxMobileTab === 'vendus' && document.querySelector('.ag-onglets .tab-btn.active').dataset.tab === 'vendus' && !!document.querySelector('.ag-carte.scan-highlight')), 'scan d\'un agneau vendu : bascule sur Vendus puis surligne la carte');
 await scan(m, await m.evaluate(() => EID(6, 801)));
 check(await m.evaluate(() => agneauxMobileTab === 'attente' && !!document.querySelector('.ag-carte.scan-highlight .al-num')), 'scan d\'un agneau en attente : retour sur En attente, carte surlignée');
-await scan(m, '250016299900000');
+await scan(m, '250000012900000');
 check(await m.evaluate(() => /Aucun agneau trouvé/.test(document.getElementById('scan-open-agneau-err').textContent)), 'EID inconnu : message');
 await m.evaluate(() => { pendingHighlightLambEid = EID(6, 804); render('agneaux'); });
 await m.waitForTimeout(200);

@@ -36,7 +36,7 @@ async function ouvrir(bureau) {
     window.octets = (c) => { const u = buildBilanLactationPdfBytes(c); let s = ''; for (const x of u) s += String.fromCharCode(x); return btoa(s); };
     window.jeuBase = () => {
       DB = migrateData({}); DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2025-10-01'; DB.campagneInitialisee = true; DB.exploitation = Object.assign(DB.exploitation || {}, { nom: 'Ferme du Test' });
-      const f = (i) => ({ id: 'b' + i, eid: '2500162999' + String(9000 + i), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] });
+      const f = (i) => ({ id: 'b' + i, eid: '2500000129' + String(9000 + i), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] });
       DB.brebis = [f(1), f(2), f(3)]; DB.beliers = []; DB.agnelles = []; DB.lots = []; DB.laitTank = [{ date: '2025-11-02', quantite: 4200 }, { date: '2026-01-10', quantite: 5100 }];
     };
   });

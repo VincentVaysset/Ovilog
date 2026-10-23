@@ -15,13 +15,13 @@ for (const largeur of [360, 390]) {
   await page.evaluate(() => {
     DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
     DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
-    window.E = (d, n) => '2500162991' + d + String(n).padStart(4, '0');
+    window.E = (d, n) => '2500000121' + d + String(n).padStart(4, '0');
     const f = (d, n, extra) => Object.assign({ id: 'b' + d + n, eid: E(d, n), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: [], videesDefinitives: [] }, extra || {});
     const l = (n, extra) => Object.assign({ eid: E(6, n), sexe: 'Femelle', sanitaire: [], mouvements: [] }, extra || {});
     DB.brebis = [
       f(8, 1, { agnelages: [{ campagne: 2025, date: '2026-01-14', codeRepro: 'IA', lambs: [l(1), l(2), l(3)] }] }),
       f(8, 2, { agnelages: [{ campagne: 2025, date: '2026-01-20', codeRepro: 'EP', lambs: [l(4), l(5, { statutFinal: 'vendu' }), l(6, { statutFinal: 'mort' })] }] }),
-      f(8, 3, { agnelages: [{ campagne: 2025, date: '2026-01-25', lambs: [l(7, { eid: '2500162992' + '60001' }), l(8)] }] })      // 2500162992 60001 : même n° d'ordre que 60001 (ambigu)
+      f(8, 3, { agnelages: [{ campagne: 2025, date: '2026-01-25', lambs: [l(7, { eid: '2500000122' + '60001' }), l(8)] }] })      // 2500000122 60001 : même n° d'ordre que 60001 (ambigu)
     ];
     DB.agnelles = [];
     window.__avant = JSON.stringify(DB);

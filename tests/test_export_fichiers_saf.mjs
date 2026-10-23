@@ -141,7 +141,7 @@ console.log('OK écriture temporaire impossible / plugin FileSaver absent : aler
 
 // ---- "Exporter mes données" : compteurs vérifiés ----
 await installerFauxPlugins(page);
-await page.evaluate(() => { DB.brebis = [{ id: 'e1', eid: '250016299930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }]; DB.beliers = []; DB.agnelles = []; saveData(DB); });
+await page.evaluate(() => { DB.brebis = [{ id: 'e1', eid: '250000012930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }]; DB.beliers = []; DB.agnelles = []; saveData(DB); });
 await page.evaluate(async () => { await exportBackupFile(DB, 'troupeau-sauvegarde'); });
 m = await modale();
 check(m && /Fichier enregistré/.test(m), '"Exporter mes données" : modale honnête attendue');

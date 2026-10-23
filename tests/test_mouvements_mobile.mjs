@@ -13,31 +13,31 @@ const browser = await chromium.launch(LAUNCH);
 // ---- jeu commun (identique sur la page PC et sur la page mobile)
 function jeu() {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   window.EID = eid;
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
-  DB.acheteurs = ['Natera', 'Bio Plus', 'Boucherie Martin']; DB.causesMortalite = ['Mammite', 'Boiterie', 'Pneumonie'];
+  DB.acheteurs = ['Acheteur C', 'Acheteur D', 'Boucherie Martin']; DB.causesMortalite = ['Mammite', 'Boiterie', 'Pneumonie'];
   DB.produits = { vaccins: [], antibiotiques: ['Intramicine'], antiparasitaires: [], antiinflammatoires: [], autres: [] };
   DB.produitsInfo = { Intramicine: { posologie: null, delaiAttente: 7, delaiLait: 7, delaiViande: 28 } };
   const A = fiche(eid(8, 8133), { id: 'A' });
   A.agnelages = [{ date: '2026-09-25', campagne: 2026, lambs: [
     { eid: eid(6, 801), sexe: 'Mâle', sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-09-25' }] },
     { eid: eid(6, 802), sexe: 'Mâle', sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-09-25' }] },
-    { eid: eid(6, 803), sexe: 'Mâle', sanitaire: [], statutFinal: 'vendu', mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-09-25' }, { type: 'Vendu', acheteur: 'Natera', date: '2026-10-01' }] },
+    { eid: eid(6, 803), sexe: 'Mâle', sanitaire: [], statutFinal: 'vendu', mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-09-25' }, { type: 'Vendu', acheteur: 'Acheteur C', date: '2026-10-01' }] },
     { eid: eid(6, 804), sexe: 'Femelle', sanitaire: [], statutFinal: 'mort', mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-09-25' }, { type: 'Mort', cause: 'Pneumonie', date: '2026-10-02' }] }] }];
   const sd = [{ type: 'Traitement', sousType: 'Antibiotique', produit: 'Intramicine', date: '2026-09-20', quantiteCc: 8, intervenant: 'Éleveur', dureeJours: 1, bio: true, delaiLaitJours: 14, delaiViandeJours: 56 }];
   DB.brebis = [A, fiche(eid(9, 59), { id: 'B' }), fiche(eid(9, 69), { id: 'C' }), fiche(eid(9, 152), { id: 'D', sanitaire: sd, numeroCourtTravailSieol: '152' }), fiche(eid(0, 33), { id: 'E' }), fiche(eid(7, 5), { id: 'F' }),
     fiche(eid(9, 77), { id: 'G' }), fiche(eid(9, 81), { id: 'H' }), fiche(eid(8, 90), { id: 'I' }), fiche(eid(8, 91), { id: 'J' }), fiche(eid(7, 12), { id: 'K' }), fiche(eid(6, 40), { id: 'L' }),
-    fiche(eid(9, 99), { id: 'M', statut: 'vendue', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', acheteur: 'Natera', date: '2026-09-01' }] }),
+    fiche(eid(9, 99), { id: 'M', statut: 'vendue', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', acheteur: 'Acheteur C', date: '2026-09-01' }] }),
     fiche(eid(8, 600), { id: 'N', mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2026-10-02' }] })];   // entrée le 02/10 : une sortie datée avant est incohérente
-  DB.beliers = [fiche(eid(9, 90), { id: 'bel1', statut: 'actif' }), fiche(eid(8, 91), { id: 'bel2', statut: 'actif' }), fiche(eid(9, 92), { id: 'bel3', statut: 'vendu', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente reproduction', acheteur: 'Bio Plus', date: '2026-10-02' }] })];
+  DB.beliers = [fiche(eid(9, 90), { id: 'bel1', statut: 'actif' }), fiche(eid(8, 91), { id: 'bel2', statut: 'actif' }), fiche(eid(9, 92), { id: 'bel3', statut: 'vendu', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente reproduction', acheteur: 'Acheteur D', date: '2026-10-02' }] })];
   DB.agnelles = [fiche(eid(5, 41), { id: 'ag1' }), fiche(eid(5, 42), { id: 'ag2' }), fiche(eid(5, 43), { id: 'ag3' })];
   DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} }; DB.mouvementsCollectifs = [];
   const poser = (cat, type, cause, acheteur, date, ids) => { const items = animauxMouvementPc(cat).filter(a => ids.includes(a.id)); appliquerMouvementCollectifPc({ categorie: cat, type, cause, acheteur, date, animaux: items }); };
-  poser('brebis', 'Vente', '', 'Natera', '2026-10-02', ['G', 'H', 'I']);          // lot de 3 ventes
+  poser('brebis', 'Vente', '', 'Acheteur C', '2026-10-02', ['G', 'H', 'I']);          // lot de 3 ventes
   poser('brebis', 'Morte', 'Mammite', null, '2026-10-02', ['J', 'K']);             // lot de 2 mortes
-  poser('agnelles', 'Vente reproduction', '', 'Bio Plus', '2026-10-02', ['ag3']);  // agnelle archivée
+  poser('agnelles', 'Vente reproduction', '', 'Acheteur D', '2026-10-02', ['ag3']);  // agnelle archivée
   const L = DB.brebis.find(x => x.id === 'L'); L.mouvements.push({ type: 'Autoconsommation', date: '2026-10-02' }); L.statut = 'autoconsommée'; recalculerStatutBrebis(L);   // sortie individuelle
   window.__saves = 0; window.__avant = JSON.stringify(DB);
 }
@@ -270,7 +270,7 @@ await bip(E1);
 check(await mob.textContent('#mn-compte') === '1 sélectionnée' && /déjà sélectionnée/.test(await mob.textContent('#mn-scan-fb')), 'second bip du même animal : « déjà sélectionnée », pas de doublon');
 await bip(E2);
 check(await mob.textContent('#mn-compte') === '2 sélectionnées', 'deuxième animal ajouté');
-await bip('250016299999999');
+await bip('250000012999999');
 check(await mob.textContent('#mn-compte') === '2 sélectionnées' && /introuvable/.test(await mob.textContent('#mn-scan-fb')), 'EID inconnu : message « introuvable », rien de coché : ' + await mob.textContent('#mn-scan-fb'));
 await bip('152');
 check(await mob.textContent('#mn-compte') === '3 sélectionnées', 'n° de travail SIEOL court accepté au bip');
@@ -311,7 +311,7 @@ await mob.click('#mn-types [data-val="Vente"]'); await mob.click('#mn-liste .mn-
 check(await mob.evaluate(() => [...document.querySelectorAll('#mn-erreurs li')].some(l => /acheteur est obligatoire/.test(l.textContent))), 'Vente sans acheteur : erreur');
 // entrée après la date de sortie
 await mob.fill('#mn-q', '600'); await mob.click('#mn-liste .mn-it >> nth=0'); await mob.fill('#mn-q', '');
-await mob.selectOption('#mn-acheteur', 'Natera');
+await mob.selectOption('#mn-acheteur', 'Acheteur C');
 await mob.evaluate(() => { const d = document.getElementById('mn-date'); d.value = '2026-10-01'; d.dispatchEvent(new Event('input')); });
 await mob.click('#mn-valider');
 check(await mob.evaluate(() => [...document.querySelectorAll('#mn-erreurs li')].some(l => /est entré\(e\) le 02-10-2026, après la date de sortie choisie \(01-10-2026\)/.test(l.textContent))), 'animal entré après la date choisie : erreur (comme sur PC)');
@@ -360,7 +360,7 @@ await mob.click('#mn-liste .mn-it >> nth=0');
 eq([await lib('Morte'), await lib('Vente reproduction'), await lib('Perte'), await lib('Autoconsommation')], ['Valider 1 morte', 'Valider 1 vente repro', 'Valider 1 perte', 'Valider 1 autoconsommation'], 'libellés du bouton selon le type');
 await mob.click('#mn-categories [data-cat="agneaux"]'); await mob.click('#mn-types [data-val="Vendu"]'); await mob.click('#mn-liste .mn-it >> nth=0'); await mob.click('#mn-liste .mn-it >> nth=1');
 eq(await mob.textContent('#mn-valider'), 'Valider 2 agneaux vendus', 'agneaux : « Valider 2 agneaux vendus »');
-await mob.selectOption('#mn-acheteur', 'Natera'); mob.reponse = true; await mob.click('#mn-valider');
+await mob.selectOption('#mn-acheteur', 'Acheteur C'); mob.reponse = true; await mob.click('#mn-valider');
 const agn = await mob.evaluate(() => ({ vues: currentView, vendus: DB.brebis.flatMap(b => (b.agnelages || []).flatMap(a => a.lambs)).filter(l => l.statutFinal === 'vendu').length, cat: document.querySelector('#mm-cats .tab-btn.active').textContent, cartes: document.querySelectorAll('#mm-liste .mm-lot').length }));
 check(agn.vues === 'inventaire' && agn.vendus === 3 && agn.cat === 'Agneaux' && agn.cartes === 1, 'agneaux : 2 agneaux vendus (+1 déjà vendu), liste ouverte sur Agneaux, une carte de lot : ' + JSON.stringify(agn));
 console.log('OK 13 Annuler revient à la liste sans écrire ; libellés « Valider N … » par type (morte, vente repro, perte, autoconsommation, agneaux vendus) ; agneaux : Vendu + acheteur.');

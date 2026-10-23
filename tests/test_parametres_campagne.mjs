@@ -21,7 +21,7 @@ for (const bureau of [true, false]) {
   const jeu = (init) => page.evaluate((initialisee) => {
     window.__saves = 0; DB = migrateData({}); saveData = function () { window.__saves++; return true; };
     DB.campagneDebut = 2026; DB.campagneInitialisee = initialisee; DB.campagneDateDemarrage = '2026-10-01';
-    DB.exploitation = { ...DB.exploitation, nom: 'Galibert Clément', campagneMoisDebut: 10, campagneJourDebut: 1 };
+    DB.exploitation = { ...DB.exploitation, nom: 'Exploitation B', campagneMoisDebut: 10, campagneJourDebut: 1 };
     DB.reproGestationMin = 142; DB.reproGestationMax = 152; DB.reproRetourMin = 160; DB.reproRetourMax = 171; DB.reproSeuilMiseBasMois = 3;
     DB.agnelles = []; parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres');
   }, init);

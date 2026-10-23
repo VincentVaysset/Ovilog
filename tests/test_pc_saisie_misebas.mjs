@@ -21,7 +21,7 @@ await page.evaluate(() => {
   DB = migrateData({});
   window.__saves = 0;
   const o = saveData; saveData = function (...a) { window.__saves++; return o.apply(this, a); };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   window.E = eid;
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
@@ -159,7 +159,7 @@ check(await page.evaluate(() => /Mise bas annulée/.test(document.getElementById
 check(await page.evaluate(n => misebasCampagneRows().length === n - 1 && window.__saves >= 1, nAvant), 'annuler une mise bas : la mise bas est bien retirée et enregistrée');
 console.log('OK 6 annulation : saisie en cours abandonnée sans rien écrire ; annuler une mise bas enregistrée se fait en un geste, sans confirmation.');
 
-const En = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+const En = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
 // ================================================================ 7. enregistrement complet au clavier : EID tapé, mort-né sans boucle (sexe facultatif), adoption vers une brebis ACTIVE seulement
 await page.evaluate(() => { DB.brebis.find(b => b.eid === E(3, 103)).agnelages = []; render('misebas-rapide'); });
 await saisir('00103');

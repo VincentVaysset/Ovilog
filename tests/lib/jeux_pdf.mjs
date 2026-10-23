@@ -6,7 +6,7 @@ export function installerCasPdf() {
   window.__sorties = [];
   saveOrShareBinaryFile = async function (nom, bytes) { window.__sorties.push({ nom, bytes: new Uint8Array(bytes) }); };
   window.__vers = async (fn) => { window.__sorties = []; const r = await fn(); return r instanceof Uint8Array ? r : window.__sorties[0].bytes; };
-  window.eid = (c, n) => '2500162999' + c + String(n).padStart(4, '0');
+  window.eid = (c, n) => '2500000129' + c + String(n).padStart(4, '0');
   window.fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   window.jeu = (nSemaines) => {
     const plans = {

@@ -24,10 +24,10 @@ async function ouvrir(bureau) {
 const jeu = (page, premiereEntree, annee, vendus) => page.evaluate(([pe, an, vd]) => {
   window.__saves = 0; DB = migrateData({}); saveData = function () { window.__saves++; return true; };
   DB.campagneDebut = 2026; DB.campagneInitialisee = true;
-  const b = (n, entree, agn) => ({ id: 'b' + n, eid: '250 0162991000' + n, statut: 'active', dateEntree: entree, mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: agn || [], createdAt: 1 });
+  const b = (n, entree, agn) => ({ id: 'b' + n, eid: '250 0000121000' + n, statut: 'active', dateEntree: entree, mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: agn || [], createdAt: 1 });
   const lamb = (vendu, k) => ({ eid: 'l' + k, sexe: 'Mâle', mouvements: vd[k - 1] ? [{ type: 'Vendu', date: '2025-05-10', acheteur: 'X' }] : [] });
   DB.brebis = [b(1, pe, [{ date: '2025-02-01', lambs: [lamb(true, 1), lamb(true, 2), lamb(false, 3)] }]), b(2, pe, [{ date: '2025-03-01', lambs: [lamb(true, 4), lamb(false, 5)] }]), b(3, pe), b(4, pe)];
-  DB.beliers = [{ id: 'be1', eid: '250 0162991000b1', statut: 'actif', dateEntree: pe, mouvements: [] }]; DB.agnelles = [];
+  DB.beliers = [{ id: 'be1', eid: '250 0000121000b1', statut: 'actif', dateEntree: pe, mouvements: [] }]; DB.agnelles = [];
   window.__avant = JSON.stringify(DB);
   window.__saisies = [];
   saveOrShareBinaryFile = async function (nom, bytes, mime) { window.__saisies.push({ nom, mime, b64: (() => { let s = ''; for (const x of bytes) s += String.fromCharCode(x); return btoa(s); })() }); };

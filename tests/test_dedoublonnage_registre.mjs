@@ -123,20 +123,20 @@ const SYNTH = () => {
   const ec = { date: '2025-12-01', resultat: 'gestante' };
   return { registre: {
     brebis: {
-      '250016299930001': { eid: '250016299930001', mouvements: [m3, m3, m3, m3], agnelages: [ag1, ag1], sanitaire: [s1, s1], echographies: [ec, ec], controleLaitier: [], modesRepro: [], derniereMiseAJour: 1700000000000 },
-      '250016299930002': { eid: '250016299930002', mouvements: [m4, m5, m4, m4], agnelages: [], sanitaire: [], echographies: [], controleLaitier: [], modesRepro: [] },
-      '250016299930003': { eid: '250016299930003', mouvements: [m1, { type: 'Vente', cause: 'x', date: '2026-07-07' }, { type: 'Vente', cause: 'y', date: '2026-07-07' }], agnelages: [], sanitaire: [], echographies: [], controleLaitier: [], modesRepro: [] }
+      '250000012930001': { eid: '250000012930001', mouvements: [m3, m3, m3, m3], agnelages: [ag1, ag1], sanitaire: [s1, s1], echographies: [ec, ec], controleLaitier: [], modesRepro: [], derniereMiseAJour: 1700000000000 },
+      '250000012930002': { eid: '250000012930002', mouvements: [m4, m5, m4, m4], agnelages: [], sanitaire: [], echographies: [], controleLaitier: [], modesRepro: [] },
+      '250000012930003': { eid: '250000012930003', mouvements: [m1, { type: 'Vente', cause: 'x', date: '2026-07-07' }, { type: 'Vente', cause: 'y', date: '2026-07-07' }], agnelages: [], sanitaire: [], echographies: [], controleLaitier: [], modesRepro: [] }
     },
-    beliers: { '250016299930090': { eid: '250016299930090', mouvements: [m6, m6], sanitaire: [], agnelages: [], echographies: [], controleLaitier: [], modesRepro: [] } },
+    beliers: { '250000012930090': { eid: '250000012930090', mouvements: [m6, m6], sanitaire: [], agnelages: [], echographies: [], controleLaitier: [], modesRepro: [] } },
     agnelles: {
-      '250016299930011': { eid: '250016299930011', mouvements: [m1, m2, m1b, m2], sanitaire: [], agnelages: [], echographies: [], controleLaitier: [], modesRepro: [] },
-      '250016299930012': { eid: '250016299930012', mouvements: [m1], sanitaire: [], agnelages: [], echographies: [], controleLaitier: [], modesRepro: [] }
+      '250000012930011': { eid: '250000012930011', mouvements: [m1, m2, m1b, m2], sanitaire: [], agnelages: [], echographies: [], controleLaitier: [], modesRepro: [] },
+      '250000012930012': { eid: '250000012930012', mouvements: [m1], sanitaire: [], agnelages: [], echographies: [], controleLaitier: [], modesRepro: [] }
     }
   } };
 };
 const FICHES = () => ({
-  brebis: [{ id: 's1', eid: '250016299930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2026-01-01' }], controleLaitier: [], modesRepro: [] }],
-  beliers: [], agnelles: [{ id: 'a1', eid: '250016299930099', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }]
+  brebis: [{ id: 's1', eid: '250000012930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2026-01-01' }], controleLaitier: [], modesRepro: [] }],
+  beliers: [], agnelles: [{ id: 'a1', eid: '250000012930099', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }]
 });
 
 // ================================================================ 1. fusion de l'archivage
@@ -194,7 +194,7 @@ check(quatre && quatre.apres === 2 && !quatre.parDefaut && /4 occurrences/.test(
 check(trois && trois.apres === 2 && !trois.parDefaut, '3 occurrences -> 2, décochée');
 check(L('brebis', 'sanitaire').length === 1 && !L('brebis', 'sanitaire')[0].parDefaut && /sanitaire/.test(L('brebis', 'sanitaire')[0].motif), 'carnet sanitaire : listé à part, décoché');
 check(L('brebis', 'echographies').length === 1 && !L('brebis', 'echographies')[0].parDefaut, 'autre champ (échographies) : listé à part, décoché');
-check(!analyse.lignes.some(l => l.eid === '250016299930003' || l.eid === '250016299930012'), 'aucun faux positif : mêmes dates mais causes différentes ; même élément dans deux entrées différentes');
+check(!analyse.lignes.some(l => l.eid === '250000012930003' || l.eid === '250000012930012'), 'aucun faux positif : mêmes dates mais causes différentes ; même élément dans deux entrées différentes');
 const dbApres = await page.evaluate(() => JSON.stringify(DB)), savesApres = await page.evaluate(() => window.__saves), vApres = await cloudVersion();
 check(dbApres === dbAvant && savesApres === 0 && vApres === versionAvant, 'analyse en lecture seule : DB identique (' + (dbApres === dbAvant) + '), 0 saveData (' + savesApres + '), 0 écriture cloud (' + versionAvant + ' -> ' + vApres + ')');
 console.log('OK 2 analyse : 4 entrées / 8 lignes ; 4 cochées (2 occurrences, mouvements/agnelages) ; 4 -> 2 et 3 -> 2 décochées ; sanitaire et échographies à part ; aucun faux positif ; lecture seule (DB, saveData, cloud).');
@@ -261,11 +261,11 @@ const saves = await page.evaluate(() => window.__saveAsCalls);
 check(saves.length === 1 && saves[0].registreJson === JSON.stringify(registreAvant), 'l\'export visible a été demandé UNE fois, AVANT toute modification (registre intact au moment de l\'appel)');
 const reg = await page.evaluate(() => JSON.parse(JSON.stringify(DB.registre)));
 const seq = (a) => JSON.stringify(a);
-check(reg.agnelles['250016299930011'].mouvements.length === 2 && reg.agnelles['250016299930011'].mouvements[0].type === 'Entrée' && reg.agnelles['250016299930011'].mouvements[1].type === 'Vente', 'agnelle : 4 -> 2 mouvements, première occurrence gardée, ordre conservé');
-check(reg.brebis['250016299930001'].agnelages.length === 1 && reg.beliers['250016299930090'].mouvements.length === 1, 'brebis agnelages 2 -> 1 ; bélier 2 -> 1');
-check(reg.brebis['250016299930001'].mouvements.length === 4 && reg.brebis['250016299930001'].sanitaire.length === 2 && reg.brebis['250016299930001'].echographies.length === 2 && reg.brebis['250016299930002'].mouvements.length === 4, 'lignes décochées (4 occurrences, sanitaire, échographies, 3 occurrences) : intactes');
-check(reg.agnelles['250016299930012'].mouvements.length === 1 && reg.brebis['250016299930003'].mouvements.length === 3, 'entrées sans doublon : intactes');
-check(reg.brebis['250016299930001'].derniereMiseAJour === 1700000000000, 'derniereMiseAJour inchangée');
+check(reg.agnelles['250000012930011'].mouvements.length === 2 && reg.agnelles['250000012930011'].mouvements[0].type === 'Entrée' && reg.agnelles['250000012930011'].mouvements[1].type === 'Vente', 'agnelle : 4 -> 2 mouvements, première occurrence gardée, ordre conservé');
+check(reg.brebis['250000012930001'].agnelages.length === 1 && reg.beliers['250000012930090'].mouvements.length === 1, 'brebis agnelages 2 -> 1 ; bélier 2 -> 1');
+check(reg.brebis['250000012930001'].mouvements.length === 4 && reg.brebis['250000012930001'].sanitaire.length === 2 && reg.brebis['250000012930001'].echographies.length === 2 && reg.brebis['250000012930002'].mouvements.length === 4, 'lignes décochées (4 occurrences, sanitaire, échographies, 3 occurrences) : intactes');
+check(reg.agnelles['250000012930012'].mouvements.length === 1 && reg.brebis['250000012930003'].mouvements.length === 3, 'entrées sans doublon : intactes');
+check(reg.brebis['250000012930001'].derniereMiseAJour === 1700000000000, 'derniereMiseAJour inchangée');
 for (const cat of ['brebis', 'beliers', 'agnelles']) for (const eid of Object.keys(reg[cat])) for (const c of CHAMPS) {
   const distAvant = new Set((registreAvant[cat][eid][c] || []).map(canon)), distApres = new Set((reg[cat][eid][c] || []).map(canon));
   check(seq([...distAvant].sort()) === seq([...distApres].sort()), 'ensemble des éléments distincts inchangé : ' + cat + ' ' + eid + ' ' + c);
@@ -279,7 +279,7 @@ check(e.lignes === 4 && e.cochees === 0, 'analyse relancée : ne restent que les
 const page2 = await newPage();
 await installerFauxPlugins(page2);
 await connecter(page2, email, password, false);
-await waitFor(() => page2.evaluate((n) => DB.registre && DB.registre.agnelles && DB.registre.agnelles['250016299930011'] && DB.registre.agnelles['250016299930011'].mouvements.length === n, 2), { label: '2e appareil converge' });
+await waitFor(() => page2.evaluate((n) => DB.registre && DB.registre.agnelles && DB.registre.agnelles['250000012930011'] && DB.registre.agnelles['250000012930011'].mouvements.length === n, 2), { label: '2e appareil converge' });
 check(await page2.evaluate(() => JSON.stringify(DB.registre)) === await page.evaluate(() => JSON.stringify(DB.registre)), '2e appareil : registre identique');
 await page2.context().close();
 console.log('OK 5 succès : 4 éléments retirés dans 3 entrées, export visible AVANT toute modification, ordre et premières occurrences conservés, lignes décochées et entrées sans doublon intactes, éléments distincts identiques, fiches identiques, journal, cloud = local, 2e appareil convergent.');
@@ -293,8 +293,8 @@ await page.click('.dd-tout[data-section="verifier"][data-val="1"]');
 await page.click('#btn-dd-appliquer');
 await waitFor(() => page.evaluate(() => !dedoublonRegistreEnCours && /retiré/.test(doublonsRegistreEtat.message)), { label: 'passage 2' });
 const reg2 = await page.evaluate(() => JSON.parse(JSON.stringify(DB.registre)));
-check(reg2.brebis['250016299930001'].mouvements.length === 2 && reg2.brebis['250016299930001'].sanitaire.length === 1 && reg2.brebis['250016299930001'].echographies.length === 1, 'cases « à vérifier » cochées : 4 occurrences -> 2 (pas 1), sanitaire 2 -> 1, échographies 2 -> 1');
-check(reg2.brebis['250016299930002'].mouvements.length === 3 && reg2.brebis['250016299930002'].mouvements.map(m => m.type).join() === 'Morte,Perte,Morte', '3 occurrences -> 2, ordre conservé (Morte, Perte, Morte)');
+check(reg2.brebis['250000012930001'].mouvements.length === 2 && reg2.brebis['250000012930001'].sanitaire.length === 1 && reg2.brebis['250000012930001'].echographies.length === 1, 'cases « à vérifier » cochées : 4 occurrences -> 2 (pas 1), sanitaire 2 -> 1, échographies 2 -> 1');
+check(reg2.brebis['250000012930002'].mouvements.length === 3 && reg2.brebis['250000012930002'].mouvements.map(m => m.type).join() === 'Morte,Perte,Morte', '3 occurrences -> 2, ordre conservé (Morte, Perte, Morte)');
 e = await etatEcran();
 check(/retiré/.test(e.statut), e.statut);
 await page.click('#btn-dd-analyser');
@@ -307,7 +307,7 @@ console.log('OK 5b cases « à vérifier » : 4 -> 2 (pas 1), 3 -> 2, sanitaire 
 // poser DB.registre en local puis saveData serait en course avec l'écho d'un ancien instantané.
 async function reposerRegistre() {
   await fetch(BACKEND + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops: Object.entries(SYNTH().registre).flatMap(([cat, m]) => Object.entries(m).map(([eid, ent]) => ({ type: 'set', path: 'users/' + uid + '/registre/' + idDoc(cat, eid), data: Object.assign({ id: idDoc(cat, eid), categorie: cat, eid }, ent) }))) }) });
-  await waitFor(() => page.evaluate(() => DB.registre.agnelles['250016299930011'].mouvements.length === 4 && !!DB.registre.beliers['250016299930090'] && DB.registre.brebis['250016299930001'].agnelages.length === 2 && DB.registre.brebis['250016299930001'].mouvements.length === 4), { label: 'registre synthétique re-posé (reçu du cloud)' });
+  await waitFor(() => page.evaluate(() => DB.registre.agnelles['250000012930011'].mouvements.length === 4 && !!DB.registre.beliers['250000012930090'] && DB.registre.brebis['250000012930001'].agnelages.length === 2 && DB.registre.brebis['250000012930001'].mouvements.length === 4), { label: 'registre synthétique re-posé (reçu du cloud)' });
   await waitFor(() => cloudEgalLocal(page, 6), { label: 'cloud = local' });
 }
 await reposerRegistre();
@@ -316,7 +316,7 @@ await page.click('#btn-dd-analyser');
 // l'écho du cloud est coupé : cet appareil ne voit pas les modifications faites ailleurs
 await page.route('**/snapshot?*', route => route.abort());
 const docs0 = await cloudDocs();
-const idA1 = idDoc('agnelles', '250016299930011'), idBel = idDoc('beliers', '250016299930090'), idB1 = idDoc('brebis', '250016299930001');
+const idA1 = idDoc('agnelles', '250000012930011'), idBel = idDoc('beliers', '250000012930090'), idB1 = idDoc('brebis', '250000012930001');
 const modifie = JSON.parse(JSON.stringify(docs0[idA1]));
 modifie.mouvements.push({ type: 'Perte', cause: 'ajouté ailleurs', date: '2026-08-08' });
 await fetch(BACKEND + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops: [
@@ -324,12 +324,12 @@ await fetch(BACKEND + '/batch', { method: 'POST', body: JSON.stringify({ uid, op
   { type: 'delete', path: 'users/' + uid + '/registre/' + idBel }
 ] }) });
 await page.evaluate(() => { window.__mode = 'ok'; });
-const localA1 = await page.evaluate(() => JSON.stringify(DB.registre.agnelles['250016299930011']));
+const localA1 = await page.evaluate(() => JSON.stringify(DB.registre.agnelles['250000012930011']));
 await page.click('#btn-dd-appliquer');
 await waitFor(() => page.evaluate(() => !dedoublonRegistreEnCours && /✅|⚠️/.test(doublonsRegistreEtat.message)), { label: 'passage garde' });
 e = await etatEcran();
 check(/⚠️/.test(e.statut) && (e.statut.match(/modifiée ailleurs/g) || []).length === 2 && /1 élément\(s\) retiré\(s\) dans 1 entrée\(s\)/.test(e.statut), 'garde : 2 entrées refusées « modifiée ailleurs », 1 traitée : ' + e.statut);
-check(await page.evaluate(() => JSON.stringify(DB.registre.agnelles['250016299930011'])) === localA1, 'entrée refusée : copie locale intacte');
+check(await page.evaluate(() => JSON.stringify(DB.registre.agnelles['250000012930011'])) === localA1, 'entrée refusée : copie locale intacte');
 const docs1 = await cloudDocs();
 check(canon(docs1[idA1].mouvements) === canon(modifie.mouvements) && !docs1[idBel], 'cloud : la modification faite ailleurs n\'a PAS été écrasée, le document supprimé ailleurs n\'a pas été recréé');
 check(docs1[idB1].agnelages.length === 1, 'l\'entrée non touchée ailleurs a bien été dédoublonnée dans le cloud');
@@ -351,7 +351,7 @@ await page.unroute('**/batch');
 e = await etatEcran();
 const regE = await page.evaluate(() => JSON.parse(JSON.stringify(DB.registre)));
 check(/⚠️/.test(e.statut) && /l'écriture du document registre a échoué/.test(e.statut), 'échec d\'écriture signalé avec sa raison : ' + e.statut);
-check(regE.agnelles['250016299930011'].mouvements.length === 4 && regE.brebis['250016299930001'].agnelages.length === 1 && regE.beliers['250016299930090'].mouvements.length === 1, 'l\'entrée en échec reste intacte (4 mouvements), les deux autres sont traitées');
+check(regE.agnelles['250000012930011'].mouvements.length === 4 && regE.brebis['250000012930001'].agnelages.length === 1 && regE.beliers['250000012930090'].mouvements.length === 1, 'l\'entrée en échec reste intacte (4 mouvements), les deux autres sont traitées');
 console.log('OK 6b échec d\'écriture sur une entrée : signalé avec sa raison, entrée intacte, les autres traitées.');
 await page.context().close();
 

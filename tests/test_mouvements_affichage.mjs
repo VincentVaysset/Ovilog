@@ -82,7 +82,7 @@ for (const [nom, fichier] of Object.entries(EXPORTS)) {
       // agnelle vendue APRÈS la bascule, et une autre AVANT
       DB.agnelles = DB.agnelles || [];
       const mkAg = (id, eid) => ({ id, eid, motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2026-01-10' }], modesRepro: [] });
-      DB.agnelles.push(mkAg('agA', '250016299990001'), mkAg('agB', '250016299990002'));
+      DB.agnelles.push(mkAg('agA', '250000012990001'), mkAg('agB', '250000012990002'));
       CATEGORIE_ANIMAL_CONFIG.agnelles.applySortie(DB.agnelles.find(a => a.id === 'agA'), 'Vente', null, 'Acheteur', '2026-10-06');
       CATEGORIE_ANIMAL_CONFIG.agnelles.applySortie(DB.agnelles.find(a => a.id === 'agB'), 'Vente', null, 'Acheteur', '2026-03-01');
       // agneaux : vendu après (affiché), vendu avant (masqué après), vendu sans date (affiché), mort-né (jamais)
@@ -90,9 +90,9 @@ for (const [nom, fichier] of Object.entries(EXPORTS)) {
       mere.agnelages = mere.agnelages || [];
       const lamb = (eid, sexe, statut, mouv) => ({ eid, sexe, statutFinal: statut, mouvements: mouv });
       mere.agnelages.push({ date: '2026-02-01', campagne: 2025, lambs: [
-        lamb('250016299990011', 'Mâle', 'vendu', [{ type: 'Vendu', date: '2026-10-07', acheteur: 'X' }]),
-        lamb('250016299990012', 'Mâle', 'vendu', [{ type: 'Vendu', date: '2026-03-01', acheteur: 'X' }]),
-        lamb('250016299990013', 'Femelle', 'mort', []),
+        lamb('250000012990011', 'Mâle', 'vendu', [{ type: 'Vendu', date: '2026-10-07', acheteur: 'X' }]),
+        lamb('250000012990012', 'Mâle', 'vendu', [{ type: 'Vendu', date: '2026-03-01', acheteur: 'X' }]),
+        lamb('250000012990013', 'Femelle', 'mort', []),
         { eid: null, sexe: 'Mort-né', mouvements: [] }
       ] });
       return 1;
@@ -105,7 +105,7 @@ for (const [nom, fichier] of Object.entries(EXPORTS)) {
     // les données masquées existent toujours (rien supprimé)
     const intacts = await apres.evaluate(() => ({
       agB: !!(DB.registre.agnelles && Object.values(DB.registre.agnelles).some(e => e && (e.mouvements || []).some(m => m.date === '2026-03-01'))),
-      agneauAvant: DB.brebis.some(s => (s.agnelages || []).some(a => a.lambs.some(l => l.eid === '250016299990012')))
+      agneauAvant: DB.brebis.some(s => (s.agnelages || []).some(a => a.lambs.some(l => l.eid === '250000012990012')))
     }));
     check(intacts.agB && intacts.agneauAvant, 'les lignes masquées (agnelle vendue avant, agneau vendu avant) doivent rester dans le registre / la fiche');
     console.log('OK masqué n\'est pas supprimé : l\'agnelle vendue le 01/03 reste dans registre.agnelles, l\'agneau vendu le 01/03 reste sur la fiche de sa mère.');

@@ -79,8 +79,8 @@ await d1.page.evaluate(() => {
   DB.campagneDebut = 2026;
   DB.campagneInitialisee = true;
   DB.brebis = [
-    { id: 'a', eid: '250016299950001', statut: 'active', createdAt: 1, notes: 'v1', echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
-    { id: 'b', eid: '250016299950002', statut: 'active', createdAt: 1, notes: 'v1', echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
+    { id: 'a', eid: '250000012950001', statut: 'active', createdAt: 1, notes: 'v1', echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
+    { id: 'b', eid: '250000012950002', statut: 'active', createdAt: 1, notes: 'v1', echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
   ];
   DB.beliers = [];
   DB.agnelles = [];
@@ -185,7 +185,7 @@ await d1.page.evaluate(() => {
   // syncAllToCloud n'a été déclenché pour ce changement) : représente
   // fidèlement l'état d'un appareil fermé avant qu'une relance planifiée
   // n'ait pu s'exécuter.
-  DB.brebis.push({ id: 'c-hors-ligne', eid: '250016299950099', statut: 'active', createdAt: 99, notes: 'ajoutee-sans-sync', echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] });
+  DB.brebis.push({ id: 'c-hors-ligne', eid: '250000012950099', statut: 'active', createdAt: 99, notes: 'ajoutee-sans-sync', echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] });
   localStorage.setItem('troupeau_data_v1', JSON.stringify(DB));
 });
 const avantReconnexion = await fetch('http://127.0.0.1:' + fakePort + '/getdoc?uid=' + uidToUse + '&col=brebis&id=c-hors-ligne').then(r => r.json());

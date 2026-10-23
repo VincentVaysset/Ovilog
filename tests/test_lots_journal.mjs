@@ -13,7 +13,7 @@ const alertes = [];
 page.on('dialog', d => { if (d.type() === 'alert') alertes.push(d.message()); d.accept(); });
 await page.goto(URL_APP, { waitUntil: 'load' });
 await page.waitForTimeout(300);
-const reset = () => page.evaluate(() => { DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; }; DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true; window.E = (n) => '25001629919' + String(n).padStart(5, '0'); });
+const reset = () => page.evaluate(() => { DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; }; DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true; window.E = (n) => '25000001219' + String(n).padStart(5, '0'); });
 
 // ================================================================ 1. migration : un événement initial par lot de reproduction existant
 await reset();
@@ -30,11 +30,11 @@ const mig = await page.evaluate(() => {
   return { m, nEv2: m2.evenementsLots.length, ids: [...ids], schema: m.schemaLots, seuil: m.reproSeuilMiseBasMois };
 });
 const [l0, l1, l2, l3] = mig.m.lots;
-const E0 = (n) => '25001629919' + String(n).padStart(5, '0');
+const E0 = (n) => '25000001219' + String(n).padStart(5, '0');
 check(mig.m.evenementsLots.length === 4 && mig.nEv2 === 4, 'un événement initial par lot non vide (reproduction, recherche, réforme), migration idempotente : ' + mig.m.evenementsLots.length);
 check(mig.m.evenementsLots[0].id === 'EL-init-1700000000000' && mig.m.evenementsLots[0].type === 'initial' && mig.m.evenementsLots[0].eids.length === 2 && mig.m.evenementsLots[0].source === 'migration', 'événement initial : id déterministe, type initial, tous les membres');
 check(mig.ids.length === 4, 'deux appareils qui migrent chacun de leur côté produisent les MÊMES ids (aucun doublon après fusion)');
-check(l0.journal === 1 && l1.journal === 1 && JSON.stringify(l0.membres) === JSON.stringify(['25001629919' + '00059', '25001629919' + '00069']) && l0.journalN === 1, 'lot migré : journalisé, membres conservés, cache à jour');
+check(l0.journal === 1 && l1.journal === 1 && JSON.stringify(l0.membres) === JSON.stringify(['25000001219' + '00059', '25000001219' + '00069']) && l0.journalN === 1, 'lot migré : journalisé, membres conservés, cache à jour');
 check(l0.campagneMisesBas === 2027 && l0.campagneMisesBasDeduite === true && l1.campagneMisesBas === 2026, 'campagne des mises bas déduite (IA du 15/06/2027 → 2027 ; éponge lutte 20/10/2026 → 2026) : ' + l0.campagneMisesBas + ' / ' + l1.campagneMisesBas);
 check(l0.campagne === 2026, 'lot.campagne (ancien sens) jamais réécrit');
 check(l2.journal === 1 && l3.journal === 1 && l2.type === undefined && l3.type === 'reforme' && l2.campagneMisesBas === undefined && l3.campagneMisesBas === undefined, 'lots de recherche et de réforme : journalisés, sans campagne des mises bas');
