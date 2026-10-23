@@ -197,6 +197,7 @@
   .ecran-technique .colonne .btn { height: 48px; padding: 0; border-radius: 999px; font-weight: 700; }
   body.desktop-shell .ecran-technique .colonne .btn { height: 44px; }
   .ecran-technique .colonne .btn-secondaire-technique { background: var(--ch-carte); border: 1px solid var(--ch-bord-champ); color: var(--ch-texte); }
+  .ecran-technique .colonne .btn:disabled { background: var(--ch-bord-champ); color: var(--ch-icone); cursor: not-allowed; }   /* désactivé visible (ex. « Renvoyer l'e-mail » pendant 60 s), comme button.btn:disabled */
   /* Assistant de première configuration : barre de progression, étapes, options, appareils */
   .ecran-technique.assistant { justify-content: flex-start; text-align: left; padding-top: 20px; }
   .ecran-technique.assistant .colonne { max-width: 420px; }
@@ -6457,7 +6458,7 @@ function render(view, sheepId) {
   // traitement pour "Première configuration" (chantier "Paramétrage de la
   // date de début de campagne") : validation obligatoire avant d'accéder
   // au reste de l'appli, jamais de menu ni de retour possible non plus.
-  const isAuthGate = (view === 'boot' || view === 'auth' || view === 'premiere-configuration' || view === 'attente-compte');
+  const isAuthGate = (view === 'boot' || view === 'auth' || view === 'premiere-configuration' || view === 'attente-compte' || view === 'verifier-email');
   const headerEl = document.querySelector('header');
   if (headerEl) headerEl.classList.toggle('hidden', isAuthGate);
   document.body.classList.toggle('porte-auth', isAuthGate);   // PC : pas de menu latéral non plus avant la connexion et la première configuration (audit charte U)
@@ -6535,6 +6536,7 @@ function render(view, sheepId) {
     else if (view === 'boot') renderBoot();
     else if (view === 'auth') renderAuthGate();
     else if (view === 'attente-compte') renderAttenteCompte();
+    else if (view === 'verifier-email') renderVerifierEmail();
     else if (view === 'premiere-configuration') renderPremiereConfiguration();
     else if (view === 'diag-bluetooth') renderDiagBluetooth();
     else if (view === 'maj-inventaire') renderMajInventaire();
@@ -29114,6 +29116,55 @@ function renderAttenteCompte() {
   }, DELAI_MESSAGE_COMPTE_MS);
 }
 
+/* ---------- « Vérifiez votre e-mail » : porte des comptes dont l'adresse n'est pas encore confirmée ----------
+   Affiché à la place de l'appli (ni en-tête ni menu, comme la connexion) tant que user.emailVerified est faux : rien du compte n'est lu ni écrit avant (voir
+   onAuthStateChanged dans le script module). « J'ai vérifié » : user.reload() puis user.getIdToken(true) (jeton rafraîchi, indispensable pour que Firestore
+   voie la vérification), puis l'appli se charge. « Renvoyer l'e-mail » : nouvel envoi, bouton désactivé 60 s. « Se déconnecter » : retour à la connexion. */
+const DELAI_RENVOI_EMAIL_MS = 60000;
+function renderVerifierEmail() {
+  pageTitle.textContent = 'Connexion';
+  const sync = window.OvilogSync || {};
+  const email = (sync.emailEnAttenteVerification && sync.emailEnAttenteVerification()) || '';
+  app.innerHTML = `
+    <div class="ecran-technique" id="verifier-email-ecran">
+      <div class="marque"><img src="${OVILOG_LOGO_DATA_URI}" alt="Ovilog"></div>
+      <div class="attente-titre">Vérifiez votre e-mail</div>
+      <div class="attente-texte">Un e-mail de confirmation a été envoyé à <b id="verifier-email-adresse"></b>. Ouvrez le lien qu'il contient, puis revenez ici.</div>
+      <div class="colonne">
+        <div id="verifier-email-msg" class="hidden" role="status"></div>
+        <button class="btn btn-primary" id="btn-email-verifie">J'ai vérifié</button>
+        <button class="btn btn-secondary btn-secondaire-technique" id="btn-renvoyer-email">Renvoyer l'e-mail</button>
+        <div style="text-align:center;"><button type="button" class="lien-discret" id="btn-deconnexion-verification">Se déconnecter</button></div>
+      </div>
+    </div>
+  `;
+  document.getElementById('verifier-email-adresse').textContent = email;
+  const msg = document.getElementById('verifier-email-msg');
+  const montrer = (ton, texte) => { msg.className = 'msg-charte ' + ton; msg.innerHTML = '<span></span>'; msg.querySelector('span').textContent = texte; };
+  const btnVerifie = document.getElementById('btn-email-verifie'), btnRenvoi = document.getElementById('btn-renvoyer-email');
+  const majRenvoi = () => {
+    const reste = (sync.renvoiPossibleDans && sync.renvoiPossibleDans()) || 0;
+    btnRenvoi.disabled = reste > 0;
+    if (reste > 0) setTimeout(() => { if (currentView === 'verifier-email' && document.getElementById('btn-renvoyer-email') === btnRenvoi) majRenvoi(); }, Math.min(reste, 1000));
+  };
+  majRenvoi();
+  btnVerifie.onclick = async () => {
+    btnVerifie.disabled = true; btnVerifie.textContent = 'Vérification…';
+    try {
+      const ok = await sync.confirmerEmailVerifie();
+      if (!ok) montrer('alerte', "Adresse pas encore confirmée : ouvrez le lien reçu par e-mail, puis touchez « J'ai vérifié ».");
+    } catch (e) { montrer('alerte', e.message || 'Vérification impossible pour le moment.'); }
+    if (document.getElementById('btn-email-verifie') === btnVerifie) { btnVerifie.disabled = false; btnVerifie.textContent = "J'ai vérifié"; }
+  };
+  btnRenvoi.onclick = async () => {
+    btnRenvoi.disabled = true;
+    try { await sync.renvoyerEmailVerification(); montrer('ok', 'E-mail renvoyé à ' + email + '.'); }
+    catch (e) { montrer('alerte', e.message || "Envoi impossible pour le moment."); }
+    majRenvoi();
+  };
+  document.getElementById('btn-deconnexion-verification').onclick = () => { if (sync.deconnecterSansVider) sync.deconnecterSansVider(); };
+}
+
 function renderAuthGate() {
   const mode = currentAuthMode;
   const titles = { login: 'Connexion', signup: 'Créer un compte', forgot: 'Mot de passe oublié' };
@@ -29517,7 +29568,7 @@ updateHeaderReaderButton();
 import {
   initializeApp, getAuth, setPersistence, browserLocalPersistence,
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
-  onAuthStateChanged, signOut,
+  sendEmailVerification, onAuthStateChanged, signOut,
   initializeFirestore, persistentLocalCache, persistentSingleTabManager,
   collection, doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, onSnapshot, arrayUnion,
   writeBatch, runTransaction
@@ -30696,7 +30747,23 @@ async function decideEcranApresConnexion(user) {
   render(!hadDonneesExistantes && premiereConfigurationCampagneNecessaire() ? 'premiere-configuration' : 'home');
 }
 
+/* Vérification de l'adresse e-mail : un compte non vérifié ne lit ni n'écrit rien (ni synchro, ni création du compte vide, ni première configuration) ;
+   il voit l'écran « Vérifiez votre e-mail » (renderVerifierEmail). Les règles Firestore exigent email_verified, d'où le jeton rafraîchi après vérification. */
+let dernierEnvoiVerificationMs = 0;
+let chargementApresVerification = false;
+async function envoyerEmailVerification(user) {
+  await sendEmailVerification(user);
+  dernierEnvoiVerificationMs = Date.now();
+}
+
 onAuthStateChanged(fbAuth, user => {
+  if (user && !user.emailVerified) {
+    // Adresse pas encore confirmée : la porte, sans rien charger du compte (une session non vérifiée retrouvée au démarrage aussi).
+    if (sync.uid) onSignedOut();
+    // Après la fin de ce module (window.OvilogSync, lu par l'écran, est alors défini même si l'état arrive dès l'enregistrement de cet écouteur)
+    queueMicrotask(() => { if (fbAuth.currentUser === user && !user.emailVerified) render('verifier-email'); });
+    return;
+  }
   if (user) {
     // Distingue une vraie transition déconnecté -> connecté (qui doit
     // décider l'écran d'atterrissage) d'un simple rafraîchissement de
@@ -30734,6 +30801,7 @@ function friendlyAuthError(e) {
   if (code === 'auth/weak-password') return "Mot de passe trop faible (6 caractères minimum).";
   if (code === 'auth/too-many-requests') return "Trop de tentatives — réessaie dans quelques minutes.";
   if (code === 'auth/network-request-failed') return "Pas de connexion réseau — la première connexion nécessite d'être en ligne.";
+  if (code === 'auth/quota-exceeded') return "Trop de tentatives — réessaie dans quelques minutes.";
   return "Connexion impossible (" + (code || (e && e.message) || 'erreur inconnue') + ").";
 }
 
@@ -30753,7 +30821,10 @@ window.OvilogSync = {
   async signup(email, password) {
     try {
       await setPersistence(fbAuth, browserLocalPersistence);
-      await createUserWithEmailAndPassword(fbAuth, email, password);
+      const cred = await createUserWithEmailAndPassword(fbAuth, email, password);
+      // E-mail de confirmation : un échec d'envoi ne bloque pas l'inscription (« Renvoyer l'e-mail » sur l'écran de vérification).
+      try { await envoyerEmailVerification(cred.user); } catch (e) { console.error('Envoi de l\'e-mail de vérification impossible :', e); }
+      if (currentView === 'verifier-email') render('verifier-email');   // « Renvoyer l'e-mail » démarre désactivé (60 s)
       // Nouveau compte => cloud forcément vide pour cet uid : onSignedIn/
       // bootstrapDevice (déclenché par onAuthStateChanged juste après) va
       // donc pousser les données locales existantes vers le cloud plutôt
@@ -30761,6 +30832,29 @@ window.OvilogSync = {
     } catch (e) {
       throw new Error(friendlyAuthError(e));
     }
+  },
+  // Écran « Vérifiez votre e-mail » (renderVerifierEmail, script classique)
+  emailEnAttenteVerification() { return fbAuth.currentUser ? fbAuth.currentUser.email : ''; },
+  renvoiPossibleDans() { return Math.max(0, dernierEnvoiVerificationMs + DELAI_RENVOI_EMAIL_MS - Date.now()); },
+  async renvoyerEmailVerification() {
+    const user = fbAuth.currentUser;
+    if (!user) return;
+    try { await envoyerEmailVerification(user); } catch (e) { throw new Error(friendlyAuthError(e)); }
+  },
+  // « J'ai vérifié » : relit l'utilisateur, rafraîchit le jeton (Firestore voit alors email_verified), puis charge l'appli. Renvoie faux si l'adresse n'est pas encore confirmée.
+  async confirmerEmailVerifie() {
+    const user = fbAuth.currentUser;
+    if (!user) return false;
+    try {
+      await user.reload();
+      if (!user.emailVerified) return false;
+      await user.getIdToken(true);
+    } catch (e) { throw new Error(friendlyAuthError(e)); }
+    if (chargementApresVerification || sync.uid === user.uid) return true;
+    chargementApresVerification = true;
+    decideEcranApresConnexion(user).catch(e => { console.error('Erreur de connexion à la synchronisation :', e); render('home'); })
+      .finally(() => { chargementApresVerification = false; });
+    return true;
   },
   async resetPassword(email) {
     try {

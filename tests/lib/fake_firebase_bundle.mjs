@@ -11,8 +11,32 @@ export function initializeFirestore(app, opts) { return { app }; }
 export function persistentLocalCache(opts) { return {}; }
 export function persistentSingleTabManager() { return {}; }
 
+let authCourant = null;
+// Session persistante (comme le vrai SDK avec browserLocalPersistence) : SEULEMENT si le test l'active (localStorage « __fakePersister » = '1'),
+// pour retrouver au démarrage une session existante -- les autres tests gardent une connexion à chaque chargement.
+const CLE_SESSION = '__fakeSessionAuth';
+const persister = () => { try { return localStorage.getItem('__fakePersister') === '1'; } catch (e) { return false; } };
+function memoriserSession(u) { if (!persister()) return; try { if (u) localStorage.setItem(CLE_SESSION, JSON.stringify({ uid: u.uid, email: u.email, emailVerified: u.emailVerified })); else localStorage.removeItem(CLE_SESSION); } catch (e) {} }
 export function getAuth(app) {
-  return { app, currentUser: null, _listeners: [] };
+  authCourant = { app, currentUser: null, _listeners: [] };
+  if (persister()) { try { const m = JSON.parse(localStorage.getItem(CLE_SESSION) || 'null'); if (m) authCourant.currentUser = fauxUtilisateur(m.uid, m.email, m.emailVerified); } catch (e) {} }
+  return authCourant;
+}
+// Utilisateur comme le vrai SDK : emailVerified, reload() (relit l'état serveur) et getIdToken(true) (le jeton ne porte la vérification qu'une fois rafraîchi).
+function fauxUtilisateur(uid, email, emailVerified) {
+  const u = { uid, email, emailVerified: !!emailVerified, _jetonVerifie: !!emailVerified, _rafraichissements: 0 };
+  u.reload = async () => {
+    if (reseau().coupe) { const e = new Error('network'); e.code = 'auth/network-request-failed'; throw e; }
+    const r = await (await fetch(BACKEND_URL + '/auth/user?uid=' + uid)).json();
+    u.emailVerified = !!r.emailVerified;
+    memoriserSession(u);
+  };
+  u.getIdToken = async (force) => { if (force) { u._rafraichissements++; u._jetonVerifie = u.emailVerified; if (typeof window !== 'undefined') window.__fakeIdTokenForce = (window.__fakeIdTokenForce || 0) + 1; } return 'jeton-' + uid; };
+  return u;
+}
+export async function sendEmailVerification(user) {
+  if (reseau().coupe) { const e = new Error('network'); e.code = 'auth/network-request-failed'; throw e; }
+  await fetch(BACKEND_URL + '/auth/sendVerification', { method: 'POST', body: JSON.stringify({ uid: user.uid }) });
 }
 export async function setPersistence(auth, mode) { /* no-op */ }
 export const browserLocalPersistence = 'local';
@@ -24,7 +48,8 @@ export async function createUserWithEmailAndPassword(auth, email, password) {
   const res = await fetch(BACKEND_URL + '/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) });
   const data = await res.json();
   if (!res.ok) { const e = new Error(data.error); e.code = 'auth/' + data.error; throw e; }
-  auth.currentUser = { uid: data.uid, email };
+  auth.currentUser = fauxUtilisateur(data.uid, email, data.emailVerified !== false);
+  memoriserSession(auth.currentUser);
   fireAuthListeners(auth);
   return { user: auth.currentUser };
 }
@@ -32,7 +57,8 @@ export async function signInWithEmailAndPassword(auth, email, password) {
   const res = await fetch(BACKEND_URL + '/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
   const data = await res.json();
   if (!res.ok) { const e = new Error(data.error); e.code = 'auth/' + data.error; throw e; }
-  auth.currentUser = { uid: data.uid, email };
+  auth.currentUser = fauxUtilisateur(data.uid, email, data.emailVerified !== false);
+  memoriserSession(auth.currentUser);
   fireAuthListeners(auth);
   return { user: auth.currentUser };
 }
@@ -44,6 +70,7 @@ export function onAuthStateChanged(auth, cb) {
 }
 export async function signOut(auth) {
   auth.currentUser = null;
+  memoriserSession(null);
   fireAuthListeners(auth);
 }
 
@@ -80,7 +107,8 @@ async function ecrire(body) {
   await attendreReseau();
   // Trace côté page (heure d'ENVOI réel, après la file hors ligne) : les tests y comparent l'ordre « sauvegarde puis écriture ».
   if (typeof window !== 'undefined') (window.__ecrituresLog = window.__ecrituresLog || []).push({ t: performance.now(), chemins: (body.ops || []).map(o => o.path), pile: (body.ops || []).some(o => o.path.includes('/registre/')) ? String(new Error().stack).split('\n').slice(2, 9).map(l => l.trim().replace(/^at /, '').slice(0, 90)).join(' < ') : undefined });
-  try { return await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify(Object.assign({ clientId: clientId() }, body)) }); }
+  const jetonVerifie = authCourant && authCourant.currentUser ? authCourant.currentUser._jetonVerifie !== false : true;
+  try { return await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify(Object.assign({ clientId: clientId(), jetonVerifie }, body)) }); }
   finally { ecrituresTerminees++; }
 }
 

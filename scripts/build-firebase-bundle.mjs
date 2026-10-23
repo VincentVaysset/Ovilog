@@ -23,7 +23,7 @@ export {
 export {
   getAuth, setPersistence, browserLocalPersistence,
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
-  onAuthStateChanged, signOut
+  sendEmailVerification, onAuthStateChanged, signOut
 } from 'firebase/auth';
 export {
   initializeFirestore, persistentLocalCache, persistentSingleTabManager,

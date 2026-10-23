@@ -9,7 +9,10 @@
 import http from 'http';
 import { randomUUID } from 'crypto';
 
-const users = new Map(); // email -> { uid, password }
+const users = new Map(); // email -> { uid, password, verifie, envois }
+// Vérification de l'adresse e-mail (test_verification_email) : désactivée par défaut, tout compte est alors vérifié (les autres tests n'en voient rien).
+let exigerVerification = false;
+const userParUid = uid => [...users.values()].find(u => u.uid === uid);
 const collections = new Map(); // uid -> { colName -> { docId -> data } }
 const metas = new Map(); // uid -> data
 const journaux = new Map(); // uid -> [{ n, clientId, ops: [{ type, path, lots? }] }] : toutes les écritures REÇUES, dans l'ordre (les tests y vérifient qui a écrit quoi, et quand)
@@ -62,19 +65,25 @@ const server = http.createServer(async (req, res) => {
       const { email, password } = await readBody(req);
       if (users.has(email)) return json(res, 400, { error: 'email-already-in-use' });
       const uid = randomUUID();
-      users.set(email, { uid, password });
+      users.set(email, { uid, password, verifie: !exigerVerification, envois: 0 });
       ensureUser(uid);
-      return json(res, 200, { uid });
+      return json(res, 200, { uid, emailVerified: !exigerVerification });
     }
     if (url.pathname === '/auth/login' && req.method === 'POST') {
       const { email, password } = await readBody(req);
       const u = users.get(email);
       if (!u || u.password !== password) return json(res, 400, { error: 'invalid-credential' });
       ensureUser(u.uid);
-      return json(res, 200, { uid: u.uid });
+      return json(res, 200, { uid: u.uid, emailVerified: u.verifie !== false });
     }
+    if (url.pathname === '/auth/config' && req.method === 'POST') { exigerVerification = !!(await readBody(req)).exigerVerification; return json(res, 200, { ok: true }); }
+    if (url.pathname === '/auth/verifier' && req.method === 'POST') { const u = users.get((await readBody(req)).email); if (u) u.verifie = true; return json(res, u ? 200 : 404, { ok: !!u }); }
+    if (url.pathname === '/auth/sendVerification' && req.method === 'POST') { const u = userParUid((await readBody(req)).uid); if (u) u.envois++; return json(res, u ? 200 : 404, { ok: !!u }); }
+    if (url.pathname === '/auth/user' && req.method === 'GET') { const u = userParUid(url.searchParams.get('uid')); return json(res, u ? 200 : 404, u ? { emailVerified: u.verifie !== false, envois: u.envois } : { error: 'user-not-found' }); }
     if (url.pathname === '/batch' && req.method === 'POST') {
-      const { uid, ops, clientId } = await readBody(req);
+      const { uid, ops, clientId, jetonVerifie } = await readBody(req);
+      // Règle Firestore « email_verified == true » : un jeton non vérifié ne peut rien écrire (permission-denied)
+      if (exigerVerification && jetonVerifie === false) return json(res, 403, { error: 'permission-denied', message: 'email non vérifié dans le jeton' });
       ensureUser(uid);
       const cols = collections.get(uid);
       // « Créer seulement si absent » (runTransaction du faux SDK) : refuse TOUT le batch si le document existe déjà -- 409, comme une transaction abandonnée.
