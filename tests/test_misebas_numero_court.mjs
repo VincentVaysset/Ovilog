@@ -175,5 +175,53 @@ for (const desktop of [false, true]) {
   console.log('OK 4 numéros existants (ancien format 11 chiffres) : jamais modifiés, jamais contournés.');
   await page.context().close();
 }
+// ================================================================ 5. indicatif de marquage AFFICHÉ devant le champ (éleveur sans lecteur : il ne tape que les 5 chiffres)
+for (const desktop of [false, true]) {
+  const nom = desktop ? 'PC' : 'MOBILE';
+  const page = await ouvrir(desktop);
+  const E3 = n => '250016299' + '9' + 3 + String(n).padStart(5, '0');
+  const prefixe = (sel) => page.evaluate(sel => {
+    const champ = document.querySelector(sel), g = champ.closest('.eid-groupe');
+    if (!g) return null;
+    const p = g.querySelector('.eid-prefixe');
+    return { texte: p.textContent, visible: getComputedStyle(p).display !== 'none', placeholder: champ.placeholder };
+  }, sel);
+  await page.evaluate(() => { resetMisebasRapideSession(); render('misebas-rapide'); });
+  await page.fill('#scan-misebas', E3(103).slice(-5)); await page.press('#scan-misebas', 'Enter');
+  await page.waitForSelector('#lamb-list-rapide');
+  const sel = '.eid-input-rapide[data-id="0"]';
+  let p = await prefixe(sel);
+  check(p && p.texte === 'FR 162991' && p.visible && /71001/.test(p.placeholder), nom + ' : « FR 162991 » affiché devant le champ vide : ' + JSON.stringify(p));
+  if (desktop) check(!/bip|scann/i.test(p.placeholder), 'PC : ni « bip » ni « Scanner » dans le champ');
+  await page.fill(sel, '61007');
+  check((await prefixe(sel)).visible, nom + ' : préfixe toujours visible pendant la frappe des 5 chiffres');
+  await page.fill(sel, '250016299163008');
+  check(!(await prefixe(sel)).visible, nom + ' : EID bippé (15 chiffres) : préfixe masqué, n° pris tel quel');
+  // agneau adopté venant d'un AUTRE élevage : on tape son n° national complet, il est gardé avec SON indicatif
+  await page.fill(sel, '170001 61009');
+  check(!(await prefixe(sel)).visible, nom + ' : n° national d\'un autre élevage : préfixe masqué');
+  await page.click('.sexe-opt-rapide[data-id="0"][data-val="Mâle"]');
+  await page.click('#btn-valider-misebas');
+  eq(await page.evaluate(() => DB.brebis.find(b => b.id.endsWith('00103')).agnelages.map(a => a.lambs.map(l => l.eid))), [['250017000161009']], nom + ' : agneau d\'un autre élevage enregistré avec son propre indicatif');
+  // sans indicatif : champ simple, comme avant
+  await page.evaluate(() => { DB.exploitation.indicatifMarquage = ''; resetMisebasRapideSession(); render('misebas-rapide'); });
+  await page.fill('#scan-misebas', E3(102).slice(-5)); await page.press('#scan-misebas', 'Enter');
+  await page.waitForSelector('#lamb-list-rapide');
+  eq(await prefixe(sel), null, nom + ' : sans indicatif, aucun préfixe affiché');
+  console.log('OK 5 ' + nom + ' : indicatif affiché devant le champ, masqué pour un EID bippé ou un n° complet, absent sans indicatif.');
+  await page.context().close();
+}
+// fiche brebis : même affichage, et une mise bas déjà enregistrée (EID complet) s'ouvre sans préfixe
+{
+  const page = await ouvrir(false);
+  await page.evaluate(() => { currentSheepId = DB.brebis[2].id; editContext = null; render('add-agnelage'); });
+  await page.waitForSelector('#btn-save-agnelage');
+  const vis = () => page.evaluate(() => { const g = document.querySelector('.eid-input[data-id="1"]').closest('.eid-groupe'); return g ? [g.querySelector('.eid-prefixe').textContent, getComputedStyle(g.querySelector('.eid-prefixe')).display !== 'none'] : null; });
+  eq(await vis(), ['FR 162991', true], 'fiche brebis : préfixe affiché');
+  await page.fill('.eid-input[data-id="1"]', '250016299163010');
+  eq(await vis(), ['FR 162991', false], 'fiche brebis : masqué pour un EID bippé');
+  console.log('OK 5 fiche brebis : même affichage du préfixe.');
+  await page.context().close();
+}
 await browser.close();
 console.log('OK test_misebas_numero_court');

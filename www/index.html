@@ -1214,6 +1214,12 @@
   .mb-ag { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--ch-bord); border-radius: 14px; background: var(--ch-ligne-alt); }
   .mb-ag .tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .mb-ag input[type=text] { margin: 0; }
+  /* N° d'agneau à la mise bas : indicatif de marquage affiché devant le champ (champEidAgneauHtml) ; masqué dès qu'un n° complet est saisi ou bippé */
+  .eid-groupe { display: flex; align-items: stretch; width: 100%; border: 1px solid var(--ch-bord-champ); border-radius: var(--radius); background: var(--ch-carte); overflow: hidden; margin-bottom: 4px; }
+  .eid-groupe:focus-within { border-color: var(--ch-vert); box-shadow: 0 0 0 3px var(--ch-vert-pastel); }
+  .eid-groupe .eid-prefixe { display: flex; align-items: center; padding: 0 10px; background: var(--ch-ligne-alt); border-right: 1px solid var(--ch-separateur); color: var(--ch-icone); font-size: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .eid-groupe.eid-complet .eid-prefixe { display: none; }
+  body .eid-groupe input[type=text] { flex: 1; min-width: 0; margin: 0; border: 0; border-radius: 0; box-shadow: none !important; font-variant-numeric: tabular-nums; }
   .mb-ag .tab-bar { margin: 0; }
   /* Chantier de tri mobile : tuiles, une ligne de compteur, onglets segmentés, cartes, bandeau « Annuler » */
   .tri-mobile { display: flex; flex-direction: column; gap: 12px; }
@@ -2516,6 +2522,23 @@ function apercuEidAgneau(saisie, dateISO) {
   if (conflit) return { texte: messageEidDejaUtilise(conflit), ton: 'danger', resolu: r };
   if (r.auto) return { texte: "Né dans l'élevage : " + r.national + (r.alerte ? ' · ' + r.alerte : ''), ton: r.alerte ? 'alerte' : 'normal', resolu: r };
   return { texte: "Numéro d'ordre : n°" + numeroVisuel(r.eid), ton: 'normal', resolu: r };
+}
+/* Champ du n° d'un agneau à la mise bas (fiche brebis, saisie rapide mobile et PC) : quand l'indicatif de marquage est connu, il est AFFICHÉ devant le champ
+   (« FR 162991 », grisé, non modifiable) pour que l'éleveur sans lecteur voie qu'il ne tape que les 5 chiffres. Affichage seulement : la valeur du champ reste
+   ce qui est tapé, et c'est toujours resoudreEidAgneau qui reconstitue l'EID. Dès que le champ contient autre chose qu'un n° court (EID bippé, n° national
+   d'un autre élevage, saisie libre), le préfixe disparaît : le numéro est pris tel quel. Sans indicatif à 6 chiffres : champ simple, comme avant. */
+function eidAgneauSansPrefixe(valeur) { return !/^\d{0,5}$/.test(cleanEid(String(valeur || ''))); }
+function champEidAgneauHtml(classe, id, valeur, placeholderSansIndicatif, style) {
+  const ind = indicatifMarquageElevage();
+  const pc = isDesktopMode();
+  const ph = ind ? (pc ? 'Ex. 71001' : 'Ex. 71001, ou bip') : placeholderSansIndicatif;
+  const champ = `<input type="text" class="${classe}" data-id="${id}" value="${xlsxEscape(valeur || '')}" placeholder="${ph}" inputmode="numeric" autocomplete="off"${ind ? ` aria-label="N° de l'agneau, après FR ${ind}"` : ''}${style && !ind ? ` style="${style}"` : ''}>`;
+  if (!ind) return champ;
+  return `<div class="eid-groupe${eidAgneauSansPrefixe(valeur) ? ' eid-complet' : ''}"${style ? ` style="${style}"` : ''}><span class="eid-prefixe" aria-hidden="true">FR ${ind}</span>${champ}</div>`;
+}
+function majPrefixeEidAgneau(champ) {
+  const groupe = champ && champ.closest('.eid-groupe');
+  if (groupe) groupe.classList.toggle('eid-complet', eidAgneauSansPrefixe(champ.value));
 }
 
 /* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, TOUS
@@ -12084,7 +12107,7 @@ function renderAddAgnelage(sheepId) {
       </div>
       <div class="eid-block" data-id="${id}">
         <label>${isDesktopMode() ? 'N° ou EID de l\'agneau' : 'EID (bip agneau) ou n°'}</label>
-        <input type="text" class="eid-input" data-id="${id}" inputmode="numeric" autocomplete="off" placeholder="${isDesktopMode() ? 'Saisir le n° (ex. 71001) ou l\'EID' : 'Scanner, ou saisir le n° (ex. 71001)'}">
+        ${champEidAgneauHtml('eid-input', id, '', isDesktopMode() ? 'Saisir le n° (ex. 71001) ou l\'EID' : 'Scanner, ou saisir le n° (ex. 71001)')}
         <div class="eid-preview" data-id="${id}" style="font-size:12px;margin-bottom:10px;"></div>
         <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
           <input type="checkbox" class="adopt-check" data-id="${id}" style="width:16px;height:16px;margin:0;">
@@ -12125,6 +12148,7 @@ function renderAddAgnelage(sheepId) {
     if (eidInput) {
       attachEidBeep(eidInput);
       eidInput.addEventListener('input', () => {
+        majPrefixeEidAgneau(eidInput);
         const v = eidInput.value.trim();
         if (v === (lambs[id].eidOriginal || '')) { eidPreview.textContent = ''; return; } // valeur inchangée (édition) : pas de re-vérification
         if (!v) { eidPreview.textContent = ''; return; }
@@ -12162,7 +12186,7 @@ function renderAddAgnelage(sheepId) {
       if (sexeBtn) sexeBtn.click();
       if (l.sexe !== 'Mort-né') {
         const eidInput = document.querySelector(`.eid-input[data-id="${id}"]`);
-        if (eidInput) eidInput.value = l.eid || '';
+        if (eidInput) { eidInput.value = l.eid || ''; majPrefixeEidAgneau(eidInput); }
         lambs[id].eidOriginal = l.eid || ''; // valeur de référence : re-vérifiée seulement si modifiée (voir eid-input 'input')
         if (l.adopte) {
           const check = document.querySelector(`.adopt-check[data-id="${id}"]`);
@@ -13282,7 +13306,7 @@ function renderMiseBasRapide() {
   function lambRowHtml(l, i) {
     return `<tr data-i="${i}"${i % 2 ? ' class="alt"' : ''}>
       <td class="n">${i + 1}</td>
-      <td>${l.mortNe ? '<span class="info">pas de boucle</span>' : `<input type="text" class="eid-input-rapide" data-id="${i}" value="${l.eid}" placeholder="Saisir le n° (ex. 71001) ou l'EID" inputmode="numeric" autocomplete="off" style="margin:0;min-width:170px;"><div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;white-space:normal;"></div>`}</td>
+      <td>${l.mortNe ? '<span class="info">pas de boucle</span>' : `${champEidAgneauHtml('eid-input-rapide', i, l.eid, "Saisir le n° (ex. 71001) ou l'EID", 'margin:0;min-width:200px;')}<div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;white-space:normal;"></div>`}</td>
       <td><div class="tab-bar sexe-bar" style="margin:0;display:inline-flex;"><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Mâle' ? ' active' : ''}" data-id="${i}" data-val="Mâle">Mâle</button><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Femelle' ? ' active' : ''}" data-id="${i}" data-val="Femelle">Femelle</button></div></td>
       <td><input type="checkbox" class="mortne-check-rapide" data-id="${i}" aria-label="Mort-né"${l.mortNe ? ' checked' : ''}></td>
       <td>${l.mortNe ? '<span class="info">—</span>' : `<label class="adopt-cell" style="display:inline-flex;align-items:center;gap:6px;margin:0;"><input type="checkbox" class="adopt-check-rapide" data-id="${i}"${l.adopte ? ' checked' : ''}><span>Adopté</span></label><div class="adopt-field-rapide${l.adopte ? '' : ' hidden'}" data-id="${i}" style="display:${l.adopte ? 'block' : 'none'};margin-top:4px;"><input type="text" class="adopt-eid-rapide" data-id="${i}" value="${l.adoptNum}" placeholder="N° ou EID de la mère" autocomplete="off" style="margin:0;min-width:170px;"><div class="adopt-preview-rapide" data-id="${i}" style="font-size:12px;white-space:normal;"></div></div>`}</td>
@@ -13295,7 +13319,7 @@ function renderMiseBasRapide() {
     const eidOk = !l.mortNe && !resoluL.erreur && cleanEid(resoluL.eid).length >= 11;
     return `<div class="mb-ag" data-i="${i}">
       <div class="tete"><b>Agneau ${i + 1}</b><span class="mb-pastille${l.mortNe ? ' ambre' : eidOk ? ' vert' : ''}" data-pastille="${i}">${l.mortNe ? 'Mort-né' : eidOk ? (resoluL.auto ? 'N° complété' : 'EID bippé') : 'EID à saisir'}</span></div>
-      ${l.mortNe ? '' : `<input type="text" class="eid-input-rapide" data-id="${i}" value="${l.eid}" placeholder="Scanner, ou saisir le n° (ex. 71001)" inputmode="numeric" autocomplete="off"><div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;"></div>`}
+      ${l.mortNe ? '' : `${champEidAgneauHtml('eid-input-rapide', i, l.eid, 'Scanner, ou saisir le n° (ex. 71001)')}<div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;"></div>`}
       <label class="ligne-interrupteur" style="font-weight:500;"><span>Mort-né (pas de boucle)</span><input type="checkbox" class="mortne-check-rapide interrupteur" data-id="${i}"${l.mortNe ? ' checked' : ''}></label>
       <div class="tab-bar sexe-bar"><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Mâle' ? ' active' : ''}" data-id="${i}" data-val="Mâle">Mâle</button><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Femelle' ? ' active' : ''}" data-id="${i}" data-val="Femelle">Femelle</button></div>
       ${l.mortNe ? '<div class="info">Le sexe du mort-né est facultatif.</div>' : `
@@ -13327,6 +13351,7 @@ function renderMiseBasRapide() {
         attachEidBeep(eidInput);
         eidInput.addEventListener('input', () => {
           l.eid = eidInput.value;
+          majPrefixeEidAgneau(eidInput);
           const v = eidInput.value.trim(), prev = q('.eid-preview-rapide'), pastille = zone.querySelector(`[data-pastille="${i}"]`);
           const ap = apercuEidAgneau(v, form.date);
           const ok = !ap.resolu.erreur && cleanEid(ap.resolu.eid).length >= 11;
