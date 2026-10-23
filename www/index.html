@@ -1215,6 +1215,12 @@
   .mb-ag { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--ch-bord); border-radius: 14px; background: var(--ch-ligne-alt); }
   .mb-ag .tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .mb-ag input[type=text] { margin: 0; }
+  /* N° d'agneau à la mise bas : indicatif de marquage affiché devant le champ (champEidAgneauHtml) ; masqué dès qu'un n° complet est saisi ou bippé */
+  .eid-groupe { display: flex; align-items: stretch; width: 100%; border: 1px solid var(--ch-bord-champ); border-radius: var(--radius); background: var(--ch-carte); overflow: hidden; margin-bottom: 4px; }
+  .eid-groupe:focus-within { border-color: var(--ch-vert); box-shadow: 0 0 0 3px var(--ch-vert-pastel); }
+  .eid-groupe .eid-prefixe { display: flex; align-items: center; padding: 0 10px; background: var(--ch-ligne-alt); border-right: 1px solid var(--ch-separateur); color: var(--ch-icone); font-size: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .eid-groupe.eid-complet .eid-prefixe { display: none; }
+  body .eid-groupe input[type=text] { flex: 1; min-width: 0; margin: 0; border: 0; border-radius: 0; box-shadow: none !important; font-variant-numeric: tabular-nums; }
   .mb-ag .tab-bar { margin: 0; }
   /* Chantier de tri mobile : tuiles, une ligne de compteur, onglets segmentés, cartes, bandeau « Annuler » */
   .tri-mobile { display: flex; flex-direction: column; gap: 12px; }
@@ -1579,16 +1585,24 @@ function libelleVersion() {
    fonction renvoie false, y compris dans un navigateur de test classique. */
 /* Saisie en cours : mémorise le champ actif (id, valeur, sélection) avant un redessin déclenché par la synchro ou par un filtre, et le rétablit après -- sans quoi
    la valeur tapée et le focus sont perdus (le champ est recréé). Ne concerne que les champs avec un id, de la même vue ; jamais les cases, boutons ni listes. */
+/* Champs sans id mais repérés par une classe + data-id (n° des agneaux, mère adoptive…) : retrouvés par ce couple après le redessin. */
+function selecteurSaisieEnCours(a) {
+  if (a.id) return '#' + CSS.escape(a.id);
+  const cls = a.classList && a.classList[0], dataId = a.getAttribute('data-id');
+  return cls && dataId !== null ? '.' + CSS.escape(cls) + '[data-id="' + CSS.escape(dataId) + '"]' : null;
+}
 function capturerSaisieEnCours() {
   const a = document.activeElement, zone = document.getElementById('app');
-  if (!a || !a.id || !zone || !zone.contains(a) || !/^(INPUT|TEXTAREA)$/.test(a.tagName) || ['checkbox', 'radio', 'button', 'submit', 'file', 'range', 'color'].includes(a.type)) return null;
+  if (!a || !zone || !zone.contains(a) || !/^(INPUT|TEXTAREA)$/.test(a.tagName) || ['checkbox', 'radio', 'button', 'submit', 'file', 'range', 'color'].includes(a.type)) return null;
+  const selecteur = selecteurSaisieEnCours(a);
+  if (!selecteur) return null;
   let ss = null, se = null;
   try { ss = a.selectionStart; se = a.selectionEnd; } catch (e) { /* champ numérique ou date : pas de sélection */ }
-  return { id: a.id, tag: a.tagName, valeur: a.value, ss, se, vue: currentView };
+  return { selecteur, tag: a.tagName, valeur: a.value, ss, se, vue: currentView };
 }
 function restaurerSaisieEnCours(saisie) {
   if (!saisie || currentView !== saisie.vue) return;
-  const n = document.getElementById(saisie.id);
+  const n = document.querySelector(saisie.selecteur);
   if (!n || n.tagName !== saisie.tag) return;
   if (n.value !== saisie.valeur) n.value = saisie.valeur;
   n.focus();
@@ -1613,6 +1627,16 @@ function isDesktopMode() {
 // plus bas, dont l'effet est neutralisé par cette classe sur desktop (le
 // panneau reste affiché quoi qu'il arrive, comme une vraie sidebar).
 document.body.classList.toggle('desktop-shell', isDesktopMode());
+/* PC (Electron, Windows) : après une boîte native alert() ou confirm(), les champs peuvent ne plus recevoir la frappe tant que la fenêtre n'a pas
+   perdu puis repris le focus (bug connu d'Electron). Chaque boîte est donc suivie d'un rappel du focus à la fenêtre (electronAPI.refocus, voir
+   electron/main.js). Le comportement des boîtes (texte, réponse de confirm) est inchangé ; rien ne change hors PC. */
+(function reparerFocusApresBoiteNative() {
+  if (!isDesktopMode() || !window.electronAPI || typeof window.electronAPI.refocus !== 'function') return;
+  const refocus = () => { try { window.electronAPI.refocus(); } catch (e) { /* ignoré */ } };
+  const alertNatif = window.alert.bind(window), confirmNatif = window.confirm.bind(window);
+  window.alert = function (msg) { try { return alertNatif(msg); } finally { refocus(); } };
+  window.confirm = function (msg) { try { return confirmNatif(msg); } finally { refocus(); } };
+})();
 
 /* ---------- Stockage local ---------- */
 const DB_KEY = 'troupeau_data_v1';
@@ -2492,8 +2516,13 @@ function resoudreEidAgneau(saisie, dateISO) {
   }
   if (!eid) return { eid: brut, auto: false };
   const res = { eid, auto: true, national: eid.slice(4, 10) + ' ' + eid.slice(10) };
-  const annee = parseInt(String(dateISO || '').slice(0, 4), 10);
-  if (annee && parseInt(eid.charAt(10), 10) !== annee % 10) res.alerte = "Le chiffre d'année du n° (" + eid.charAt(10) + ") ne correspond pas à la date de naissance (" + annee + ").";
+  // Chiffre d'année : les boucles d'une campagne portent le chiffre de la CAMPAGNE (nommée par son année de fin : un agneau né en novembre 2026,
+  // campagne 2027, est bouclé en 7). Le chiffre de l'année civile de naissance reste accepté aussi ; alerte seulement s'il ne colle à aucun des deux.
+  const date = String(dateISO || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const annee = parseInt(date.slice(0, 4), 10), campagne = campagneAnneeDebutPourDate(date) + 1, chiffre = parseInt(eid.charAt(10), 10);
+    if (chiffre !== annee % 10 && chiffre !== campagne % 10) res.alerte = "Le chiffre d'année du n° (" + eid.charAt(10) + ") ne correspond pas à la campagne " + campagne + (campagne !== annee ? ' ni à l\'année de naissance (' + annee + ')' : '') + '.';
+  }
   return res;
 }
 /* Un numéro déjà enregistré l'est peut-être sous une AUTRE forme (anciennes fiches : EID sur 11 chiffres, avec ou sans espaces). Aucun numéro enregistré n'est jamais modifié ni converti ;
@@ -2517,6 +2546,23 @@ function apercuEidAgneau(saisie, dateISO) {
   if (conflit) return { texte: messageEidDejaUtilise(conflit), ton: 'danger', resolu: r };
   if (r.auto) return { texte: "Né dans l'élevage : " + r.national + (r.alerte ? ' · ' + r.alerte : ''), ton: r.alerte ? 'alerte' : 'normal', resolu: r };
   return { texte: "Numéro d'ordre : n°" + numeroVisuel(r.eid), ton: 'normal', resolu: r };
+}
+/* Champ du n° d'un agneau à la mise bas (fiche brebis, saisie rapide mobile et PC) : quand l'indicatif de marquage est connu, il est AFFICHÉ devant le champ
+   (« FR 162991 », grisé, non modifiable) pour que l'éleveur sans lecteur voie qu'il ne tape que les 5 chiffres. Affichage seulement : la valeur du champ reste
+   ce qui est tapé, et c'est toujours resoudreEidAgneau qui reconstitue l'EID. Dès que le champ contient autre chose qu'un n° court (EID bippé, n° national
+   d'un autre élevage, saisie libre), le préfixe disparaît : le numéro est pris tel quel. Sans indicatif à 6 chiffres : champ simple, comme avant. */
+function eidAgneauSansPrefixe(valeur) { return !/^\d{0,5}$/.test(cleanEid(String(valeur || ''))); }
+function champEidAgneauHtml(classe, id, valeur, placeholderSansIndicatif, style) {
+  const ind = indicatifMarquageElevage();
+  const pc = isDesktopMode();
+  const ph = ind ? (pc ? 'Ex. 71001' : 'Ex. 71001, ou bip') : placeholderSansIndicatif;
+  const champ = `<input type="text" class="${classe}" data-id="${id}" value="${xlsxEscape(valeur || '')}" placeholder="${ph}" inputmode="numeric" autocomplete="off"${ind ? ` aria-label="N° de l'agneau, après FR ${ind}"` : ''}${style && !ind ? ` style="${style}"` : ''}>`;
+  if (!ind) return champ;
+  return `<div class="eid-groupe${eidAgneauSansPrefixe(valeur) ? ' eid-complet' : ''}"${style ? ` style="${style}"` : ''}><span class="eid-prefixe" aria-hidden="true">FR ${ind}</span>${champ}</div>`;
+}
+function majPrefixeEidAgneau(champ) {
+  const groupe = champ && champ.closest('.eid-groupe');
+  if (groupe) groupe.classList.toggle('eid-complet', eidAgneauSansPrefixe(champ.value));
 }
 
 /* Vérifie qu'un EID n'appartient à AUCUN autre animal de la base, TOUS
@@ -12099,7 +12145,7 @@ function renderAddAgnelage(sheepId) {
       </div>
       <div class="eid-block" data-id="${id}">
         <label>${isDesktopMode() ? 'N° ou EID de l\'agneau' : 'EID (bip agneau) ou n°'}</label>
-        <input type="text" class="eid-input" data-id="${id}" inputmode="numeric" autocomplete="off" placeholder="${isDesktopMode() ? 'Saisir le n° (ex. 71001) ou l\'EID' : 'Scanner, ou saisir le n° (ex. 71001)'}">
+        ${champEidAgneauHtml('eid-input', id, '', isDesktopMode() ? 'Saisir le n° (ex. 71001) ou l\'EID' : 'Scanner, ou saisir le n° (ex. 71001)')}
         <div class="eid-preview" data-id="${id}" style="font-size:12px;margin-bottom:10px;"></div>
         <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
           <input type="checkbox" class="adopt-check" data-id="${id}" style="width:16px;height:16px;margin:0;">
@@ -12140,6 +12186,7 @@ function renderAddAgnelage(sheepId) {
     if (eidInput) {
       attachEidBeep(eidInput);
       eidInput.addEventListener('input', () => {
+        majPrefixeEidAgneau(eidInput);
         const v = eidInput.value.trim();
         if (v === (lambs[id].eidOriginal || '')) { eidPreview.textContent = ''; return; } // valeur inchangée (édition) : pas de re-vérification
         if (!v) { eidPreview.textContent = ''; return; }
@@ -12177,7 +12224,7 @@ function renderAddAgnelage(sheepId) {
       if (sexeBtn) sexeBtn.click();
       if (l.sexe !== 'Mort-né') {
         const eidInput = document.querySelector(`.eid-input[data-id="${id}"]`);
-        if (eidInput) eidInput.value = l.eid || '';
+        if (eidInput) { eidInput.value = l.eid || ''; majPrefixeEidAgneau(eidInput); }
         lambs[id].eidOriginal = l.eid || ''; // valeur de référence : re-vérifiée seulement si modifiée (voir eid-input 'input')
         if (l.adopte) {
           const check = document.querySelector(`.adopt-check[data-id="${id}"]`);
@@ -13297,7 +13344,7 @@ function renderMiseBasRapide() {
   function lambRowHtml(l, i) {
     return `<tr data-i="${i}"${i % 2 ? ' class="alt"' : ''}>
       <td class="n">${i + 1}</td>
-      <td>${l.mortNe ? '<span class="info">pas de boucle</span>' : `<input type="text" class="eid-input-rapide" data-id="${i}" value="${l.eid}" placeholder="Saisir le n° (ex. 71001) ou l'EID" inputmode="numeric" autocomplete="off" style="margin:0;min-width:170px;"><div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;white-space:normal;"></div>`}</td>
+      <td>${l.mortNe ? '<span class="info">pas de boucle</span>' : `${champEidAgneauHtml('eid-input-rapide', i, l.eid, "Saisir le n° (ex. 71001) ou l'EID", 'margin:0;min-width:200px;')}<div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;white-space:normal;"></div>`}</td>
       <td><div class="tab-bar sexe-bar" style="margin:0;display:inline-flex;"><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Mâle' ? ' active' : ''}" data-id="${i}" data-val="Mâle">Mâle</button><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Femelle' ? ' active' : ''}" data-id="${i}" data-val="Femelle">Femelle</button></div></td>
       <td><input type="checkbox" class="mortne-check-rapide" data-id="${i}" aria-label="Mort-né"${l.mortNe ? ' checked' : ''}></td>
       <td>${l.mortNe ? '<span class="info">—</span>' : `<label class="adopt-cell" style="display:inline-flex;align-items:center;gap:6px;margin:0;"><input type="checkbox" class="adopt-check-rapide" data-id="${i}"${l.adopte ? ' checked' : ''}><span>Adopté</span></label><div class="adopt-field-rapide${l.adopte ? '' : ' hidden'}" data-id="${i}" style="display:${l.adopte ? 'block' : 'none'};margin-top:4px;"><input type="text" class="adopt-eid-rapide" data-id="${i}" value="${l.adoptNum}" placeholder="N° ou EID de la mère" autocomplete="off" style="margin:0;min-width:170px;"><div class="adopt-preview-rapide" data-id="${i}" style="font-size:12px;white-space:normal;"></div></div>`}</td>
@@ -13310,7 +13357,7 @@ function renderMiseBasRapide() {
     const eidOk = !l.mortNe && !resoluL.erreur && cleanEid(resoluL.eid).length >= 11;
     return `<div class="mb-ag" data-i="${i}">
       <div class="tete"><b>Agneau ${i + 1}</b><span class="mb-pastille${l.mortNe ? ' ambre' : eidOk ? ' vert' : ''}" data-pastille="${i}">${l.mortNe ? 'Mort-né' : eidOk ? (resoluL.auto ? 'N° complété' : 'EID bippé') : 'EID à saisir'}</span></div>
-      ${l.mortNe ? '' : `<input type="text" class="eid-input-rapide" data-id="${i}" value="${l.eid}" placeholder="Scanner, ou saisir le n° (ex. 71001)" inputmode="numeric" autocomplete="off"><div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;"></div>`}
+      ${l.mortNe ? '' : `${champEidAgneauHtml('eid-input-rapide', i, l.eid, 'Scanner, ou saisir le n° (ex. 71001)')}<div class="eid-preview-rapide" data-id="${i}" style="font-size:12px;"></div>`}
       <label class="ligne-interrupteur" style="font-weight:500;"><span>Mort-né (pas de boucle)</span><input type="checkbox" class="mortne-check-rapide interrupteur" data-id="${i}"${l.mortNe ? ' checked' : ''}></label>
       <div class="tab-bar sexe-bar"><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Mâle' ? ' active' : ''}" data-id="${i}" data-val="Mâle">Mâle</button><button type="button" class="tab-btn sexe-opt-rapide${l.sexe === 'Femelle' ? ' active' : ''}" data-id="${i}" data-val="Femelle">Femelle</button></div>
       ${l.mortNe ? '<div class="info">Le sexe du mort-né est facultatif.</div>' : `
@@ -13340,8 +13387,8 @@ function renderMiseBasRapide() {
       const eidInput = q('.eid-input-rapide');
       if (eidInput) {
         attachEidBeep(eidInput);
-        eidInput.addEventListener('input', () => {
-          l.eid = eidInput.value;
+        const majApercu = () => {
+          majPrefixeEidAgneau(eidInput);
           const v = eidInput.value.trim(), prev = q('.eid-preview-rapide'), pastille = zone.querySelector(`[data-pastille="${i}"]`);
           const ap = apercuEidAgneau(v, form.date);
           const ok = !ap.resolu.erreur && cleanEid(ap.resolu.eid).length >= 11;
@@ -13349,7 +13396,10 @@ function renderMiseBasRapide() {
           if (!v) { prev.textContent = ''; return; }
           prev.textContent = ap.texte;
           prev.style.color = ap.ton === 'danger' ? 'var(--danger)' : ap.ton === 'alerte' ? 'var(--ch-ambre-texte)' : 'var(--ch-texte2)';
-        });
+        };
+        eidInput.addEventListener('input', () => { l.eid = eidInput.value; majApercu(); });
+        // champs redessinés (ajout ou retrait d'un agneau, mort-né) : l'aperçu des n° déjà saisis est recalculé, sans événement (donc sans rejouer le bip)
+        if (l.eid) majApercu();
       }
       const check = q('.adopt-check-rapide');
       if (check) {
@@ -30143,7 +30193,19 @@ saveData = function(data) {
    propre écriture confirmée) : met à jour DB + le cache local + l'écran
    affiché, sans redéclencher un envoi vers le cloud (sync.applyingRemote). */
 let redessinSynchroDiffere = false;
+/* Écrans de saisie dont le formulaire en cours ne vit QUE à l'écran (brebis scannée, agneaux, sexe, n° tapés…) : les redessiner sur un écho de synchro
+   remettait le formulaire à zéro sous les doigts (le champ où l'on tapait disparaissait). Sur ces écrans, les données reçues sont appliquées tout de suite
+   (DB et stockage local : contrôles de doublons et d'agnelage déjà enregistré toujours à jour), mais l'écran n'est pas reconstruit ; il se rafraîchit
+   à l'enregistrement ou au changement d'écran. */
+function vueDeSaisieEnCours(vue) {
+  return /^(add|edit)-/.test(vue || '') || vue === 'misebas-rapide' || vue === 'echo-rapide';
+}
 function applyRemoteUpdate(mutatorFn) {
+  if (vueDeSaisieEnCours(currentView)) {
+    sync.applyingRemote = true;
+    try { mutatorFn(); localStorage.setItem(DB_KEY, JSON.stringify(DB)); } finally { sync.applyingRemote = false; }
+    return;
+  }
   if (saisieDateEnCours()) {
     // les données sont appliquées tout de suite, l'écran attend la fin de la frappe (voir saisieDateEnCours)
     sync.applyingRemote = true;
@@ -30170,6 +30232,7 @@ function applyRemoteUpdate(mutatorFn) {
   }
 }
 window.__redessinSynchro = () => applyRemoteUpdate(() => {});      // même chemin qu'un instantané distant (utilisé par les tests de saisie)
+window.__appliquerSynchro = (mutatorFn) => applyRemoteUpdate(mutatorFn);   // idem, avec une donnée distante (tests de saisie pendant une synchro)
 
 /* Report des instantanés Firestore pendant une opération groupée locale
    (voir operationGroupeeEnCours, posé par executerChangementCampagne) --

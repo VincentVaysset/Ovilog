@@ -114,6 +114,16 @@ app.whenReady().then(() => {
   ipcMain.handle('ovilog-install-update', () => {
     if (autoUpdater) autoUpdater.quitAndInstall();
   });
+  // Bug connu d'Electron sous Windows : après une boîte native (alert / confirm de la page), les champs ne reçoivent plus la frappe
+  // (« des fois je n'arrive pas à écrire dans la case ») tant que la fenêtre n'a pas perdu puis repris le focus. La page appelle ceci
+  // juste après chaque boîte (voir reparerFocusApresBoiteNative dans www/index.html) : on rend le focus clavier à la fenêtre.
+  ipcMain.on('ovilog-refocus', (event) => {
+    const fenetre = BrowserWindow.fromWebContents(event.sender);
+    if (!fenetre || fenetre.isDestroyed()) return;
+    fenetre.blur();
+    fenetre.focus();
+    event.sender.focus();
+  });
 
   if (autoUpdater) {
     // Branché AVANT tout appel : electron-updater journalise lui-même

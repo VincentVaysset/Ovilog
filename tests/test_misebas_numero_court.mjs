@@ -38,13 +38,15 @@ const EXISTANTE = '250016299' + '9' + 3 + '00101';
     const sans = (() => { const sauve = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = ''; const x = f('61001'); DB.exploitation.indicatifMarquage = sauve; return x; })();
     const repli = (() => { const sauve = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = ''; DB.exploitation.prefixeEid = '162991'; const x = f('61001'); DB.exploitation.indicatifMarquage = sauve; DB.exploitation.prefixeEid = ''; return x; })();
     const court = (() => { const sauve = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = '1629'; const x = f('61001'); DB.exploitation.indicatifMarquage = sauve; return x; })();
-    return { cinq: f('61001'), espaces: f('162991 61001'), onze: f('16299161001'), annee: f('71001'), bippe: f('250016299161001'), libre: f('ABC12'), quatre: f('6100'), vide: f(''), sans, repli, court, ageNaissance: anneeNaissance(f('61001').eid) };
+    return { cinq: f('61001'), espaces: f('162991 61001'), onze: f('16299161001'), annee: f('51001'), campagne: f('71001'), campagneAout: f('71001', '2026-08-15'), civile: f('61001', '2026-11-20'), bippe: f('250016299161001'), libre: f('ABC12'), quatre: f('6100'), vide: f(''), sans, repli, court, ageNaissance: anneeNaissance(f('61001').eid) };
   });
   eq(r.cinq.eid, '250016299161001', '5 chiffres : EID complet reconstitué (2500 + 162991 + 61001)');
   check(r.cinq.auto && r.cinq.national === '162991 61001' && !r.cinq.alerte && !r.cinq.erreur, 'n° national affiché, aucune alerte quand le chiffre d\'année colle à la date : ' + JSON.stringify(r.cinq));
   eq(r.espaces.eid, '250016299161001', 'n° national avec espace (162991 61001)');
   eq(r.onze.eid, '250016299161001', 'n° national sans espace (11 chiffres)');
-  check(r.annee.eid === '250016299171001' && /chiffre d'année du n° \(7\).*2026/.test(r.annee.alerte) && !r.annee.erreur, 'chiffre d\'année différent : ALERTE seulement (n° gardé) : ' + JSON.stringify(r.annee));
+  check(r.annee.eid === '250016299151001' && /chiffre d'année du n° \(5\).*campagne 2027.*2026/.test(r.annee.alerte) && !r.annee.erreur, 'chiffre d\'année ni campagne ni année civile : ALERTE seulement (n° gardé) : ' + JSON.stringify(r.annee));
+  check(!r.campagne.alerte && !r.civile.alerte, 'né en octobre-novembre 2026 (campagne 2027) : boucle en 7 (campagne) ou en 6 (année civile) acceptée sans alerte : ' + JSON.stringify([r.campagne, r.civile]));
+  check(/\(7\).*campagne 2026\.$/.test(r.campagneAout.alerte || ''), 'né en août 2026 (campagne 2026) : une boucle en 7 donne l\'alerte : ' + JSON.stringify(r.campagneAout));
   check(r.bippe.eid === '250016299161001' && !r.bippe.auto, 'EID bippé de 15 chiffres : inchangé');
   check(r.libre.eid === 'ABC12' && !r.libre.auto && r.quatre.eid === '6100' && !r.quatre.auto, 'saisie libre ou 4 chiffres : gardée telle quelle');
   check(r.vide.eid === '' && !r.vide.auto, 'vide : rien');
@@ -75,6 +77,8 @@ for (const desktop of [false, true]) {
   let a = await aper(0);
   check(a.texte === "Né dans l'élevage : 162991 61001" && (desktop || a.pastille === 'N° complété'), nom + ' : aperçu « Né dans l\'élevage : 162991 61001 »' + (desktop ? '' : ' + pastille « N° complété »') + ' : ' + JSON.stringify(a));
   await page.click('#add-lamb-rapide');
+  a = await aper(0);
+  check(a.texte === "Né dans l'élevage : 162991 61001" && (desktop || a.pastille === 'N° complété'), nom + ' : l\'aperçu de l\'agneau 1 reste affiché après l\'ajout d\'un agneau : ' + JSON.stringify(a));
   await sexe(1, 'Femelle');
   await page.fill('.eid-input-rapide[data-id="1"]', '162991 61002');
   // doublon dans la même portée
@@ -82,9 +86,12 @@ for (const desktop of [false, true]) {
   await page.click('#btn-valider-misebas');
   check(/même EID/.test(await page.evaluate(() => document.getElementById('err').textContent)), nom + ' : deux agneaux avec le même n° dans la portée : refusé');
   // alerte de chiffre d'année : visible, jamais bloquante
-  await page.fill('.eid-input-rapide[data-id="1"]', '71002');
+  await page.fill('.eid-input-rapide[data-id="1"]', '51002');
   a = await aper(1);
-  check(/chiffre d'année du n° \(7\)/.test(a.texte) && /ambre/.test(a.couleur || 'var(--ch-ambre-texte)'), nom + ' : alerte discrète sur le chiffre d\'année : ' + JSON.stringify(a));
+  check(/chiffre d'année du n° \(5\)/.test(a.texte) && /ambre/.test(a.couleur || 'var(--ch-ambre-texte)'), nom + ' : alerte discrète sur le chiffre d\'année : ' + JSON.stringify(a));
+  // boucle au chiffre de la campagne (2 octobre 2026 = campagne 2027) : aucune alerte
+  await page.fill('.eid-input-rapide[data-id="1"]', '71002');
+  check(!/chiffre d'année/.test((await aper(1)).texte), nom + ' : boucle en 7 pour la campagne 2027 : aucune alerte');
   // la date suit : en la passant à 2027 l'alerte disparaît pour 71002 et apparaît pour 61001
   await page.fill('#f-date-rapide', '2027-01-10'); await page.dispatchEvent('#f-date-rapide', 'change');
   eq(await page.evaluate(() => [/chiffre d'année/.test(document.querySelector('.eid-preview-rapide[data-id="0"]').textContent), /chiffre d'année/.test(document.querySelector('.eid-preview-rapide[data-id="1"]').textContent)]), [true, false], nom + ' : l\'alerte suit la date de naissance');
@@ -173,6 +180,54 @@ for (const desktop of [false, true]) {
   eq(r.libre, '250016299165005', 'un numéro libre est accepté et complété');
   check(r.numerosInchanges, 'AUCUN numéro déjà enregistré n\'est modifié (EID, n° SIEOL, père/mère, mère adoptive, agneaux) : ancien format 11 chiffres conservé tel quel');
   console.log('OK 4 numéros existants (ancien format 11 chiffres) : jamais modifiés, jamais contournés.');
+  await page.context().close();
+}
+// ================================================================ 5. indicatif de marquage AFFICHÉ devant le champ (éleveur sans lecteur : il ne tape que les 5 chiffres)
+for (const desktop of [false, true]) {
+  const nom = desktop ? 'PC' : 'MOBILE';
+  const page = await ouvrir(desktop);
+  const E3 = n => '250016299' + '9' + 3 + String(n).padStart(5, '0');
+  const prefixe = (sel) => page.evaluate(sel => {
+    const champ = document.querySelector(sel), g = champ.closest('.eid-groupe');
+    if (!g) return null;
+    const p = g.querySelector('.eid-prefixe');
+    return { texte: p.textContent, visible: getComputedStyle(p).display !== 'none', placeholder: champ.placeholder };
+  }, sel);
+  await page.evaluate(() => { resetMisebasRapideSession(); render('misebas-rapide'); });
+  await page.fill('#scan-misebas', E3(103).slice(-5)); await page.press('#scan-misebas', 'Enter');
+  await page.waitForSelector('#lamb-list-rapide');
+  const sel = '.eid-input-rapide[data-id="0"]';
+  let p = await prefixe(sel);
+  check(p && p.texte === 'FR 162991' && p.visible && /71001/.test(p.placeholder), nom + ' : « FR 162991 » affiché devant le champ vide : ' + JSON.stringify(p));
+  if (desktop) check(!/bip|scann/i.test(p.placeholder), 'PC : ni « bip » ni « Scanner » dans le champ');
+  await page.fill(sel, '61007');
+  check((await prefixe(sel)).visible, nom + ' : préfixe toujours visible pendant la frappe des 5 chiffres');
+  await page.fill(sel, '250016299163008');
+  check(!(await prefixe(sel)).visible, nom + ' : EID bippé (15 chiffres) : préfixe masqué, n° pris tel quel');
+  // agneau adopté venant d'un AUTRE élevage : on tape son n° national complet, il est gardé avec SON indicatif
+  await page.fill(sel, '170001 61009');
+  check(!(await prefixe(sel)).visible, nom + ' : n° national d\'un autre élevage : préfixe masqué');
+  await page.click('.sexe-opt-rapide[data-id="0"][data-val="Mâle"]');
+  await page.click('#btn-valider-misebas');
+  eq(await page.evaluate(() => DB.brebis.find(b => b.id.endsWith('00103')).agnelages.map(a => a.lambs.map(l => l.eid))), [['250017000161009']], nom + ' : agneau d\'un autre élevage enregistré avec son propre indicatif');
+  // sans indicatif : champ simple, comme avant
+  await page.evaluate(() => { DB.exploitation.indicatifMarquage = ''; resetMisebasRapideSession(); render('misebas-rapide'); });
+  await page.fill('#scan-misebas', E3(102).slice(-5)); await page.press('#scan-misebas', 'Enter');
+  await page.waitForSelector('#lamb-list-rapide');
+  eq(await prefixe(sel), null, nom + ' : sans indicatif, aucun préfixe affiché');
+  console.log('OK 5 ' + nom + ' : indicatif affiché devant le champ, masqué pour un EID bippé ou un n° complet, absent sans indicatif.');
+  await page.context().close();
+}
+// fiche brebis : même affichage, et une mise bas déjà enregistrée (EID complet) s'ouvre sans préfixe
+{
+  const page = await ouvrir(false);
+  await page.evaluate(() => { currentSheepId = DB.brebis[2].id; editContext = null; render('add-agnelage'); });
+  await page.waitForSelector('#btn-save-agnelage');
+  const vis = () => page.evaluate(() => { const g = document.querySelector('.eid-input[data-id="1"]').closest('.eid-groupe'); return g ? [g.querySelector('.eid-prefixe').textContent, getComputedStyle(g.querySelector('.eid-prefixe')).display !== 'none'] : null; });
+  eq(await vis(), ['FR 162991', true], 'fiche brebis : préfixe affiché');
+  await page.fill('.eid-input[data-id="1"]', '250016299163010');
+  eq(await vis(), ['FR 162991', false], 'fiche brebis : masqué pour un EID bippé');
+  console.log('OK 5 fiche brebis : même affichage du préfixe.');
   await page.context().close();
 }
 await browser.close();
