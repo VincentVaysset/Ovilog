@@ -30,7 +30,7 @@
 
 ## 4. En attente d'une décision du propriétaire
 
-- **Début de campagne réglable par compte** (questionnaire de l'ami : campagne qui pourrait commencer au 1er août) : inspection faite, correctif PROPOSÉ, pas codé. Juste aujourd'hui : nom de campagne, bornes, rattachement des dates, libellé de bascule. Faux si le début n'est pas octobre : la grille des mois (`moisInfoPourIndex`, `MOIS_LABELS_CAMPAGNE`, écrits en dur pour octobre) → Tank (total ≠ somme des mois), Calendrier du tank (août et septembre absents), Bilan de lactation, Qualité et Bilan économique ; textes « octobre à septembre » en dur (Bilan de lactation mobile, PC, PDF). Proposition : grille partant de `campagneMoisDebutConfig()` (sortie identique pour octobre), libellés tirés de `NOMS_MOIS`, textes par `campagneDateDebutLabel()` → `campagneDateFinLabel()`, nouveau test avec un début au 1er août. La Déclaration annuelle PAC reste en année civile.
+- **Début de campagne réglable : FAIT sur la branche (non fusionné)** — les mois de la production laitière suivent le début réglé (`moisCampagne`, test `test_campagne_debut_mois`). L'ami trait de décembre à fin juillet : non concerné en pratique.
 - **Jeux de test** : ils utilisent l'indicatif de marquage réel du propriétaire ; proposé (non fait) de le remplacer par un indicatif fictif.
 - **Test terrain du module reproduction** jamais fait en conditions réelles : vrai lot IA et vrai lot Éponge, mises bas dans / hors fenêtre, correction manuelle du code Repro, lot créé avant une bascule de campagne et mise bas saisie après.
 

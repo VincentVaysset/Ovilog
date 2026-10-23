@@ -3815,11 +3815,12 @@ function bilanCampagneQualite(campagne) {
 
   let sommeHorsQualite = 0, sommeAvecQualite = 0, volumePrixPondere = 0, montantSuperA = 0, montantPenalitesCampagne = 0;
   const superAParMois = {};
-  for (let i = 0; i < 12; i++) {
-    const info = moisInfoPourIndex(campagne, i);
-    const volumeMois = volumeTankMois(info.key);
-    const listMois = listCampagne.filter(p => p.date.slice(0, 7) === info.key);
-    const penalitesMois = penalitesCampagne.filter(p => (p.dateDebut || '').slice(0, 7) === info.key);
+  const moisC = moisCampagne(campagne);
+  for (let i = 0; i < moisC.length; i++) {
+    const info = moisC[i];
+    const volumeMois = volumeTankMoisCampagne(info);
+    const listMois = listCampagne.filter(p => dansMoisCampagne(info, p.date));
+    const penalitesMois = penalitesCampagne.filter(p => dansMoisCampagne(info, p.dateDebut || ''));
     const res = calculerPrixLaitMois(listMois, volumeMois, coef, penalitesMois);
     superAParMois[info.key] = res.superA.eligible;
     if (res.prixHorsQualite !== null) {
@@ -3915,9 +3916,10 @@ function tankCampagneData(campagne) {
   const jourPrelev = new Set((DB.prelevementsQualite || []).filter(p => p && p.date).map(p => p.date));
   const mois = [];
   let cumul = 0;
-  for (let i = 0; i < 12; i++) {
-    const info = moisInfoPourIndex(campagne, i);
-    const rs = releves.filter(l => l.date.slice(0, 7) === info.key);
+  const moisC = moisCampagne(campagne);
+  for (let i = 0; i < moisC.length; i++) {
+    const info = moisC[i];
+    const rs = releves.filter(l => dansMoisCampagne(info, l.date));
     const litres = Math.round(rs.reduce((s, l) => s + l.quantite, 0) * 10) / 10;
     cumul = Math.round((cumul + litres) * 10) / 10;
     mois.push({
@@ -3959,10 +3961,11 @@ function qualiteCampagneData(campagne) {
   const list = prelevementsCampagne(campagne);
   const bilan = bilanCampagneQualite(campagne);
   const mois = [];
-  for (let i = 0; i < 12; i++) {
-    const info = moisInfoPourIndex(campagne, i);
-    const prelevements = list.filter(p => p.date.slice(0, 7) === info.key);
-    const volume = volumeTankMois(info.key);
+  const moisC = moisCampagne(campagne);
+  for (let i = 0; i < moisC.length; i++) {
+    const info = moisC[i];
+    const prelevements = list.filter(p => dansMoisCampagne(info, p.date));
+    const volume = volumeTankMoisCampagne(info);
     const m = moyennesQualitePonderees(prelevements);
     mois.push({
       cle: info.key, libelle: moisLibelleLong(info.key), libelleCourt: info.label, indexMois: i,
@@ -7820,7 +7823,7 @@ function bilanLactationHtml() {
       <label>Brebis présentes (moyenne de présence sur la campagne)</label>
       <input type="number" step="0.1" id="bilan-lactation-brebis-presentes" placeholder="ex: 380" value="${ind.moyennePresence !== null && ind.moyennePresence !== undefined ? ind.moyennePresence : ''}">
       ${champCorrigeBadgeHtml(ind.moyennePresenceCorrige, 'btn-reset-lactation-presentes')}
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Calculé automatiquement : moyenne mensuelle de l'effectif sur les 12 mois de la campagne (octobre à septembre), à partir de l'effectif de début de campagne, ajustée chaque mois selon les sorties ET les entrées survenues ce mois-là. Modifiable si tu as une connaissance terrain plus fine.</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Calculé automatiquement : moyenne mensuelle de l'effectif sur les 12 mois de la campagne (${periodeMoisCampagneLibelle(campagne)}), à partir de l'effectif de début de campagne, ajustée chaque mois selon les sorties ET les entrées survenues ce mois-là. Modifiable si tu as une connaissance terrain plus fine.</div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">N-1 : <b>${txt(indN1.moyennePresence, '')}</b></div>
     </div>
 
@@ -7847,16 +7850,17 @@ function bilanLactationPcData(campagne) {
   const ind = bilanLactationIndicateurs(campagne, opts), indN1 = bilanLactationIndicateurs(campagne - 1, opts);
   const moisDebut = campagneMoisDebutConfig(), jourDebut = campagneJourDebutConfig();
   const mensuel = [];
-  for (let i = 0; i < 12; i++) {
-    const info = moisInfoPourIndex(campagne, i);
-    mensuel.push({ cle: info.key, label: MOIS_LABELS_CAMPAGNE[i], litres: volumeTankMois(info.key), effectif: effectifPresentADate(new Date(campagne, (moisDebut - 1) + i, jourDebut)) });
+  const moisC = moisCampagne(campagne);
+  for (let i = 0; i < moisC.length; i++) {
+    const info = moisC[i];
+    mensuel.push({ cle: info.key, label: info.labelCourt, litres: volumeTankMoisCampagne(info), effectif: effectifPresentADate(new Date(campagne, (moisDebut - 1) + i, jourDebut)) });
   }
   const sansControle = brebisMiseBasSansControleLaitier(campagne);
   const ecart = (a, b) => (a === null || a === undefined || b === null || b === undefined) ? null : Math.round((a - b) * 10) / 10;
   return {
     campagne, libelle: campagneLabel(campagne), periode: periodeNominaleTitre(campagne), ind, indN1, mensuel,
     litrageTank: mensuel.reduce((a, m) => a + m.litres, 0),
-    moyenneEffectifCalculee: Math.round(mensuel.reduce((a, m) => a + m.effectif, 0) / 12 * 10) / 10,
+    moyenneEffectifCalculee: Math.round(mensuel.reduce((a, m) => a + m.effectif, 0) / mensuel.length * 10) / 10,
     sansControle,
     comparatif: [
       { cle: 'litrage', label: 'Litrage total', unite: ' L', dec: 0, n: ind.litrageTotal, n1: indN1.litrageTotal },
@@ -7929,7 +7933,7 @@ function bilanLactationDesktopHtml() {
     <div class="brd-grid2">
       <div class="card">
         <p class="brd-ttl">Litrage par mois</p>
-        <p class="brd-note">Tank · octobre à septembre · en milliers de litres${corrigeLitrage ? ' · total du tank ' + litres(d.litrageTank) + ', litrage total corrigé à la main' : ''}</p>
+        <p class="brd-note">Tank · ${periodeMoisCampagneLibelle(campagne)} · en milliers de litres${corrigeLitrage ? ' · total du tank ' + litres(d.litrageTank) + ', litrage total corrigé à la main' : ''}</p>
         ${maxL > 0 ? barresLitrage : '<div class="brd-vide">Aucune saisie tank sur cette campagne.</div>'}
       </div>
       <div class="card">
@@ -7976,17 +7980,18 @@ function bilanEconomiquePcData(campagne) {
   const mois = [];
   const S = { volume: 0, hors: 0, grades: 0, superA: 0, penalites: 0, avec: 0 };
   const horsGain = { superA: 0, penalites: 0, mois: [] };
-  for (let i = 0; i < 12; i++) {
-    const info = moisInfoPourIndex(campagne, i);
-    const volume = volumeTankMois(info.key);
-    const listMois = listCampagne.filter(p => p.date.slice(0, 7) === info.key);
-    const penalitesMois = penalitesCampagne.filter(p => (p.dateDebut || '').slice(0, 7) === info.key);
+  const moisC = moisCampagne(campagne);
+  for (let i = 0; i < moisC.length; i++) {
+    const info = moisC[i];
+    const volume = volumeTankMoisCampagne(info);
+    const listMois = listCampagne.filter(p => dansMoisCampagne(info, p.date));
+    const penalitesMois = penalitesCampagne.filter(p => dansMoisCampagne(info, p.dateDebut || ''));
     const res = calculerPrixLaitMois(listMois, volume, coef, penalitesMois);
     const g = res.grades;
     const incidenceGrades = g.cellules.incidence + g.coliformes.incidence + g.floreTotale.incidence + g.butyriques.incidence;
     const compte = res.prixHorsQualite !== null;
     const m = {
-      cle: info.key, label: MOIS_LABELS_CAMPAGNE[i], libelle: info.label, hasData: DB.prelevementsQualite.some(p => p.date.slice(0, 7) === info.key),
+      cle: info.key, label: info.labelCourt, libelle: info.label, hasData: DB.prelevementsQualite.some(p => dansMoisCampagne(info, p.date)),
       volume, compte, res, coef,
       prixHors: res.prixHorsQualite, prixAvec: res.prixAvecQualite,
       montantHors: compte ? res.prixHorsQualite * volume / 1000 : null,
@@ -16296,12 +16301,30 @@ function renderJournal() {
 }
 
 /* ---------- Suivi qualité du lait ---------- */
-const MOIS_LABELS_CAMPAGNE = ['Oct', 'Nov', 'Déc', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep'];
-function moisInfoPourIndex(campagneDebut, idx) {
-  const year = idx < 3 ? campagneDebut : campagneDebut + 1;
-  const monthNum = ((idx + 9) % 12) + 1; // idx0 -> oct(10) ... idx11 -> sep(9)
-  const key = year + '-' + String(monthNum).padStart(2, '0');
-  return { key, label: MOIS_LABELS_CAMPAGNE[idx] + ' ' + String(year).slice(2) };
+/* Mois d'une campagne : la grille part du mois de début RÉGLÉ (campagneMoisDebutConfig), plus d'octobre écrit en dur. Début le 1er du mois :
+   12 mois civils. Début un autre jour (ex. 15 août) : 13 mois, le premier et le dernier partiels -- seuls leurs jours de la campagne comptent
+   (dansMoisCampagne), donc le total de la campagne est toujours la somme de ses mois. Début au 1er octobre : grille identique à l'ancienne. */
+const MOIS_COURTS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+function moisCampagne(campagne) {
+  const m0 = campagneMoisDebutConfig() - 1, n = campagneJourDebutConfig() === 1 ? 12 : 13, out = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date(campagne, m0 + i, 1), y = d.getFullYear(), m = d.getMonth();
+    out.push({ key: y + '-' + String(m + 1).padStart(2, '0'), label: MOIS_COURTS[m] + ' ' + String(y).slice(2), labelCourt: MOIS_COURTS[m], mois: m, campagne });
+  }
+  return out;
+}
+function moisInfoPourIndex(campagne, idx) { return moisCampagne(campagne)[idx]; }
+// Une date (AAAA-MM-JJ) appartient au mois `info` de sa campagne : même mois civil ET même campagne (mois partiels d'un début en cours de mois)
+function dansMoisCampagne(info, dateStr) {
+  return !!dateStr && dateStr.slice(0, 7) === info.key && campagneAnneeDebutPourDate(dateStr) === info.campagne;
+}
+function volumeTankMoisCampagne(info) {
+  return (DB.laitTank || []).filter(l => l && dansMoisCampagne(info, l.date)).reduce((s, l) => s + l.quantite, 0);
+}
+// « octobre à septembre », « août à juillet »… : premier et dernier mois de la grille de la campagne
+function periodeMoisCampagneLibelle(campagne) {
+  const m = moisCampagne(campagne);
+  return NOMS_MOIS[m[0].mois] + ' à ' + NOMS_MOIS[m[m.length - 1].mois];
 }
 
 /* ---------- Production laitière (mobile + base de la version PC) : deux onglets « Tank » et « Qualité » ----------
@@ -23429,12 +23452,12 @@ function buildBilanLactationPdfBytes(campagne) {
     entete: { fond: pdfHexCouleur(PDF_CHARTE.vert), texte: PDF_COULEURS.blanc }, alterne: [pdfHexCouleur(PDF_CHARTE.ligneAlt), PDF_COULEURS.blanc]
   });
   const maxL = Math.max(...D.mensuel.map(m => m.litres));
-  if (maxL > 0) doc.barresMensuelles({ titre: 'Litrage par mois', droite: 'Tank · octobre à septembre · en milliers de litres', points: D.mensuel.map(m => ({ label: m.label, valeur: m.litres, texte: m.litres > 0 ? fmtDecimal(m.litres / 1000, 1) : '0' })), couleur: PDF_COULEURS.vert, couleurPic: PDF_COULEURS.vertFonce });
+  if (maxL > 0) doc.barresMensuelles({ titre: 'Litrage par mois', droite: 'Tank · ' + periodeMoisCampagneLibelle(campagne) + ' · en milliers de litres', points: D.mensuel.map(m => ({ label: m.label, valeur: m.litres, texte: m.litres > 0 ? fmtDecimal(m.litres / 1000, 1) : '0' })), couleur: PDF_COULEURS.vert, couleurPic: PDF_COULEURS.vertFonce });
   else { doc.section('Litrage par mois'); doc.note('Aucune saisie tank sur cette campagne.'); }
   const moyEff = ind.moyennePresence !== null && ind.moyennePresence !== undefined ? ind.moyennePresence : D.moyenneEffectifCalculee;
   if (D.mensuel.some(m => m.effectif > 0)) doc.barresMensuelles({ titre: 'Brebis présentes, moyenne mensuelle', droite: 'Effectif au premier jour de chaque mois · trait pointillé = moyenne ' + fmtDecimal(moyEff, 0), points: D.mensuel.map(m => ({ label: m.label, valeur: m.effectif, texte: String(m.effectif) })), couleur: PDF_COULEURS.vert, moyenne: moyEff > 0 ? { valeur: moyEff } : null });
   else { doc.section('Brebis présentes, moyenne mensuelle'); doc.note('Aucun effectif connu sur cette campagne.'); }
-  doc.note("Litrage total et brebis passées à la traite : calculés automatiquement (tank de Production laitière, contrôles laitiers), modifiables à la main si besoin. Moyenne de présence = moyenne mensuelle de l'effectif sur les 12 mois de la campagne (octobre à septembre), entrées et sorties incluses. Ratio traites / mises bas = brebis passées à la traite ÷ brebis ayant mis bas (donnée reprise du Bilan de reproduction troupeau) — un ratio supérieur à 100 % est possible (des brebis restées vides ou ayant avorté peuvent aussi être traites).", 8);
+  doc.note("Litrage total et brebis passées à la traite : calculés automatiquement (tank de Production laitière, contrôles laitiers), modifiables à la main si besoin. Moyenne de présence = moyenne mensuelle de l'effectif sur les 12 mois de la campagne (" + periodeMoisCampagneLibelle(campagne) + "), entrées et sorties incluses. Ratio traites / mises bas = brebis passées à la traite ÷ brebis ayant mis bas (donnée reprise du Bilan de reproduction troupeau) — un ratio supérieur à 100 % est possible (des brebis restées vides ou ayant avorté peuvent aussi être traites).", 8);
   return doc.fin();
 }
 
