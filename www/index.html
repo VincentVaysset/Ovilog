@@ -17230,6 +17230,16 @@ function lignesLotsPc(lot) {
       lots: (lots.get(k) || []).map(l => l.nom), dansCeLot: membres.has(k), dansUnAutreLot: (lots.get(k) || []).some(l => l.id !== lot.id) };
   }).sort(comparerAnimauxAgeNumero);
 }
+/* N° tapé puis Entrée (panneau d'un lot, PC) : correspondance EXACTE d'abord (n° court sans les zéros de tête, n° de travail SIEOL, EID complet ou
+   sa fin à partir de 8 chiffres), sinon par morceau comme le filtre « Rechercher un n° ». Cherché parmi tous les animaux proposés au lot. */
+function correspondancesNumeroLotPc(lignes, saisie) {
+  const q = String(saisie || '').replace(/\s+/g, '').toLowerCase();
+  if (!q) return [];
+  const sansZeros = v => String(v || '').toLowerCase().replace(/^0+/, '');
+  const exactes = lignes.filter(r => sansZeros(r.numero) === sansZeros(q) || (r.court && sansZeros(r.court) === sansZeros(q)) || cleanEid(r.eid).toLowerCase() === q || (q.length >= 8 && cleanEid(r.eid).toLowerCase().endsWith(q)));
+  if (exactes.length) return exactes;
+  return lignes.filter(r => r.numero.toLowerCase().includes(q) || r.court.toLowerCase().includes(q) || cleanEid(r.eid).toLowerCase().includes(q));
+}
 function filtrerLignesLotsPc(lignes, onglet, lot) {
   const F = lotsPcEtat.F, q = F.q.replace(/\s+/g, '').toLowerCase(), nb = v => v !== '' && v !== null && v !== undefined && !isNaN(parseFloat(v));
   const tags = [];
@@ -17385,7 +17395,7 @@ function lotsExistantsPcHtml(conteneur) {
   conteneur.querySelector('#le-campagne').onchange = ev => { T.campagne = ev.target.value; redessiner(); };
   conteneur.querySelector('#le-q').addEventListener('input', ev => { T.q = ev.target.value; clearTimeout(lotsPcMinuterieLE); lotsPcMinuterieLE = setTimeout(redessiner, 250); });
   conteneur.querySelector('#le-export').onclick = () => exporterLotsExistantsXlsx(liste);
-  conteneur.querySelectorAll('.le-modifier').forEach(b => { b.onclick = () => { lotsPcEtat.lotId = b.dataset.id; lotsPcEtat.selection = new Set(); lotsPcEtat.F = filtresLotsVides(); lotsPcEtat.onglet = ongletParDefautLot((DB.lots || []).find(l => l.id === b.dataset.id)); lotsPcEtat.messagePanneau = ''; lotsPcEtat.messageEdition = ''; redessiner(); }; });
+  conteneur.querySelectorAll('.le-modifier').forEach(b => { b.onclick = () => { lotsPcEtat.lotId = b.dataset.id; lotsPcEtat.selection = new Set(); lotsPcEtat.F = filtresLotsVides(); lotsPcEtat.onglet = ongletParDefautLot((DB.lots || []).find(l => l.id === b.dataset.id)); lotsPcEtat.messagePanneau = ''; lotsPcEtat.messageEdition = ''; lotsPcEtat.messageNumero = null; redessiner(); }; });
   conteneur.querySelectorAll('.le-excel').forEach(b => { b.onclick = () => { const l = tous.find(x => x.id === b.dataset.id); if (l) exporterListeLotsXlsx('lot-' + String(l.nom).replace(/[^\w\-]+/g, '_') + '_' + jourAujourdhuiISO() + '.xlsx', membresDuLotPourExport(l), 'Lot'); }; });
   conteneur.querySelectorAll('.le-suppr').forEach(b => { b.onclick = () => { const l = tous.find(x => x.id === b.dataset.id); if (l) supprimerLotPc(l); }; });
 }
@@ -17631,6 +17641,7 @@ function renderLotsPc() {
           ${onglets}${rapides}
           <div class="pc-filtres-ligne" style="margin-bottom:10px;">${specifiques}</div>
           <div class="pc-filtres-ligne" style="margin-bottom:10px;">${transverses}</div>
+          ${E.messageNumero ? `<div class="msg-charte ${E.messageNumero.ton}" id="lt-msg-numero" style="margin:0 0 10px;">${E.messageNumero.texte}</div>` : ''}
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;" id="lt-tags">${tags.map((t, i) => `<span class="pc-pill info" style="padding:3px 10px;">${t[0]} <a href="#" class="lt-tag" data-i="${i}" style="text-decoration:none;color:inherit;" title="Supprimer ce filtre">✕</a></span>`).join('')}</div>
           <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;margin-bottom:10px;">
             <div><p class="brd-ttl" style="margin:0;" id="lt-compte">${lignes.length} ${agn ? 'agnelle' : 'brebis'}${lignes.length > 1 && !agn ? '' : ''}${lignes.length > 1 && agn ? 's' : ''} correspondent · ${selFiltre} sélectionnée${selFiltre > 1 ? 's' : ''} sur cet onglet</p><p class="brd-note" style="margin:2px 0 0;">Clique sur une ligne pour la cocher. En-têtes triables. La sélection est conservée quand tu changes d'onglet ou de critères.</p>${resumeEchoHtml}</div>
@@ -17687,7 +17698,7 @@ function renderLotsPc() {
         nouveau = creerLotJournalise(champs, []);
       }
       saveData(DB);
-      E.lotId = id; E.selection = new Set(); E.F = filtresLotsVides(); E.onglet = ongletParDefautLot(nouveau); E.messagePanneau = '';
+      E.lotId = id; E.selection = new Set(); E.F = filtresLotsVides(); E.onglet = ongletParDefautLot(nouveau); E.messagePanneau = ''; E.messageNumero = null;
       redessiner();
     };
     if (typeof lotsExistantsPcHtml === 'function') lotsExistantsPcHtml($('lt-existants'));
@@ -17700,7 +17711,24 @@ function renderLotsPc() {
   // un redessin déclenché par le « change » du champ quitté remplaçait le champ suivant avant que le clic ne lui donne le focus (« je ne peux pas saisir »).
   const lie = (id, fn) => { const n = $(id); if (!n) return; const saisie = n.tagName === 'INPUT' && !['checkbox', 'radio'].includes(n.type); n.addEventListener(saisie ? 'input' : 'change', ev => { fn(ev.target); if (saisie) planifier(); else redessiner(); }); };
   const lieTexte = lie;
-  lieTexte('lt-q', t => { F.q = t.value; });
+  lieTexte('lt-q', t => { F.q = t.value; E.messageNumero = null; });
+  // Entrée dans « Rechercher un n° » : un seul animal correspond -> coché (champ vidé, curseur gardé) ; plusieurs, aucun ou déjà dans le lot -> rien n'est coché, message
+  $('lt-q').addEventListener('keydown', ev => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    const saisie = ev.target.value.trim();
+    if (!saisie) return;
+    const nomAnimal = agn ? 'agnelle' : 'brebis', trouves = correspondancesNumeroLotPc(lignesLotsPc(lot), saisie), lib = r => 'n°' + echoHtml(r.numero);
+    if (trouves.length === 1 && !trouves[0].dansCeLot) {
+      const r = trouves[0], k = cleanEid(r.eid), deja = E.selection.has(k);
+      E.selection.add(k); F.q = ''; ev.target.value = '';
+      E.messageNumero = { ton: 'ok', texte: lib(r) + (deja ? ' déjà cochée' : ' cochée') + ' · ' + E.selection.size + ' sélectionnée' + (E.selection.size > 1 ? 's' : '') };
+    } else if (trouves.length === 1) E.messageNumero = { ton: 'alerte', texte: lib(trouves[0]) + ' est déjà dans ce lot : rien n\'est coché.' };
+    else if (trouves.length > 1) { F.q = saisie; E.messageNumero = { ton: 'alerte', texte: trouves.length + ' ' + nomAnimal + (agn ? 's' : '') + ' correspondent à « ' + echoHtml(saisie) + ' » : coche la bonne dans la liste.' }; }
+    else E.messageNumero = { ton: 'alerte', texte: 'Aucune ' + nomAnimal + ' ne correspond au n° « ' + echoHtml(saisie) + ' » : rien n\'est coché.' };
+    redessiner();
+    const champ = $('lt-q'); if (champ) champ.focus();
+  });
   lie('lt-millesime', t => { F.millesime = t.value; }); lie('lt-statut', t => { F.statut = t.value; }); lie('lt-dans-lot', t => { F.dansLot = t.value; }); lie('lt-age', t => { F.age = t.value; });
   lie('lt-ctrl-campagne', t => { F.ctrlCampagne = t.value; }); lie('lt-anomalie-any', t => { F.anomalieAny = t.checked; });
   [1, 2, 3].forEach(n => { lie('lt-an' + n, t => { F.anomalie[n] = t.value; }); lie('lt-lait' + n + '-min', t => { F.lait[n][0] = t.value; }); lie('lt-lait' + n + '-max', t => { F.lait[n][1] = t.value; }); });
@@ -17741,7 +17769,7 @@ function renderLotsPc() {
     const n = affecterAuLotPc(lot, items);
     if (n < 0) { E.messagePanneau = 'Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n\'a été affecté.'; redessiner(); return; }
     saveData(DB);
-    E.selection.clear(); E.messagePanneau = ''; redessiner();
+    E.selection.clear(); E.messagePanneau = ''; E.messageNumero = null; redessiner();
   };
   $('lt-ed-nom').addEventListener('input', ev => { E.ed.nom = ev.target.value; });
   $('lt-ed-date').addEventListener('input', ev => { E.ed.date = ev.target.value; });

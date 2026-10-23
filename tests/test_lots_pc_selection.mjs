@@ -55,5 +55,38 @@ eq((await etat()).coches, 0, '« Tout décocher » : plus rien de coché');
 check(await page.evaluate(() => window.__saves) === saves0, 'cocher et décocher n\'écrivent rien');
 console.log('OK 1 position conservée : case cochée ou décochée en bas de liste, « Tout cocher », page défilée.');
 
+// ================================================================ 2. n° tapé + Entrée : coche si un seul animal correspond
+const msg = () => page.evaluate(() => { const m = document.getElementById('lt-msg-numero'); return m ? [m.className.replace('msg-charte ', ''), m.textContent.replace(/\s+/g, ' ').trim()] : null; });
+const champ = () => page.evaluate(() => [document.getElementById('lt-q').value, document.activeElement && document.activeElement.id]);
+const coche = n => page.evaluate(k => lotsPcEtat.selection.has(cleanEid(E(...k))), n);
+const entree = async v => { await page.fill('#lt-q', v); await page.press('#lt-q', 'Enter'); await page.waitForTimeout(450); };
+// n° court exact (5 derniers chiffres de l'EID)
+await entree('80045');
+eq([await coche([8, 45]), await champ(), await msg()], [true, ['', 'lt-q'], ['ok', 'n°80045 cochée · 1 sélectionnée']], 'un seul résultat : cochée, champ vidé, curseur gardé, message vert');
+check(await page.evaluate(() => document.querySelector('#lt-table tr[data-eid="' + E(8, 45) + '"] input').checked), 'la case de n°80045 est cochée dans la liste (filtre vidé)');
+await entree('2500162991 80046');
+eq([await coche([8, 46]), (await msg())[0]], [true, 'ok'], 'EID complet tapé (avec espace) : coché');
+// plusieurs : rien de coché, liste filtrée sur la saisie
+await entree('0012');
+const plusieurs = await page.evaluate(() => [lotsPcEtat.selection.size, document.getElementById('lt-q').value, [...document.querySelectorAll('#lt-table tr[data-eid]')].map(r => r.children[1].textContent.trim())]);
+eq([plusieurs[0], plusieurs[1], await msg()], [2, '0012', ['alerte', '2 brebis correspondent à « 0012 » : coche la bonne dans la liste.']], 'plusieurs résultats : rien de coché, saisie gardée, message ambre');
+check(plusieurs[2].includes('80012') && plusieurs[2].includes('90012'), 'la liste est filtrée sur les brebis correspondantes : ' + plusieurs[2].join(','));
+// aucune
+await entree('77777');
+eq([await page.evaluate(() => lotsPcEtat.selection.size), await msg()], [2, ['alerte', 'Aucune brebis ne correspond au n° « 77777 » : rien n\'est coché.']], 'aucun résultat : rien de coché, message ambre');
+// taper efface le message
+await page.fill('#lt-q', '8'); await page.waitForTimeout(450);
+eq(await msg(), null, 'une nouvelle frappe efface le message');
+// rien n'est écrit avant « Affecter »
+check(await page.evaluate(id => (DB.lots.find(l => l.id === id).membres || []).length === 0, lotId), 'rien n\'est écrit dans le lot avant « Affecter »');
+check(await page.evaluate(() => window.__saves) === saves0, 'aucune écriture avant « Affecter »');
+// déjà dans le lot : après affectation, le n° tapé ne coche rien
+await page.fill('#lt-q', ''); await page.waitForTimeout(450);
+await page.click('#lt-affecter'); await page.waitForTimeout(300);
+check(await page.evaluate(id => DB.lots.find(l => l.id === id).membres.length === 2, lotId), 'Affecter : les 2 brebis cochées entrent dans le lot');
+await entree('80045');
+eq([await page.evaluate(() => lotsPcEtat.selection.size), await msg()], [0, ['alerte', 'n°80045 est déjà dans ce lot : rien n\'est coché.']], 'déjà dans le lot : rien de coché, message ambre');
+console.log('OK 2 n° + Entrée : un résultat = coché (champ vidé, curseur gardé) ; plusieurs, aucun ou déjà dans le lot = rien de coché, message ; rien écrit avant Affecter.');
+
 await browser.close();
 console.log('OK test_lots_pc_selection');
