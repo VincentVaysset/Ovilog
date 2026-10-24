@@ -1,0 +1,71 @@
+name: Tests
+
+# Batterie de tests (tests/run_all.sh) répartie sur plusieurs machines en parallèle : 5 parts de la batterie + la passe « fuseaux »
+# en UTC et en Europe/Paris. Lancée :
+#   - à chaque pull request (check requis « Tests OK » pour fusionner dans main, voir la protection de branche) ;
+#   - par build-apk.yml avant toute construction (workflow_call) : aucun APK, installeur ni Release si un test échoue ;
+#   - à la main (workflow_dispatch).
+# Les tests sur exports réels (tests/data/, jamais versionné) sont sautés ici (SKIP), comme en local sans ces fichiers.
+on:
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  batterie:
+    name: ${{ matrix.libelle }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { libelle: 'Part 1/5', part: '1/5', fuseau: '' }
+          - { libelle: 'Part 2/5', part: '2/5', fuseau: '' }
+          - { libelle: 'Part 3/5', part: '3/5', fuseau: '' }
+          - { libelle: 'Part 4/5', part: '4/5', fuseau: '' }
+          - { libelle: 'Part 5/5', part: '5/5', fuseau: '' }
+          - { libelle: 'Fuseau UTC', part: '', fuseau: 'UTC' }
+          - { libelle: 'Fuseau Europe/Paris', part: '', fuseau: 'Europe/Paris' }
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Installer Playwright et Chromium
+        working-directory: tests
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Installer PyMuPDF (lecture des PDF par les tests)
+        run: python3 -m pip install --user pymupdf
+
+      - name: Lancer la batterie
+        env:
+          OVILOG_PART: ${{ matrix.part }}
+          OVILOG_FUSEAUX: ${{ matrix.fuseau }}
+        run: bash tests/run_all.sh
+
+  resultat:
+    # Check unique à exiger dans la protection de main : vert seulement si toutes les parts le sont.
+    name: Tests OK
+    needs: batterie
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Toutes les parts sont vertes
+        run: |
+          if [ "${{ needs.batterie.result }}" != "success" ]; then echo "Au moins une part de la batterie a échoué."; exit 1; fi
+          echo "Batterie verte."

@@ -24,6 +24,10 @@ publications.forEach((e, i) => {
   check(!/prerelease: \$\{\{/.test(e), 'workflow : aucune condition qui rendrait une release stable automatiquement');
 });
 check(/actions\/upload-artifact@v4/.test(yml) && yml.match(/actions\/upload-artifact@v4/g).length === 2, 'workflow : les artefacts (APK, installeur) sont toujours produits, y compris hors main');
+// tests avant toute construction : aucune Release (stable ni « [test] ») si la batterie échoue (voir tests.yml)
+check(/\n  tests:\n    [\s\S]*?uses: \.\/\.github\/workflows\/tests\.yml/.test(yml) && /\n  build:\n    needs: tests\n/.test(yml), 'workflow : la construction (et donc toute Release) attend la batterie de tests');
+const ymlTests = readFileSync(new URL('../.github/workflows/tests.yml', import.meta.url), 'utf8');
+check(/\n  pull_request:/.test(ymlTests) && /\n  workflow_call:/.test(ymlTests) && /name: Tests OK/.test(ymlTests) && /bash tests\/run_all\.sh/.test(ymlTests), 'tests.yml : pull request + appel par la construction, check « Tests OK », batterie run_all.sh');
 const main = readFileSync(new URL('../electron/main.js', import.meta.url), 'utf8');
 check(/autoUpdater\.allowPrerelease = false;/.test(main) && !/allowPrerelease = true/.test(main), 'electron : allowPrerelease = false (seules les versions promues sont proposées)');
 console.log('OK B workflow et Electron : publication seulement sur main, toujours en pre-release, Electron ignore les pre-release.');
