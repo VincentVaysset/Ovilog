@@ -28335,11 +28335,21 @@ function renderParametresSauvegarde(content) {
       </div>
       <div id="update-check-status" class="prm-note" style="margin:0 0 8px;"></div>
       <div id="update-pret" class="prm-bandeau-maj hidden"><div id="update-pret-texte" style="font-weight:500;"></div><button type="button" class="btn btn-primary btn-petit" id="btn-update-pret"></button></div>
+      ${!isDesktopMode() && contactAdministrateur() ? `<div id="bloc-canal-test" style="border-top:1px solid var(--ch-separateur);padding-top:10px;margin-top:4px;">
+        <label class="prm-case"><input type="checkbox" id="f-canal-test"${reglageCanalTest() ? ' checked' : ''}><span>Recevoir les versions de test</span></label>
+        <div class="prm-note">Réservé à l'administrateur, propre à cet appareil : les versions des branches de travail sont proposées en plus des versions stables, avec la mention « version de test ». Désactivé, l'appareil garde la version installée jusqu'à la prochaine version stable plus récente.</div>
+      </div>` : ''}
     </div>`;
   const cardsHtml = prmColonnesHtml(carteDonnees, carteApplication);
   content.innerHTML = cardsHtml + `<details class="prm-maintenance" id="prm-maintenance"${prmMaintenanceOuvert ? ' open' : ''}><summary><b>Maintenance</b> · Rechercher les doublons du registre</summary><div class="prm-maintenance-corps">${maintenance.html}</div></details>`;
   maintenance.brancher();
   document.getElementById('prm-maintenance').ontoggle = (e) => { prmMaintenanceOuvert = e.target.open; };
+  const caseCanalTest = document.getElementById('f-canal-test');   // administrateur, mobile seulement (le PC reste sur les versions stables)
+  if (caseCanalTest) caseCanalTest.onchange = (ev) => {
+    try { if (ev.target.checked) localStorage.setItem(CLE_CANAL_TEST, '1'); else localStorage.removeItem(CLE_CANAL_TEST); } catch (e) {}
+    const st = document.getElementById('update-check-status');
+    if (st) st.textContent = ev.target.checked ? 'Versions de test activées sur cet appareil : touchez « Vérifier les mises à jour ».' : 'Versions de test désactivées : seules les versions stables seront proposées.';
+  };
 
   document.getElementById('btn-export').onclick = () => {
     const btn = document.getElementById('btn-export');
@@ -28466,7 +28476,7 @@ function renderParametresSauvegarde(content) {
           return;
         }
         statusEl.textContent = '';
-        afficherBandeauMaj('Version ' + release.name + ' disponible', 'Télécharger et installer', () => afficherPopupMiseAJour(release));
+        afficherBandeauMaj('Version ' + release.name + (release.test ? ' (version de test)' : '') + ' disponible', 'Télécharger et installer', () => afficherPopupMiseAJour(release));
         afficherPopupMiseAJour(release);
       };
       return;
@@ -29501,30 +29511,44 @@ async function derniereReleaseDisponible() {
     if (!res.ok) return { ok: false, best: null, reason: 'http_' + res.status };
     const releases = await res.json();
     if (!Array.isArray(releases)) return { ok: false, best: null, reason: 'reponse_invalide' };
-    let best = null;
-    for (const r of releases) {
-      // Canal stable : seules les versions que le propriétaire a PROMUES à la main (release non marquée « pre-release », non brouillon) sont proposées.
-      // Les builds automatiques de main sont publiés en pre-release (voir build-apk.yml) et restent invisibles ici tant qu'ils ne sont pas promus.
-      if (r.prerelease === true || r.draft === true) continue;
-      const m = /^v(\d+)$/.exec(r.tag_name || '');
-      if (!m) continue;
-      const asset = (r.assets || []).find(a => /\.apk$/i.test(a.name || ''));
-      if (!asset || !asset.browser_download_url) continue;
-      // Contrôle basique de provenance avant de retenir l'URL de
-      // téléchargement : elle doit provenir de GitHub lui-même.
-      let url;
-      try { url = new URL(asset.browser_download_url); } catch (e) { continue; }
-      const hoteAutorise = url.hostname === 'github.com' || url.hostname.endsWith('.githubusercontent.com');
-      if (!hoteAutorise) continue;
-      const versionCode = parseInt(m[1], 10);
-      if (!best || versionCode > best.versionCode) {
-        best = { versionCode, tagName: r.tag_name, name: r.name || r.tag_name, body: r.body || '', apkUrl: asset.browser_download_url };
-      }
-    }
-    return { ok: true, best };
+    return { ok: true, best: choisirReleaseMiseAJour(releases, canalTestActif()) };
   } catch (e) {
     return { ok: false, best: null, reason: 'reseau:' + (e && e.message || 'inconnu') };
   }
+}
+
+/* Canal de test : un appareil de l'ADMINISTRATEUR (document admins/<uid>, voir la bulle de contact) qui a activé « Recevoir les versions de test »
+   (Paramètres › Sauvegarde, réglage propre à l'appareil, jamais synchronisé) se voit proposer aussi les pre-releases (versions de test des branches,
+   « [test] », et builds de main pas encore promus). Tous les autres cas -- autre compte, réglage désactivé, administrateur pas encore reconnu -- ne voient
+   que les versions promues, comme avant. */
+const CLE_CANAL_TEST = 'ovilog_canal_test';
+function reglageCanalTest() { try { return localStorage.getItem(CLE_CANAL_TEST) === '1'; } catch (e) { return false; } }
+function canalTestActif() { return reglageCanalTest() && contactAdministrateur(); }
+// Release la plus récente à proposer (plus grand n° de version « vN » avec un APK venant de GitHub) ; accepterTest = pre-releases admises aussi
+function choisirReleaseMiseAJour(releases, accepterTest) {
+  let best = null;
+  for (const r of releases) {
+    // Canal stable : seules les versions que le propriétaire a PROMUES à la main (release non marquée « pre-release », non brouillon) sont proposées.
+    // Les builds automatiques de main sont publiés en pre-release (voir build-apk.yml) et restent invisibles ici tant qu'ils ne sont pas promus.
+    // Canal de test (accepterTest) : les pre-releases aussi ; jamais un brouillon.
+    if (r.draft === true || (r.prerelease === true && !accepterTest)) continue;
+    const m = /^v(\d+)$/.exec(r.tag_name || '');
+    if (!m) continue;
+    const asset = (r.assets || []).find(a => /\.apk$/i.test(a.name || ''));
+    if (!asset || !asset.browser_download_url) continue;
+    // Contrôle basique de provenance avant de retenir l'URL de
+    // téléchargement : elle doit provenir de GitHub lui-même.
+    let url;
+    try { url = new URL(asset.browser_download_url); } catch (e) { continue; }
+    const hoteAutorise = url.hostname === 'github.com' || url.hostname.endsWith('.githubusercontent.com');
+    if (!hoteAutorise) continue;
+    const versionCode = parseInt(m[1], 10);
+    if (!best || versionCode > best.versionCode) {
+      const test = r.prerelease === true;
+      best = { versionCode, tagName: r.tag_name, name: (r.name || r.tag_name).replace(/^\[test\]\s*/, ''), body: (r.body || '').replace(/^<!-- ovilog-canal-test -->\s*/, ''), apkUrl: asset.browser_download_url, test };
+    }
+  }
+  return best;
 }
 
 // Combine les deux -- renvoie { ok, release } : release contient les infos
@@ -29559,8 +29583,8 @@ function afficherPopupMiseAJour(release) {
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
         ${iconCircle(ICON_SYNC, 'blue', 'md')}
         <div>
-          <div style="font-weight:700;font-size:15px;">Nouvelle version disponible</div>
-          <div style="font-size:12px;color:var(--text-muted);">${release.name}</div>
+          <div style="font-weight:700;font-size:15px;">${release.test ? 'Nouvelle version de test disponible' : 'Nouvelle version disponible'}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${release.test ? cartePastille('version de test', 'ambre') + ' ' : ''}${xlsxEscape(release.name)}</div>
         </div>
       </div>
       <div id="update-popup-body" style="font-size:13px;color:var(--text-muted);margin-bottom:14px;white-space:pre-wrap;max-height:160px;overflow-y:auto;"></div>
@@ -29701,6 +29725,7 @@ const ECRANS_CONTACT = { home: 'Accueil', list: 'Brebis', detail: 'Fiche brebis'
 var panneauContact = null;          // { onglet, type, texte, message } quand le panneau est ouvert
 var clavierMobileOuvert = false;
 var bulleContactPrete = false;
+var canalTestRelance = false;
 const bulleContact = document.getElementById('bulle-contact');
 const echapperContact = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 function bulleContactMasquee() { try { return localStorage.getItem(CLE_BULLE_MASQUEE) === '1'; } catch (e) { return false; } }
@@ -29727,6 +29752,8 @@ function majBulleContact() {
 // Appelée par le module de synchro à chaque changement des messages (voir signalerContact)
 window.rafraichirContact = function () {
   majBulleContact();
+  // canal de test : l'administrateur n'est reconnu qu'après la connexion, donc après la vérification de démarrage -- une seule relance
+  if (!canalTestRelance && canalTestActif()) { canalTestRelance = true; verifierMiseAJourAuDemarrage(); }
   if (panneauContact && panneauContact.onglet === 'mes') { dessinerPanneauContact(); window.OvilogSync.marquerReponsesLuesContact(); }
   if (currentView === 'parametres' && typeof rafraichirMessagesRecus === 'function') rafraichirMessagesRecus();
 };
