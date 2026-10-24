@@ -209,3 +209,10 @@ Sans `URL_AVANT`, seuls les attendus de la version actuelle sont vérifiés.
   son comportement (sélecteur système, FileProvider, partage) ne se vérifie que sur un appareil.
 - Le vrai Firestore : le faux backend simule `writeBatch`, `arrayUnion`, `onSnapshot` par polling.
 - Electron / Windows.
+
+## Sur GitHub (intégration continue)
+
+`.github/workflows/tests.yml` rejoue la batterie à chaque pull request et avant chaque construction (`build-apk.yml`) : 7 machines en parallèle,
+`OVILOG_PART=1/5` … `5/5` (une part de la batterie chacune) puis `OVILOG_FUSEAUX=UTC` et `OVILOG_FUSEAUX=Europe/Paris` (passe « fuseaux » seule).
+Le check « Tests OK » n'est vert que si toutes les parts le sont ; il est exigé pour fusionner dans `main`. Sans ces variables, `run_all.sh` garde
+son comportement complet (batterie locale avant chaque push). Les tests sur exports réels sont sautés sur GitHub (pas de `tests/data/`).
