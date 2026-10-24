@@ -29644,7 +29644,7 @@ import {
   sendEmailVerification, onAuthStateChanged, signOut,
   initializeFirestore, persistentLocalCache, persistentSingleTabManager,
   collection, doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, onSnapshot, arrayUnion,
-  writeBatch, runTransaction
+  writeBatch, runTransaction, query, where, serverTimestamp
 } from './vendor/firebase.bundle.js';
 
 const firebaseConfig = {
@@ -30690,6 +30690,57 @@ function stopListeners() {
   sync.unsubscribers = [];
 }
 
+/* ---------- Bulle de contact : messages à l'administrateur (collection racine « feedback ») ----------
+   Un message = { uid, exploitation, texte, type, date, dateServeur, campagne, ecran, version, appareil, statut, reponse… } : liste FERMÉE de champs
+   (CHAMPS_MESSAGE_CONTACT), jamais aucune donnée d'animal jointe d'office. Hors réseau, le cache Firestore garde l'écriture et l'envoie au retour du réseau
+   (« En attente d'envoi » tant que le serveur ne l'a pas reçue). Un compte connecté suffit (adresse vérifiée non exigée pour ce seul envoi) ; l'administrateur
+   est le compte qui possède un document admins/<uid> (créé à la main dans la console, aucun identifiant dans le dépôt). Règles : firestore.rules. */
+const CHAMPS_MESSAGE_CONTACT = ['uid', 'exploitation', 'texte', 'type', 'date', 'dateServeur', 'campagne', 'ecran', 'version', 'appareil', 'statut', 'reponse', 'reponseDate', 'reponseLue'];
+const CLE_ECHECS_CONTACT = 'ovilog_contact_echecs';   // messages refusés par le serveur (texte gardé sur l'appareil pour « Renvoyer »)
+const contact = { uid: null, estAdmin: false, mes: [], tous: [], prets: false, unsubs: [] };
+function lireEchecsContact() { try { return JSON.parse(localStorage.getItem(CLE_ECHECS_CONTACT) || '[]'); } catch (e) { return []; } }
+function ecrireEchecsContact(l) { try { localStorage.setItem(CLE_ECHECS_CONTACT, JSON.stringify(l)); } catch (e) {} }
+function signalerContact() { try { if (typeof window.rafraichirContact === 'function') window.rafraichirContact(); } catch (e) { console.error('Bulle de contact : rafraîchissement', e); } }
+function messagesDepuisInstantane(snap) {
+  const l = [];
+  snap.forEach(d => { const m = Object.assign({}, d.data(), { id: d.id, enAttente: !!(d.metadata && d.metadata.hasPendingWrites) }); l.push(m); });
+  return l.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+}
+function arreterContact() {
+  contact.unsubs.forEach(u => { try { u(); } catch (e) {} });
+  contact.unsubs = []; contact.uid = null; contact.estAdmin = false; contact.mes = []; contact.tous = []; contact.prets = false;
+  signalerContact();
+}
+async function demarrerContact(uid) {
+  if (contact.uid === uid) return;
+  arreterContact();
+  contact.uid = uid;
+  const erreur = e => console.error('Bulle de contact : lecture des messages impossible', e);
+  contact.unsubs.push(onSnapshot(query(collection(fbDb, 'feedback'), where('uid', '==', uid)), { includeMetadataChanges: true },
+    snap => { if (contact.uid !== uid) return; contact.mes = messagesDepuisInstantane(snap); contact.prets = true; signalerContact(); }, erreur));
+  try { contact.estAdmin = (await getDoc(doc(fbDb, 'admins', uid))).exists(); }
+  catch (e) { contact.estAdmin = false; }   // pas administrateur (lecture refusée) ou hors réseau sans cache : écran « Messages reçus » absent
+  if (contact.uid !== uid) return;
+  if (contact.estAdmin) {
+    contact.unsubs.push(onSnapshot(collection(fbDb, 'feedback'), { includeMetadataChanges: true },
+      snap => { if (contact.uid !== uid) return; contact.tous = messagesDepuisInstantane(snap); signalerContact(); }, erreur));
+  }
+  signalerContact();
+}
+function contactEcritureAutorisee() { return !!(sync.uid && contact.uid === sync.uid && ecritureCloudAutorisee()); }
+function ecrireMessageContact(id, donnees) {
+  // Pas d'attente : hors réseau la promesse ne se résout qu'au retour du réseau ; le refus des règles (permission-denied) garde le message en « Non envoyé ».
+  setDoc(doc(fbDb, 'feedback', id), donnees).then(() => {
+    const echecs = lireEchecsContact().filter(m => m.id !== id);
+    ecrireEchecsContact(echecs); signalerContact();
+  }).catch(e => {
+    console.error('Bulle de contact : message refusé par le serveur', e);
+    const echecs = lireEchecsContact().filter(m => m.id !== id);
+    echecs.unshift({ id, type: donnees.type, texte: donnees.texte, date: donnees.date, ecran: donnees.ecran, code: (e && e.code) || 'inconnu' });
+    ecrireEchecsContact(echecs.slice(0, 20)); signalerContact();
+  });
+}
+
 /* Décision prise une seule fois par appareil, la première fois qu'il se
    connecte à un compte donné : si le cloud est vide, on y pousse les
    données locales actuelles (cet appareil devient la source) ; s'il
@@ -30800,6 +30851,7 @@ async function onSignedIn(user) {
     catch (e) { console.error('Lecture ponctuelle du compte impossible pour le moment (réseau lent ou coupé) : attente de l\'instantané serveur', e); }
   }
   await startListeners(alreadyBootstrapped);
+  demarrerContact(user.uid).catch(e => console.error('Bulle de contact : démarrage', e));
   if (!alreadyBootstrapped) {
     // Appareil jamais appairé : rien ne se fait avant que le SERVEUR ait répondu pour meta (écran « Lecture de votre compte… », voir decideEcranApresConnexion).
     await attendreSourceConnue('meta');
@@ -30813,6 +30865,7 @@ async function onSignedIn(user) {
 
 function onSignedOut() {
   stopListeners();
+  arreterContact();
   sync.uid = null;
   sync.email = null;
   reinitialiserEtatCompte();
@@ -30971,7 +31024,53 @@ window.OvilogSync = {
   // viderJournalSynchro sont des déclarations de ce module, invisibles
   // depuis le script classique sans ce passage explicite par window.
   lireJournal() { return lireJournalSynchro(); },
-  viderJournal() { viderJournalSynchro(); }
+  viderJournal() { viderJournalSynchro(); },
+  // Bulle de contact (script classique : panneau, « Messages reçus ») -- voir demarrerContact
+  contactEtat() { return { connecte: !!sync.uid && contact.uid === sync.uid, estAdmin: contact.estAdmin, prets: contact.prets, mes: contact.mes.slice(), tous: contact.tous.slice(), echecs: lireEchecsContact() }; },
+  envoyerMessageContact(m) {
+    if (!contactEcritureAutorisee()) return { ok: false, erreur: 'non-connecte' };
+    const texte = String(m.texte || '').trim().slice(0, 2000);
+    if (!texte || !['bug', 'question', 'idee'].includes(m.type)) return { ok: false, erreur: 'invalide' };
+    const id = sync.uid + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const donnees = { uid: sync.uid, exploitation: String(m.exploitation || '').slice(0, 120), texte, type: m.type, date: new Date().toISOString(), dateServeur: serverTimestamp(),
+      campagne: String(m.campagne || '').slice(0, 20), ecran: String(m.ecran || '').slice(0, 80), version: String(m.version || '').slice(0, 60), appareil: String(m.appareil || '').slice(0, 40),
+      statut: 'nouveau', reponse: '', reponseDate: '', reponseLue: true };
+    Object.keys(donnees).forEach(k => { if (!CHAMPS_MESSAGE_CONTACT.includes(k)) delete donnees[k]; });
+    ecrireMessageContact(id, donnees);
+    return { ok: true, id };
+  },
+  // « Renvoyer » un message refusé : même texte et même type, informations jointes du moment (contexte fourni par l'écran)
+  renvoyerMessageContact(id, contexte) {
+    const m = lireEchecsContact().find(x => x.id === id);
+    if (!m || !contactEcritureAutorisee()) return { ok: false };
+    ecrireEchecsContact(lireEchecsContact().filter(x => x.id !== id));
+    return this.envoyerMessageContact(Object.assign({}, contexte || {}, { type: m.type, texte: m.texte }));
+  },
+  oublierEchecContact(id) { ecrireEchecsContact(lireEchecsContact().filter(x => x.id !== id)); signalerContact(); },
+  marquerReponsesLuesContact() {
+    if (!contactEcritureAutorisee()) return;
+    contact.mes.filter(m => m.reponse && m.reponseLue === false).forEach(m => {
+      updateDoc(doc(fbDb, 'feedback', m.id), { reponseLue: true }).catch(e => console.error('Bulle de contact : réponse lue', e));
+    });
+  },
+  // Administrateur seulement (les règles refusent tout autre compte)
+  adminContact(action, id, texte) {
+    if (!contact.estAdmin || !contactEcritureAutorisee()) return false;
+    const m = contact.tous.find(x => x.id === id);
+    if (!m) return false;
+    const ref = doc(fbDb, 'feedback', id);
+    const echec = e => console.error('Messages reçus : ' + action, e);
+    if (action === 'lu') { if (m.statut === 'nouveau') updateDoc(ref, { statut: 'lu' }).catch(echec); }
+    else if (action === 'traite') updateDoc(ref, { statut: 'traite' }).catch(echec);
+    else if (action === 'repondre') {
+      const r = String(texte || '').trim().slice(0, 2000);
+      if (!r) return false;
+      updateDoc(ref, { reponse: r, reponseDate: new Date().toISOString(), reponseLue: false, statut: m.statut === 'nouveau' ? 'lu' : m.statut }).catch(echec);
+    }
+    else if (action === 'supprimer') deleteDoc(ref).catch(echec);
+    else return false;
+    return true;
+  }
 };
 </script>
 </body>

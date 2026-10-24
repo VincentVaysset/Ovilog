@@ -108,29 +108,61 @@ async function ecrire(body) {
   // Trace côté page (heure d'ENVOI réel, après la file hors ligne) : les tests y comparent l'ordre « sauvegarde puis écriture ».
   if (typeof window !== 'undefined') (window.__ecrituresLog = window.__ecrituresLog || []).push({ t: performance.now(), chemins: (body.ops || []).map(o => o.path), pile: (body.ops || []).some(o => o.path.includes('/registre/')) ? String(new Error().stack).split('\n').slice(2, 9).map(l => l.trim().replace(/^at /, '').slice(0, 90)).join(' < ') : undefined });
   const jetonVerifie = authCourant && authCourant.currentUser ? authCourant.currentUser._jetonVerifie !== false : true;
-  try { return await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify(Object.assign({ clientId: clientId(), jetonVerifie }, body)) }); }
+  const authUid = authCourant && authCourant.currentUser ? authCourant.currentUser.uid : null;
+  try { return await fetch(BACKEND_URL + '/batch', { method: 'POST', body: JSON.stringify(Object.assign({ clientId: clientId(), jetonVerifie, authUid }, body)) }); }
   finally { ecrituresTerminees++; }
 }
 
 function parsePath(path) {
   const parts = path.split('/');
+  if (parts[0] !== 'users') return { racine: parts[0], id: parts[1] };   // collection à la racine (bulle de contact : feedback, admins)
   return { uid: parts[1], col: parts[2], id: parts[3] };
 }
+const authUidCourant = () => (authCourant && authCourant.currentUser ? authCourant.currentUser.uid : '');
+
+// Collections à la racine (feedback) : comme le vrai SDK, une écriture apparaît TOUT DE SUITE dans les instantanés de cet appareil avec
+// metadata.hasPendingWrites = true (même hors réseau), puis disparaît si le serveur la refuse (règles : permission-denied, promesse rejetée).
+const enAttenteRacine = new Map();   // chemin -> { type, data }
+let versionLocaleRacine = 0;
+async function ecrireRacine(op) {
+  enAttenteRacine.set(op.path, op); versionLocaleRacine++;
+  try {
+    const res = await ecrire({ uid: null, ops: [op] });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const e = new Error(data.message || data.error || ('HTTP ' + res.status)); e.code = data.error || 'unknown';
+      throw e;
+    }
+  } finally { if (enAttenteRacine.get(op.path) === op) enAttenteRacine.delete(op.path); versionLocaleRacine++; }
+}
+export function query(colRef, ...filtres) { return { path: colRef.path, filtres }; }
+export function where(champ, op, valeur) { return { champ, op, valeur }; }
+export function serverTimestamp() { return { __op: 'serverTimestamp' }; }
 
 export async function setDoc(ref, data) {
-  const { uid } = parsePath(ref.path);
-  await ecrire({ uid, ops: [{ type: 'set', path: ref.path, data }] });
+  const p = parsePath(ref.path);
+  if (p.racine) return ecrireRacine({ type: 'set', path: ref.path, data });
+  await ecrire({ uid: p.uid, ops: [{ type: 'set', path: ref.path, data }] });
 }
 export async function updateDoc(ref, data) {
-  const { uid } = parsePath(ref.path);
-  await ecrire({ uid, ops: [{ type: 'update', path: ref.path, data }] });
+  const p = parsePath(ref.path);
+  if (p.racine) return ecrireRacine({ type: 'update', path: ref.path, data });
+  await ecrire({ uid: p.uid, ops: [{ type: 'update', path: ref.path, data }] });
 }
 export async function deleteDoc(ref) {
-  const { uid } = parsePath(ref.path);
-  await ecrire({ uid, ops: [{ type: 'delete', path: ref.path }] });
+  const p = parsePath(ref.path);
+  if (p.racine) return ecrireRacine({ type: 'delete', path: ref.path });
+  await ecrire({ uid: p.uid, ops: [{ type: 'delete', path: ref.path }] });
 }
 export async function getDoc(ref) {
-  const { uid, col, id } = parsePath(ref.path);
+  const pr = parsePath(ref.path);
+  if (pr.racine) {
+    const res = await lireServeur(BACKEND_URL + '/getdoc?racine=' + pr.racine + '&id=' + encodeURIComponent(pr.id) + '&auth=' + authUidCourant());
+    const data = await res.json();
+    if (!res.ok) { const e = new Error(data.error); e.code = data.error; throw e; }
+    return { exists: () => data.exists, data: () => data.data };
+  }
+  const { uid, col, id } = pr;
   const res = await lireServeur(BACKEND_URL + '/getdoc?uid=' + uid + '&col=' + col + '&id=' + (id || ''));
   const data = await res.json();
   return { exists: () => data.exists, data: () => data.data };
@@ -209,6 +241,7 @@ export function onSnapshot(ref, a, b, c) {
   const options = typeof a === 'function' ? {} : (a || {});
   const onNext = typeof a === 'function' ? a : b;
   const onError = typeof a === 'function' ? b : c;
+  if (parsePath(ref.path).racine) return onSnapshotRacine(ref, options, onNext, onError);
   const { uid, col, id } = parsePath(ref.path);
   const estMeta = col === 'meta' && !!id;
   let lastVersion = -1;
@@ -247,6 +280,52 @@ export function onSnapshot(ref, a, b, c) {
     } catch (e) {
       if (e && e.code === 'unavailable') { /* réseau coupé pendant le vol : le prochain tour livrera le cache */ }
       else if (onError) onError(e);
+    }
+    if (!stopped) setTimeout(poll, POLL_MS);
+  }
+  poll();
+  return () => { stopped = true; };
+}
+
+
+// Instantanés d'une collection à la racine (ou d'une requête where('champ', '==', valeur)) : contenu serveur + écritures locales en attente.
+function onSnapshotRacine(ref, options, onNext, onError) {
+  const racine = ref.path.split('/')[0];
+  const f = (ref.filtres || [])[0];
+  let dernier = null, stopped = false, serveur = null;
+  function livrer() {
+    const docs = Object.assign({}, serveur || {});
+    const pendants = new Set();
+    enAttenteRacine.forEach((op, path) => {
+      const [col, id] = path.split('/');
+      if (col !== racine) return;
+      if (op.type === 'delete') { delete docs[id]; return; }
+      const base = op.type === 'update' ? Object.assign({}, docs[id] || {}) : {};
+      Object.keys(op.data).forEach(k => { const v = op.data[k]; base[k] = v && v.__op === 'serverTimestamp' ? Date.now() : v; });
+      docs[id] = base; pendants.add(id);
+    });
+    Object.keys(docs).forEach(id => { if (f && docs[id][f.champ] !== f.valeur) delete docs[id]; });
+    const signature = JSON.stringify([docs, [...pendants].sort()]);
+    const metaSeule = signature === dernier;
+    if (metaSeule) return;
+    dernier = signature;
+    const liste = Object.keys(docs).map(id => ({ id, data: () => docs[id], metadata: { hasPendingWrites: pendants.has(id), fromCache: false } }));
+    onNext({ forEach(fn) { liste.forEach(fn); }, size: liste.length, metadata: { hasPendingWrites: pendants.size > 0, fromCache: reseau().coupe === true } });
+  }
+  async function poll() {
+    if (stopped) return;
+    try {
+      if (!reseau().coupe) {
+        const q = f ? '&champ=' + encodeURIComponent(f.champ) + '&valeur=' + encodeURIComponent(f.valeur) : '';
+        const res = await lireServeur(BACKEND_URL + '/snapshot?racine=' + racine + '&auth=' + authUidCourant() + q);
+        const data = await res.json();
+        if (!res.ok) { const e = new Error(data.error); e.code = data.error; throw e; }
+        serveur = data.docs;
+      }
+      livrer();
+    } catch (e) {
+      if (e && e.code === 'unavailable') { /* réseau coupé pendant le vol */ }
+      else { if (onError) onError(e); stopped = true; return; }
     }
     if (!stopped) setTimeout(poll, POLL_MS);
   }

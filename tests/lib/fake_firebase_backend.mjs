@@ -17,6 +17,44 @@ const collections = new Map(); // uid -> { colName -> { docId -> data } }
 const metas = new Map(); // uid -> data
 const journaux = new Map(); // uid -> [{ n, clientId, ops: [{ type, path, lots? }] }] : toutes les écritures REÇUES, dans l'ordre (les tests y vérifient qui a écrit quoi, et quand)
 const versions = new Map(); // uid -> { colName|'meta' -> integer, bumped on every write }
+// Collections à la racine (bulle de contact) : feedback/{id}, admins/{uid} -- avec les MÊMES règles que firestore.rules (connecte, estAdmin, champs permis).
+const racines = new Map(); // col -> { id -> data }
+const racine = col => { if (!racines.has(col)) racines.set(col, {}); return racines.get(col); };
+const CHAMPS_FEEDBACK = ['uid', 'exploitation', 'texte', 'type', 'date', 'dateServeur', 'campagne', 'ecran', 'version', 'appareil', 'statut', 'reponse', 'reponseDate', 'reponseLue'];
+const estAdmin = uid => !!uid && racine('admins')[uid] !== undefined;
+function resoudreSentinelles(data) { const r = {}; Object.keys(data || {}).forEach(k => { const v = data[k]; r[k] = v && v.__op === 'serverTimestamp' ? { __serverTime: true, ms: Date.now() } : v; }); return r; }
+// Renvoie null si l'opération est permise, sinon le motif du refus (permission-denied)
+function refusRacine(op, auth) {
+  const [col, id] = op.path.split('/');
+  if (!auth) return 'non connecté';
+  if (col === 'admins') return 'admins : écriture réservée à la console';
+  if (col !== 'feedback') return 'collection inconnue';
+  const actuel = racine('feedback')[id];
+  if (op.type === 'set') {
+    if (actuel !== undefined) return 'mise à jour par set';
+    const d = op.data || {}, cles = Object.keys(d);
+    if (!id.startsWith(auth + '_') || id.length <= auth.length + 1) return 'identifiant';
+    if (!cles.every(k => CHAMPS_FEEDBACK.includes(k))) return 'champ non permis : ' + cles.filter(k => !CHAMPS_FEEDBACK.includes(k)).join(',');
+    if (!['uid', 'texte', 'type', 'date', 'statut'].every(k => cles.includes(k))) return 'champ manquant';
+    if (d.uid !== auth) return 'uid';
+    if (typeof d.texte !== 'string' || !d.texte.length || d.texte.length > 2000) return 'texte';
+    if (!['bug', 'question', 'idee'].includes(d.type)) return 'type';
+    if (d.statut !== 'nouveau') return 'statut';
+    if ((d.reponse || '') !== '') return 'reponse';
+    if ('dateServeur' in d && !(d.dateServeur && d.dateServeur.__op === 'serverTimestamp')) return 'dateServeur';
+    return null;
+  }
+  if (actuel === undefined) return 'document absent';
+  if (op.type === 'delete') return estAdmin(auth) ? null : 'suppression réservée à l\'administrateur';
+  if (op.type === 'update') {
+    const cles = Object.keys(op.data || {}).filter(k => JSON.stringify(op.data[k]) !== JSON.stringify(actuel[k]));
+    const apres = Object.assign({}, actuel, op.data);
+    if (estAdmin(auth) && cles.every(k => ['statut', 'reponse', 'reponseDate', 'reponseLue'].includes(k)) && ['nouveau', 'lu', 'traite'].includes(apres.statut) && typeof apres.reponse === 'string' && apres.reponse.length <= 2000) return null;
+    if (actuel.uid === auth && cles.every(k => k === 'reponseLue') && apres.reponseLue === true) return null;
+    return 'mise à jour non permise : ' + cles.join(',');
+  }
+  return 'opération inconnue';
+}
 
 function ensureUser(uid) {
   if (!collections.has(uid)) collections.set(uid, {});
@@ -81,7 +119,21 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/auth/sendVerification' && req.method === 'POST') { const u = userParUid((await readBody(req)).uid); if (u) u.envois++; return json(res, u ? 200 : 404, { ok: !!u }); }
     if (url.pathname === '/auth/user' && req.method === 'GET') { const u = userParUid(url.searchParams.get('uid')); return json(res, u ? 200 : 404, u ? { emailVerified: u.verifie !== false, envois: u.envois } : { error: 'user-not-found' }); }
     if (url.pathname === '/batch' && req.method === 'POST') {
-      const { uid, ops, clientId, jetonVerifie } = await readBody(req);
+      const { uid, ops, clientId, jetonVerifie, authUid } = await readBody(req);
+      // Collections à la racine : règles de la bulle de contact (le test peut écrire directement, clientId « test-direct », comme la console)
+      if (ops.some(op => !op.path.startsWith('users/'))) {
+        if (clientId !== 'test-direct') for (const op of ops) { const motif = refusRacine(op, authUid); if (motif) return json(res, 403, { error: 'permission-denied', message: motif }); }
+        for (const op of ops) {
+          const [col, id] = op.path.split('/');
+          const c = racine(col);
+          if (op.type === 'set') c[id] = resoudreSentinelles(op.data);
+          else if (op.type === 'update') c[id] = Object.assign({}, c[id] || {}, resoudreSentinelles(op.data));
+          else if (op.type === 'delete') delete c[id];
+          if (!journaux.has('racine')) journaux.set('racine', []);
+          journaux.get('racine').push({ n: journaux.get('racine').length + 1, clientId: clientId || null, ops: [{ type: op.type, path: op.path, data: op.data }] });
+        }
+        return json(res, 200, { ok: true });
+      }
       // Règle Firestore « email_verified == true » : un jeton non vérifié ne peut rien écrire (permission-denied)
       if (exigerVerification && jetonVerifie === false) return json(res, 403, { error: 'permission-denied', message: 'email non vérifié dans le jeton' });
       ensureUser(uid);
@@ -146,6 +198,22 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/journal' && req.method === 'GET') {
       return json(res, 200, journaux.get(url.searchParams.get('uid')) || []);
+    }
+    if (url.pathname === '/getdoc' && req.method === 'GET' && url.searchParams.get('racine')) {
+      const col = url.searchParams.get('racine'), id = url.searchParams.get('id'), auth = url.searchParams.get('auth');
+      if (col === 'admins' && (!auth || auth !== id)) return json(res, 403, { error: 'permission-denied' });
+      const data = racine(col)[id];
+      return json(res, 200, { exists: data !== undefined, data: data || null });
+    }
+    if (url.pathname === '/snapshot' && req.method === 'GET' && url.searchParams.get('racine')) {
+      const col = url.searchParams.get('racine'), auth = url.searchParams.get('auth'), champ = url.searchParams.get('champ'), valeur = url.searchParams.get('valeur');
+      if (url.searchParams.get('test') !== '1') {
+        const permis = col === 'feedback' && auth && (estAdmin(auth) || (champ === 'uid' && valeur === auth));
+        if (!permis) return json(res, 403, { error: 'permission-denied' });
+      }
+      const tous = racine(col), docs = {};
+      Object.keys(tous).forEach(id => { if (!champ || tous[id][champ] === valeur) docs[id] = tous[id]; });
+      return json(res, 200, { docs });
     }
     if (url.pathname === '/getdoc' && req.method === 'GET') {
       const uid = url.searchParams.get('uid');
