@@ -12,6 +12,8 @@ import { randomUUID } from 'crypto';
 const users = new Map(); // email -> { uid, password, verifie, envois }
 // Vérification de l'adresse e-mail (test_verification_email) : désactivée par défaut, tout compte est alors vérifié (les autres tests n'en voient rien).
 let exigerVerification = false;
+// « Règles non publiées » (test_bulle_contact) : toute écriture de l'appli dans feedback est refusée, comme avant la publication des règles dans la console
+let refuserFeedback = false;
 const userParUid = uid => [...users.values()].find(u => u.uid === uid);
 const collections = new Map(); // uid -> { colName -> { docId -> data } }
 const metas = new Map(); // uid -> data
@@ -29,6 +31,7 @@ function refusRacine(op, auth) {
   if (!auth) return 'non connecté';
   if (col === 'admins') return 'admins : écriture réservée à la console';
   if (col !== 'feedback') return 'collection inconnue';
+  if (refuserFeedback) return 'règles non publiées';
   const actuel = racine('feedback')[id];
   if (op.type === 'set') {
     if (actuel !== undefined) return 'mise à jour par set';
@@ -114,6 +117,7 @@ const server = http.createServer(async (req, res) => {
       ensureUser(u.uid);
       return json(res, 200, { uid: u.uid, emailVerified: u.verifie !== false });
     }
+    if (url.pathname === '/racine/config' && req.method === 'POST') { refuserFeedback = !!(await readBody(req)).refuserFeedback; return json(res, 200, { ok: true }); }
     if (url.pathname === '/auth/config' && req.method === 'POST') { exigerVerification = !!(await readBody(req)).exigerVerification; return json(res, 200, { ok: true }); }
     if (url.pathname === '/auth/verifier' && req.method === 'POST') { const u = users.get((await readBody(req)).email); if (u) u.verifie = true; return json(res, u ? 200 : 404, { ok: !!u }); }
     if (url.pathname === '/auth/sendVerification' && req.method === 'POST') { const u = userParUid((await readBody(req)).uid); if (u) u.envois++; return json(res, u ? 200 : 404, { ok: !!u }); }
