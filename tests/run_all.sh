@@ -29,7 +29,9 @@ ECHEC=0
 # Sur GitHub Actions : chaque échec devient aussi une annotation (nom du test + message FAIL), lisible sans ouvrir le journal complet
 annoter() {
   [ -n "${GITHUB_ACTIONS:-}" ] || return 0
-  local msg; msg=$(printf '%s\n' "$2" | grep -m1 -E 'FAIL|Error|TIMEOUT|PAGEERROR' | cut -c1-900)
+  # le vrai message d'abord (« Error: FAIL: … », « PAGEERROR … »), pas une ligne de code source citée dans la pile
+  local msg; msg=$(printf '%s\n' "$2" | grep -m1 -E '^(Error|FAIL|TIMEOUT|PAGEERROR)|^[A-Za-z]*Error: ' | cut -c1-900)
+  [ -n "$msg" ] || msg=$(printf '%s\n' "$2" | grep -m1 -E 'FAIL|Error|TIMEOUT|PAGEERROR' | cut -c1-900)
   [ -n "$msg" ] || msg=$(printf '%s\n' "$2" | tail -1 | cut -c1-900)
   msg=${msg//'%'/'%25'}
   echo "::error title=$1::$msg"
