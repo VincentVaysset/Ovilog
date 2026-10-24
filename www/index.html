@@ -176,6 +176,8 @@
   .contact-reponse { background: var(--ch-vert-pastel); color: var(--ch-vert-texte); border-left: 5px solid var(--ch-vert-fonce); border-radius: 12px; padding: 10px 12px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .contact-reponse b { display: block; font-size: 12px; margin-bottom: 2px; }
   .mb-pastille.rouge { background: var(--ch-rouge-pastel); color: var(--ch-rouge); }
+  .repro-question-choix { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .repro-question-choix .btn { flex: 1 1 0; min-width: 96px; margin: 0; min-height: 44px; }
   .mr-carte { cursor: pointer; }
   .mr-carte.mr-nouveau { border-left: 5px solid var(--ch-vert); }
   .mr-carte .carte-liste-acts { flex-wrap: wrap; }
@@ -4817,16 +4819,46 @@ function fenetreReproMatch(dateEvenement, dateMiseBas) {
    l'évènement le plus probable en cas de correspondances multiples
    (rarissime en pratique -- un seul lot couvre normalement chaque cycle). */
 function deduireCodeRepro(sheep, dateMiseBas) {
-  const modes = sheep.modesRepro || [];
-  if (!dateMiseBas) return 'MN';
-  for (let i = modes.length - 1; i >= 0; i--) {
-    const m = modes[i];
-    if (!m) continue;
-    const match = fenetreReproMatch(m.date, dateMiseBas);
-    if (match === 'directe') return m.mode;
-    if (match === 'retour') return 'RE';
-  }
-  return 'MN';
+  const s = situationReproMiseBas(sheep, dateMiseBas);
+  return s.question ? null : s.code;   // null : le code doit être CHOISI par l'éleveur (question à la saisie, voir questionReproHtml)
+}
+
+/* Situation Repro d'une mise bas, d'après le DERNIER lot IA / éponge de la brebis qui vise la campagne de cette mise bas (ou dont la fenêtre de
+   retour n'est pas dépassée) et les bornes RÉGLÉES du compte (Paramètres › Campagne : gestation G min-max, 1er retour R min-max) :
+   avant G min -> question IA (ou EP) / MN ; G min à G max -> IA (ou EP) d'office ; entre G max et R min -> question IA (ou EP) / RE / MN ;
+   à partir de R min -> RE d'office (un retour, même après R max). Hors de tout lot : MN. Renvoie { code, question: null | { zone, choix }, m, diff }.
+   La réponse est fixée à la saisie (agnelage.codeRepro) : les bilans des lots la suivent (classementMiseBasLot), rien n'est rejugé ensuite. */
+function bornesRepro() {
+  return { gMin: DB.reproGestationMin !== undefined ? DB.reproGestationMin : 144, gMax: DB.reproGestationMax !== undefined ? DB.reproGestationMax : 152,
+    rMin: DB.reproRetourMin !== undefined ? DB.reproRetourMin : 160, rMax: DB.reproRetourMax !== undefined ? DB.reproRetourMax : 171 };
+}
+const joursEntreDates = (a, b) => Math.round((new Date(b.slice(0, 10) + 'T00:00:00Z') - new Date(a.slice(0, 10) + 'T00:00:00Z')) / 86400000);
+function situationReproMiseBas(sheep, dateMiseBas) {
+  if (!dateMiseBas || !/^\d{4}-\d{2}-\d{2}/.test(dateMiseBas)) return { code: 'MN', question: null, m: null, diff: null };
+  const B = bornesRepro(), campagne = campagneAnneeDebutPourDate(dateMiseBas);
+  const candidats = (sheep.modesRepro || []).filter(m => m && (m.mode === 'IA' || m.mode === 'EP') && /^\d{4}-\d{2}-\d{2}/.test(m.date || '') && m.date.slice(0, 10) <= dateMiseBas.slice(0, 10))
+    .filter(m => campagneMisesBasEvenementRepro(m) === campagne || joursEntreDates(m.date, dateMiseBas) <= B.rMax)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const m = candidats[0];
+  if (!m) return { code: 'MN', question: null, m: null, diff: null };
+  const diff = joursEntreDates(m.date, dateMiseBas);
+  if (diff < B.gMin) return { code: null, question: { zone: 'avant', choix: [m.mode, 'MN'] }, m, diff };
+  if (diff <= B.gMax) return { code: m.mode, question: null, m, diff };
+  if (diff < B.rMin) return { code: null, question: { zone: 'entre', choix: [m.mode, 'RE', 'MN'] }, m, diff };
+  return { code: 'RE', question: null, m, diff };
+}
+const LIBELLE_CHOIX_REPRO = { IA: 'IA', EP: 'Éponge', RE: 'Retour', MN: 'Monte naturelle' };
+// Message de la charte posé à la saisie quand la date tombe hors des fenêtres d'un lot : un bouton par code, aucun choix par défaut.
+function questionReproHtml(s, codeChoisi) {
+  if (!s || !s.question) return '';
+  const B = bornesRepro(), m = s.m, lot = m.lotId ? (DB.lots || []).find(l => l.id === m.lotId) : null;
+  const nomLot = lot && lot.nom ? 'du lot « ' + lot.nom + ' »' : 'du lot ' + (m.mode === 'EP' ? 'Éponge' : 'IA') + ' du ' + formatDateFr(m.date.slice(0, 10));
+  const fen = m.mode === 'EP' ? 'de l\'éponge' : 'de l\'IA';
+  const texte = s.question.zone === 'avant'
+    ? `Brebis ${nomLot} : mise bas à ${s.diff} j, avant la fenêtre ${fen} (${B.gMin} à ${B.gMax} j). ${m.mode === 'EP' ? 'Éponge' : 'IA'} ou monte naturelle ?`
+    : `Brebis ${nomLot} : mise bas à ${s.diff} j, entre la fenêtre ${fen} (${B.gMin} à ${B.gMax} j) et celle des retours (${B.rMin} à ${B.rMax} j). ${m.mode === 'EP' ? 'Éponge' : 'IA'}, retour ou monte naturelle ?`;
+  return `<div class="msg-charte alerte repro-question" role="group" aria-label="Code Repro à choisir"><b>${codeChoisi ? 'Code Repro choisi : ' + LIBELLE_CHOIX_REPRO[codeChoisi] : 'Code Repro à choisir'}</b><span>${texte}</span>
+    <div class="repro-question-choix">${s.question.choix.map(c => `<button type="button" class="btn ${c === codeChoisi ? 'btn-primary' : 'btn-secondary'} repro-question-btn" data-code="${c}">${LIBELLE_CHOIX_REPRO[c]}</button>`).join('')}</div></div>`;
 }
 
 /* Étiquette compacte d'un code Repro, réutilisée sur la fiche brebis/agnelle
@@ -12133,6 +12165,8 @@ function renderAddAgnelage(sheepId) {
   // re-déduire (une correction manuelle ne doit jamais être silencieusement
   // écrasée en rouvrant l'agnelage).
   let codeRepro = (existing && existing.codeRepro) ? existing.codeRepro : deduireCodeRepro(sheep, today);
+  // Date hors des fenêtres d'un lot IA / éponge : code à CHOISIR (question, aucun choix par défaut) ; en édition, le code déjà fixé n'est pas reposé
+  let situationRepro = (existing && existing.codeRepro) ? null : situationReproMiseBas(sheep, today);
 
   app.innerHTML = `
     <div class="card">
@@ -12146,6 +12180,7 @@ function renderAddAgnelage(sheepId) {
         <button type="button" class="opt-btn repro-code-opt" data-val="RE">Retour</button>
         <button type="button" class="opt-btn repro-code-opt" data-val="MN">Monte nat.</button>
       </div>
+      <div id="repro-question" style="margin-bottom:16px;"></div>
       <div id="lamb-list"></div>
       <button type="button" class="btn btn-secondary" id="add-lamb" style="margin-bottom:14px;">+ Ajouter un agneau</button>
       <div id="err" class="error-box hidden"></div>
@@ -12155,13 +12190,18 @@ function renderAddAgnelage(sheepId) {
 
   function updateReproCodeButtons() {
     document.querySelectorAll('.repro-code-opt').forEach(b => b.classList.toggle('selected', b.dataset.val === codeRepro));
+    const q = document.getElementById('repro-question');
+    q.innerHTML = questionReproHtml(situationRepro, codeRepro);
+    q.style.display = q.innerHTML ? '' : 'none';
+    q.querySelectorAll('.repro-question-btn').forEach(b => { b.onclick = () => { codeRepro = b.dataset.code; updateReproCodeButtons(); }; });
   }
   updateReproCodeButtons();
   document.querySelectorAll('.repro-code-opt').forEach(b => {
     b.onclick = () => { codeRepro = b.dataset.val; updateReproCodeButtons(); };
   });
   document.getElementById('f-date').addEventListener('change', (e) => {
-    codeRepro = deduireCodeRepro(sheep, e.target.value);
+    situationRepro = situationReproMiseBas(sheep, e.target.value);
+    codeRepro = situationRepro.question ? null : situationRepro.code;
     updateReproCodeButtons();
     document.querySelectorAll('.eid-input').forEach(i => i.dispatchEvent(new Event('input')));   // l'alerte « chiffre d'année » suit la date
   });
@@ -12292,6 +12332,11 @@ function renderAddAgnelage(sheepId) {
 
   document.getElementById('btn-save-agnelage').onclick = () => {
     const err = document.getElementById('err');
+    if (!codeRepro) {
+      err.textContent = 'Choisissez le code Repro de cette mise bas (question ci-dessus).';
+      err.classList.remove('hidden');
+      return;
+    }
     const ids = Object.keys(lambs);
     if (ids.length === 0) {
       err.textContent = "Ajoute au moins un agneau.";
@@ -13279,6 +13324,7 @@ function chercherBrebisMiseBas(val) {
 /* Construit l'agnelage d'une saisie. saisie : { date, codeRepro, lambs: [{ sexe: 'Mâle' | 'Femelle' | 'Mort-né', sexeMortNe?, eid?, adopte?, adoptNum? }] }.
    Retourne { erreur } ou { agnelage }. Mort-né : jamais d'EID (sexeMortNe facultatif, simple information) ; aucun soin ajouté d'office (un soin se saisit par le Carnet sanitaire) ; adoption : brebis ACTIVE uniquement. */
 function construireAgnelageMiseBas(sheep, saisie) {
+  if (!saisie.codeRepro) return { erreur: 'Choisissez le code Repro de cette mise bas (question ci-dessus).' };
   const lambs = saisie.lambs || [];
   if (lambs.length === 0) return { erreur: 'Ajoute au moins un agneau.' };
   const vivants = lambs.filter(l => l.sexe && l.sexe !== 'Mort-né');
@@ -13368,7 +13414,11 @@ function renderMiseBasRapide() {
   let derniere = null;         // confirmation verte : { sheepId, ref, numero, resume }
   let annulee = null;          // message d'annulation : « Saisie annulée » (mobile) / « Mise bas annulée » (PC)
   const nouvelAgneau = () => ({ mortNe: false, sexe: null, eid: '', adopte: false, adoptNum: '' });
-  const ouvrirFormulaire = (sheep) => { currentSheep = sheep; form = { date: jourAujourdhuiISO(), codeRepro: deduireCodeRepro(sheep, jourAujourdhuiISO()), lambs: [nouvelAgneau()] }; };
+  const ouvrirFormulaire = (sheep) => {
+    currentSheep = sheep;
+    const situation = situationReproMiseBas(sheep, jourAujourdhuiISO());   // hors des fenêtres d'un lot IA / éponge : code à choisir (question)
+    form = { date: jourAujourdhuiISO(), situation, codeRepro: situation.question ? null : situation.code, lambs: [nouvelAgneau()] };
+  };
   function resetForm() { currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null; form = null; }
   const sexeLibelle = (l) => l.mortNe ? 'Mort-né' : (l.sexe || '');
 
@@ -13474,6 +13524,7 @@ function renderMiseBasRapide() {
         <div id="mb-alertes">${controles.alertes.map(a => `<div class="mb-msg alerte" data-alerte="${a.code}">${a.message}</div>`).join('')}</div>
         <label>Repro</label>
         <div class="tab-bar" id="repro-code-list-rapide" style="margin-bottom:0;">${[['IA', 'IA'], ['EP', 'Éponge'], ['RE', 'Retour'], ['MN', 'Monte nat.']].map(([v, l]) => `<button type="button" class="tab-btn repro-code-opt-rapide${form.codeRepro === v ? ' active' : ''}" data-val="${v}">${l}</button>`).join('')}</div>
+        <div id="repro-question-rapide" style="margin-top:10px;"></div>
       </div>
       <div class="sec" id="mb-nb-agneaux" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Agneaux · ${form.lambs.length}</div>
       <div id="lamb-list-rapide"></div>
@@ -13499,7 +13550,8 @@ function renderMiseBasRapide() {
         <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start;margin-bottom:12px;">
           <div><div class="brd-note" style="margin:0 0 4px;">Date de mise bas</div><input type="date" id="f-date-rapide" value="${form.date}" style="margin:0;"></div>
           <div><div class="brd-note" style="margin:0 0 4px;">Repro <span id="pc-repro-chip" class="pc-pill info">déduit, modifiable</span></div>
-            <div id="repro-code-list-rapide" style="display:flex;gap:6px;flex-wrap:wrap;">${[['IA', 'IA'], ['EP', 'EP'], ['RE', 'RE'], ['MN', 'MN']].map(([v, l]) => `<button type="button" class="opt-btn repro-code-opt-rapide${form.codeRepro === v ? ' selected' : ''}" data-val="${v}" style="width:auto;padding:6px 14px;">${l}</button>`).join('')}</div></div>
+            <div id="repro-code-list-rapide" style="display:flex;gap:6px;flex-wrap:wrap;">${[['IA', 'IA'], ['EP', 'EP'], ['RE', 'RE'], ['MN', 'MN']].map(([v, l]) => `<button type="button" class="opt-btn repro-code-opt-rapide${form.codeRepro === v ? ' selected' : ''}" data-val="${v}" style="width:auto;padding:6px 14px;">${l}</button>`).join('')}</div>
+            <div id="repro-question-rapide" style="margin-top:10px;"></div></div>
         </div>
         <div id="mb-alertes">${controles.alertes.map(a => `<div class="mb-msg alerte" data-alerte="${a.code}">${a.message}</div>`).join('')}</div>
         <table class="brd-t" id="mb-table-agneaux"><colgroup><col style="width:8%"><col style="width:25%"><col style="width:19%"><col style="width:10%"><col style="width:24%"><col style="width:14%"></colgroup>
@@ -13629,18 +13681,24 @@ function renderMiseBasRapide() {
     if (currentSheep && form && !bloc) {
       document.getElementById('add-lamb-rapide').onclick = () => { form.lambs.push(nouvelAgneau()); renderLambs(); };
       document.getElementById(pc ? 'btn-annuler-saisie-pc' : 'btn-annuler-saisie-mb').onclick = () => { resetForm(); draw(); };   // abandonne la saisie en cours : rien n'est enregistré
+      // Code Repro : sélecteur + question (date hors des fenêtres d'un lot IA / éponge), les deux restent d'accord
+      const majRepro = (chip) => {
+        document.querySelectorAll('.repro-code-opt-rapide').forEach(x => { x.classList.toggle('active', x.dataset.val === form.codeRepro); x.classList.toggle('selected', x.dataset.val === form.codeRepro); });
+        const chipRepro = document.getElementById('pc-repro-chip'); if (chipRepro && chip) chipRepro.textContent = chip;
+        const q = document.getElementById('repro-question-rapide');
+        q.innerHTML = questionReproHtml(form.situation, form.codeRepro);
+        q.style.display = q.innerHTML ? '' : 'none';
+        q.querySelectorAll('.repro-question-btn').forEach(b => { b.onclick = () => { form.codeRepro = b.dataset.code; majRepro('choisi'); document.getElementById('err').classList.add('hidden'); }; });
+      };
+      majRepro(form.situation && form.situation.question ? 'à choisir' : null);
       document.querySelectorAll('.repro-code-opt-rapide').forEach(b => {
-        b.onclick = () => {
-          form.codeRepro = b.dataset.val;
-          document.querySelectorAll('.repro-code-opt-rapide').forEach(x => { x.classList.toggle('active', x === b); x.classList.toggle('selected', x === b); });
-          const chipRepro = document.getElementById('pc-repro-chip'); if (chipRepro) chipRepro.textContent = 'choisi à la main';
-        };
+        b.onclick = () => { form.codeRepro = b.dataset.val; majRepro('choisi à la main'); };
       });
       document.getElementById('f-date-rapide').addEventListener('change', (e) => {
         form.date = e.target.value;
-        form.codeRepro = deduireCodeRepro(currentSheep, form.date);
-        document.querySelectorAll('.repro-code-opt-rapide').forEach(x => { x.classList.toggle('active', x.dataset.val === form.codeRepro); x.classList.toggle('selected', x.dataset.val === form.codeRepro); });
-        const chipRepro = document.getElementById('pc-repro-chip'); if (chipRepro) chipRepro.textContent = 'déduit, modifiable';
+        form.situation = situationReproMiseBas(currentSheep, form.date);
+        form.codeRepro = form.situation.question ? null : form.situation.code;
+        majRepro(form.situation.question ? 'à choisir' : 'déduit, modifiable');
         majAlertes();
         document.querySelectorAll('.eid-input-rapide').forEach(i => i.dispatchEvent(new Event('input')));   // l'alerte « chiffre d'année » suit la date
       });
