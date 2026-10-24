@@ -5201,12 +5201,16 @@ function statsReproductionParCode(cohort) {
    - Global : somme IA + 1er retour, fertilité = total ÷ effectif total.
    - Prolificité (par colonne) = agneaux nés (mort-nés inclus) ÷ mises bas
      de cette colonne, même dénominateur logique que sa fertilité. */
+/* Classement d'une mise bas d'un membre dans le bilan d'un lot, d'après le code Repro FIXÉ à la saisie (voir situationReproMiseBas) : code du lot
+   (IA / EP) -> 'directe', RE -> 'retour', MN (ou autre) -> hors lot (null). Une ancienne mise bas sans code reste jugée comme avant : IA par les
+   fenêtres réglées, éponge = toute mise bas de la campagne. */
+function classementMiseBasLot(lot, ag) {
+  if (!ag || !ag.date) return null;
+  if (ag.codeRepro) return ag.codeRepro === lot.mode ? 'directe' : ag.codeRepro === 'RE' ? 'retour' : null;
+  if (lot.mode === 'EP') return 'directe';
+  return fenetreReproMatch(lot.dateEvenement || lot.dateCreation, ag.date);
+}
 function statsLotIA(lot) {
-  const min = DB.reproGestationMin !== undefined ? DB.reproGestationMin : 144;
-  const max = DB.reproGestationMax !== undefined ? DB.reproGestationMax : 152;
-  const retMin = DB.reproRetourMin !== undefined ? DB.reproRetourMin : 160;
-  const retMax = DB.reproRetourMax !== undefined ? DB.reproRetourMax : 171;
-  const lotDate = new Date(lot.dateEvenement || lot.dateCreation);
   let effectif = 0, misesBasIA = 0, misesBasRetour = 0, agneauxIA = 0, agneauxRetour = 0, sorties = 0;
   (lot.membres || []).forEach(eid => {
     const animal = trouverAnimalReproOuArchive(eid);
@@ -5214,13 +5218,9 @@ function statsLotIA(lot) {
     const ag = agnelageCampagneActuelle(animal);
     if (estSortieDuTroupeau(animal) && !(ag && ag.date)) { sorties++; return; }      // sortie avant mise bas : hors taux, comptée à part
     effectif++;
-    if (!ag || !ag.date || isNaN(lotDate.getTime())) return;
-    const mb = new Date(ag.date);
-    if (isNaN(mb.getTime())) return;
-    const diff = Math.round((mb - lotDate) / 86400000);
-    const nesTotal = (ag.lambs || []).length;
-    if (diff >= min && diff <= max) { misesBasIA++; agneauxIA += nesTotal; }
-    else if (diff >= retMin && diff <= retMax) { misesBasRetour++; agneauxRetour += nesTotal; }
+    const classe = classementMiseBasLot(lot, ag), nesTotal = ag ? (ag.lambs || []).length : 0;
+    if (classe === 'directe') { misesBasIA++; agneauxIA += nesTotal; }
+    else if (classe === 'retour') { misesBasRetour++; agneauxRetour += nesTotal; }
   });
   return Object.assign(statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour), { sorties });
 }
@@ -5306,11 +5306,6 @@ function lotEpongeConcerneCampagneEnCours(lot) {
    pour identifier une cohorte (numéro visuel commençant par le chiffre du
    millésime, ex : 90059 pour 2019, voir anneeNaissance). */
 function statsLotIAParAgeExact(lot) {
-  const min = DB.reproGestationMin !== undefined ? DB.reproGestationMin : 144;
-  const max = DB.reproGestationMax !== undefined ? DB.reproGestationMax : 152;
-  const retMin = DB.reproRetourMin !== undefined ? DB.reproRetourMin : 160;
-  const retMax = DB.reproRetourMax !== undefined ? DB.reproRetourMax : 171;
-  const lotDate = new Date(lot.dateEvenement || lot.dateCreation);
   const groupes = {};
   (lot.membres || []).forEach(eid => {
     const animal = trouverAnimalReproOuArchive(eid);
@@ -5322,13 +5317,9 @@ function statsLotIAParAgeExact(lot) {
     if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBasIA: 0, misesBasRetour: 0, agneauxIA: 0, agneauxRetour: 0 };
     const g = groupes[millesime];
     g.effectif++;
-    if (!ag || !ag.date || isNaN(lotDate.getTime())) return;
-    const mb = new Date(ag.date);
-    if (isNaN(mb.getTime())) return;
-    const diff = Math.round((mb - lotDate) / 86400000);
-    const nesTotal = (ag.lambs || []).length;
-    if (diff >= min && diff <= max) { g.misesBasIA++; g.agneauxIA += nesTotal; }
-    else if (diff >= retMin && diff <= retMax) { g.misesBasRetour++; g.agneauxRetour += nesTotal; }
+    const classe = classementMiseBasLot(lot, ag), nesTotal = ag ? (ag.lambs || []).length : 0;
+    if (classe === 'directe') { g.misesBasIA++; g.agneauxIA += nesTotal; }
+    else if (classe === 'retour') { g.misesBasRetour++; g.agneauxRetour += nesTotal; }
   });
   return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(millesime => {
     const g = groupes[millesime];
@@ -5357,7 +5348,7 @@ function statsLotEpongeParAgeExact(lot) {
     if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBas: 0, agneaux: 0 };
     const g = groupes[millesime];
     g.effectif++;
-    if (!ag) return;
+    if (classementMiseBasLot(lot, ag) !== 'directe') return;   // code fixé à la saisie : seule une mise bas « Éponge » compte (RE, MN hors lot)
     g.misesBas++;
     g.agneaux += (ag.lambs || []).length;
   });
@@ -5384,7 +5375,7 @@ function statsLotEponge(lot) {
     const ag = agnelageCampagneActuelle(animal);
     if (estSortieDuTroupeau(animal) && !ag) { sorties++; return; }      // sortie avant mise bas : hors taux, comptée à part
     effectif++;
-    if (!ag) return;
+    if (classementMiseBasLot(lot, ag) !== 'directe') return;   // code fixé à la saisie : seule une mise bas « Éponge » compte (RE, MN hors lot)
     misesBas++;
     agneaux += (ag.lambs || []).length;
   });

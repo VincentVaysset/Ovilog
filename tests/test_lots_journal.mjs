@@ -196,7 +196,7 @@ const st = await page.evaluate(() => {
 check(st.membres === 5, 'les 5 membres restent dans le lot (jamais retirés automatiquement)');
 check(st.effectif === 3 && st.sorties === 2 && st.misesBasIA === 2 && st.fertilite === 66.7, 'stats IA : effectif 3 (active sans mise bas, active avec, archivée AVEC mise bas), 2 sorties avant mise bas (vendue, archivée sans), taux 66,7 % : ' + JSON.stringify(st));
 check(st.parAge === 3, 'détail par millésime (PDF) cohérent avec le total : ' + st.parAge);
-check(JSON.stringify(st.ep) === '[1,1,1]', 'éponge : même règle (effectif 1, 1 sortie, 1 mise bas)');
+check(JSON.stringify(st.ep) === '[1,1,0]', 'éponge : même règle de sorties (effectif 1, 1 sortie) ; la mise bas de code IA ne compte pas dans un lot éponge (bilan selon le code fixé à la saisie)');
 console.log('OK 5 statistiques : sorties avant mise bas exclues du numérateur et du dénominateur, comptées à part, jamais retirées du lot ; archivée avec mise bas comptée.');
 
 // ================================================================ 6. plomberie de synchro, garde-fou version, lot vide, seuil Paramètres
