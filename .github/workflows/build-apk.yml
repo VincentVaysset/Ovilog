@@ -8,7 +8,15 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  tests:
+    # Batterie complète (voir tests.yml) AVANT toute construction : si un test échoue, ni APK, ni installeur, ni Release
+    # (stable de main ou pre-release « [test] ») -- une version cassée ne peut jamais arriver dans la fenêtre de mise à jour.
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
   build:
+    needs: tests
     runs-on: ubuntu-latest
     # Nécessaire pour que l'étape "Publier la Release GitHub" ci-dessous
     # puisse créer une release + y attacher l'APK avec le GITHUB_TOKEN
@@ -106,9 +114,9 @@ jobs:
         # TOUJOURS en "pre-release" (invisible pour l'appli installée, qui ne
         # propose que les versions non pre-release). Pour livrer une version :
         # GitHub > Releases > modifier la version voulue > décocher "Set as a
-        # pre-release" (et cocher "Set as the latest release"). Les autres
-        # builds (branches claude/**, lancement manuel, autres branches) ne
-        # produisent que l'artefact ci-dessus, jamais de Release.
+        # pre-release" (et cocher "Set as the latest release"). Un push sur
+        # une branche publie une pre-release de TEST (étape suivante, marquée
+        # « [test] ») ; un lancement manuel ne produit que l'artefact.
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
@@ -130,6 +138,42 @@ jobs:
 
             ${{ github.event.head_commit.message }}
           files: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Publier la pre-release de test (build de branche, canal de test)
+        # CANAL DE TEST : un push sur une branche (claude/**) publie aussi une Release, TOUJOURS en pre-release, repérée par un marqueur explicite :
+        # nom commençant par « [test] » ET corps commençant par « <!-- ovilog-canal-test --> ». L'appli installée ne la propose QUE sur un appareil
+        # de l'administrateur qui a activé « Recevoir les versions de test » (Paramètres › Sauvegarde) ; tous les autres (et toute version d'avant ce
+        # réglage) ignorent les pre-releases. Pas sur un lancement manuel (même commit que le push : pas de doublon). APK seul, le PC reste stable.
+        if: github.ref != 'refs/heads/main' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: "[test] Ovilog 1.0.${{ github.run_number }} (${{ github.ref_name }})"
+          prerelease: true
+          body: |
+            <!-- ovilog-canal-test -->
+            Version de test (branche ${{ github.ref_name }}@${{ github.sha }}) — proposée seulement aux appareils de l'administrateur qui ont activé « Recevoir les versions de test ».
+
+            ${{ github.event.head_commit.message }}
+          files: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Ménage des pre-releases de test (garder les 3 plus récentes)
+        # Ne supprime QUE les pre-releases portant les DEUX marqueurs du canal de test (nom « [test] … » ET corps « <!-- ovilog-canal-test --> ») :
+        # jamais une Release de main (pre-release en attente de promotion) ni une version stable. Garde les 3 plus récentes (n° de version), supprime
+        # les autres avec leur tag. Évite que la liste des Releases lue par les appareils (première page) ne se remplisse de versions de test.
+        if: github.ref != 'refs/heads/main' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq '.[] | select(.prerelease == true and .draft == false and (.name // "" | startswith("[test] ")) and (.body // "" | startswith("<!-- ovilog-canal-test -->")) and (.tag_name | test("^v[0-9]+$"))) | "\(.tag_name | ltrimstr("v"))\t\(.id)\t\(.tag_name)"' \
+            | sort -t$'\t' -k1,1nr | tail -n +4 | while IFS=$'\t' read -r num id tag; do
+              echo "Suppression de la pre-release de test ${tag} (id ${id})"
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${id}"
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${tag}" || echo "Tag ${tag} déjà absent"
+            done
 
   build-windows:
     # Job séparé (runner + toolchain distincts) : n'installe rien à la

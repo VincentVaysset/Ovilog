@@ -11,7 +11,7 @@ const A = [1046, 1568], B = [220], AMBIGU = [700, 700];
 
 function jeu(vide) {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   window.EID = eid;
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
@@ -22,7 +22,7 @@ function jeu(vide) {
     fiche(eid(5, 33), { id: 'D', numeroCourtTravailSieol: '533', numeroLongTravailSieol: '250033' }),
     fiche(eid(7, 777), { id: 'E', numeroCourtTravailSieol: '777', numeroLongTravailSieol: '257777' }),
     fiche(eid(6, 777), { id: 'F' }),            // même n° d'ordre 00777 que E : collision
-    fiche(eid(9, 99), { id: 'M', statut: 'vendue', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', acheteur: 'Natera', date: '2026-09-01' }] })];
+    fiche(eid(9, 99), { id: 'M', statut: 'vendue', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', acheteur: 'Acheteur C', date: '2026-09-01' }] })];
   DB.beliers = []; DB.agnelles = []; DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} }; DB.mouvementsCollectifs = [];
   window.__avant = JSON.stringify(DB); window.__saves = 0;
 }

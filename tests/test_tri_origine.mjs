@@ -14,7 +14,7 @@ await page.waitForTimeout(300);
 await page.evaluate(() => {
   DB = migrateData({}); saveData = function () { window.__saves = (window.__saves || 0) + 1; };
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
-  window.E = (d, n) => '2500162991' + d + String(n).padStart(4, '0');
+  window.E = (d, n) => '2500000121' + d + String(n).padStart(4, '0');
   const f = (d, n, extra) => Object.assign({ id: 'b' + d + n, eid: E(d, n), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: [], videesDefinitives: [] }, extra || {});
   const agn = (code, n, extra) => { const o = { campagne: 2025, date: '2026-01-1' + n, lambs: [{ eid: E(6, n), sexe: 'Femelle', sanitaire: [], mouvements: [] }] }; if (code) o.codeRepro = code; return Object.assign(o, extra || {}); };
   DB.brebis = [

@@ -1,0 +1,77 @@
+import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
+import { readFileSync } from 'fs';
+import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp, setLogLevel } from 'firebase/firestore';
+setLogLevel('error');
+const env = await initializeTestEnvironment({ projectId: 'demo-ovilog', firestore: { rules: readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8'), host: '127.0.0.1', port: 8085 } });
+const A = 'eleveurA', B = 'eleveurB', ADMIN = 'proprio';
+await env.withSecurityRulesDisabled(async c => { await setDoc(doc(c.firestore(), 'admins', ADMIN), { role: 'admin' }); });
+const db = (uid, verifie = false) => uid ? env.authenticatedContext(uid, { email_verified: verifie }).firestore() : env.unauthenticatedContext().firestore();
+const msg = (uid, extra = {}) => Object.assign({ uid, exploitation: 'Ferme du Test', texte: 'Bonjour', type: 'bug', date: new Date().toISOString(), dateServeur: serverTimestamp(), campagne: '2027', ecran: 'home', version: '1.0.test', appareil: 'Android téléphone', statut: 'nouveau', reponse: '', reponseDate: '', reponseLue: true }, extra);
+let n = 0; const ok = async (p, l) => { await assertSucceeds(p); n++; console.log('OK   ' + l); }; const ko = async (p, l) => { await assertFails(p); n++; console.log('REFUS ' + l); };
+// création
+await ok(setDoc(doc(db(A), 'feedback', A + '_1'), msg(A)), 'A (adresse NON vérifiée) crée son message');
+await ko(setDoc(doc(db(null), 'feedback', 'x_1'), msg('x')), 'non connecté : création refusée');
+await ko(setDoc(doc(db(A), 'feedback', A + '_2'), msg(B)), 'A ne peut pas écrire au nom de B');
+await ko(setDoc(doc(db(A), 'feedback', B + '_2'), msg(A)), 'identifiant au nom de B refusé');
+await ko(setDoc(doc(db(A), 'feedback', A + '_3'), msg(A, { eid: '250000000000001' })), 'champ non prévu (eid) refusé');
+await ko(setDoc(doc(db(A), 'feedback', A + '_4'), msg(A, { type: 'autre' })), 'type inconnu refusé');
+await ko(setDoc(doc(db(A), 'feedback', A + '_5'), msg(A, { texte: 'x'.repeat(2001) })), 'texte de 2 001 caractères refusé');
+await ok(setDoc(doc(db(A), 'feedback', A + '_6'), msg(A, { texte: 'x'.repeat(2000), type: 'idee' })), 'texte de 2 000 caractères accepté');
+await ko(setDoc(doc(db(A), 'feedback', A + '_7'), msg(A, { statut: 'traite' })), 'statut imposé à la création refusé');
+await ko(setDoc(doc(db(A), 'feedback', A + '_8'), msg(A, { reponse: 'fausse réponse' })), 'réponse à la création refusée');
+await ko(setDoc(doc(db(A), 'feedback', A + '_9'), msg(A, { dateServeur: 12345 })), 'dateServeur falsifiée refusée');
+await ok(setDoc(doc(db(B, true), 'feedback', B + '_1'), msg(B, { type: 'question' })), 'B crée son message');
+// lecture
+await ok(getDocs(query(collection(db(A), 'feedback'), where('uid', '==', A))), 'A liste SES messages (requête uid == A)');
+await ko(getDocs(collection(db(A), 'feedback')), 'A ne liste pas tous les messages');
+await ko(getDoc(doc(db(A), 'feedback', B + '_1')), 'A ne lit pas le message de B');
+await ok(getDocs(collection(db(ADMIN), 'feedback')), 'administrateur liste tous les messages');
+await ok(getDoc(doc(db(ADMIN), 'admins', ADMIN)), 'administrateur lit son document admins');
+await ok(getDoc(doc(db(A), 'admins', A)), 'A lit admins/A (absent : pas administrateur)');
+await ko(getDoc(doc(db(A), 'admins', ADMIN)), 'A ne lit pas admins/<autre>');
+await ko(setDoc(doc(db(A), 'admins', A), { role: 'admin' }), 'A ne peut pas se déclarer administrateur');
+// mises à jour
+await ko(updateDoc(doc(db(A), 'feedback', A + '_1'), { statut: 'traite' }), 'A ne change pas le statut');
+await ko(updateDoc(doc(db(A), 'feedback', A + '_1'), { texte: 'modifié' }), 'A ne modifie pas son texte');
+await ok(updateDoc(doc(db(ADMIN), 'feedback', A + '_1'), { statut: 'lu' }), 'admin : marquer lu');
+await ok(updateDoc(doc(db(ADMIN), 'feedback', A + '_1'), { reponse: 'Merci, corrigé', reponseDate: '2026-10-24', reponseLue: false }), 'admin : répondre');
+await ko(updateDoc(doc(db(ADMIN), 'feedback', A + '_1'), { texte: 'réécrit' }), 'admin ne réécrit pas le texte');
+await ko(updateDoc(doc(db(ADMIN), 'feedback', A + '_1'), { statut: 'archive' }), 'admin : statut inconnu refusé');
+await ok(updateDoc(doc(db(A), 'feedback', A + '_1'), { reponseLue: true }), 'A marque la réponse lue');
+await ko(updateDoc(doc(db(B), 'feedback', A + '_1'), { reponseLue: true }), 'B ne touche pas au message de A');
+await ok(updateDoc(doc(db(ADMIN), 'feedback', A + '_1'), { statut: 'traite' }), 'admin : marquer traité');
+// suppression
+await ko(deleteDoc(doc(db(A), 'feedback', A + '_1')), 'A ne supprime pas');
+await ok(deleteDoc(doc(db(ADMIN), 'feedback', A + '_1')), 'admin supprime');
+// rapports d'erreurs automatiques (collection erreurs)
+const err = (uid, extra = {}) => Object.assign({ uid, date: new Date().toISOString(), version: '1.0.284', appareil: 'android', ecran: 'home', type: 'TypeError', message: 'Cannot read properties of undefined (reading "…")', pile: ['renderHome:7311:12', 'render:6540:3'], nombre: 1 }, extra);
+await ok(setDoc(doc(db(A), 'erreurs', A + '_e1'), err(A)), 'erreurs : A (adresse NON vérifiée) envoie un rapport conforme');
+await ok(setDoc(doc(db(A), 'erreurs', A + '_e2'), err(A, { message: 'x'.repeat(300), pile: ['a', 'b', 'c', 'd', 'e'], appareil: 'pc' })), 'erreurs : message de 300 caractères et pile de 5 lignes acceptés');
+await ko(setDoc(doc(db(null), 'erreurs', 'x_e1'), err('x')), 'erreurs : non connecté refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e3'), err(B)), 'erreurs : au nom d\'un autre uid refusé');
+await ko(setDoc(doc(db(A), 'erreurs', B + '_e3'), err(A)), 'erreurs : identifiant au nom d\'un autre compte refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e4'), err(A, { eid: '250000000000001' })), 'erreurs : champ en trop (eid) refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e5'), err(A, { message: 'x'.repeat(301) })), 'erreurs : message de 301 caractères refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e6'), err(A, { pile: ['a', 'b', 'c', 'd', 'e', 'f'] })), 'erreurs : pile de 6 lignes refusée');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e7'), err(A, { pile: ['x'.repeat(201)] })), 'erreurs : ligne de pile de 201 caractères refusée');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e8'), err(A, { nombre: '1' })), 'erreurs : nombre de mauvais type (chaîne) refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e9'), err(A, { message: 42 })), 'erreurs : message de mauvais type (nombre) refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e10'), err(A, { pile: 'renderHome:1:1' })), 'erreurs : pile de mauvais type (chaîne au lieu de liste) refusée');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e11'), err(A, { pile: [42] })), 'erreurs : ligne de pile de mauvais type refusée');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e12'), err(A, { nombre: 1.5 })), 'erreurs : nombre non entier refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e13'), err(A, { appareil: 'iphone' })), 'erreurs : appareil inconnu refusé');
+const sansVersion = err(A); delete sansVersion.version;
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e14'), sansVersion), 'erreurs : champ manquant refusé');
+await ko(updateDoc(doc(db(A), 'erreurs', A + '_e1'), { message: 'autre' }), 'erreurs : A ne modifie pas son rapport');
+await ko(updateDoc(doc(db(ADMIN), 'erreurs', A + '_e1'), { message: 'autre' }), 'erreurs : même l\'administrateur ne modifie pas un rapport');
+await ko(getDoc(doc(db(A), 'erreurs', A + '_e1')), 'erreurs : A ne relit pas les rapports');
+await ko(getDocs(collection(db(B, true), 'erreurs')), 'erreurs : B ne liste pas les rapports');
+await ok(getDocs(collection(db(ADMIN), 'erreurs')), 'erreurs : l\'administrateur liste les rapports');
+await ko(deleteDoc(doc(db(A), 'erreurs', A + '_e1')), 'erreurs : A ne supprime pas');
+await ok(deleteDoc(doc(db(ADMIN), 'erreurs', A + '_e1')), 'erreurs : l\'administrateur supprime');
+// données d'élevage intactes
+await ok(setDoc(doc(db(A, true), 'users', A, 'brebis', 'b1'), { eid: '250000000000001' }), 'compte vérifié : ses données users/A');
+await ko(setDoc(doc(db(A, false), 'users', A, 'brebis', 'b1'), { eid: '250000000000001' }), 'compte NON vérifié : users/A refusé (inchangé)');
+await ko(getDoc(doc(db(B, true), 'users', A, 'brebis', 'b1')), 'B ne lit pas users/A (inchangé)');
+console.log('TOUT OK : ' + n + ' contrôles');
+await env.cleanup();

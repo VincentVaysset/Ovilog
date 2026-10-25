@@ -25,7 +25,7 @@ for (const bureau of [true, false]) {
   await page.evaluate(() => {
     localStorage.removeItem('ovilog_derniere_sauvegarde');
     window.__saves = 0; DB = migrateData({}); saveData = function () { window.__saves++; return true; };
-    DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.brebis = [{ id: 'b1', eid: '250 016299100001', statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [] }];
+    DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.brebis = [{ id: 'b1', eid: '250 000012100001', statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [] }];
     prmMaintenanceOuvert = false; parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres');
   });
   // ---- structure

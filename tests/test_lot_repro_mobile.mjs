@@ -19,7 +19,7 @@ const jeu = () => page.evaluate(() => {
   window.__bips = { trouve: 0, deja: 0, rate: 0 };
   playBeepTrouve = () => { window.__bips.trouve++; }; playBeepDejaTrouve = () => { window.__bips.deja++; }; playBeepRate = () => { window.__bips.rate++; };
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
-  window.E = (d, n) => '2500162991' + d + String(n).padStart(4, '0');
+  window.E = (d, n) => '2500000121' + d + String(n).padStart(4, '0');
   const f = (d, n, extra) => Object.assign({ id: 'b' + d + n, eid: E(d, n), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: [], videesDefinitives: [] }, extra || {});
   DB.brebis = [f(8, 133), f(9, 59, { agnelages: [{ campagne: 2027, date: '2027-11-10', codeRepro: 'IA', lambs: [{}] }] }), f(9, 69, { statut: 'vendue' }), f(9, 152), f(0, 33), f(9, 77, { statut: 'vendue' })];
   const lot = creerLotReproductionJournalise({ id: 'LR', nom: 'IA du 15-06-2027', mode: 'IA', cible: 'Brebis', dateCreation: '2026-10-02', dateEvenement: '2027-06-15', campagne: 2026, campagneMisesBas: 2027 }, [E(8, 133), E(9, 59), E(9, 69)], { source: 'PC' });
@@ -93,7 +93,7 @@ console.log('OK 4 retrait : confirmation, motif facultatif, refus avec message s
 
 // ================================================================ 5. écart non tranché, garde-fou de version
 await jeu(); await ouvrir();
-await page.evaluate(() => { DB.lots.find(x => x.id === 'LR').membres.push('250016299190999'); });
+await page.evaluate(() => { DB.lots.find(x => x.id === 'LR').membres.push('250000012190999'); });
 await scanner(await page.evaluate(() => E(9, 152)));
 check(/écart non tranché/.test(await $t('#lr-toast')) && await page.evaluate(() => DB.evenementsLots.length) === 1, 'écart non tranché : rien n\'est ajouté, message (à trancher sur PC)');
 await jeu(); await ouvrir();

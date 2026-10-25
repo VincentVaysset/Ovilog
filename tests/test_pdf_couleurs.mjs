@@ -1,6 +1,6 @@
 /* Couleurs des PDF = charte, source unique (PDF_CHARTE ; PDF_COULEURS et PDF_PL_COUL en dérivent) : sur chaque PDF (Calendrier du tank, Rapport de campagne, Bilan de lactation, Bilan de reproduction),
    le filet d'en-tête est EXACTEMENT le vert Ovilog #357f4b (à l'arrondi du PDF près), les titres de section sont en vert foncé #2f6e44 (texte et chiffres), et plus aucune trace des anciennes couleurs hors charte
-   (vert #3c8a55, bleu #3f7fb0, corail #c1402c, ambre #b3760a). Même PDF, octet pour octet, sur PC et sur mobile. Jeu SYNTHÉTIQUE, saveOrShareBinaryFile remplacé, aucune donnée réelle. */
+   (vert #3c8a55, bleu #3f7fb0, corail #c1402c, ambre #b3760a) ; « Non obtenu » (Super A) du rapport en gris, jamais rouge. Même PDF, octet pour octet, sur PC et sur mobile. Jeu SYNTHÉTIQUE, saveOrShareBinaryFile remplacé, aucune donnée réelle. */
 import { chromium } from 'playwright';
 import { spawnSync } from 'child_process';
 import { writeFileSync, mkdtempSync } from 'fs';
@@ -38,7 +38,8 @@ async function ouvrir(bureau) {
     window.CAS_PDF.prod = async () => {
       DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.exploitation = Object.assign(DB.exploitation || {}, { nom: 'Ferme du Test' });
       DB.laitTank = [{ date: '2025-10-01', quantite: 200 }, { date: '2025-12-04', quantite: 300 }, { date: '2026-07-31', quantite: 130 }];
-      DB.prelevementsQualite = [{ id: 'p1', date: '2025-12-05', volumeLait: 310, tb: 70, tp: 55, cellules: 400000, floreTotale: 20000, coliformes: 40, butyriques: 100, listeria: 'negatif', salmonelles: 'negatif', campagne: 2026 }];
+      DB.prelevementsQualite = [{ id: 'p1', date: '2025-12-05', volumeLait: 310, tb: 70, tp: 55, cellules: 400000, floreTotale: 20000, coliformes: 40, butyriques: 100, listeria: 'negatif', salmonelles: 'negatif', campagne: 2026 },
+        { id: 'p2', date: '2026-01-12', volumeLait: 300, tb: 68, tp: 54, cellules: 2500000, floreTotale: 900000, coliformes: 900, butyriques: 9000, listeria: 'negatif', salmonelles: 'negatif', campagne: 2026 }];   // mois sans Super A
       DB.penalitesBacterio = [{ id: 'pen1', dateDebut: '2026-07-30', dateFin: '2026-07-31', cause: 'salmonelles', litrageL: 1200, commentaire: 'test' }];
       DB.parametresPrixLait = [{ campagne: 0, coefficientMsu: 12, prixReference: null, msuReference: null }];
       return { calendrier: buildCalendrierTankPdfBytes(2025), rapport: buildRapportCampagnePdfBytes(2025) };
@@ -61,6 +62,11 @@ for (const nom of Object.keys(P)) {
   check(r.fills.some(f => proche(f, VERT) && f[2 + 1] >= 1.1 && f[2 + 1] <= 2.3 && f[4] > 400), nom + ' : filet d\'en-tête en vert Ovilog ' + VERT);
   check(r.textes.some(t => proche(t, VERT_FONCE) && t[3].length > 3), nom + ' : logo et titres de section en vert foncé ' + VERT_FONCE);
   for (const [lib, hex] of Object.entries(ANCIENNES)) check(!r.fills.some(f => proche(f, hex, 1)) && !r.textes.some(t => proche(t, hex, 1)), nom + ' : plus de ' + lib + ' (hors charte)');
+  if (nom === 'rapport') {
+    // « Non obtenu » (Super A, tableau de la Qualité du lait) : gris de la charte comme à l'écran, jamais rouge (ce n'est pas une alerte)
+    const non = r.textes.filter(t => t[3] === 'Non obtenu');
+    check(non.length >= 1 && non.every(t => proche(t, '#5e5b47') && !proche(t, '#a33a31')), 'rapport : « Non obtenu » en gris #5e5b47, jamais rouge : ' + JSON.stringify(non));
+  }
   nPdf++;
 }
 console.log('OK couleurs des PDF : ' + nPdf + ' PDF (Tank, Calendrier, Rapport, Bilan de lactation, Bilan de reproduction) : filet #357f4b, titres #2f6e44, plus d\'ancienne couleur, identiques sur PC et mobile.');

@@ -110,9 +110,9 @@ async function installerFauxPlugins(page) {
 }
 const baseDb = () => ({
   campagneDebut: 2026, campagneDateDemarrage: '2025-10-01', campagneInitialisee: true,
-  brebis: [{ id: 's1', eid: '250016299930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2025-10-02' }], controleLaitier: [], modesRepro: [] }],
-  beliers: [{ id: 'b1', eid: '250016299930090', statut: 'actif', createdAt: 1, sanitaire: [], mouvements: [] }],
-  agnelles: [{ id: 'a1', eid: '250016299930002', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }],
+  brebis: [{ id: 's1', eid: '250000012930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2025-10-02' }], controleLaitier: [], modesRepro: [] }],
+  beliers: [{ id: 'b1', eid: '250000012930090', statut: 'actif', createdAt: 1, sanitaire: [], mouvements: [] }],
+  agnelles: [{ id: 'a1', eid: '250000012930002', motherEid: null, pere: '', mere: '', sanitaire: [], mouvements: [], modesRepro: [] }],
   registre: { brebis: {}, beliers: {}, agnelles: {} }
 });
 

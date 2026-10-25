@@ -38,7 +38,7 @@ await page.goto(URL_APP, { waitUntil: 'load' }); await page.waitForTimeout(300);
 const rendu = await page.evaluate(() => {
   const r = getComputedStyle(document.documentElement);
   DB = migrateData({}); saveData = () => true; DB.campagneDebut = 2026; DB.campagneInitialisee = true;
-  DB.brebis = [{ id: 'b1', eid: '2500162991010001', statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [], createdAt: 1, numeroCourtTravailSieol: '1', numeroLongTravailSieol: '021001' }];
+  DB.brebis = [{ id: 'b1', eid: '2500000121010001', statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [], createdAt: 1, numeroCourtTravailSieol: '1', numeroLongTravailSieol: '021001' }];
   render('inventaire-actifs');
   const th = getComputedStyle(document.querySelector('.inv-table th')), tuile = getComputedStyle(document.querySelector('.reg-tuile.vert'));
   return { primary: r.getPropertyValue('--primary').trim(), header: getComputedStyle(document.querySelector('header')).backgroundColor, th: th.backgroundColor, tuileFond: tuile.backgroundColor, tuileBord: tuile.borderLeftColor };

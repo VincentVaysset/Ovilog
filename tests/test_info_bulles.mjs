@@ -11,7 +11,7 @@ const browser = await chromium.launch(LAUNCH);
 
 function jeu() {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   const fiche = (id, e, o) => Object.assign({ id, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
   DB.brebis = [fiche('P1', eid(8, 1), { numeroCourtTravailSieol: '8001' }), fiche('P2', eid(8, 2), { numeroCourtTravailSieol: '8002' })];

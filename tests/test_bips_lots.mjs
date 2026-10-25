@@ -40,13 +40,13 @@ const eq = (x, y) => JSON.stringify(x) === JSON.stringify(y);
 const mkBrebis = (id, eid) => ({ id, eid, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] });
 await page.evaluate((mk) => {
   DB.brebis = [
-    { id: 'b1', eid: '250016299930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
-    { id: 'b2', eid: '250016299830001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }, // même n° court que b1
-    { id: 'b3', eid: '250016299930002', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
-    { id: 'b4', eid: '250016299930003', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
+    { id: 'b1', eid: '250000012930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
+    { id: 'b2', eid: '250000012830001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }, // même n° court que b1
+    { id: 'b3', eid: '250000012930002', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] },
+    { id: 'b4', eid: '250000012930003', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }
   ];
   DB.beliers = []; DB.agnelles = [];
-  DB.lots = [{ id: 'lot-t', nom: 'Lot test', membres: ['250016299930001', '250016299830001', '250016299930002'], dateCreation: '2026-10-01' }];
+  DB.lots = [{ id: 'lot-t', nom: 'Lot test', membres: ['250000012930001', '250000012830001', '250000012930002'], dateCreation: '2026-10-01' }];
   saveData(DB);
   localStorage.clear();
   currentLotId = 'lot-t'; render('lot-search');
@@ -54,11 +54,11 @@ await page.evaluate((mk) => {
 await page.waitForSelector('#scan-lot');
 
 // ---- Écran de recherche d'un lot ----
-let r = await scan('#scan-lot', '250016299930002');
+let r = await scan('#scan-lot', '250000012930002');
 check(eq(r, A), 'lot : 1er scan d\'une brebis du lot -> bip A, obtenu ' + JSON.stringify(r));
-r = await scan('#scan-lot', '250016299930002');
+r = await scan('#scan-lot', '250000012930002');
 check(eq(r, C), 'lot : 2e scan -> bip C seul (jamais A+C), obtenu ' + JSON.stringify(r));
-r = await scan('#scan-lot', '250016299930003');
+r = await scan('#scan-lot', '250000012930003');
 check(eq(r, B), 'lot : brebis absente du lot -> bip B, obtenu ' + JSON.stringify(r));
 r = await scan('#scan-lot', '30001');
 check(eq(r, AMBIGU), 'lot : numéro court ambigu -> double bip bref, obtenu ' + JSON.stringify(r));
@@ -70,11 +70,11 @@ await page.evaluate(() => { render('add-lot'); });
 await page.waitForSelector('.sp-mode-btn[data-mode="bip"]');
 await page.click('.sp-mode-btn[data-mode="bip"]');
 await page.waitForSelector('.sp-scan');
-r = await scan('.sp-scan', '250016299930002');
+r = await scan('.sp-scan', '250000012930002');
 check(eq(r, A), 'sélecteur : 1er scan -> bip A, obtenu ' + JSON.stringify(r));
-r = await scan('.sp-scan', '250016299930002');
+r = await scan('.sp-scan', '250000012930002');
 check(eq(r, C), 'sélecteur : déjà sélectionnée -> bip C SEUL (avant : A et C ensemble), obtenu ' + JSON.stringify(r));
-r = await scan('.sp-scan', '250016299999999');
+r = await scan('.sp-scan', '250000012999999');
 check(eq(r, B), 'sélecteur : EID absent de la liste -> bip B, obtenu ' + JSON.stringify(r));
 r = await scan('.sp-scan', '30001');
 check(eq(r, AMBIGU), 'sélecteur : ambigu -> double bip, obtenu ' + JSON.stringify(r));
@@ -83,10 +83,10 @@ console.log('OK bip en série du sélecteur : A / C seul (le double bip A+C est 
 // ---- Non-régression : un écran qui n'utilise pas l'option garde le bip A à chaque scan ----
 await page.evaluate(() => { render('list'); });
 await page.waitForSelector('#scan-open', { state: 'attached' });
-r = await scan('#scan-open', '250016299930002'); // ouvre la fiche (navigation) : on revient à la liste pour re-scanner
+r = await scan('#scan-open', '250000012930002'); // ouvre la fiche (navigation) : on revient à la liste pour re-scanner
 await page.evaluate(() => { render('list'); });
 await page.waitForSelector('#scan-open', { state: 'attached' });
-const r2 = await scan('#scan-open', '250016299930002');
+const r2 = await scan('#scan-open', '250000012930002');
 check(eq(r, A) && eq(r2, A), 'liste Brebis : scan répété -> toujours le bip A (comportement inchangé), obtenu ' + JSON.stringify([r, r2]));
 console.log('OK non-régression : un écran sans session "trouvé" (liste Brebis) joue toujours le bip A, inchangé.');
 

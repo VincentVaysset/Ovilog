@@ -93,7 +93,7 @@ await installerFauxPlugins(page);
 await connecter(page, true);
 const uid = await uidDe();
 await page.evaluate(() => {
-  window.eid = (c, n) => '2500162999' + c + String(n).padStart(4, '0');
+  window.eid = (c, n) => '2500000129' + c + String(n).padStart(4, '0');
   window.fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   // Jeu du bilan du 23/09 (voir test_bilan_calculs) : 296 + 67 mises bas, 427 nés, 38 morts, dont 3 + 1 agneaux adoptés
   window.jeu = () => {

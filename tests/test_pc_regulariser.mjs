@@ -22,7 +22,7 @@ await page.evaluate(() => {
   window.__saves = 0;
   const o = saveData; saveData = function (...a) { window.__saves++; return o.apply(this, a); };
   // EID : 10 premiers chiffres fixes, 1 chiffre d'année (6 = 2026, 5 = 2025, 4 = 2024, ...), 5 chiffres de numéro
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   const mb = (d, lambs) => ({ date: d, campagne: 2026, lambs });
   const L = (sexe, o) => Object.assign({ sexe }, o || {});

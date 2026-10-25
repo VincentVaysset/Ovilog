@@ -24,7 +24,7 @@ await page.evaluate(() => {
 });
 const A = [1046, 1568], B = [220], C = [440], AMBIGU = [700, 700];
 const eq = (x, y) => JSON.stringify(x) === JSON.stringify(y);
-const E = { x: '250016299930001', y: '250016299940002', z: '250016299950003', w: '250016299960004', hors: '250016299970005' };
+const E = { x: '250000012930001', y: '250000012940002', z: '250000012950003', w: '250000012960004', hors: '250000012970005' };
 await page.evaluate((E) => {
   const f = (id, eid, extra) => Object.assign({ id, eid, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }, extra || {});
   DB.brebis = [

@@ -144,7 +144,7 @@ for (const pc of [false, true]) {
   const { page, dialogues } = await ouvrir(false);
   await page.evaluate(() => {
     DB.exploitation.campagneMoisDebut = 10; DB.exploitation.campagneJourDebut = 1; DB.campagneDebut = 2026; DB.campagneDateDebut = '2026-10-01'; DB.campagneDateFin = '2027-09-30'; DB.campagneInitialisee = true; DB.campagneDateDemarrage = '2026-10-01';
-    DB.brebis = [{ id: 's1', eid: '250016299900001', statut: 'active', createdAt: 1, echographies: [], agnelages: [{ date: '2026-11-01', campagne: 2026, lambs: [{ sexe: 'Mâle' }] }], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
+    DB.brebis = [{ id: 's1', eid: '250000012900001', statut: 'active', createdAt: 1, echographies: [], agnelages: [{ date: '2026-11-01', campagne: 2026, lambs: [{ sexe: 'Mâle' }] }], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
     DB.agnelles = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} }; saveData(DB); render('confirmation-nouvelle-campagne');
   });
   await page.waitForSelector('#carte-dates-nouvelle-campagne');

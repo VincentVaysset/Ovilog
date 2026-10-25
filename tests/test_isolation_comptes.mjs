@@ -73,7 +73,7 @@ const marquer = dev => dev.page.evaluate(() => { window.__avantRechargement = tr
   const metaB = await h.serveur(uidB, 'meta'), brebisB = await h.serveur(uidB, 'brebis'), lotsB = await h.serveur(uidB, 'evenementsLots');
   const tout = JSON.stringify([metaB, brebisB, lotsB, await h.journal(uidB)]);
   check(Object.keys(brebisB.docs || {}).length === 0 && Object.keys(lotsB.docs || {}).length === 0, 'B : aucune brebis ni évènement de lot sur son serveur');
-  check(!/GAEC du Compte|Natera|Maladie|"LC"|25001629919/.test(tout), 'B : rien de A (nom, acheteur, cause de mortalité, lot, EID) n\'a été écrit sur le compte de B');
+  check(!/GAEC du Compte|Acheteur C|Maladie|"LC"|25000001219/.test(tout), 'B : rien de A (nom, acheteur, cause de mortalité, lot, EID) n\'a été écrit sur le compte de B');
 
   // A se reconnecte et retrouve tout depuis son compte
   await marquer(dev);
@@ -90,7 +90,7 @@ const marquer = dev => dev.page.evaluate(() => { window.__avantRechargement = tr
   const dev = await h.ouvrir({ desktop: true });
   suivreTelechargements(dev);
   await dev.page.evaluate(() => {
-    DB.brebis = [{ id: 'resteA', eid: '250016299199999', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
+    DB.brebis = [{ id: 'resteA', eid: '250000012199999', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
     DB.exploitation.nom = 'GAEC de A (reste)'; DB.acheteurs = ['AcheteurDeA'];
     saveData(DB);
     localStorage.setItem('ovilog_sync_bootstrapped_uid', 'uid-de-A-hors-ligne');
@@ -107,7 +107,7 @@ const marquer = dev => dev.page.evaluate(() => { window.__avantRechargement = tr
   eq(c, { brebis: 0, nom: '', acheteurs: [] }, 'C : compte vide malgré la base locale laissée par A');
   const sauv = dev.fichiers.find(f => /^avant-changement-de-compte-/.test(f.nom));
   check(sauv && sauv.contenu && sauv.contenu.brebis.length === 1 && sauv.contenu.exploitation.nom === 'GAEC de A (reste)', 'C : la base laissée par A a été sauvegardée (« avant-changement-de-compte ») avant d\'être vidée : ' + JSON.stringify(dev.fichiers.map(f => f.nom)));
-  if (uidC) { await h.attendreCalme(uidC); check(!/GAEC de A|AcheteurDeA|250016299199999/.test(JSON.stringify([await h.serveur(uidC, 'meta'), await h.serveur(uidC, 'brebis'), await h.journal(uidC)])), 'C : rien de A sur le serveur de C'); }
+  if (uidC) { await h.attendreCalme(uidC); check(!/GAEC de A|AcheteurDeA|250000012199999/.test(JSON.stringify([await h.serveur(uidC, 'meta'), await h.serveur(uidC, 'brebis'), await h.journal(uidC)])), 'C : rien de A sur le serveur de C'); }
   console.log('OK B : changement de compte détecté à la connexion (base laissée par un autre compte) : sauvegarde, vidage, compte vide.');
 }
 
@@ -116,7 +116,7 @@ const marquer = dev => dev.page.evaluate(() => { window.__avantRechargement = tr
   const dev = await h.ouvrir({ desktop: true });
   await dev.page.evaluate(() => {
     DB.campagneDebut = 2026; DB.campagneInitialisee = true;
-    DB.brebis = [{ id: 'localeAvantCloud', eid: '250016299188888', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
+    DB.brebis = [{ id: 'localeAvantCloud', eid: '250000012188888', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
     DB.acheteurs = ['AcheteurLocal']; DB.exploitation.nom = 'Élevage d\'avant le cloud'; saveData(DB);
   });
   check(await dev.page.evaluate(() => localStorage.getItem('ovilog_sync_bootstrapped_uid')) === null, 'D : aucun propriétaire connu');

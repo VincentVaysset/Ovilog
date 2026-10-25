@@ -73,7 +73,7 @@ await waitFor(d1.page, () => window.OvilogSync.getState().loggedIn, { label: 'de
 await d1.page.evaluate(() => {
   DB.campagneDebut = 2026; DB.campagneInitialisee = true;
   DB.brebis = []; DB.beliers = []; DB.agnelles = [];
-  DB.laitTank = []; DB.acheteurs = ['Natera']; DB.causesMortalite = ['Maladie']; DB.journal = [];
+  DB.laitTank = []; DB.acheteurs = ['Acheteur C']; DB.causesMortalite = ['Maladie']; DB.journal = [];
   saveData(DB);
 });
 await serveurAttend('meta', r => r.exists && r.data && Array.isArray(r.data.acheteurs) && r.data.acheteurs.length === 1 && r.data.causesMortalite && r.data.causesMortalite.length === 1, 'le serveur reçoit l\'état meta initial');
@@ -96,7 +96,7 @@ await Promise.all([
     saveData(DB);
   }),
   d2.page.evaluate(() => {
-    DB.acheteurs.push('Bio Plus');
+    DB.acheteurs.push('Acheteur D');
     DB.journal.push({ type: 'Tonte', date: '2026-01-15', note: 'Tonte du troupeau' });
     saveData(DB);
   })
@@ -123,7 +123,7 @@ if (JSON.stringify(etat1) !== JSON.stringify(etat2)) {
 }
 if (etat1.laitTank.length !== 1 || etat1.laitTank[0].quantite !== 320.5) throw new Error('FAIL: laitTank (device 1) non préservé, obtenu ' + JSON.stringify(etat1.laitTank));
 if (etat1.causesMortalite.length !== 2 || !etat1.causesMortalite.includes('Piétin')) throw new Error('FAIL: causesMortalite (device 1) non préservé, obtenu ' + JSON.stringify(etat1.causesMortalite));
-if (etat1.acheteurs.length !== 2 || !etat1.acheteurs.includes('Bio Plus')) throw new Error('FAIL: acheteurs (device 2) non préservé, obtenu ' + JSON.stringify(etat1.acheteurs));
+if (etat1.acheteurs.length !== 2 || !etat1.acheteurs.includes('Acheteur D')) throw new Error('FAIL: acheteurs (device 2) non préservé, obtenu ' + JSON.stringify(etat1.acheteurs));
 if (etat1.journal.length !== 1 || etat1.journal[0].type !== 'Tonte') throw new Error('FAIL: journal (device 2) non préservé, obtenu ' + JSON.stringify(etat1.journal));
 console.log('OK: les 4 champs meta modifiés simultanément par 2 appareils DIFFÉRENTS (laitTank+causesMortalite sur device 1, acheteurs+journal sur device 2) coexistent tous, sans qu\'aucun n\'écrase l\'autre.');
 

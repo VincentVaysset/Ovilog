@@ -85,11 +85,11 @@ async function installerFauxPlugins(page) {
 }
 
 const fichierImport = { name: 'sauvegarde.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
-  brebis: [{ id: 'imp1', eid: '250016299930077', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }], beliers: [], agnelles: [] })) };
+  brebis: [{ id: 'imp1', eid: '250000012930077', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }], beliers: [], agnelles: [] })) };
 async function preparer() {
   await installerFauxPlugins(page);
   await page.evaluate(() => {
-    DB.brebis = [{ id: 'orig1', eid: '250016299930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
+    DB.brebis = [{ id: 'orig1', eid: '250000012930001', statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], modesRepro: [] }];
     DB.beliers = []; DB.agnelles = []; saveData(DB);
     parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres');
   });

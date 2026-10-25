@@ -2,7 +2,7 @@
    Fonctions AUTONOMES : sérialisées dans la page par page.evaluate(fn). */
 export function jeuRegistre() {
   DB = migrateData({});
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   const soin = (type, sousType, produit, date, dose, ord) => ({ type, sousType, produit, date, dose, numeroOrdonnance: ord || '' });
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
@@ -25,7 +25,7 @@ export function jeuRegistre() {
 }
 export function jeuControleLaitier(avecControles) {
   DB = migrateData({});
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   const cl = (n, q, an) => ({ controle: n, quantite: q, anomalie: an || null, date: '2027-01-20', campagne: 2026 });
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;

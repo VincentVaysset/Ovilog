@@ -10,16 +10,16 @@ const browser = await chromium.launch(LAUNCH);
 
 function jeu() {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   window.EID = eid;
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
   const A = fiche(eid(8, 8133), { id: 'A' });
   A.agnelages = [{ date: '2026-09-25', campagne: 2026, lambs: [{ eid: eid(6, 801), sexe: 'Mâle', sanitaire: [], mouvements: [] }, { eid: eid(6, 802), sexe: 'Femelle', sanitaire: [], mouvements: [] }] }];
   DB.brebis = [A, fiche(eid(9, 59), { id: 'B' }), fiche(eid(9, 152), { id: 'D', numeroCourtTravailSieol: '152' }), fiche(eid(0, 33), { id: 'E' }),
-    fiche(eid(9, 99), { id: 'M', statut: 'vendue', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', acheteur: 'Natera', date: '2026-09-01' }] })];
+    fiche(eid(9, 99), { id: 'M', statut: 'vendue', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', acheteur: 'Acheteur C', date: '2026-09-01' }] })];
   DB.beliers = [fiche(eid(9, 90), { id: 'bel1', statut: 'actif' }), fiche(eid(8, 91), { id: 'bel2', statut: 'actif', numeroTravailSieol: '91' }),
-    fiche(eid(9, 92), { id: 'bel3', statut: 'vendu', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente reproduction', acheteur: 'Bio Plus', date: '2026-10-02' }] })];
+    fiche(eid(9, 92), { id: 'bel3', statut: 'vendu', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente reproduction', acheteur: 'Acheteur D', date: '2026-10-02' }] })];
   DB.agnelles = []; DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} }; DB.mouvementsCollectifs = [];
   window.__avant = JSON.stringify(DB); window.__saves = 0;
 }
@@ -80,7 +80,7 @@ await mob.evaluate(() => render('list'));
 await scan(mob, '#scan-open', await mob.evaluate(() => EID(9, 59)));
 eq(await mob.evaluate(() => currentView), 'detail', 'scan d\'un EID ouvre la fiche');
 await mob.evaluate(() => render('list'));
-await scan(mob, '#scan-open', '250016299900000');
+await scan(mob, '#scan-open', '250000012900000');
 check(await mob.evaluate(() => /Aucune brebis trouvée/.test(document.getElementById('scan-open-err').textContent) && currentView === 'list'), 'EID inconnu : message, on reste sur la liste');
 console.log('OK 2 fiche : ligne et scan.');
 

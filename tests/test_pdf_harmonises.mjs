@@ -63,12 +63,12 @@ for (const [nom, att] of Object.entries(MIGRES)) {
 }
 // ---- grand tableau paysage : plusieurs pages, rien de coupé, en-tête repris, pied « Page n/N »
 {
-  const b64 = await pc.evaluate(() => { const rows = Array.from({ length: 140 }, (_, i) => ['n°6299' + String(100000 + i), 'Brebis', 'Vente', 'Réforme — texte plutôt long numéro ' + i, '0' + (i % 9 + 1) + '-10-2026', 'Campagne 2026']);
+  const b64 = await pc.evaluate(() => { const rows = Array.from({ length: 140 }, (_, i) => ['n°0012' + String(100000 + i), 'Brebis', 'Vente', 'Réforme — texte plutôt long numéro ' + i, '0' + (i % 9 + 1) + '-10-2026', 'Campagne 2026']);
     const o = buildPdfTableCharte({ title: 'Registre test', subtitle: '140 ligne(s)', columns: ['N°', 'Catégorie', 'Type', 'Cause / détail', 'Date', 'Campagne'].map((l, k) => ({ label: l, x: k * 90 })), rows, landscape: true });
     let s = ''; for (const x of o) s += String.fromCharCode(x); return btoa(s); });
   const r = lirePdfMots(Buffer.from(b64, 'base64'), 'h_gros');
   check(r.pages >= 3 && r.tailles.every(t => t[0] > t[1]), 'grand tableau : ' + r.pages + ' pages en paysage');
-  check(['n°6299100000', 'n°6299100139'].every(w => r.mots.includes(w)) && r.mots.filter(w => w === 'Brebis').length === 140, 'grand tableau : les 140 lignes sont présentes, rien de coupé');
+  check(['n°0012100000', 'n°0012100139'].every(w => r.mots.includes(w)) && r.mots.filter(w => w === 'Brebis').length === 140, 'grand tableau : les 140 lignes sont présentes, rien de coupé');
   check(r.mots.filter(w => w === 'Catégorie').length === r.pages && r.mots.includes('Page') && r.mots.includes(r.pages + '/' + r.pages), 'grand tableau : en-tête de colonnes sur chaque page et pied « Page n/N »');
   console.log('OK grand tableau paysage : ' + r.pages + ' pages, 140 lignes, en-tête répété.');
 }

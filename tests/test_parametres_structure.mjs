@@ -8,7 +8,7 @@ const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + '
 const browser = await chromium.launch(LAUNCH);
 const jeu = (page) => page.evaluate(() => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; return true; };
-  DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.exploitation = { ...DB.exploitation, nom: 'Galibert Clément', numeroCheptel: '12241205', indicatifMarquage: '162991', prefixeEid: '162991' };
+  DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.exploitation = { ...DB.exploitation, nom: 'Exploitation B', numeroCheptel: '00000001', indicatifMarquage: '000121', prefixeEid: '000121' };
   parametresTab = 'exploitation'; parametresRubrique = null;
 });
 const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? document.querySelector(s).textContent.replace(/\s+/g, ' ').trim() : null, sel);
@@ -45,7 +45,7 @@ const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? docume
   await page.evaluate(() => render('parametres'));
   check(await page.evaluate(() => !document.querySelector('.tab-bar')), 'mobile : plus d\'onglets');
   eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Lecteur', 'Sauvegarde'], 'mobile : 5 rubriques (dont Lecteur), pas d\'Imports');
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-resume')].map(e => e.textContent)), ['Galibert Clément · cheptel 12241205', 'Campagne 2027 · réglages de reproduction', '6 listes · acheteurs, causes de mortalité…', 'À régler dans l\'appli du téléphone', 'Aucune sauvegarde vérifiée sur cet appareil'], 'résumés des rubriques');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-resume')].map(e => e.textContent)), ['Exploitation B · cheptel 00000001', 'Campagne 2027 · réglages de reproduction', '6 listes · acheteurs, causes de mortalité…', 'À régler dans l\'appli du téléphone', 'Aucune sauvegarde vérifiée sur cet appareil'], 'résumés des rubriques');
   check(/Synchronisation|Connexion|Hors ligne/.test(await txt(page, '#prm-accueil-sync')) && /Version .* · les imports de fichiers se font sur PC/.test(await txt(page, '.prm-pied')), 'pied : état de synchro + version : ' + await txt(page, '.prm-pied'));
   check(await page.evaluate(() => !document.getElementById('btn-back').classList.contains('hidden') === false && !document.getElementById('btn-menu').classList.contains('hidden')), 'écran d\'arrivée : menu visible, pas de flèche de retour');
   // une rubrique + retour

@@ -86,18 +86,18 @@ export async function demarrerHarnais() {
 // Pose, sur l'appareil donné, le jeu du compte existant puis attend que le serveur le détienne ENTIÈREMENT (meta + brebis + journal du lot).
 export async function peuplerCompte(h, dev) {
   await dev.page.evaluate(() => {
-    const eid = n => '25001629919' + String(n).padStart(5, '0');
+    const eid = n => '25000001219' + String(n).padStart(5, '0');
     const fiche = (id, e, extra) => Object.assign({ id, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, extra || {});
     DB.campagneDebut = 2026; DB.campagneInitialisee = true;
     DB.exploitation = Object.assign(DB.exploitation || {}, { nom: 'GAEC du Compte' });
-    DB.acheteurs = ['Natera']; DB.causesMortalite = ['Maladie'];
+    DB.acheteurs = ['Acheteur C']; DB.causesMortalite = ['Maladie'];
     DB.brebis = [fiche('b1', eid(1), { numeroCourtTravailSieol: '17' }), fiche('b2', eid(2), { numeroCourtTravailSieol: '23' }), fiche('b3', eid(3))];
     DB.beliers = []; DB.agnelles = [];
     creerLotReproductionJournalise({ id: 'LC', nom: 'IA du 15-06-2027', mode: 'IA', cible: 'Brebis', dateCreation: '2027-06-15', dateEvenement: '2027-06-15', campagneMisesBas: 2027 }, [1, 2, 3].map(eid));
     saveData(DB);
   });
   const uid = dev.uid;
-  await h.attendreServeur(uid, 'meta', r => r.exists && r.data && (r.data.lots || []).some(l => l.id === 'LC') && (r.data.acheteurs || []).includes('Natera') && r.data.registreCollectionMigree20260930 === true, 'meta (lot LC, acheteurs, migration du registre terminée)');
+  await h.attendreServeur(uid, 'meta', r => r.exists && r.data && (r.data.lots || []).some(l => l.id === 'LC') && (r.data.acheteurs || []).includes('Acheteur C') && r.data.registreCollectionMigree20260930 === true, 'meta (lot LC, acheteurs, migration du registre terminée)');
   await h.attendreServeur(uid, 'brebis', r => Object.keys(r.docs).length === 3, '3 brebis sur le serveur');
   await h.attendreServeur(uid, 'evenementsLots', r => Object.keys(r.docs).length >= 1, 'journal du lot sur le serveur');
   await h.attendreCalme(uid);

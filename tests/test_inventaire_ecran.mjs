@@ -18,11 +18,11 @@ for (const bureau of [true, false]) {
   await page.evaluate(() => {
     window.__saves = 0; DB = migrateData({}); saveData = function () { window.__saves++; return true; };
     DB.campagneDebut = 2026; DB.campagneInitialisee = true;
-    const b = (n, extra) => Object.assign({ id: 'b' + n, eid: '25001629910' + String(10000 + n), statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [], createdAt: 1,
+    const b = (n, extra) => Object.assign({ id: 'b' + n, eid: '25000001210' + String(10000 + n), statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [], createdAt: 1,
       numeroCourtTravailSieol: String(n), numeroLongTravailSieol: '02' + String(1000 + n) }, extra || {});
-    DB.brebis = [b(1, { agnelages: [{ date: '2026-02-01', lambs: [{ eid: '250016299100099001', sexe: 'Mâle', mouvements: [] }, { eid: '250016299100099002', sexe: 'Femelle', mouvements: [] }] }] }), b(2), b(3), b(12), b(23)];
-    DB.agnelles = [{ id: 'a1', eid: '250016299100010001', statut: 'active' }, { id: 'a2', eid: '250016299100010002', statut: 'active' }];
-    DB.beliers = [{ id: 'be1', eid: '250016299100020001', statut: 'actif', numeroTravailSieol: 'B12', mouvements: [] }, { id: 'be2', eid: '250016299100020002', statut: 'actif', numeroTravailSieol: 'B34', mouvements: [] }];
+    DB.brebis = [b(1, { agnelages: [{ date: '2026-02-01', lambs: [{ eid: '250000012100099001', sexe: 'Mâle', mouvements: [] }, { eid: '250000012100099002', sexe: 'Femelle', mouvements: [] }] }] }), b(2), b(3), b(12), b(23)];
+    DB.agnelles = [{ id: 'a1', eid: '250000012100010001', statut: 'active' }, { id: 'a2', eid: '250000012100010002', statut: 'active' }];
+    DB.beliers = [{ id: 'be1', eid: '250000012100020001', statut: 'actif', numeroTravailSieol: 'B12', mouvements: [] }, { id: 'be2', eid: '250000012100020002', statut: 'actif', numeroTravailSieol: 'B34', mouvements: [] }];
     window.__avant = JSON.stringify(DB);
     window.__saisies = [];
     saveOrShareBinaryFile = async function (nom, bytes, mime) { window.__saisies.push({ nom, mime, n: bytes.length }); };
@@ -83,11 +83,11 @@ for (const bureau of [true, false]) {
   eq((await lignes()).map(l => l[1]), ['021012'], nom + ' : n° long');
   await frappe('0 2 1 0 1 2');
   eq((await lignes()).map(l => l[1]), ['021012'], nom + ' : espaces ignorés');
-  await frappe('62991010003');
-  eq((await lignes()).map(l => l[2]), ['62991010003'], nom + ' : n° officiel');
-  await frappe('250016299101');   // préfixe de l'EID complet (les 5 brebis)
+  await frappe('00121010003');
+  eq((await lignes()).map(l => l[2]), ['00121010003'], nom + ' : n° officiel');
+  await frappe('250000012101');   // préfixe de l'EID complet (les 5 brebis)
   eq((await lignes()).length, 5, nom + ' : EID complet (début)');
-  await frappe('250 016 299 10 100 23');
+  await frappe('250 000 012 10 100 23');
   eq((await lignes()).map(l => l[0]), ['23'], nom + ' : EID complet avec espaces');
   check(await page.evaluate(() => document.activeElement && document.activeElement.id === 'inventaire-recherche'), nom + ' : le champ garde le focus pendant la frappe');
   await frappe('zzz');
@@ -138,7 +138,7 @@ for (const bureau of [true, false]) {
   await page.click('#btn-export-inventaire-xlsx'); await page.waitForFunction(() => window.__saisies.length === 2);
   const xl = await page.evaluate(() => ({ s: window.__saisies[1], f: window.__xlsx }));
   eq(xl.s.nom, 'inventaire_brebis_2026-10-09.xlsx', nom + ' : nom de l\'Excel');
-  eq(xl.f[0].rows, [['N° court', 'N° long', 'N° officiel'], ['3', '021003', '62991010003'], ['23', '021023', '62991010023']], nom + ' : l\'Excel ne contient que les lignes affichées');
+  eq(xl.f[0].rows, [['N° court', 'N° long', 'N° officiel'], ['3', '021003', '00121010003'], ['23', '021023', '00121010023']], nom + ' : l\'Excel ne contient que les lignes affichées');
   check(await page.evaluate(() => window.__saves === 0 && JSON.stringify(DB) === window.__avant), nom + ' : aucune écriture de données');
   console.log('OK ' + nom + ' : boutons, recherche (tous les numéros, espaces, focus), onglets, clic vers les fiches, exports = liste affichée.');
   await page.context().close();

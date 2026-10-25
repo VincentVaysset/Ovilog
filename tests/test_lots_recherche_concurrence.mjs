@@ -55,7 +55,7 @@ async function waitFor(page, fn, { timeout = 20000, interval = 200, label = 'con
 
 const email = 'lots-recherche-' + Date.now() + '@ovilog-audit-jetable.test';
 const password = 'AuditTest12345!';
-const eid = n => '25001629919' + String(n).padStart(5, '0');
+const eid = n => '25000001219' + String(n).padStart(5, '0');
 const membres = (page, id) => page.evaluate(i => DB.lots.find(l => l.id === i).membres.map(cleanEid).sort().join(','), id);
 const attendu = ns => ns.map(n => eid(n)).sort().join(',');
 async function attendreCloud(page, lotId, n) {
@@ -74,7 +74,7 @@ await d1.page.evaluate(async ({ email, pw }) => { await window.OvilogSync.signup
 await waitFor(d1.page, () => window.OvilogSync.getState().loggedIn, { label: 'PC connecté' });
 await d1.page.evaluate(() => {
   DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.beliers = []; DB.agnelles = [];
-  DB.brebis = Array.from({ length: 30 }, (_, i) => ({ id: 'b' + (i + 1), eid: '25001629919' + String(i + 1).padStart(5, '0'), statut: 'active', agnelages: [], modesRepro: [], videesDefinitives: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], echographies: [], controleLaitier: [] }));
+  DB.brebis = Array.from({ length: 30 }, (_, i) => ({ id: 'b' + (i + 1), eid: '25000001219' + String(i + 1).padStart(5, '0'), statut: 'active', agnelages: [], modesRepro: [], videesDefinitives: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], echographies: [], controleLaitier: [] }));
   creerLotJournalise({ id: 'LR', nom: 'Doubles à suivre', dateCreation: '2026-10-03' }, []);                 // lot de recherche, créé VIDE
   creerLotJournalise({ id: 'LF', nom: 'Réforme du 03-10-2026', dateCreation: '2026-10-03', type: 'reforme' }, []);
   window.rows = (a, b) => DB.brebis.slice(a - 1, b).map(s => ({ eid: s.eid, obj: s }));
@@ -120,16 +120,16 @@ console.log('OK 2 édition mobile (par différences) pendant l\'affectation PC :
 const diff = await d2.page.evaluate(() => {
   const l = DB.lots.find(x => x.id === 'LR');
   const ouverture = l.membres.slice();                                          // l'écran s'est ouvert avec ces membres
-  ajouterEvenementLot(l, 'affectation', ['25001629919' + '00028']);              // un autre appareil ajoute n°28 entre-temps
-  ajouterEvenementLot(l, 'retrait', ['25001629919' + '00001']);                  // et retire n°1
-  const finaux = ouverture.filter(e => cleanEid(e) !== '25001629919' + '00002').concat(['25001629919' + '00029']);   // l'écran retire n°2 et ajoute n°29
+  ajouterEvenementLot(l, 'affectation', ['25000001219' + '00028']);              // un autre appareil ajoute n°28 entre-temps
+  ajouterEvenementLot(l, 'retrait', ['25000001219' + '00001']);                  // et retire n°1
+  const finaux = ouverture.filter(e => cleanEid(e) !== '25000001219' + '00002').concat(['25000001219' + '00029']);   // l'écran retire n°2 et ajoute n°29
   const ok = appliquerDiffMembresLot(l, ouverture, finaux);
   return { ok, m: l.membres.map(cleanEid).sort().join(',') };
 });
 const attDiff = [...plage(1, 20), 25, 28, 29].filter(n => n !== 1 && n !== 2);
 check(diff.ok && diff.m === attendu(attDiff), 'seules les différences de l\'écran sont appliquées (retrait n°2, ajout n°29) : n°28 (ajouté ailleurs) conservé, n°1 (retiré ailleurs) reste retiré : ' + diff.m);
 await d2.page.evaluate(() => saveData(DB));
-await waitFor(d1.page, () => DB.lots.find(l => l.id === 'LR').membres.map(cleanEid).includes('25001629919' + '00029') && !DB.lots.find(l => l.id === 'LR').membres.map(cleanEid).includes('25001629919' + '00002'), { label: 'le PC reçoit' });
+await waitFor(d1.page, () => DB.lots.find(l => l.id === 'LR').membres.map(cleanEid).includes('25000001219' + '00029') && !DB.lots.find(l => l.id === 'LR').membres.map(cleanEid).includes('25000001219' + '00002'), { label: 'le PC reçoit' });
 check(await membres(d1.page, 'LR') === await membres(d2.page, 'LR'), 'PC et mobile identiques');
 console.log('OK 3 appliquerDiffMembresLot : jamais l\'état complet, seulement ce que l\'écran a changé.');
 
@@ -149,8 +149,8 @@ console.log('OK 4 brebis vendue conservée par l\'édition mobile ; 0 membre ref
 // ---------- 5. retrait PC + ajout mobile (bip) sur le même lot de réforme ----------
 await d2.page.evaluate(() => render('lots'));
 await Promise.all([
-  d1.page.evaluate(() => { retirerDuLotPc(DB.lots.find(x => x.id === 'LF'), '25001629919' + '00003'); saveData(DB); }),
-  d2.page.evaluate(() => { ajouterEvenementLot(DB.lots.find(x => x.id === 'LF'), 'affectation', ['25001629919' + '00004']); saveData(DB); })
+  d1.page.evaluate(() => { retirerDuLotPc(DB.lots.find(x => x.id === 'LF'), '25000001219' + '00003'); saveData(DB); }),
+  d2.page.evaluate(() => { ajouterEvenementLot(DB.lots.find(x => x.id === 'LF'), 'affectation', ['25000001219' + '00004']); saveData(DB); })
 ]);
 await waitFor(d1.page, () => DB.evenementsLots.filter(e => e.lotId === 'LF').length === 4, { label: 'PC reçoit' });
 await waitFor(d2.page, () => DB.evenementsLots.filter(e => e.lotId === 'LF').length === 4, { label: 'mobile reçoit' });
@@ -164,10 +164,10 @@ const snap2 = await (await fetch('http://localhost:' + fakePort + '/snapshot?uid
 const mem = await d1.page.evaluate(() => DB.lots.find(l => l.id === 'LR').membres.slice());
 await fetch('http://localhost:' + fakePort + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops: [{ type: 'update', path: 'users/' + uid + '/meta/main', data: { lots: snap2.data.lots.map(l => l.id === 'LR' ? Object.assign({}, l, { membres: [...mem, eid(9999)] }) : l) } }] }) });
 await waitFor(d1.page, () => ecartsMembresLots().length === 1, { label: 'le PC détecte l\'écart sur le lot de recherche' });
-const ref = await d1.page.evaluate(() => { const l = DB.lots.find(x => x.id === 'LR'); return [affecterAuLotPc(l, rows(26, 27)), l.membres.map(cleanEid).includes('25001629919' + '09999')]; });
+const ref = await d1.page.evaluate(() => { const l = DB.lots.find(x => x.id === 'LR'); return [affecterAuLotPc(l, rows(26, 27)), l.membres.map(cleanEid).includes('25000001219' + '09999')]; });
 check(ref[0] === -1 && ref[1] === true, 'écart non tranché : l\'affectation PC est refusée, rien n\'est écrasé');
 await d1.page.evaluate(() => { integrerEcartLot('LR'); saveData(DB); });
-await waitFor(d2.page, () => ecartsMembresLots().length === 0 && DB.lots.find(l => l.id === 'LR').membres.map(cleanEid).includes('25001629919' + '09999'), { label: 'convergence après intégration' });
+await waitFor(d2.page, () => ecartsMembresLots().length === 0 && DB.lots.find(l => l.id === 'LR').membres.map(cleanEid).includes('25000001219' + '09999'), { label: 'convergence après intégration' });
 console.log('OK 6 appareil non à jour (lot de recherche) : écart détecté, écriture refusée, intégré sur choix, convergence.');
 
 // ---------- 7. suppression : lot et journal partout ----------

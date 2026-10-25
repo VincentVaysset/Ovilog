@@ -13,7 +13,7 @@ await page.evaluate(() => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
   DB.campagneDebut = 2026;
   const e = (date, extra) => Object.assign({ type: 'stade', date, stade: null, agneaux: null, nombreAgneaux: null, special: null, parasitisme: false, campagne: 2026 }, extra);
-  const b = (n, echos) => ({ id: 'b' + n, eid: '25001629910000' + String(n).padStart(2, '0'), statut: 'active', echographies: echos });
+  const b = (n, echos) => ({ id: 'b' + n, eid: '25000001210000' + String(n).padStart(2, '0'), statut: 'active', echographies: echos });
   DB.brebis = [
     b(1, [e('2026-09-01', { type: 'constat', stade: 'Pleine' })]),                                                  // Gestante, sans comptage
     b(2, [e('2026-09-01', { type: 'constat', stade: 'Vide' })]),                                                    // constat Vide
@@ -31,7 +31,7 @@ await page.evaluate(() => {
     b(14, [e('2026-09-05', { stade: 'IA', agneaux: 'Simple' })]),
     b(15, [e('2025-09-05', { type: 'constat', stade: 'Vide', campagne: 2025 })]),                                    // campagne passée seulement
     b(17, [e('2026-09-06', {})]),                                                                                     // écho sans résultat (donnée incomplète) : « autres »
-    { id: 'b16', eid: '2500162991000016', statut: 'vendu', echographies: [e('2026-09-01', { stade: 'Vide' })] }       // non active : jamais comptée par l'appelant
+    { id: 'b16', eid: '2500000121000016', statut: 'vendu', echographies: [e('2026-09-01', { stade: 'Vide' })] }       // non active : jamais comptée par l'appelant
   ];
   window.__avant = JSON.stringify(DB);
 });

@@ -38,7 +38,7 @@ const R = (fn, arg) => page.evaluate(fn, arg);
 // Fabrique un troupeau synthétique : tout se passe dans le navigateur.
 await R(() => {
   // chiffre d'année = index 10 de l'EID : 4 -> 2024, 5 -> 2025, 6 -> 2026
-  window.eid = (chiffre, n) => '2500162999' + chiffre + String(n).padStart(4, '0');
+  window.eid = (chiffre, n) => '2500000129' + chiffre + String(n).padStart(4, '0');
   window.fiche = (eid, o) => Object.assign({
     id: 'f' + eid, eid, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [],
     mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: []

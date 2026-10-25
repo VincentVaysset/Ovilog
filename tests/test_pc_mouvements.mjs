@@ -18,7 +18,7 @@ await page.goto(URL_APP, { waitUntil: 'load' });
 await page.waitForTimeout(300);
 const jeu = () => page.evaluate(() => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
   DB.acheteurs = ['Acheteur A', 'Acheteur B']; DB.causesMortalite = ['Mammite', 'Boiterie'];
@@ -364,10 +364,10 @@ if (exportPresent(EXPORT_CORRIGE)) {
   const parCat = await page.evaluate(() => { const r = {}; document.querySelectorAll('#mvp-table tr[data-eid]').forEach(tr => { const c = tr.children[2].textContent; r[c] = (r[c] || 0) + 1; }); return r; });
   const parCatAtt = {}; attendu.forEach(c => { parCatAtt[c] = (parCatAtt[c] || 0) + 1; });
   check(JSON.stringify(Object.entries(parCat).sort()) === JSON.stringify(Object.entries(parCatAtt).sort()), 'répartition par catégorie identique : ' + JSON.stringify(parCat) + ' / ' + JSON.stringify(parCatAtt));
-  // les lots réels (ventes Natera) : libellé et annulation
+  // les lots réels (ventes) : libellé et annulation
   const lotsR = await page.evaluate(() => [...new Set([...document.querySelectorAll('#mvp-table tr[data-eid] td:nth-child(6) .pc-pill')].map(p => p.textContent.trim()))]);
   console.log('   lots réels affichés :', JSON.stringify(lotsR));
-  check(lotsR.some(l => /^Lot du 15\/09 · 4 brebis · Natera$/.test(l)) && lotsR.some(l => /^Lot du 15\/09 · 4 béliers · Natera$/.test(l)), 'lots réels : « Lot du 15/09 · 4 brebis · Natera » et « … 4 béliers … »');
+  check(lotsR.some(l => /^Lot du 15\/09 · 4 brebis · .+$/.test(l)) && lotsR.some(l => /^Lot du 15\/09 · 4 béliers · .+$/.test(l)), 'lots réels : « Lot du 15/09 · 4 brebis · acheteur » et « … 4 béliers … »');
   const idsR = await page.evaluate(() => DB.mouvementsCollectifs.map(l => [l.id, l.categorie]));
   reponse = false; confirms.length = 0;
   await page.click(`.mv-annuler-lot[data-id="${idsR.find(x => x[1] === 'brebis')[0]}"] >> nth=0`);
@@ -395,7 +395,7 @@ if (exportPresent(EXPORT_CORRIGE)) {
   await page.click(`.mv-annuler-lot[data-id="${idsR.find(x => x[1] === 'brebis')[0]}"] >> nth=0`);
   const apresReel = await page.evaluate(() => ({ vend: DB.brebis.filter(s => s.statut === 'vendue').length, act: DB.brebis.filter(s => s.statut === 'active').length, lots: DB.mouvementsCollectifs.length }));
   check(apresReel.vend === 0 && apresReel.act === actifsBrebis + 4 && apresReel.lots === 1, 'lot réel annulé : 4 brebis de nouveau actives, un seul lot restant (béliers) : ' + JSON.stringify(apresReel));
-  console.log('OK 17 données réelles (lecture seule) : tableau = comptage indépendant du JSON, lots réels « Lot du 15/09 · 4 … · Natera », annulation avec nombre restauré, vente puis annulation du lot = base identique à l\'octet près.');
+  console.log('OK 17 données réelles (lecture seule) : tableau = comptage indépendant du JSON, lots réels « Lot du 15/09 · 4 … · acheteur », annulation avec nombre restauré, vente puis annulation du lot = base identique à l\'octet près.');
 } else console.log('SKIP 17 : export réel absent (voir tests/README.md)');
 await browser.close();
 console.log('\nTOUS LES TESTS DE LA PAGE PC « MOUVEMENTS D\'ANIMAUX » SONT PASSÉS');

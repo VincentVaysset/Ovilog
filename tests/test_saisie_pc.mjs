@@ -29,8 +29,8 @@ function balayage(pg) {
   const jeu = () => pg.evaluate(j => {
     if (j) DB = migrateData(JSON.parse(j)); else {
       DB = migrateData({});
-      const f = (d, n, extra) => Object.assign({ id: 'b' + d + n, eid: '2500162991' + d + String(n).padStart(4, '0'), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: [], videesDefinitives: [] }, extra || {});
-      DB.brebis = [f(8, 133, { agnelages: [{ campagne: 2025, date: '2026-01-14', codeRepro: 'IA', lambs: [{ eid: '2500162996' + '0001', sexe: 'Femelle', sanitaire: [], mouvements: [] }] }] }), f(9, 59), f(9, 69)]; DB.beliers = []; DB.agnelles = [{ id: 'ag9', eid: '250016299550042', origine: 'achetée', dateEntree: '2026-09-10', mouvements: [{ type: 'Entrée', date: '2026-09-10' }], sanitaire: [] }];
+      const f = (d, n, extra) => Object.assign({ id: 'b' + d + n, eid: '2500000121' + d + String(n).padStart(4, '0'), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: [], videesDefinitives: [] }, extra || {});
+      DB.brebis = [f(8, 133, { agnelages: [{ campagne: 2025, date: '2026-01-14', codeRepro: 'IA', lambs: [{ eid: '2500000126' + '0001', sexe: 'Femelle', sanitaire: [], mouvements: [] }] }] }), f(9, 59), f(9, 69)]; DB.beliers = []; DB.agnelles = [{ id: 'ag9', eid: '250000012550042', origine: 'achetée', dateEntree: '2026-09-10', mouvements: [{ type: 'Entrée', date: '2026-09-10' }], sanitaire: [] }];
     }
     DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true; DB.acheteurs = DB.acheteurs && DB.acheteurs.length ? DB.acheteurs : ['Acheteur A'];
     document.querySelectorAll('.modal-overlay').forEach(o => o.remove());

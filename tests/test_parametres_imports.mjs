@@ -19,7 +19,7 @@ const jeu = (typeSuivi) => page.evaluate((ts) => {
   localStorage.removeItem('ovilog_derniers_imports');
   window.__saves = 0; DB = migrateData({}); saveData = function () { window.__saves++; return true; };
   DB.campagneDebut = 2026; DB.campagneInitialisee = true; DB.exploitation = { ...DB.exploitation, typeSuivi: ts };
-  const b = (n, court) => ({ id: 'b' + n, eid: '250 0162991' + n, statut: 'active', numeroCourtTravailSieol: court || null, mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [], createdAt: 1 });
+  const b = (n, court) => ({ id: 'b' + n, eid: '250 0000121' + n, statut: 'active', numeroCourtTravailSieol: court || null, mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [], createdAt: 1 });
   DB.brebis = [b('51001', null), b('51002', null)];
   parametresTab = 'imports'; render('parametres');
 }, typeSuivi);

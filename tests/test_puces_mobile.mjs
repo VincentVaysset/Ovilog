@@ -20,7 +20,7 @@ async function nouveau(largeur, pc) {
   await page.goto(URL_APP, { waitUntil: 'load' }); await page.waitForTimeout(300);
   await page.evaluate(() => {
     DB = migrateData({}); saveData = function () { return true; };
-    const eid = n => '2500162999' + '3' + String(n).padStart(5, '0'); window.EID = eid;
+    const eid = n => '2500000129' + '3' + String(n).padStart(5, '0'); window.EID = eid;
     const fiche = e => ({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controlesLaitiers: [], notes: [] });
     DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
     DB.brebis = [fiche(eid(101)), fiche(eid(102))]; DB.beliers = []; DB.agnelles = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };

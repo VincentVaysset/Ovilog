@@ -25,7 +25,7 @@ await page.goto(URL_APP, { waitUntil: 'load' });
 await page.waitForTimeout(300);
 const res = await page.evaluate(() => {
   DB = migrateData({});
-  const eid = (c, n) => '2500162999' + c + String(n).padStart(4, '0');
+  const eid = (c, n) => '2500000129' + c + String(n).padStart(4, '0');
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   const mb = (d, l) => ({ date: d, campagne: 2026, lambs: l.map(s => ({ sexe: s })) });
   const cl = (n, camp) => ({ controle: n, quantite: 1.2, anomalie: null, date: '2027-01-15', campagne: camp });

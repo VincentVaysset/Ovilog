@@ -18,7 +18,7 @@ await page.waitForTimeout(300);
 const jeuSur = (pg) => pg.evaluate(() => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; };
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
-  window.E = (d, n) => '2500162991' + d + String(n).padStart(4, '0');
+  window.E = (d, n) => '2500000121' + d + String(n).padStart(4, '0');
   const f = (d, n, extra) => Object.assign({ id: 'b' + d + n, eid: E(d, n), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: [], videesDefinitives: [] }, extra || {});
   const l = (n, sexe, extra) => Object.assign({ eid: sexe === 'Femelle' || extra && extra.eid ? E(6, n) : undefined, sexe, sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-01-14' }] }, extra || {});
   const A = f(8, 133, { agnelages: [{ campagne: 2025, date: '2026-01-14', codeRepro: 'IA', lambs: [l(1, 'Femelle'), l(2, 'Femelle', { triStatut: 'gardée' }), l(3, 'Mâle')] }] });

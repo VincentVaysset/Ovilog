@@ -16,7 +16,7 @@ await page.waitForTimeout(300);
 
 await page.evaluate(() => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; return true; };
-  const eid = (an, n) => '250016299' + '9' + an + String(n).padStart(5, '0');
+  const eid = (an, n) => '250000012' + '9' + an + String(n).padStart(5, '0');
   window.E = eid;
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
@@ -51,7 +51,7 @@ eq(await page.evaluate(() => [echoRapideSession.demarree, echoRapideSession.lot,
 const t0 = await page.evaluate(() => [...document.querySelectorAll('#echo-tuiles .tuile-charte')].map(t => [t.querySelector('.l').textContent, t.querySelector('.n').textContent, t.className.replace('tuile-charte ', '')]));
 eq(t0, [['Pleines', '0', 'vert'], ['Vides', '0', 'ambre'], ['Réussite', '—', 'bleu']], 'tuiles Pleines / Vides / Réussite');
 await saisir(E_(105));
-function E_(n) { return '250016299' + '9' + 3 + String(n).padStart(5, '0'); }
+function E_(n) { return '250000012' + '9' + 3 + String(n).padStart(5, '0'); }
 await page.waitForSelector('#carte-echo-brebis');
 const c1 = await page.evaluate(() => ({ prec: document.getElementById('echo-precedente').textContent, texte: document.getElementById('carte-echo-brebis').textContent.replace(/\s+/g, ' '), alerteLot: !!document.getElementById('alerte-lot-echo'),
   barre: [...document.querySelectorAll('.mn-barre .btn')].map(b => b.textContent), stades: [...document.querySelectorAll('.stade-opt')].map(b => b.dataset.val), compt: !document.getElementById('nombre-agneaux-block').classList.contains('hidden') }));

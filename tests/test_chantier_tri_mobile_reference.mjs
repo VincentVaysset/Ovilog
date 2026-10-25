@@ -27,7 +27,7 @@ await page.waitForTimeout(300);
 const sansBoutonRepro = h => h.replace(/\s*<button class="btn btn-secondary" id="btn-new-lot-repro"[^>]*>[^<]*<\/button>/, '');       // exception voulue : création d'un lot de reproduction sur PC seulement
 const res = await page.evaluate(() => {
   DB = migrateData({}); saveData = function () {};
-  const eid = (d, n) => '2500162991' + d + String(n).padStart(4, '0');
+  const eid = (d, n) => '2500000121' + d + String(n).padStart(4, '0');
   const fiche = (d, n, o) => Object.assign({ id: 'f' + d + n, eid: eid(d, n), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
   DB.acheteurs = ['Acheteur A'];

@@ -1,5 +1,5 @@
 /* Canal stable des mises à jour. L'appli (APK) et l'installeur Windows ne proposent que les Releases que le propriétaire a promues à la main (non « pre-release », non brouillon) ;
-   les builds de main naissent en pre-release ; seuls les push sur main publient une Release (branches et lancements manuels = artefact seulement).
+   les builds de main naissent en pre-release ; un push de branche ne publie qu'une pre-release « [test] » (canal de test, voir test_canal_test), un lancement manuel rien.
    A. Application : derniereReleaseDisponible / verifierMiseAJourDisponible avec un faux fetch (mélange stable / pre-release / brouillon).
    B. Workflow build-apk.yml et electron/main.js : garde-fous vérifiés dans les fichiers eux-mêmes. Faux fetch, rien n'est téléchargé ni installé. */
 import { chromium } from 'playwright';
@@ -11,14 +11,23 @@ const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + '
 // ---------------- B. fichiers du dépôt
 const yml = readFileSync(new URL('../.github/workflows/build-apk.yml', import.meta.url), 'utf8');
 const etapes = yml.split(/\n      - name: /).slice(1);
-const publications = etapes.filter(e => /\n\s+uses: softprops\/action-gh-release@v2/.test(e));
-eq(publications.length, 2, 'workflow : deux étapes de publication de Release (APK et installeur Windows)');
+const toutesPublications = etapes.filter(e => /\n\s+uses: softprops\/action-gh-release@v2/.test(e));
+const publications = toutesPublications.filter(e => !/^Publier la pre-release de test/.test(e));
+eq(publications.length, 2, 'workflow : deux étapes de publication de Release sur main (APK et installeur Windows)');
+// canal de test : la seule autre publication est la pre-release « [test] » d'un push de branche (voir test_canal_test)
+const publicationsTest = toutesPublications.filter(e => /^Publier la pre-release de test/.test(e));
+eq(publicationsTest.length, 1, 'workflow : une seule publication hors main, la pre-release de test');
+check(/\n\s+if: github\.ref != 'refs\/heads\/main' && github\.event_name == 'push'/.test(publicationsTest[0]) && /\n\s+prerelease: true\b/.test(publicationsTest[0]) && /name: "\[test\] /.test(publicationsTest[0]) && /body: \|\n\s+<!-- ovilog-canal-test -->/.test(publicationsTest[0]), 'workflow : pre-release de test seulement sur un push de branche, toujours en pre-release, marquée « [test] » et <!-- ovilog-canal-test -->');
 publications.forEach((e, i) => {
   check(/\n\s+if: github\.ref == 'refs\/heads\/main' && github\.event_name == 'push'/.test(e), 'workflow : l\'étape de publication ' + (i + 1) + ' ne tourne que sur un push de main');
   check(/\n\s+prerelease: true\b/.test(e), 'workflow : l\'étape de publication ' + (i + 1) + ' publie toujours en pre-release');
   check(!/prerelease: \$\{\{/.test(e), 'workflow : aucune condition qui rendrait une release stable automatiquement');
 });
 check(/actions\/upload-artifact@v4/.test(yml) && yml.match(/actions\/upload-artifact@v4/g).length === 2, 'workflow : les artefacts (APK, installeur) sont toujours produits, y compris hors main');
+// tests avant toute construction : aucune Release (stable ni « [test] ») si la batterie échoue (voir tests.yml)
+check(/\n  tests:\n    [\s\S]*?uses: \.\/\.github\/workflows\/tests\.yml/.test(yml) && /\n  build:\n    needs: tests\n/.test(yml), 'workflow : la construction (et donc toute Release) attend la batterie de tests');
+const ymlTests = readFileSync(new URL('../.github/workflows/tests.yml', import.meta.url), 'utf8');
+check(/\n  pull_request:/.test(ymlTests) && /\n  workflow_call:/.test(ymlTests) && /name: Tests OK/.test(ymlTests) && /bash tests\/run_all\.sh/.test(ymlTests), 'tests.yml : pull request + appel par la construction, check « Tests OK », batterie run_all.sh');
 const main = readFileSync(new URL('../electron/main.js', import.meta.url), 'utf8');
 check(/autoUpdater\.allowPrerelease = false;/.test(main) && !/allowPrerelease = true/.test(main), 'electron : allowPrerelease = false (seules les versions promues sont proposées)');
 console.log('OK B workflow et Electron : publication seulement sur main, toujours en pre-release, Electron ignore les pre-release.');
