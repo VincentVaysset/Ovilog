@@ -54,9 +54,10 @@ try {
   for (const v of ['add-sheep', 'misebas-rapide', 'echo-rapide', 'auth', 'verifier-email', 'premiere-configuration']) { await A.page.evaluate(x => render(x), v); cachee[v] = await bulleVisible(A); }
   eq(Object.values(cachee).filter(Boolean).length, 0, 'bulle cachée sur les écrans de saisie et les portes d\'authentification : ' + JSON.stringify(cachee));
   // barre fixe en bas apparue après le rendu (ex. sélection d'une brebis) : la bulle s'efface
-  await A.page.evaluate(() => { render('home'); const d = document.createElement('div'); d.className = 'mn-barre'; d.id = 'barre-test'; document.getElementById('app').appendChild(d); });
+  // posée sur body (et non dans #app) : un redessin de l'écran pendant le contrôle (synchro reçue) ne doit pas l'effacer sous le test
+  await A.page.evaluate(() => { render('home'); const d = document.createElement('div'); d.className = 'mn-barre'; d.id = 'barre-test'; document.body.appendChild(d); });
   check(!(await bulleVisible(A)), 'barre fixe en bas : bulle effacée');
-  await A.page.evaluate(() => document.getElementById('barre-test').remove());
+  await A.page.evaluate(() => { const b = document.getElementById('barre-test'); if (b) b.remove(); });
   // champ de scan qui a le curseur dès l'ouverture (liste des brebis) : la bulle reste ; clavier ouvert (la fenêtre perd sa moitié basse) : effacée, puis revient
   await A.page.evaluate(() => render('list'));
   check(await A.page.evaluate(() => { const i = document.getElementById('scan-open'); i.focus(); return document.activeElement === i; }), 'liste des brebis : le champ de scan a le curseur');
