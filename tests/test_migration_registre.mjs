@@ -1,9 +1,9 @@
 /* Teste la migration du registre (chantier "Registre : collection dédiée",
    1re étape -- migration seule) sur les VRAIES données de registre de
-   l'export du 29/09 (342 brebis + 0 bélier + 115 agnelles = 457 entrées) :
+   l'export réel fourni (tests/data, jamais versionné ; toutes les attentes sont des RELATIONS avec ce registre, aucun chiffre en dur) :
    1. DB.registre avant/après strictement identique (contenu, pas juste le
       compte).
-   2. 457 documents créés côté cloud (collection dédiée).
+   2. autant de documents côté cloud que d'entrées dans le registre de l'export (collection dédiée).
    3. Relance de la migration idempotente (aucun doublon, aucune erreur).
    4. Un 2e appareil simulé reçoit tout sans doublon ni perte.
    5. Protection "création seulement" : un document déjà présent côté cloud
@@ -122,13 +122,13 @@ if (JSON.stringify(avantSnapshot) !== JSON.stringify(apresSnapshot)) {
 }
 console.log('OK point 1: DB.registre est strictement identique avant/après la migration (forme imbriquée inchangée pour tout le code existant).');
 
-// ---- Vérif 2 : 457 documents créés côté cloud ----
+// ---- Vérif 2 : un document par entrée du registre de l'export ----
 const snapCloud = await fetch('http://127.0.0.1:' + fakePort + '/snapshot?uid=' + uidToUse + '&col=registre').then(r => r.json());
 const nbDocsCloud = Object.keys(snapCloud.docs).length;
 if (nbDocsCloud !== totalAttendu) {
   throw new Error('FAIL point 2: attendu ' + totalAttendu + ' documents dans la collection registre, obtenu ' + nbDocsCloud);
 }
-console.log('OK point 2: exactement ' + nbDocsCloud + ' documents créés dans la collection dédiée users/{uid}/registre/{id} (342 brebis + 0 bélier + 115 agnelles).');
+console.log('OK point 2: exactement ' + nbDocsCloud + ' documents créés dans la collection dédiée users/{uid}/registre/{id}, autant que d\'entrées dans le registre de l\'export (' + Object.keys(registreReel.brebis).length + ' brebis + ' + Object.keys(registreReel.beliers).length + ' bélier(s) + ' + Object.keys(registreReel.agnelles).length + ' agnelles).');
 
 // Vérifie le contenu d'un document précis (une vraie brebis archivée de l'export).
 const uneBrebisEid = Object.keys(registreReel.brebis)[0];
@@ -166,15 +166,17 @@ await d1.ctx.close();
 const d2 = await newDevicePage();
 await d2.page.evaluate(async ({ email, pw }) => { await window.OvilogSync.login(email, pw); }, { email, pw: password });
 await waitFor(d2.page, () => window.OvilogSync.getState().loggedIn, { label: 'device 2 connecté' });
+// waitFor évalue dans la page : le total attendu (relation : autant d'entrées que dans le registre de l'export) y est passé par window
+await d2.page.evaluate(n => { window.__totalAttendu = n; }, totalAttendu);
 await waitFor(d2.page, () => {
   const r = DB.registre;
-  return r && Object.keys(r.brebis || {}).length + Object.keys(r.beliers || {}).length + Object.keys(r.agnelles || {}).length === 457;
-}, { timeout: 20000, label: 'device 2 reçoit les 457 entrées du registre' });
+  return r && Object.keys(r.brebis || {}).length + Object.keys(r.beliers || {}).length + Object.keys(r.agnelles || {}).length === window.__totalAttendu;
+}, { timeout: 30000, label: 'device 2 reçoit toutes les entrées du registre (' + totalAttendu + ')' });
 const registreDevice2 = await d2.page.evaluate(() => JSON.parse(JSON.stringify(DB.registre)));
 if (JSON.stringify(registreDevice2) !== JSON.stringify(avantSnapshot)) {
   throw new Error('FAIL point 4: le registre reçu par le device 2 doit être identique à l\'original, sans perte ni doublon.');
 }
-console.log('OK point 4: un 2e appareil connecté après coup reçoit exactement les 457 entrées, contenu identique à l\'original, sans doublon.');
+console.log('OK point 4: un 2e appareil connecté après coup reçoit exactement les ' + totalAttendu + ' entrées, contenu identique à l\'original, sans doublon.');
 // device 2 ne doit PAS re-déclencher sa propre migration à vide (son registre
 // local, avant réception, était vide -- rien à migrer depuis lui-même) :
 // vérifie que le drapeau est déjà vrai chez lui sans avoir eu à créer quoi
@@ -189,13 +191,22 @@ console.log('OK point 4: le drapeau de migration (cloud, champ meta) est bien re
 // (contenu volontairement différent, simulant un autre appareil ayant migré
 // en premier) n'est JAMAIS écrasé par une migration relancée ailleurs.
 // ============================================================
-const idCible = 'agnelle_' + Object.keys(registreReel.agnelles)[0].replace(/\s+/g, '');
-const contenuSentinelle = { eid: Object.keys(registreReel.agnelles)[0], categorie: 'agnelles', sanitaire: [], agnelages: [], mouvements: [{ type: 'SENTINELLE_TEST', date: '2099-01-01' }] };
+// Le document visé est un VRAI document déjà créé par la migration (identifiant categorie_eid, comme dans l'appli) : avant correction, le test visait
+// « agnelle_… » (sans s), un document que la migration n'écrit jamais, et passait donc sans rien vérifier.
+const catCible = Object.keys(registreReel.agnelles).length ? 'agnelles' : (Object.keys(registreReel.brebis).length ? 'brebis' : 'beliers');
+const eidCible = Object.keys(registreReel[catCible])[0];
+const idCible = catCible + '_' + eidCible.replace(/\s+/g, '');
+if (!snapCloud.docs[idCible]) throw new Error('FAIL point 5 (préalable) : le document visé ' + idCible + ' doit exister dans la collection migrée.');
+// même forme qu'un vrai document du registre (id = categorie_eid compris), seul le contenu diffère
+const contenuSentinelle = { id: idCible, eid: eidCible, categorie: catCible, sanitaire: [], agnelages: [], mouvements: [{ type: 'SENTINELLE_TEST', date: '2099-01-01' }] };
 await fetch('http://127.0.0.1:' + fakePort + '/batch', {
   method: 'POST',
   body: JSON.stringify({ uid: uidToUse, ops: [{ type: 'set', path: 'users/' + uidToUse + '/registre/' + idCible, data: contenuSentinelle }] })
 });
 await d2.page.evaluate(() => { DB.registreCollectionMigree20260930 = false; });
+// Toutes les écritures envoyées par le device 2 pendant la migration relancée sont relevées : AUCUNE ne doit viser le document déjà présent
+const ecrituresD2 = [];
+await d2.page.route('**/batch', async (route, request) => { try { (request.postDataJSON().ops || []).forEach(o => ecrituresD2.push(o.path)); } catch (e) {} await route.continue(); });
 await d2.page.evaluate(async ({ email, pw }) => {
   window.OvilogSync.deconnecterSansVider();
   await new Promise(r => setTimeout(r, 200));
@@ -207,9 +218,16 @@ const snapApresSentinelle = await fetch('http://127.0.0.1:' + fakePort + '/getdo
 if (JSON.stringify(snapApresSentinelle.data.mouvements) !== JSON.stringify(contenuSentinelle.mouvements)) {
   throw new Error('FAIL point 5: un document déjà présent côté cloud ne doit JAMAIS être écrasé par une migration relancée, obtenu ' + JSON.stringify(snapApresSentinelle.data));
 }
-console.log('OK point 5: un document déjà présent côté cloud (simulant un autre appareil ayant migré en premier) n\'est jamais écrasé -- protection "création seulement" confirmée.');
+if (ecrituresD2.some(p => p.endsWith('/registre/' + idCible))) {
+  throw new Error('FAIL point 5: la migration relancée a envoyé une écriture sur le document déjà présent ' + idCible);
+}
+const snapFinal = await fetch('http://127.0.0.1:' + fakePort + '/snapshot?uid=' + uidToUse + '&col=registre').then(r => r.json());
+if (Object.keys(snapFinal.docs).length !== totalAttendu) {
+  throw new Error('FAIL point 5: la collection doit toujours compter ' + totalAttendu + ' documents (aucun doublon), obtenu ' + Object.keys(snapFinal.docs).length);
+}
+console.log('OK point 5: un document déjà présent côté cloud (simulant un autre appareil ayant migré en premier) n\'est jamais écrasé -- protection "création seulement" confirmée (aucune écriture vers ' + idCible + ', contenu sentinelle intact, toujours ' + totalAttendu + ' documents).');
 
 await d2.ctx.close();
 cleanup();
-console.log('\nTOUS LES TESTS DE MIGRATION SONT PASSÉS (compte de test jetable, faux backend local, aucune donnée réelle, aucune bascule réelle)');
+console.log('\nTOUS LES TESTS DE MIGRATION SONT PASSÉS (compte de test jetable, faux backend local, export réel lu en local seulement, aucune bascule réelle)');
 await browser.close();

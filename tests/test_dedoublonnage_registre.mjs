@@ -10,8 +10,10 @@
       succès = doublons retirés, ordre conservé, fiches intactes, cloud = local,
       journal, 2e appareil convergent ; cases « à vérifier » cochées ; garde
       « modifiée ailleurs » ; échec d'écriture d'une entrée sans bloquer les autres.
-   5. Export réel (SKIP si absent) : 115 entrées / 230 éléments dans registre.agnelles,
-      bilans, effectif et fiches identiques avant/après.
+   5. Export réel (SKIP si absent) : doublons réels comptés par le test et comparés à
+      l'analyse (appliqués s'il y en a), puis doublons injectés dans le registre réel :
+      trouvés exactement, retirés, registre rendu identique à l'original ; bilans,
+      effectif et fiches identiques avant/après ; cloud = local.
    Faux backend Firestore + faux plugins natifs -- aucune donnée réelle écrite. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP, LIB_DIR, EXPORT_CORRIGE, EXPORT_ORIGINAL, exportPresent } from './lib/config.mjs';
@@ -355,19 +357,25 @@ check(regE.agnelles['250000012930011'].mouvements.length === 4 && regE.brebis['2
 console.log('OK 6b échec d\'écriture sur une entrée : signalé avec sa raison, entrée intacte, les autres traitées.');
 await page.context().close();
 
-// ================================================================ 7. export réel (lecture seule, copie en mémoire)
+// ================================================================ 7. export réel (copie en mémoire, compte de test jetable)
+// a) doublons RÉELS de l'export : comptés par le test lui-même (même règle d'égalité, éléments présents exactement 2 fois dans
+//    mouvements / agnelages = cochés par défaut), comparés à l'analyse ; s'il y en a, appliqués et vérifiés par relations.
+// b) doublons INJECTÉS dans le registre réel (le 1er mouvement recopié en tête de liste dans des entrées réelles) : l'analyse doit trouver
+//    exactement les entrées injectées, et l'application doit rendre le registre d'avant l'injection, octet pour octet.
+const doublonsParDefautTest = registre => {
+  let enTrop = 0; const entrees = new Set();
+  for (const cat of ['brebis', 'beliers', 'agnelles']) for (const [eid, e] of Object.entries((registre && registre[cat]) || {})) for (const champ of ['mouvements', 'agnelages']) {
+    const n = new Map(); (e[champ] || []).forEach(x => { const k = canon(x); n.set(k, (n.get(k) || 0) + 1); });
+    n.forEach(c => { if (c === 2) { enTrop++; entrees.add(cat + ':' + eid); } });
+  }
+  return { enTrop, entrees: entrees.size };
+};
+const NB_INJ_AGNELLES = 10, NB_INJ_BELIERS = 2;
+let exportsTestes = 0;
 for (const [nom, chemin] of [['corrigé', EXPORT_CORRIGE], ['original', EXPORT_ORIGINAL]]) {
   if (!exportPresent(chemin)) { console.log('SKIP : export ' + nom + ' absent'); continue; }
+  exportsTestes++;
   const data = JSON.parse(readFileSync(chemin, 'utf8'));
-  if (nom !== 'corrigé') {
-    // export original : analyse seule (aucune connexion cloud, donc rapide) -- mêmes 115 entrées / 230 éléments
-    const q = await newPage();
-    const an0 = await q.evaluate((d) => { DB = migrateData(JSON.parse(JSON.stringify(d))); const a = analyserDoublonsRegistre(); return { n: a.lignes.length, entrees: a.nbEntrees, defaut: a.lignes.filter(l => l.parDefaut).length, cats: [...new Set(a.lignes.map(l => l.categorie + '.' + l.champ))] }; }, data);
-    check(an0.entrees === 115 && an0.n === 230 && an0.defaut === 230 && an0.cats.join() === 'agnelles.mouvements', nom + ' : 115 entrées / 230 lignes exactes, uniquement registre.agnelles.mouvements : ' + JSON.stringify(an0));
-    console.log('OK 7 export (' + nom + ') : analyse seule, 115 entrées / 230 lignes cochées par défaut, uniquement registre.agnelles.mouvements.');
-    await q.context().close();
-    continue;
-  }
   const p = await newPage();
   await installerFauxPlugins(p);
   const mail = 'dedoublonnage-' + nom + '-' + Date.now() + '@ovilog-audit-jetable.test';
@@ -387,38 +395,81 @@ for (const [nom, chemin] of [['corrigé', EXPORT_CORRIGE], ['original', EXPORT_O
   check(await nLocal() === attendus, nom + ' : registre complet en mémoire (' + attendus + ' entrées)');
   const mesure = () => p.evaluate(() => {
     const dates = ['2025-01-01', '2025-10-01', '2026-01-01', '2026-09-28', '2026-10-15'];
+    const lignes = c => registreEntriesFor(c).reduce((n, x) => n + (x.mouvements || []).length + (x.agnelages || []).length, 0);
     return {
       eff: JSON.stringify(dates.map(d => [effectifADate('brebis', d), effectifADate('belier', d), effectifADate('agnelle', d)])),
       entrees: JSON.stringify(['brebis', 'beliers', 'agnelles'].map(c => effectifEntriesFor(c).map(x => [x.eid, animalDateEntree(x) && animalDateEntree(x).toISOString(), animalDateSortie(x) && animalDateSortie(x).toISOString()]))),
       bilan: bilanReproductionHtml(), fiches: JSON.stringify([DB.brebis, DB.beliers, DB.agnelles]),
-      lignesAgnelles: registreEntriesFor('agnelles').reduce((n, x) => n + x.mouvements.length, 0),
-      lignesBrebis: registreEntriesFor('brebis').reduce((n, x) => n + x.mouvements.length, 0)
+      lignes: lignes('brebis') + lignes('beliers') + lignes('agnelles'),
+      registre: JSON.parse(JSON.stringify(DB.registre))
     };
   });
-  const m0 = await mesure();
-  const an = await p.evaluate(() => { const a = analyserDoublonsRegistre(); return { n: a.lignes.length, entrees: a.nbEntrees, defaut: a.lignes.filter(l => l.parDefaut).length, enTrop: a.lignes.reduce((t, l) => t + l.avant - l.apres, 0), cats: [...new Set(a.lignes.map(l => l.categorie + '.' + l.champ))] }; });
-  console.log('[' + nom + '] analyse : ' + an.n + ' lignes dans ' + an.entrees + ' entrées (' + an.defaut + ' cochées par défaut), ' + an.enTrop + ' éléments en trop, dans ' + an.cats.join(','));
-  check(an.entrees === 115 && an.n === 230 && an.defaut === 230 && an.enTrop === 230 && an.cats.join() === 'agnelles.mouvements', nom + ' : 115 entrées / 230 lignes exactes à 2 occurrences, uniquement registre.agnelles.mouvements');
-  if (nom === 'corrigé') {
-    await p.evaluate(() => { window.__mode = 'ok'; parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; prmMaintenanceOuvert = true; render('parametres'); });
+  const analyse = () => p.evaluate(() => { const a = analyserDoublonsRegistre(); return { n: a.lignes.length, entrees: a.nbEntrees, defaut: a.lignes.filter(l => l.parDefaut).length, enTropDefaut: a.lignes.filter(l => l.parDefaut).reduce((t, l) => t + l.avant - l.apres, 0), ids: [...new Set(a.lignes.filter(l => l.parDefaut).map(l => l.categorie + ':' + l.eid))].sort() }; });
+  const appliquer = async () => {
+    await p.evaluate(() => { window.__mode = 'ok'; parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; prmMaintenanceOuvert = true; doublonsRegistreEtat.message = ''; render('parametres'); });
     await p.waitForSelector('#btn-dd-analyser', { state: 'attached' });
     await p.click('#btn-dd-analyser');
     await p.click('#btn-dd-appliquer');
     await waitFor(() => p.evaluate(() => !dedoublonRegistreEnCours && /✅|⚠️/.test(doublonsRegistreEtat.message)), { timeout: 90000, label: 'dédoublonnage de l\'export' });
-    const msg = await p.evaluate(() => doublonsRegistreEtat.message);
-    check(/✅ 230 élément\(s\) retiré\(s\) dans 115 entrée\(s\)/.test(msg), 'message : ' + msg);
+    return p.evaluate(() => doublonsRegistreEtat.message);
+  };
+  // ref : état de référence attendu après application (l'état d'avant l'injection pour b ; pour a, l'état d'avant sans l'encart
+  // « points de données à vérifier » du bilan, qui signale justement les doublons et doit disparaître avec eux)
+  const sansEncartDoublons = html => html.replace(/<details class="bc-alerte err">[\s\S]*?<\/details>/g, m => /doubl/i.test(m) ? '' : m);
+  const verifierApplication = async (m0, enTrop, entrees, etiquette, ref) => {
+    const msg = await appliquer();
+    check(msg.includes('✅ ' + enTrop + ' élément(s) retiré(s) dans ' + entrees + ' entrée(s)'), etiquette + ' : message « ' + enTrop + ' élément(s) retiré(s) dans ' + entrees + ' entrée(s) », obtenu ' + msg);
     const m1 = await mesure();
-    check(m0.lignesAgnelles === 460 && m1.lignesAgnelles === 230, 'lignes de mouvements du registre agnelles : 460 -> 230, obtenu ' + m0.lignesAgnelles + ' -> ' + m1.lignesAgnelles);
-    check(m1.lignesBrebis === m0.lignesBrebis, 'registre brebis inchangé');
-    check(m1.eff === m0.eff && m1.entrees === m0.entrees, 'effectif PAC (5 dates) et dates d\'entrée / sortie identiques avant/après');
-    check(m1.bilan === m0.bilan && m1.fiches === m0.fiches, 'bilan de reproduction et fiches identiques octet pour octet');
-    await waitFor(() => cloudEgalLocal(p, attendus), { timeout: 60000, label: 'cloud = local' });
-    const re = await p.evaluate(() => analyserDoublonsRegistre().lignes.length);
-    check(re === 0, 'deuxième analyse : plus aucun doublon');
-    console.log('OK 7 export (' + nom + ') : 230 éléments retirés dans 115 entrées, mouvements du registre agnelles 460 -> 230, effectif PAC / bilan / fiches identiques, cloud = local, 2e analyse = 0.');
+    check(m1.lignes === m0.lignes - enTrop, etiquette + ' : lignes du registre après = avant − retirés (' + m0.lignes + ' − ' + enTrop + '), obtenu ' + m1.lignes);
+    check(m1.eff === m0.eff && m1.entrees === m0.entrees && m1.eff === ref.eff && m1.entrees === ref.entrees, etiquette + ' : effectif PAC (5 dates) et dates d\'entrée / sortie identiques avant/après');
+    check(m1.fiches === m0.fiches && m1.fiches === ref.fiches, etiquette + ' : fiches identiques octet pour octet');
+    check((ref.bilanBrut ? m1.bilan : sansEncartDoublons(m1.bilan)) === ref.bilan, etiquette + ' : bilan de reproduction identique octet pour octet à la référence');
+    check(doublonsParDefautTest(m1.registre).enTrop === 0 && (await analyse()).defaut === 0, etiquette + ' : plus aucun doublon coché par défaut (compte du test et 2e analyse)');
+    await waitFor(() => cloudEgalLocal(p, attendus), { timeout: 60000, label: etiquette + ' : cloud = local' });
+    return m1;
+  };
+
+  // ---- a) doublons réels
+  const reel = doublonsParDefautTest(await p.evaluate(() => JSON.parse(JSON.stringify(DB.registre))));
+  const anReel = await analyse();
+  check(anReel.enTropDefaut === reel.enTrop && anReel.ids.length === reel.entrees, nom + ' : l\'analyse trouve autant de doublons que le compte du test (' + reel.enTrop + ' éléments dans ' + reel.entrees + ' entrées), obtenu ' + JSON.stringify({ enTrop: anReel.enTropDefaut, entrees: anReel.ids.length }));
+  if (reel.enTrop > 0) {
+    const m0 = await mesure();
+    await verifierApplication(m0, reel.enTrop, reel.entrees, nom + ' (doublons réels)', Object.assign({}, m0, { bilan: sansEncartDoublons(m0.bilan) }));
+    console.log('OK 7a export ' + nom + ' (données réelles) : ' + reel.enTrop + ' doublon(s) réel(s) dans ' + reel.entrees + ' entrée(s), retirés ; lignes après = avant − retirés ; effectif PAC, bilan et fiches identiques ; cloud = local ; 2e analyse = 0.');
+  } else {
+    console.log('OK 7a export ' + nom + ' (données réelles) : 0 doublon dans les ' + attendus + ' entrées du registre, l\'analyse n\'en trouve aucun non plus (rien à appliquer : la partie b injecte des doublons connus).');
   }
+
+  // ---- b) doublons injectés dans le registre réel
+  const mOrig = await mesure();
+  const injection = await p.evaluate(({ nA, nB }) => {
+    const choisir = (cat, n) => Object.keys(DB.registre[cat] || {}).sort().filter(eid => (DB.registre[cat][eid].mouvements || []).length > 0).slice(0, n);
+    const ids = [];
+    [['agnelles', nA], ['beliers', nB]].forEach(([cat, n]) => choisir(cat, n).forEach(eid => {
+      const e = DB.registre[cat][eid];
+      // copie du 1er élément placée EN TÊTE : un ajout en fin de liste partirait en arrayUnion, que Firestore ne double jamais
+      e.mouvements = [JSON.parse(JSON.stringify(e.mouvements[0]))].concat(e.mouvements);
+      ids.push(cat + ':' + eid);
+    }));
+    saveData(DB);
+    return ids.sort();
+  }, { nA: NB_INJ_AGNELLES, nB: NB_INJ_BELIERS });
+  const registreSansInjection = (await mesure()).registre;
+  ['agnelles', 'beliers'].forEach(cat => injection.filter(i => i.startsWith(cat + ':')).forEach(i => { const e = registreSansInjection[cat][i.slice(cat.length + 1)]; e.mouvements = e.mouvements.slice(1); }));
+  check(injection.length > 0, nom + ' : des entrées réelles reçoivent un doublon injecté');
+  await waitFor(() => cloudEgalLocal(p, attendus), { timeout: 60000, label: 'doublons injectés dans le cloud' });
+  const mInj = await mesure();
+  const anInj = await analyse();
+  check(JSON.stringify(anInj.ids) === JSON.stringify(injection) && anInj.enTropDefaut === injection.length, nom + ' : l\'analyse trouve exactement les ' + injection.length + ' entrées injectées (1 élément en trop chacune), obtenu ' + JSON.stringify({ ids: anInj.ids.length, enTrop: anInj.enTropDefaut }));
+  check(/Mouvements strictement identiques en doubl/.test(mInj.bilan) && !/Mouvements strictement identiques en doubl/.test(mOrig.bilan), nom + ' : le bilan signale les doublons injectés (encart « points de données à vérifier »), absent avant l\'injection');
+  const mApres = await verifierApplication(mInj, injection.length, injection.length, nom + ' (doublons injectés)', Object.assign({}, mOrig, { bilanBrut: true }));
+  check(mApres.lignes === mOrig.lignes, nom + ' : lignes du registre après = avant l\'injection (' + mOrig.lignes + ')');
+  check(canon(mApres.registre) === canon(registreSansInjection), nom + ' : après dédoublonnage, le registre est exactement le registre réel d\'avant l\'injection');
+  console.log('OK 7b export ' + nom + ' (registre réel + doublons injectés) : ' + injection.length + ' doublons injectés (' + injection.filter(i => i.startsWith('agnelles')).length + ' agnelles, ' + injection.filter(i => i.startsWith('beliers')).length + ' béliers), tous trouvés et seuls trouvés ; signalés par le bilan puis retirés ; registre, bilan de reproduction, effectif PAC et fiches rendus identiques à l\'original (' + attendus + ' entrées) ; cloud = local ; 2e analyse = 0.');
   await p.context().close();
 }
+if (!exportsTestes) console.log('SKIP 7 : aucun export réel présent (voir tests/README.md)');
 
 console.log('\nTOUS LES TESTS DU DÉDOUBLONNAGE DU REGISTRE SONT PASSÉS (faux backend, faux plugins, aucune donnée réelle écrite)');
 await browser.close();
