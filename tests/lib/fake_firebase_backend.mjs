@@ -25,11 +25,26 @@ const racine = col => { if (!racines.has(col)) racines.set(col, {}); return raci
 const CHAMPS_FEEDBACK = ['uid', 'exploitation', 'texte', 'type', 'date', 'dateServeur', 'campagne', 'ecran', 'version', 'appareil', 'statut', 'reponse', 'reponseDate', 'reponseLue'];
 const estAdmin = uid => !!uid && racine('admins')[uid] !== undefined;
 function resoudreSentinelles(data) { const r = {}; Object.keys(data || {}).forEach(k => { const v = data[k]; r[k] = v && v.__op === 'serverTimestamp' ? { __serverTime: true, ms: Date.now() } : v; }); return r; }
+// Rapports d'erreurs automatiques : MÊMES règles que firestore.rules (création seule, champs fermés, typés et bornés ; ni modification ni suppression par l'appli)
+const CHAMPS_ERREUR = ['uid', 'date', 'version', 'appareil', 'ecran', 'type', 'message', 'pile', 'nombre'];
+function refusErreur(op, auth, id) {
+  if (op.type === 'delete') return estAdmin(auth) ? null : 'suppression réservée à l\'administrateur';
+  if (op.type !== 'set' || racine('erreurs')[id] !== undefined) return 'un rapport ne se modifie pas';
+  const d = op.data || {}, cles = Object.keys(d);
+  if (!id.startsWith(auth + '_')) return 'identifiant';
+  if (!cles.every(k => CHAMPS_ERREUR.includes(k)) || !CHAMPS_ERREUR.every(k => cles.includes(k))) return 'champs';
+  const chaine = (v, max, min = 0) => typeof v === 'string' && v.length >= min && v.length <= max;
+  if (d.uid !== auth || !chaine(d.date, 30) || !chaine(d.version, 20) || !['android', 'pc'].includes(d.appareil) || !chaine(d.ecran, 60) || !chaine(d.type, 60, 1) || !chaine(d.message, 300)) return 'champ invalide';
+  if (!Array.isArray(d.pile) || d.pile.length > 5 || !d.pile.every(l => chaine(l, 200))) return 'pile';
+  if (!Number.isInteger(d.nombre) || d.nombre < 1 || d.nombre > 1000) return 'nombre';
+  return null;
+}
 // Renvoie null si l'opération est permise, sinon le motif du refus (permission-denied)
 function refusRacine(op, auth) {
   const [col, id] = op.path.split('/');
   if (!auth) return 'non connecté';
   if (col === 'admins') return 'admins : écriture réservée à la console';
+  if (col === 'erreurs') return refusErreur(op, auth, id);
   if (col !== 'feedback') return 'collection inconnue';
   if (refuserFeedback) return 'règles non publiées';
   const actuel = racine('feedback')[id];
@@ -222,7 +237,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/snapshot' && req.method === 'GET' && url.searchParams.get('racine')) {
       const col = url.searchParams.get('racine'), auth = url.searchParams.get('auth'), champ = url.searchParams.get('champ'), valeur = url.searchParams.get('valeur');
       if (url.searchParams.get('test') !== '1') {
-        const permis = col === 'feedback' && auth && (estAdmin(auth) || (champ === 'uid' && valeur === auth));
+        const permis = (col === 'feedback' && auth && (estAdmin(auth) || (champ === 'uid' && valeur === auth))) || (col === 'erreurs' && estAdmin(auth));
         if (!permis) return json(res, 403, { error: 'permission-denied' });
       }
       const tous = racine(col), docs = {};

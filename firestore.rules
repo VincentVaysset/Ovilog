@@ -47,6 +47,31 @@ service cloud.firestore {
       allow delete: if contactAdmin();
     }
 
+    // Ovilog, rapports d'erreurs automatiques : un compte connecté écrit un rapport DÉJÀ nettoyé par l'appli (ni texte saisi, ni n°), pour son uid,
+    // liste fermée de champs, chacun typé et borné ; jamais modifié (aucun update) ; l'administrateur lit et supprime.
+    function ligneDePileValide(p, i) { return p.size() <= i || (p[i] is string && p[i].size() <= 200); }
+    function pileValide(p) {
+      return p is list && p.size() <= 5
+        && ligneDePileValide(p, 0) && ligneDePileValide(p, 1) && ligneDePileValide(p, 2) && ligneDePileValide(p, 3) && ligneDePileValide(p, 4);
+    }
+    match /erreurs/{id} {
+      allow create: if contactConnecte()
+        && id.matches(request.auth.uid + '_.+')
+        && request.resource.data.keys().hasOnly(['uid', 'date', 'version', 'appareil', 'ecran', 'type', 'message', 'pile', 'nombre'])
+        && request.resource.data.keys().hasAll(['uid', 'date', 'version', 'appareil', 'ecran', 'type', 'message', 'pile', 'nombre'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.date is string && request.resource.data.date.size() <= 30
+        && request.resource.data.version is string && request.resource.data.version.size() <= 20
+        && request.resource.data.appareil in ['android', 'pc']
+        && request.resource.data.ecran is string && request.resource.data.ecran.size() <= 60
+        && request.resource.data.type is string && request.resource.data.type.size() > 0 && request.resource.data.type.size() <= 60
+        && request.resource.data.message is string && request.resource.data.message.size() <= 300
+        && pileValide(request.resource.data.pile)
+        && request.resource.data.nombre is int && request.resource.data.nombre >= 1 && request.resource.data.nombre <= 1000;
+      allow read, delete: if contactAdmin();
+      // aucune modification (update) : un rapport ne change jamais
+    }
+
     // Logisol : collections réservées au propriétaire
     match /campagnes/{document=**} { allow read, write: if logisol(); }
     match /produits/{document=**} { allow read, write: if logisol(); }

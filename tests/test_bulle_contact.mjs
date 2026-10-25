@@ -171,7 +171,7 @@ try {
   await B.page.evaluate(() => { parametresTab = 'messages'; render('parametres'); });
   await h.attendre(B, () => document.querySelectorAll('#messages-recus .mr-carte').length === 3, { label: 'B : 3 messages nouveaux' });
   const onglets = await B.page.evaluate(() => [...document.querySelectorAll('#messages-recus .tab-btn')].map(b => b.textContent));
-  eq(onglets, ['Nouveaux (3)', 'Lus (0)', 'Traités (0)'], 'filtres Nouveaux / Lus / Traités');
+  eq(onglets, ['Nouveaux (3)', 'Lus (0)', 'Traités (0)', 'Erreurs (0)'], 'filtres Nouveaux / Lus / Traités, puis Erreurs (rapports automatiques)');
   const pastilles = await B.page.evaluate(() => [...document.querySelectorAll('#messages-recus .mr-carte')].map(c => { const p = c.querySelector('.carte-liste-d .mb-pastille'); return p.textContent + '|' + getComputedStyle(p).backgroundColor; }).sort());
   eq(pastilles, ['Bug|rgb(251, 227, 224)', 'Idée|rgb(251, 238, 215)', 'Question|rgb(230, 240, 250)'], 'pastilles de type : Bug rouge, Question bleu, Idée ambre');
   const carteQ = `#messages-recus .mr-carte[data-id="${id1}"]`;

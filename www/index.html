@@ -1580,6 +1580,14 @@
 function echapperHtml(s) {
   return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+/* Rapports d'erreurs (étape 5b) : capture dès le démarrage ; les erreurs survenues avant que le module soit prêt attendent (10 au plus) puis
+   passent par rapporterErreur (nettoyage, limites, interrupteur de l'appareil). Voir plus bas « Rapports d'erreurs automatiques ». */
+var erreursPrecoces = [], rapportsErreursPrets = false;
+function captureErreur(e) {
+  try { if (rapportsErreursPrets) rapporterErreur(e); else if (erreursPrecoces.length < 10) erreursPrecoces.push(e); } catch (x) { /* jamais d'erreur en cascade */ }
+}
+window.addEventListener('error', ev => captureErreur(ev.error || { name: 'Error', message: ev.message || '', stack: '' }));
+window.addEventListener('unhandledrejection', ev => { const r = ev.reason; captureErreur(r instanceof Error ? r : { name: 'UnhandledRejection', message: typeof r === 'string' ? r : '', stack: '' }); });
 /* Numéro de version affiché en bas de l'écran Paramètres — remplacé au
    build CI (voir .github/workflows/build-apk.yml, étape "Injecter le
    numéro de version", exécutée AVANT `npx cap sync android`) par la date
@@ -27595,6 +27603,8 @@ function renderParametresExploitation(content) {
       <label class="prm-case"><input type="checkbox" id="f-bulle-contact"${bulleContactMasquee() ? '' : ' checked'}><span>Afficher la bulle de contact</span></label>
       <div class="prm-note">Bouton vert en bas à droite pour poser une question, signaler un bug ou proposer une idée. Réglage propre à cet appareil.</div>
       <button type="button" class="btn btn-secondary" id="btn-ecrire-concepteur" style="margin-top:10px;">Écrire au concepteur</button>
+      <label class="prm-case" style="margin-top:14px;"><input type="checkbox" id="f-erreurs-auto"${rapportsErreursCoupes() ? '' : ' checked'}><span>Envoyer les erreurs techniques (sans donnée d'animal)</span></label>
+      <div class="prm-note">En cas de plantage, un rapport technique part au concepteur : type d'erreur, écran, version. Aucun n°, aucun nom, aucune note. Réglage propre à cet appareil.</div>
     </div>`;
   content.innerHTML = prmColonnesHtml(carteIdentite, carteSynchro + carteBio + carteEco + carteContact);
   document.getElementById('f-bulle-contact').onchange = (ev) => {
@@ -27602,6 +27612,9 @@ function renderParametresExploitation(content) {
     majBulleContact();
   };
   document.getElementById('btn-ecrire-concepteur').onclick = () => ouvrirPanneauContact('nouveau');
+  document.getElementById('f-erreurs-auto').onchange = (ev) => {
+    try { if (ev.target.checked) localStorage.removeItem(CLE_ERREURS_COUPEES); else { localStorage.setItem(CLE_ERREURS_COUPEES, '1'); localStorage.removeItem(CLE_ERREURS_ATTENTE); } } catch (e) {}
+  };
   const caseEco = document.getElementById('f-exp-bilan-eco');   // absente sur un compte neuf (voir bilanEconomiqueDisponible)
   if (caseEco) caseEco.onchange = (ev) => { DB.bilanEconomiqueActif = ev.target.checked; DB.bilanEconomiqueDisponible = true; saveData(DB); };   // réversible, enregistré tout de suite ; l'interrupteur reste disponible
 
@@ -29857,6 +29870,7 @@ function majBulleContact() {
 // Appelée par le module de synchro à chaque changement des messages (voir signalerContact)
 window.rafraichirContact = function () {
   majBulleContact();
+  const etatC = contactEtatCourant(); if (etatC && etatC.connecte) envoyerErreursEnAttente();   // rapports d'erreurs survenues sans compte connecté
   // canal de test : l'administrateur n'est reconnu qu'après la connexion, donc après la vérification de démarrage -- une seule relance
   if (!canalTestRelance && canalTestActif()) { canalTestRelance = true; verifierMiseAJourAuDemarrage(); }
   if (panneauContact && panneauContact.onglet === 'mes') { dessinerPanneauContact(); window.OvilogSync.marquerReponsesLuesContact(); }
@@ -29879,6 +29893,84 @@ bulleContact.addEventListener('pointerdown', e => e.preventDefault());
 bulleContact.addEventListener('mousedown', e => e.preventDefault());
 bulleContact.onclick = () => ouvrirPanneauContact(reponsesNonLuesContact(contactEtatCourant()) ? 'mes' : 'nouveau');
 
+/* ---------- Rapports d'erreurs automatiques (étape 5b) ----------
+   Une erreur JavaScript (ou une promesse en échec) est envoyée à l'administrateur, NETTOYÉE avant tout envoi :
+   - message : tout ce qui est entre guillemets ('…', "…", « … », `…`) devient "…", toute suite de 5 chiffres ou plus (EID, n° national, même espacés)
+     devient « # » ; s'il reste UN SEUL mot qui n'est pas du vocabulaire technique (mot anglais d'erreur JavaScript ou identifiant de code), le message
+     est retiré et seul le TYPE d'erreur part (« (message masqué) ») : un nom de brebis, une note ou un nom de personne ne peuvent pas sortir ;
+   - pile : 5 lignes au plus, « fonction:ligne:colonne », sans adresse de fichier ;
+   - écran : nom de vue seulement (jamais de n°) ; version, appareil (android / pc).
+   Une même erreur (type + message + 1re ligne de pile) une fois par jour et par appareil, 20 envois par jour au plus ; sans compte connecté, 10 au plus
+   attendent et partent à la connexion. Interrupteur propre à l'appareil (Paramètres › Exploitation, CLE_ERREURS_COUPEES), activé par défaut. */
+const CLE_ERREURS_COUPEES = 'ovilog_erreurs_coupees', CLE_ERREURS_JOUR = 'ovilog_erreurs_jour', CLE_ERREURS_ATTENTE = 'ovilog_erreurs_attente';
+const ERREURS_MAX_JOUR = 20, MESSAGE_ERREUR_MASQUE = '(message masqué)';
+const MOTS_ERREUR_TECHNIQUES = new Set(('a an the of to in on at by for from with as is are was were be been it this that not no or and only can cannot could '
+  + 'read reading set setting get getting access before after initialization initialized defined declared undefined null nan true false '
+  + 'function method property properties object array string number bigint symbol boolean value values type types class constructor instance member private '
+  + 'unexpected token end input json position invalid illegal valid date time failed fail execute call stack size maximum exceeded assignment constant '
+  + 'variable iterable has convert length out range element node document window event listener network error errors load loading fetch request response '
+  + 'status code unknown internal unavailable offline timeout deadline aborted abort cancelled canceled denied permission permissions missing insufficient '
+  + 'quota storage resource exhausted closed reset refused connection disconnected script uncaught promise rejected rejection resolved then catch already '
+  + 'argument arguments expected got received required supported unsupported allowed operation state found exception transaction batch write update delete '
+  + 'query snapshot collection field fields path segments index data user auth firestore firebase http https url blob file image canvas context pdf xlsx zip '
+  + 'dom play when which while has have nor into its typeerror referenceerror rangeerror syntaxerror evalerror urierror aggregateerror domexception '
+  + 'notallowederror securityerror quotaexceedederror aborterror networkerror invalidstateerror notfounderror unhandledrejection firebaseerror').split(' '));
+function rapportsErreursCoupes() { try { return localStorage.getItem(CLE_ERREURS_COUPEES) === '1'; } catch (e) { return false; } }
+function nettoyerMessageErreur(m) {
+  let t = String(m === null || m === undefined ? '' : m);
+  t = t.replace(/«[^»]*»|"[^"]*"|'[^']*'|`[^`]*`|‘[^’]*’|“[^”]*”/g, '"…"');
+  t = t.replace(/\d(?:[\s.\-]?\d){4,}/g, '#');
+  t = t.replace(/\s+/g, ' ').trim().slice(0, 300);
+  const mots = t.match(/[A-Za-zÀ-ÖØ-öø-ÿ_$][\wÀ-ÖØ-öø-ÿ$.\-]*/g) || [];
+  const technique = w => w.length === 1 || MOTS_ERREUR_TECHNIQUES.has(w.toLowerCase().replace(/[.\-]+$/, ''))
+    || (/^[\w$.]+$/.test(w) && (/[a-z][A-Z]/.test(w) || /[_$]/.test(w) || /\w\.\w/.test(w)));   // identifiant de code : camelCase, _, $, a.b
+  return mots.every(technique) ? t : MESSAGE_ERREUR_MASQUE;
+}
+function pileErreur(stack) {
+  return String(stack || '').split('\n').map(l => l.trim()).filter(l => /^at\s/.test(l) || /@.*:\d+:\d+$/.test(l)).slice(0, 5).map(l => {
+    const m = l.match(/^at\s+(?:(.+?)\s+\()?.*?:(\d+):(\d+)\)?$/) || l.match(/^(.*?)@.*?:(\d+):(\d+)$/);
+    if (!m) return 'anonyme';
+    const fn = String(m[1] || '').replace(/[^\w$.<>]/g, '').slice(0, 80) || 'anonyme';
+    return (fn + ':' + m[2] + ':' + m[3]).slice(0, 200);
+  });
+}
+function preparerRapportErreur(err) {
+  const e = err || {};
+  const nom = String(e.name || (e.constructor && e.constructor.name) || 'Error');
+  return { type: /^[A-Za-z]{1,60}$/.test(nom) ? nom : 'Error', message: nettoyerMessageErreur(e.message), pile: pileErreur(e.stack),
+    ecran: String(typeof currentView === 'string' ? currentView : '').replace(/[^\w\-]/g, '').slice(0, 60),
+    version: libelleVersion().replace(/^Version : /, '').slice(0, 20), appareil: isDesktopMode() ? 'pc' : 'android' };
+}
+let rapportEnCours = false;
+function rapporterErreur(err) {
+  if (rapportEnCours || rapportsErreursCoupes()) return;
+  rapportEnCours = true;
+  try {
+    const r = preparerRapportErreur(err), sig = r.type + '|' + r.message + '|' + (r.pile[0] || '');
+    const jour = jourAujourdhuiISO();
+    let j; try { j = JSON.parse(localStorage.getItem(CLE_ERREURS_JOUR) || 'null'); } catch (x) { j = null; }
+    if (!j || j.jour !== jour) j = { jour, sigs: [], total: 0 };
+    if (j.sigs.includes(sig) || j.total >= ERREURS_MAX_JOUR) return;
+    j.sigs.push(sig); j.total++;
+    try { localStorage.setItem(CLE_ERREURS_JOUR, JSON.stringify(j)); } catch (x) {}
+    const s = window.OvilogSync;
+    if (!(s && s.envoyerRapportErreur && s.envoyerRapportErreur(r))) {
+      let att; try { att = JSON.parse(localStorage.getItem(CLE_ERREURS_ATTENTE) || '[]'); } catch (x) { att = []; }
+      if (att.length < 10) { att.push(r); try { localStorage.setItem(CLE_ERREURS_ATTENTE, JSON.stringify(att)); } catch (x) {} }
+    }
+  } catch (x) { /* un rapport ne doit jamais provoquer d'autre erreur */ }
+  finally { rapportEnCours = false; }
+}
+// Rapports en attente (aucun compte connecté au moment de l'erreur) : envoyés dès qu'un compte est connecté (appelée par rafraichirContact)
+function envoyerErreursEnAttente() {
+  let att; try { att = JSON.parse(localStorage.getItem(CLE_ERREURS_ATTENTE) || '[]'); } catch (x) { att = []; }
+  if (!att.length) return;
+  if (rapportsErreursCoupes()) { try { localStorage.removeItem(CLE_ERREURS_ATTENTE); } catch (x) {} return; }
+  const s = window.OvilogSync, restants = att.filter(r => !(s && s.envoyerRapportErreur && s.envoyerRapportErreur(r)));
+  try { if (restants.length) localStorage.setItem(CLE_ERREURS_ATTENTE, JSON.stringify(restants)); else localStorage.removeItem(CLE_ERREURS_ATTENTE); } catch (x) {}
+}
+rapportsErreursPrets = true;
+erreursPrecoces.splice(0).forEach(e => rapporterErreur(e));
 function contexteMessageContact() {
   const appareil = isDesktopMode() ? 'Windows (PC)' : (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())
     ? 'Android ' + (Math.min(screen.width, screen.height) >= 600 ? 'tablette' : 'téléphone') : 'Navigateur';
@@ -29990,7 +30082,19 @@ function renderMessagesRecus(content) {
   const liste = etat.tous.filter(dansFiltre);
   const type = k => { const t = TYPES_CONTACT.find(x => x.k === k) || TYPES_CONTACT[1]; return cartePastille(t.l, t.ton); };
   const date = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' · ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); };
-  const onglet = (f, l) => `<button type="button" class="tab-btn${E.filtre === f ? ' active' : ''}" data-filtre="${f}">${l} (${compte(f)})</button>`;
+  // rapports d'erreurs automatiques regroupés par type + message (voir rapporterErreur)
+  const groupesErreurs = (() => {
+    const g = new Map();
+    (window.OvilogSync.erreursRecues ? window.OvilogSync.erreursRecues() : []).forEach(x => {
+      const k = (x.type || '') + '|' + (x.message || '');
+      if (!g.has(k)) g.set(k, { type: x.type, message: x.message, ids: [], versions: new Set(), appareils: new Set(), ecrans: new Set(), nombre: 0, derniere: '', pile: x.pile || [] });
+      const o = g.get(k); o.ids.push(x.id); o.nombre += Number(x.nombre) || 1; if (x.version) o.versions.add(x.version); if (x.appareil) o.appareils.add(x.appareil); if (x.ecran) o.ecrans.add(x.ecran);
+      if (String(x.date || '') > o.derniere) { o.derniere = String(x.date || ''); o.pile = x.pile || []; }
+    });
+    return [...g.values()].sort((a, b) => b.derniere.localeCompare(a.derniere));
+  })();
+  const compteOnglet = f => f === 'erreurs' ? groupesErreurs.length : compte(f);
+  const onglet = (f, l) => `<button type="button" class="tab-btn${E.filtre === f ? ' active' : ''}" data-filtre="${f}">${l} (${compteOnglet(f)})</button>`;
   const cartes = liste.map(m => {
     const repond = E.repondre === m.id;
     const acts = repond
@@ -30002,8 +30106,14 @@ function renderMessagesRecus(content) {
       acts });
   });
   content.innerHTML = `<div id="messages-recus" class="contact-liste">
-    <div class="tab-bar" role="tablist">${onglet('nouveau', 'Nouveaux')}${onglet('lu', 'Lus')}${onglet('traite', 'Traités')}</div>
-    ${cartes.length ? cartes.join('') : `<div class="contact-joint">${E.filtre === 'nouveau' ? 'Aucun nouveau message.' : E.filtre === 'lu' ? 'Aucun message lu en attente.' : 'Aucun message traité.'}</div>`}
+    <div class="tab-bar" role="tablist">${onglet('nouveau', 'Nouveaux')}${onglet('lu', 'Lus')}${onglet('traite', 'Traités')}${onglet('erreurs', 'Erreurs')}</div>
+    ${E.filtre === 'erreurs'
+      ? (groupesErreurs.length ? groupesErreurs.map((g, i) => carteListeHtml({ nm: echapperHtml(g.type || 'Error'), pastille: cartePastille(g.nombre + ' fois', ''), cls: 'contact-carte mr-erreur', attrs: `data-groupe="${i}"`,
+          l2: `<div class="contact-texte">${echapperHtml(g.message || MESSAGE_ERREUR_MASQUE)}</div>${g.pile.length ? `<div class="contact-joint">${echapperHtml(g.pile.join(' ‹ '))}</div>` : ''}`,
+          l3: [`<span class="contact-joint">${echapperHtml(['dernière : ' + date(g.derniere), [...g.appareils].join(', '), [...g.versions].map(v => 'version ' + v).join(', '), [...g.ecrans].join(', ')].filter(Boolean).join(' · '))}</span>`],
+          acts: `<button type="button" class="btn btn-secondary btn-supprimer btn-petit" data-supprimer-erreurs="${i}">Supprimer</button>` })).join('')
+        : '<div class="contact-joint">Aucune erreur reçue.</div>')
+      : (cartes.length ? cartes.join('') : `<div class="contact-joint">${E.filtre === 'nouveau' ? 'Aucun nouveau message.' : E.filtre === 'lu' ? 'Aucun message lu en attente.' : 'Aucun message traité.'}</div>`)}
   </div>`;
   const z = content;
   if (focusReponse) { const t = document.getElementById('mr-reponse'); if (t) { t.focus(); try { t.setSelectionRange(curseur, curseur); } catch (e) {} } }
@@ -30027,6 +30137,11 @@ function renderMessagesRecus(content) {
     window.OvilogSync.adminContact('repondre', b.dataset.envoyerReponse, texte);
     E.repondre = null; E.brouillon = ''; showToast('Réponse envoyée');
     renderMessagesRecus(content);
+  }; });
+  z.querySelectorAll('[data-supprimer-erreurs]').forEach(b => { b.onclick = () => {
+    const g = groupesErreurs[parseInt(b.dataset.supprimerErreurs, 10)]; if (!g) return;
+    if (!confirm('Supprimer définitivement cette erreur (' + g.ids.length + ' rapport' + (g.ids.length > 1 ? 's' : '') + ') ?')) return;
+    window.OvilogSync.supprimerErreurs(g.ids); showToast('Erreur supprimée');
   }; });
   z.querySelectorAll('[data-traiter]').forEach(b => { b.onclick = () => { window.OvilogSync.adminContact('traite', b.dataset.traiter); showToast('Message marqué traité'); }; });
   z.querySelectorAll('[data-supprimer]').forEach(b => { b.onclick = () => {
@@ -31128,7 +31243,7 @@ function stopListeners() {
    est le compte qui possède un document admins/<uid> (créé à la main dans la console, aucun identifiant dans le dépôt). Règles : firestore.rules. */
 const CHAMPS_MESSAGE_CONTACT = ['uid', 'exploitation', 'texte', 'type', 'date', 'dateServeur', 'campagne', 'ecran', 'version', 'appareil', 'statut', 'reponse', 'reponseDate', 'reponseLue'];
 const CLE_ECHECS_CONTACT = 'ovilog_contact_echecs';   // messages refusés par le serveur (texte gardé sur l'appareil pour « Renvoyer »)
-const contact = { uid: null, estAdmin: false, mes: [], tous: [], prets: false, unsubs: [] };
+const contact = { uid: null, estAdmin: false, mes: [], tous: [], erreurs: [], prets: false, unsubs: [] };
 function lireEchecsContact() { try { return JSON.parse(localStorage.getItem(CLE_ECHECS_CONTACT) || '[]'); } catch (e) { return []; } }
 function ecrireEchecsContact(l) { try { localStorage.setItem(CLE_ECHECS_CONTACT, JSON.stringify(l)); } catch (e) {} }
 function signalerContact() { try { if (typeof window.rafraichirContact === 'function') window.rafraichirContact(); } catch (e) { console.error('Bulle de contact : rafraîchissement', e); } }
@@ -31139,7 +31254,7 @@ function messagesDepuisInstantane(snap) {
 }
 function arreterContact() {
   contact.unsubs.forEach(u => { try { u(); } catch (e) {} });
-  contact.unsubs = []; contact.uid = null; contact.estAdmin = false; contact.mes = []; contact.tous = []; contact.prets = false;
+  contact.unsubs = []; contact.uid = null; contact.estAdmin = false; contact.mes = []; contact.tous = []; contact.erreurs = []; contact.prets = false;
   signalerContact();
 }
 async function demarrerContact(uid) {
@@ -31155,6 +31270,9 @@ async function demarrerContact(uid) {
   if (contact.estAdmin) {
     contact.unsubs.push(onSnapshot(collection(fbDb, 'feedback'), { includeMetadataChanges: true },
       snap => { if (contact.uid !== uid) return; contact.tous = messagesDepuisInstantane(snap); signalerContact(); }, erreur));
+    // rapports d'erreurs automatiques (onglet « Erreurs » de Messages reçus)
+    contact.unsubs.push(onSnapshot(collection(fbDb, 'erreurs'),
+      snap => { if (contact.uid !== uid) return; contact.erreurs = messagesDepuisInstantane(snap); signalerContact(); }, erreur));
   }
   signalerContact();
 }
@@ -31170,6 +31288,23 @@ function ecrireMessageContact(id, donnees) {
     echecs.unshift({ id, type: donnees.type, texte: donnees.texte, date: donnees.date, ecran: donnees.ecran, code: (e && e.code) || 'inconnu' });
     ecrireEchecsContact(echecs.slice(0, 20)); signalerContact();
   });
+}
+
+/* ---------- Rapports d'erreurs automatiques (collection racine « erreurs », étape 5b) ----------
+   Document reçu DÉJÀ nettoyé par le script classique (preparerRapportErreur : ni texte saisi, ni n°, ni EID) et limité ici à une liste FERMÉE de champs
+   (CHAMPS_ERREUR) aux tailles des règles (message ≤ 300, pile ≤ 5 lignes de 200, nombre entier). Écriture par un compte connecté pour SON uid, jamais
+   modifiée ensuite ; lecture et suppression réservées à l'administrateur (firestore.rules). Hors réseau, le cache Firestore l'envoie au retour. */
+const CHAMPS_ERREUR = ['uid', 'date', 'version', 'appareil', 'ecran', 'type', 'message', 'pile', 'nombre'];
+function ecrireRapportErreur(r) {
+  if (!contactEcritureAutorisee() || !r) return false;
+  const d = { uid: sync.uid, date: new Date().toISOString(), version: String(r.version || '').slice(0, 20), appareil: r.appareil === 'pc' ? 'pc' : 'android',
+    ecran: String(r.ecran || '').slice(0, 60), type: String(r.type || 'Error').slice(0, 60), message: String(r.message || '').slice(0, 300),
+    pile: (Array.isArray(r.pile) ? r.pile : []).slice(0, 5).map(l => String(l).slice(0, 200)), nombre: 1 };
+  Object.keys(d).forEach(k => { if (!CHAMPS_ERREUR.includes(k)) delete d[k]; });
+  const id = sync.uid + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  // jamais de nouvelle erreur JavaScript en cas de refus : le rapport est simplement perdu (rien d'essentiel)
+  setDoc(doc(fbDb, 'erreurs', id), d).catch(e => console.warn('Rapport d\'erreur non envoyé', e && e.code));
+  return true;
 }
 
 /* Décision prise une seule fois par appareil, la première fois qu'il se
@@ -31458,6 +31593,14 @@ window.OvilogSync = {
   viderJournal() { viderJournalSynchro(); },
   // Bulle de contact (script classique : panneau, « Messages reçus ») -- voir demarrerContact
   mesureMeta() { return mesureMeta(); },
+  // Rapports d'erreurs automatiques (voir ecrireRapportErreur) : envoi (faux si aucun compte connecté), liste et suppression pour l'administrateur
+  envoyerRapportErreur(r) { return ecrireRapportErreur(r); },
+  erreursRecues() { return contact.estAdmin ? contact.erreurs.slice() : []; },
+  supprimerErreurs(ids) {
+    if (!contact.estAdmin || !contactEcritureAutorisee()) return false;
+    (ids || []).forEach(id => deleteDoc(doc(fbDb, 'erreurs', id)).catch(e => console.warn('Erreurs : suppression', e && e.code)));
+    return true;
+  },
   contactEtat() { return { connecte: !!sync.uid && contact.uid === sync.uid, estAdmin: contact.estAdmin, prets: contact.prets, mes: contact.mes.slice(), tous: contact.tous.slice(), echecs: lireEchecsContact() }; },
   envoyerMessageContact(m) {
     if (!contactEcritureAutorisee()) return { ok: false, erreur: 'non-connecte' };

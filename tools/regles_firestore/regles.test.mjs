@@ -43,6 +43,32 @@ await ok(updateDoc(doc(db(ADMIN), 'feedback', A + '_1'), { statut: 'traite' }), 
 // suppression
 await ko(deleteDoc(doc(db(A), 'feedback', A + '_1')), 'A ne supprime pas');
 await ok(deleteDoc(doc(db(ADMIN), 'feedback', A + '_1')), 'admin supprime');
+// rapports d'erreurs automatiques (collection erreurs)
+const err = (uid, extra = {}) => Object.assign({ uid, date: new Date().toISOString(), version: '1.0.284', appareil: 'android', ecran: 'home', type: 'TypeError', message: 'Cannot read properties of undefined (reading "…")', pile: ['renderHome:7311:12', 'render:6540:3'], nombre: 1 }, extra);
+await ok(setDoc(doc(db(A), 'erreurs', A + '_e1'), err(A)), 'erreurs : A (adresse NON vérifiée) envoie un rapport conforme');
+await ok(setDoc(doc(db(A), 'erreurs', A + '_e2'), err(A, { message: 'x'.repeat(300), pile: ['a', 'b', 'c', 'd', 'e'], appareil: 'pc' })), 'erreurs : message de 300 caractères et pile de 5 lignes acceptés');
+await ko(setDoc(doc(db(null), 'erreurs', 'x_e1'), err('x')), 'erreurs : non connecté refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e3'), err(B)), 'erreurs : au nom d\'un autre uid refusé');
+await ko(setDoc(doc(db(A), 'erreurs', B + '_e3'), err(A)), 'erreurs : identifiant au nom d\'un autre compte refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e4'), err(A, { eid: '250000000000001' })), 'erreurs : champ en trop (eid) refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e5'), err(A, { message: 'x'.repeat(301) })), 'erreurs : message de 301 caractères refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e6'), err(A, { pile: ['a', 'b', 'c', 'd', 'e', 'f'] })), 'erreurs : pile de 6 lignes refusée');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e7'), err(A, { pile: ['x'.repeat(201)] })), 'erreurs : ligne de pile de 201 caractères refusée');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e8'), err(A, { nombre: '1' })), 'erreurs : nombre de mauvais type (chaîne) refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e9'), err(A, { message: 42 })), 'erreurs : message de mauvais type (nombre) refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e10'), err(A, { pile: 'renderHome:1:1' })), 'erreurs : pile de mauvais type (chaîne au lieu de liste) refusée');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e11'), err(A, { pile: [42] })), 'erreurs : ligne de pile de mauvais type refusée');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e12'), err(A, { nombre: 1.5 })), 'erreurs : nombre non entier refusé');
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e13'), err(A, { appareil: 'iphone' })), 'erreurs : appareil inconnu refusé');
+const sansVersion = err(A); delete sansVersion.version;
+await ko(setDoc(doc(db(A), 'erreurs', A + '_e14'), sansVersion), 'erreurs : champ manquant refusé');
+await ko(updateDoc(doc(db(A), 'erreurs', A + '_e1'), { message: 'autre' }), 'erreurs : A ne modifie pas son rapport');
+await ko(updateDoc(doc(db(ADMIN), 'erreurs', A + '_e1'), { message: 'autre' }), 'erreurs : même l\'administrateur ne modifie pas un rapport');
+await ko(getDoc(doc(db(A), 'erreurs', A + '_e1')), 'erreurs : A ne relit pas les rapports');
+await ko(getDocs(collection(db(B, true), 'erreurs')), 'erreurs : B ne liste pas les rapports');
+await ok(getDocs(collection(db(ADMIN), 'erreurs')), 'erreurs : l\'administrateur liste les rapports');
+await ko(deleteDoc(doc(db(A), 'erreurs', A + '_e1')), 'erreurs : A ne supprime pas');
+await ok(deleteDoc(doc(db(ADMIN), 'erreurs', A + '_e1')), 'erreurs : l\'administrateur supprime');
 // données d'élevage intactes
 await ok(setDoc(doc(db(A, true), 'users', A, 'brebis', 'b1'), { eid: '250000000000001' }), 'compte vérifié : ses données users/A');
 await ko(setDoc(doc(db(A, false), 'users', A, 'brebis', 'b1'), { eid: '250000000000001' }), 'compte NON vérifié : users/A refusé (inchangé)');
