@@ -27413,7 +27413,7 @@ function tailleMetaAdminHtml() {
   const e = etatTailleMeta(true);
   if (!e) return '';
   const ton = e.niveau === 'rouge' ? 'var(--ch-rouge)' : (e.niveau === 'ambre' ? 'var(--ch-ambre-texte)' : 'var(--ch-vert-fonce)');
-  const lignes = e.rubriques.slice(0, 5).map(r => `<li><span>${r.cle}</span><span>${formatOctets(r.octets)}</span></li>`).join('');
+  const lignes = e.rubriques.slice(0, 5).map(r => `<li><span>${echapperHtml(r.libelle || r.cle)}</span><span>${formatOctets(r.octets)}</span></li>`).join('');
   return `<div id="bloc-taille-meta" style="border-top:1px solid var(--ch-separateur);padding-top:10px;margin-top:4px;">
     <div class="prm-note" style="margin:0;">Document principal du compte</div>
     <div id="taille-meta-total" style="font-size:18px;font-weight:700;color:${ton};font-variant-numeric:tabular-nums;">${formatOctets(e.total)} sur 1 Mo · ${Math.round(e.ratio * 100)} %</div>
@@ -30473,9 +30473,26 @@ function buildAnimalCollectionOps(colName, records, ops) {
   });
 }
 
+/* Étape B, temps 1 (copie meta.registre) : sur un compte dont le registre est migré dans sa collection dédiée (drapeau
+   registreCollectionMigree20260930, local OU reçu du serveur), cette version ne LIT ni n'ÉCRIT plus le champ meta.registre : le registre vient
+   UNIQUEMENT de la collection users/{uid}/registre. La copie reste sur le serveur telle quelle (jamais effacée ici, même par un envoi qui ne la
+   contient plus : voir buildMetaOp) ; un appareil plus ancien peut continuer à la tenir à jour sans effet sur celui-ci. Effacement = temps 2, à part. */
+const CHAMP_COPIE_REGISTRE = 'registre';
+function registreMigreDansCollection(metaServeur) {
+  return DB.registreCollectionMigree20260930 === true || !!(metaServeur && metaServeur.registreCollectionMigree20260930 === true);
+}
+function champsMetaActifs(metaServeur) {
+  return registreMigreDansCollection(metaServeur) ? META_FIELDS.filter(k => k !== CHAMP_COPIE_REGISTRE) : META_FIELDS;
+}
+function sansChampsInactifs(rec, champs) {
+  if (!rec) return rec;
+  const r = {};
+  champs.forEach(k => { if (k in rec) r[k] = rec[k]; });
+  return r;
+}
 function metaRecordPourCloud(data) {
   const metaRecord = {};
-  META_FIELDS.forEach(k => { metaRecord[k] = deepClean(k === 'lots' ? lotsPourCloud(data[k]) : data[k]); });
+  champsMetaActifs().forEach(k => { metaRecord[k] = deepClean(k === 'lots' ? lotsPourCloud(data[k]) : data[k]); });
   return metaRecord;
 }
 /* Taille du document meta telle que Firestore la compte (plafond 1 Mo = 1 048 576 octets, au-delà toute écriture du document est refusée) :
@@ -30492,8 +30509,9 @@ function tailleFirestore(v) {
   return 8;
 }
 function mesureMeta() {
-  const rec = metaRecordPourCloud(DB);
-  const rubriques = Object.keys(rec).map(k => ({ cle: k, octets: new TextEncoder().encode(k).length + 1 + tailleFirestore(rec[k]) })).sort((x, y) => y.octets - x.octets);
+  // vraie taille du document : champs envoyés par cette version + champs du serveur qu'elle n'envoie plus (copie meta.registre, temps 1)
+  const rec = Object.assign({}, sync.lastSynced.meta || {}, metaRecordPourCloud(DB));
+  const rubriques = Object.keys(rec).map(k => ({ cle: k, libelle: k === CHAMP_COPIE_REGISTRE && registreMigreDansCollection() ? 'registre (copie, plus utilisée)' : k, octets: new TextEncoder().encode(k).length + 1 + tailleFirestore(rec[k]) })).sort((x, y) => y.octets - x.octets);
   return { total: 32 + rubriques.reduce((t, r) => t + r.octets, 0), max: META_TAILLE_MAX, rubriques, refusTaille: !!sync.metaRefuseeTaille };
 }
 // Écriture de meta refusée par Firestore pour la taille (« exceeds the maximum allowed size ») : signalée à l'écran (etatTailleMeta), plus seulement au journal technique
@@ -30514,7 +30532,8 @@ function buildMetaOp(data, ops) {
   if (sync.lastSynced.meta === undefined) {
     ops.push({ type: 'set', ref: metaRef, data: metaRecord, colName: 'meta', id: 'main', newValue: metaRecord });
   } else {
-    const payload = buildUpdatePayload(sync.lastSynced.meta, metaRecord);
+    // comparaison limitée aux champs ACTIFS : un champ abandonné (copie meta.registre) n'est jamais renvoyé « vide », donc jamais effacé
+    const payload = buildUpdatePayload(sansChampsInactifs(sync.lastSynced.meta, champsMetaActifs()), metaRecord);
     if (payload) ops.push({ type: 'update', ref: metaRef, data: payload, colName: 'meta', id: 'main', newValue: metaRecord });
   }
 }
@@ -30526,7 +30545,8 @@ function buildMetaOp(data, ops) {
    entrant peut avoir remplacé cet objet entre-temps (voir startListeners),
    l'écriture doit malgré tout s'appliquer sur l'objet COURANT. */
 function marquerOpAppliquee(op) {
-  if (op.colName === 'meta') { sync.lastSynced.meta = op.newValue; persisterSyncLastSynced(); if (sync.metaRefuseeTaille) { sync.metaRefuseeTaille = false; if (window.majAlerteTailleMeta) window.majAlerteTailleMeta(); } return; }
+  // meta : garde les champs du serveur que cette version n'envoie plus (copie meta.registre, temps 1), seuls les champs envoyés sont remplacés
+  if (op.colName === 'meta') { sync.lastSynced.meta = Object.assign({}, sync.lastSynced.meta || {}, op.newValue); persisterSyncLastSynced(); if (sync.metaRefuseeTaille) { sync.metaRefuseeTaille = false; if (window.majAlerteTailleMeta) window.majAlerteTailleMeta(); } return; }
   const lastMap = sync.lastSynced[op.colName];
   if (op.type === 'delete') delete lastMap[op.id];
   else lastMap[op.id] = op.newValue;
@@ -31212,9 +31232,11 @@ async function startListeners(dejaAppairePrecedemment) {
       sync.lastSynced.meta = deepClean(meta);
       applyOrQueueRemoteUpdate('meta', () => {
         const avertissement = premiereLectureMeta ? preparerPremiereLectureMeta(meta) : null;
+        // compte migré : la copie meta.registre reçue est IGNORÉE (le registre ne vient que de sa collection dédiée)
+        const champs = champsMetaActifs(meta);
         const localMetaSubset = {};
-        META_FIELDS.forEach(k => { localMetaSubset[k] = DB[k]; });
-        const fus = fusionnerEnregistrementDistant(localMetaSubset, meta, refConnueMeta);
+        champs.forEach(k => { localMetaSubset[k] = DB[k]; });
+        const fus = fusionnerEnregistrementDistant(localMetaSubset, sansChampsInactifs(meta, champs), sansChampsInactifs(refConnueMeta, champs));
         const lotsFusionnes = refConnueMeta !== undefined && Array.isArray(meta.lots) && Array.isArray(localMetaSubset.lots)
           ? { lots: fusionnerListeLots(localMetaSubset.lots, meta.lots, Array.isArray(refConnueMeta.lots) ? refConnueMeta.lots : []) } : {};
         Object.assign(DB, fus, lotsFusionnes);

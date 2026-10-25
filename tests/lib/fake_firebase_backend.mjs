@@ -221,6 +221,7 @@ const server = http.createServer(async (req, res) => {
         const e = { type: op.type, path: op.path };
         if (op.data && Array.isArray(op.data.lots)) e.lots = op.data.lots.map(l => l && l.id);
         if (op.data && 'registreCollectionMigree20260930' in op.data) e.drapeauMigration = op.data.registreCollectionMigree20260930;
+        if (op.data && /\/meta\//.test(op.path)) e.cles = Object.keys(op.data);   // champs écrits dans meta (test_registre_temps1 : jamais « registre »)
         return e;
       }) });
       return json(res, 200, { ok: true });
