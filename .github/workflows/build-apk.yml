@@ -78,9 +78,36 @@ jobs:
       - name: Rendre gradlew exécutable
         run: chmod +x android/gradlew
 
-      - name: Décoder le keystore de signature (secret GitHub)
+      - name: Contrôler et décoder le keystore de signature (secrets GitHub)
+        # Échec EXPLICITE avant Gradle si un secret manque, si le keystore décodé est vide ou s'il ne s'ouvre pas avec ce mot de passe et cet
+        # alias : jamais d'APK non signé. Les secrets passent par des variables d'environnement (jamais collés dans la commande) ; aucune valeur
+        # n'est affichée : les messages ne citent que des NOMS de secrets, pas de set -x, et la sortie de keytool est jetée (seul « OK » s'affiche).
         working-directory: android/app
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ovilog-release.keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          manque=0
+          for nom in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!nom:-}" ]; then
+              echo "::error title=Signature APK::Secret ${nom} absent ou vide (Settings › Secrets and variables › Actions)"
+              manque=1
+            fi
+          done
+          [ "$manque" -eq 0 ] || exit 1
+          if ! printf '%s' "$KEYSTORE_BASE64" | base64 -d > ovilog-release.keystore 2>/dev/null || [ ! -s ovilog-release.keystore ]; then
+            echo "::error title=Signature APK::Keystore décodé vide ou illisible (secret KEYSTORE_BASE64)"
+            exit 1
+          fi
+          # Mot de passe lu par keytool dans la variable d'environnement (-storepass:env), jamais en argument visible
+          if ! keytool -list -keystore ovilog-release.keystore -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null 2>&1; then
+            echo "::error title=Signature APK::Keystore impossible à ouvrir avec ce mot de passe ou cet alias (secrets KEYSTORE_PASSWORD / KEY_ALIAS)"
+            exit 1
+          fi
+          echo "Keystore : OK"
 
       - name: Builder l'APK signé (release)
         working-directory: android
@@ -99,6 +126,8 @@ jobs:
         with:
           name: ovilog-apk-v1.0.${{ github.run_number }}
           path: android/app/build/outputs/apk/release/app-release.apk
+          # Pas d'APK signé = échec du job (jamais un simple avertissement)
+          if-no-files-found: error
           retention-days: 30
 
       - name: Publier la Release GitHub (source de la mise à jour in-app)
@@ -138,6 +167,7 @@ jobs:
 
             ${{ github.event.head_commit.message }}
           files: android/app/build/outputs/apk/release/app-release.apk
+          fail_on_unmatched_files: true
 
       - name: Publier la pre-release de test (build de branche, canal de test)
         # CANAL DE TEST : un push sur une branche (claude/**) publie aussi une Release, TOUJOURS en pre-release, repérée par un marqueur explicite :
@@ -157,6 +187,7 @@ jobs:
 
             ${{ github.event.head_commit.message }}
           files: android/app/build/outputs/apk/release/app-release.apk
+          fail_on_unmatched_files: true
 
       - name: Ménage des pre-releases de test (garder les 3 plus récentes)
         # Ne supprime QUE les pre-releases portant les DEUX marqueurs du canal de test (nom « [test] … » ET corps « <!-- ovilog-canal-test --> ») :
