@@ -162,6 +162,16 @@ const server = http.createServer(async (req, res) => {
           }
         }
       }
+      // Plafond Firestore réel : un document de plus de 1 048 576 octets est refusé (invalid-argument), TOUT le batch avec (test_taille_meta).
+      // Taille approchée par le JSON du document obtenu : suffisant pour simuler le refus, l'appli mesure de son côté avec la règle exacte.
+      for (const op of ops) {
+        const { colName } = parsePath(op.path);
+        if (colName !== 'meta' || op.type === 'delete') continue;
+        const current = metas.get(uid) || {};
+        const apres = op.type === 'set' ? op.data : Object.assign({}, current, op.data);
+        const taille = Buffer.byteLength(JSON.stringify(apres));
+        if (taille > 1048576) return json(res, 400, { error: 'invalid-argument', message: 'Document "' + op.path + '" cannot be written because its size (' + taille.toLocaleString('en-US') + ' bytes) exceeds the maximum allowed size of 1,048,576 bytes.' });
+      }
       const touched = new Set();
       for (const op of ops) {
         const { uid: u2, colName, id } = parsePath(op.path);

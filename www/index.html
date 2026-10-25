@@ -1241,6 +1241,8 @@
   /* Saisie des mises bas (mobile) : confirmation verte, blocage rouge, alerte ambre, agneaux, dernières saisies */
   .mb-msg, .msg-charte { border-left: 5px solid var(--mb-trait); background: var(--mb-fond); color: var(--mb-texte); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; margin-bottom: 12px; }
   .mb-msg b, .msg-charte b { font-size: 15px; }
+  .taille-meta-liste { list-style: none; margin: 6px 0; padding: 0; font-size: 13px; color: var(--ch-texte2); font-variant-numeric: tabular-nums; }
+  .taille-meta-liste li { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
   .mb-msg.ok, .msg-charte.ok { --mb-trait: var(--ch-vert-fonce); --mb-fond: var(--ch-vert-pastel); --mb-texte: var(--ch-vert-texte); }
   .mb-msg.bloc, .msg-charte.bloc { --mb-trait: var(--ch-rouge); --mb-fond: var(--ch-rouge-pastel); --mb-texte: var(--ch-rouge); }
   .mb-msg.alerte, .msg-charte.alerte { --mb-trait: var(--ch-ambre); --mb-fond: var(--ch-ambre-pastel); --mb-texte: var(--ch-ambre-texte); }
@@ -7310,6 +7312,8 @@ function accueilPcGraphiqueLait(lait) {
 
 function renderHome() {
   pageTitle.textContent = isDesktopMode() ? 'Accueil' : 'Mon troupeau';
+  const alerteMeta = alerteTailleMetaHtml();   // document principal du compte proche du plafond Firestore (voir etatTailleMeta)
+  if (alerteMeta) { const d = document.createElement('div'); d.innerHTML = alerteMeta; app.appendChild(d.firstElementChild); }
 
   if (isDesktopMode()) {
     const dashboard = document.createElement('div');
@@ -27358,6 +27362,50 @@ const PARAMETRES_RUBRIQUE_LECTEUR = { key: 'lecteur', label: 'Lecteur' };
 const PARAMETRES_RUBRIQUES_MOBILE = ['exploitation', 'campagne', 'listes', 'lecteur', 'sauvegarde'];
 // « Messages reçus » (bulle de contact) : rubrique mobile et onglet PC du SEUL administrateur (document admins/<uid>, voir demarrerContact)
 const PARAMETRES_RUBRIQUE_MESSAGES = { key: 'messages', label: 'Messages reçus', aide: 'Questions, bugs et idées envoyés depuis la bulle de contact' };
+/* Taille du document principal (meta) du compte : mesure par OvilogSync.mesureMeta (plafond Firestore 1 Mo). Ambre dès 70 %, rouge dès 90 % ou si une
+   écriture a été refusée pour la taille (vraie alerte : la synchro de ces données s'arrête). Message pour tous sur l'Accueil et dans Paramètres ›
+   Sauvegarde ; détail des rubriques pour l'administrateur seulement. Mesure mise en cache 30 s (l'Accueil se redessine souvent). */
+const TAILLE_META_SEUIL_AMBRE = 0.7, TAILLE_META_SEUIL_ROUGE = 0.9;
+let cacheTailleMeta = null;
+function etatTailleMeta(forcer) {
+  const s = window.OvilogSync;
+  if (!s || !s.mesureMeta) return null;
+  if (!forcer && cacheTailleMeta && Date.now() - cacheTailleMeta.t < 30000) return cacheTailleMeta.etat;
+  let m; try { m = s.mesureMeta(); } catch (e) { return null; }
+  const ratio = m.total / m.max;
+  const etat = { ...m, ratio, niveau: (m.refusTaille || ratio >= TAILLE_META_SEUIL_ROUGE) ? 'rouge' : (ratio >= TAILLE_META_SEUIL_AMBRE ? 'ambre' : 'ok') };
+  cacheTailleMeta = { t: Date.now(), etat };
+  return etat;
+}
+function formatOctets(n) { return n >= 1048576 ? (n / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' Mo' : Math.max(1, Math.round(n / 1024)).toLocaleString('fr-FR') + ' Ko'; }
+function alerteTailleMetaHtml() {
+  const e = etatTailleMeta();
+  if (!e || e.niveau === 'ok') return '';
+  const pct = Math.round(e.ratio * 100) + ' %';
+  if (e.refusTaille) return `<div class="msg-charte bloc" id="alerte-taille-meta" role="alert"><b>Synchro bloquée : données du compte trop volumineuses</b><span>Réglages, listes, lots et relevés ne passent plus vers les autres appareils. Vos saisies restent sur cet appareil. Prévenez-nous par la bulle de contact.</span></div>`;
+  if (e.niveau === 'rouge') return `<div class="msg-charte bloc" id="alerte-taille-meta" role="alert"><b>Données du compte presque pleines (${pct})</b><span>La synchro des réglages, listes, lots et relevés va bientôt s'arrêter. Rien n'est perdu. Prévenez-nous par la bulle de contact.</span></div>`;
+  return `<div class="msg-charte alerte" id="alerte-taille-meta"><b>Données du compte : ${pct} de la place</b><span>Rien ne presse et rien n'est perdu. Prévenez-nous par la bulle de contact.</span></div>`;
+}
+// Appelée par la synchro quand une écriture de meta est refusée pour la taille (ou repasse) : message à jour sans attendre le cache
+window.majAlerteTailleMeta = function () {
+  cacheTailleMeta = null;
+  const ancien = document.getElementById('alerte-taille-meta');
+  const html = alerteTailleMetaHtml();
+  if (ancien) { if (html) ancien.outerHTML = html; else ancien.remove(); }
+  else if (html && typeof app !== 'undefined' && app && (currentView === 'home' || currentView === 'parametres')) { const d = document.createElement('div'); d.innerHTML = html; app.insertBefore(d.firstElementChild, app.firstChild); }
+};
+function tailleMetaAdminHtml() {
+  const e = etatTailleMeta(true);
+  if (!e) return '';
+  const ton = e.niveau === 'rouge' ? 'var(--ch-rouge)' : (e.niveau === 'ambre' ? 'var(--ch-ambre-texte)' : 'var(--ch-vert-fonce)');
+  const lignes = e.rubriques.slice(0, 5).map(r => `<li><span>${r.cle}</span><span>${formatOctets(r.octets)}</span></li>`).join('');
+  return `<div id="bloc-taille-meta" style="border-top:1px solid var(--ch-separateur);padding-top:10px;margin-top:4px;">
+    <div class="prm-note" style="margin:0;">Document principal du compte</div>
+    <div id="taille-meta-total" style="font-size:18px;font-weight:700;color:${ton};font-variant-numeric:tabular-nums;">${formatOctets(e.total)} sur 1 Mo · ${Math.round(e.ratio * 100)} %</div>
+    <ul id="taille-meta-rubriques" class="taille-meta-liste">${lignes}</ul>
+    <div class="prm-note" style="margin:0;">Réservé à l'administrateur. Les 5 plus grosses rubriques ; au-delà de 1 Mo, Firestore refuse l'écriture.</div>
+  </div>`;
+}
 function contactAdministrateur() { const e = contactEtatCourant(); return !!(e && e.connecte && e.estAdmin); }
 function parametresRubriquesMobile() { return contactAdministrateur() ? [...PARAMETRES_RUBRIQUES_MOBILE, 'messages'] : PARAMETRES_RUBRIQUES_MOBILE; }
 function parametresTabsPc() { return contactAdministrateur() ? [...PARAMETRES_TABS, PARAMETRES_RUBRIQUE_MESSAGES] : PARAMETRES_TABS; }
@@ -28384,13 +28432,14 @@ function renderParametresSauvegarde(content) {
       </div>
       <div id="update-check-status" class="prm-note" style="margin:0 0 8px;"></div>
       <div id="update-pret" class="prm-bandeau-maj hidden"><div id="update-pret-texte" style="font-weight:500;"></div><button type="button" class="btn btn-primary btn-petit" id="btn-update-pret"></button></div>
+      ${contactAdministrateur() ? tailleMetaAdminHtml() : ''}
       ${!isDesktopMode() && contactAdministrateur() ? `<div id="bloc-canal-test" style="border-top:1px solid var(--ch-separateur);padding-top:10px;margin-top:4px;">
         <label class="prm-case"><input type="checkbox" id="f-canal-test"${reglageCanalTest() ? ' checked' : ''}><span>Recevoir les versions de test</span></label>
         <div class="prm-note">Réservé à l'administrateur, propre à cet appareil : les versions des branches de travail sont proposées en plus des versions stables, avec la mention « version de test ». Désactivé, l'appareil garde la version installée jusqu'à la prochaine version stable plus récente.</div>
       </div>` : ''}
     </div>`;
   const cardsHtml = prmColonnesHtml(carteDonnees, carteApplication);
-  content.innerHTML = cardsHtml + `<details class="prm-maintenance" id="prm-maintenance"${prmMaintenanceOuvert ? ' open' : ''}><summary><b>Maintenance</b> · Rechercher les doublons du registre</summary><div class="prm-maintenance-corps">${maintenance.html}</div></details>`;
+  content.innerHTML = alerteTailleMetaHtml() + cardsHtml + `<details class="prm-maintenance" id="prm-maintenance"${prmMaintenanceOuvert ? ' open' : ''}><summary><b>Maintenance</b> · Rechercher les doublons du registre</summary><div class="prm-maintenance-corps">${maintenance.html}</div></details>`;
   maintenance.brancher();
   document.getElementById('prm-maintenance').ontoggle = (e) => { prmMaintenanceOuvert = e.target.open; };
   const caseCanalTest = document.getElementById('f-canal-test');   // administrateur, mobile seulement (le PC reste sur les versions stables)
@@ -30307,6 +30356,29 @@ function metaRecordPourCloud(data) {
   META_FIELDS.forEach(k => { metaRecord[k] = deepClean(k === 'lots' ? lotsPourCloud(data[k]) : data[k]); });
   return metaRecord;
 }
+/* Taille du document meta telle que Firestore la compte (plafond 1 Mo = 1 048 576 octets, au-delà toute écriture du document est refusée) :
+   chaîne = octets UTF-8 + 1, nombre 8, booléen et null 1, tableau = somme des éléments, objet = somme (nom du champ + 1 + valeur), + 32 pour le
+   document lui-même. Mesure seule : rien n'est modifié. Voir etatTailleMeta (script classique) pour les seuils affichés. */
+const META_TAILLE_MAX = 1048576;
+function tailleFirestore(v) {
+  if (v === null || v === undefined || typeof v === 'boolean') return 1;
+  if (typeof v === 'number') return 8;
+  if (typeof v === 'string') return new TextEncoder().encode(v).length + 1;
+  if (v instanceof Date) return 8;
+  if (Array.isArray(v)) return v.reduce((t, x) => t + tailleFirestore(x), 0);
+  if (typeof v === 'object') return Object.keys(v).reduce((t, k) => t + new TextEncoder().encode(k).length + 1 + tailleFirestore(v[k]), 0);
+  return 8;
+}
+function mesureMeta() {
+  const rec = metaRecordPourCloud(DB);
+  const rubriques = Object.keys(rec).map(k => ({ cle: k, octets: new TextEncoder().encode(k).length + 1 + tailleFirestore(rec[k]) })).sort((x, y) => y.octets - x.octets);
+  return { total: 32 + rubriques.reduce((t, r) => t + r.octets, 0), max: META_TAILLE_MAX, rubriques, refusTaille: !!sync.metaRefuseeTaille };
+}
+// Écriture de meta refusée par Firestore pour la taille (« exceeds the maximum allowed size ») : signalée à l'écran (etatTailleMeta), plus seulement au journal technique
+function erreurTailleDocument(error) {
+  const m = ((error && (error.message || error.code)) || String(error || '')).toLowerCase();
+  return /maximum allowed size|exceeds the maximum|too large|trop volumineux/.test(m);
+}
 function sousEnsembleMetaLocale() {
   const sous = {};
   META_FIELDS.forEach(k => { sous[k] = DB[k]; });
@@ -30332,7 +30404,7 @@ function buildMetaOp(data, ops) {
    entrant peut avoir remplacé cet objet entre-temps (voir startListeners),
    l'écriture doit malgré tout s'appliquer sur l'objet COURANT. */
 function marquerOpAppliquee(op) {
-  if (op.colName === 'meta') { sync.lastSynced.meta = op.newValue; persisterSyncLastSynced(); return; }
+  if (op.colName === 'meta') { sync.lastSynced.meta = op.newValue; persisterSyncLastSynced(); if (sync.metaRefuseeTaille) { sync.metaRefuseeTaille = false; if (window.majAlerteTailleMeta) window.majAlerteTailleMeta(); } return; }
   const lastMap = sync.lastSynced[op.colName];
   if (op.type === 'delete') delete lastMap[op.id];
   else lastMap[op.id] = op.newValue;
@@ -30420,6 +30492,7 @@ function viderJournalSynchro() {
 let compteurEchecsSynchro = 0;
 function journaliserEchecSynchro(op, error) {
   compteurEchecsSynchro++;
+  if (op && op.colName === 'meta' && erreurTailleDocument(error)) { sync.metaRefuseeTaille = true; if (window.majAlerteTailleMeta) window.majAlerteTailleMeta(); }
   try {
     const journal = lireJournalSynchro();
     journal.unshift({
@@ -31377,6 +31450,7 @@ window.OvilogSync = {
   lireJournal() { return lireJournalSynchro(); },
   viderJournal() { viderJournalSynchro(); },
   // Bulle de contact (script classique : panneau, « Messages reçus ») -- voir demarrerContact
+  mesureMeta() { return mesureMeta(); },
   contactEtat() { return { connecte: !!sync.uid && contact.uid === sync.uid, estAdmin: contact.estAdmin, prets: contact.prets, mes: contact.mes.slice(), tous: contact.tous.slice(), echecs: lireEchecsContact() }; },
   envoyerMessageContact(m) {
     if (!contactEcritureAutorisee()) return { ok: false, erreur: 'non-connecte' };
