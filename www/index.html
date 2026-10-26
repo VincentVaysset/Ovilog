@@ -12140,6 +12140,35 @@ function renderAddNote(sheepId) {
 }
 
 /* ---------- Ajout agnelage ---------- */
+/* Saisies d'un agneau enregistré qu'une modification de la mise bas pourrait effacer (retrait de l'agneau ou passage en mort-né). */
+function saisiesAgneau(l) {
+  if (!l || l.sexe === 'Mort-né') return [];
+  const quoi = [];
+  if ((l.sanitaire || []).length) quoi.push('soins');
+  if (l.statutFinal === 'vendu' || l.statutFinal === 'mort' || (l.mouvements || []).some(m => m.type !== 'Entrée')) quoi.push('vente ou mort');
+  if (l.triStatut) quoi.push('tri');
+  if ((l.notes || []).length) quoi.push('notes');
+  return quoi;
+}
+/* Agneau enregistré après « Modifier l'agnelage » : part de l'agneau d'origine (o, absent pour un agneau ajouté) et n'applique que les champs du
+   formulaire (f : sexe, EID, adoption, cause du mort-né). Rien d'autre n'est perdu ; les champs techniques du formulaire ne sont jamais enregistrés. */
+function fusionAgneauModifie(f, o) {
+  const copie = (x) => JSON.parse(JSON.stringify(x));
+  let out;
+  if (f.sexe === 'Mort-né') {
+    out = (o && o.sexe === 'Mort-né') ? copie(o) : {};   // vivant devenu mort-né : ses saisies sont effacées (confirmé par « Enregistrer quand même »)
+    out.sexe = 'Mort-né'; out.adopte = false;
+    const cause = String(f.cause || '').trim();
+    if (cause) out.cause = cause; else delete out.cause;
+    return out;
+  }
+  out = (o && o.sexe !== 'Mort-né') ? copie(o) : {};
+  out.sexe = f.sexe; out.adopte = !!f.adopte; out.eid = f.eid;
+  if (f.adopte) out.adoptiveEid = f.adoptiveEid; else delete out.adoptiveEid;
+  out.sanitaire = out.sanitaire || [];
+  delete out.cause; delete out.sexeMortNe;
+  return out;
+}
 function renderAddAgnelage(sheepId) {
   const sheep = findSheep(sheepId);
   const editing = editContext && editContext.kind === 'agnelages';
@@ -12172,6 +12201,10 @@ function renderAddAgnelage(sheepId) {
   const today = existing ? existing.date : jourAujourdhuiISO();
   let lambCount = 0;
   const lambs = {};
+  // Modification : agneau enregistré de chaque carte (par id). À l'enregistrement, l'agneau repart de cette fiche (soins, mouvements, sortie, tri,
+  // sexe du mort-né…) et seuls les champs du formulaire changent (voir fusionAgneauModifie). Effacer des saisies = message + « Enregistrer quand même ».
+  const origines = {};
+  let pertesConfirmees = null;
   // Code Repro (module Reproduction) : déduit à l'ouverture depuis la date
   // affichée, modifiable avant validation (voir deduireCodeRepro) — en
   // édition, on reprend le code déjà choisi/corrigé plutôt que de le
@@ -12197,6 +12230,7 @@ function renderAddAgnelage(sheepId) {
       <div id="lamb-list"></div>
       <button type="button" class="btn btn-secondary" id="add-lamb" style="margin-bottom:14px;">+ Ajouter un agneau</button>
       <div id="err" class="error-box hidden"></div>
+      <div id="agnelage-pertes"></div>
       <button class="btn btn-primary" id="btn-save-agnelage">${editing ? 'Enregistrer les modifications' : "Enregistrer l'agnelage"}</button>
     </div>
   `;
@@ -12318,6 +12352,7 @@ function renderAddAgnelage(sheepId) {
     existing.lambs.forEach(l => {
       addLamb();
       const id = lambCount;
+      origines[id] = l;
       const sexeBtn = document.querySelector(`.sexe-opt[data-id="${id}"][data-val="${l.sexe}"]`);
       if (sexeBtn) sexeBtn.click();
       if (l.sexe === 'Mort-né' && l.cause) {
@@ -12436,14 +12471,27 @@ function renderAddAgnelage(sheepId) {
       }
     }
     err.classList.add('hidden');
-    // cause : seulement sur un mort-né, et seulement si renseignée (facultative)
-    ids.forEach(id => { if (lambs[id].sexe !== 'Mort-né' || !String(lambs[id].cause || '').trim()) delete lambs[id].cause; });
-    const agnelage = {
-      date: document.getElementById('f-date').value,
-      lambs: ids.map(id => lambs[id]),
-      campagne: DB.campagneDebut,
-      codeRepro, codeSieolRepro: REPRO_CODE_SIEOL[codeRepro]
-    };
+    // Agneau qui a des saisies (soins, sortie, tri) retiré ou passé en mort-né : ces saisies seraient effacées → message, enregistrement seulement sur « Enregistrer quand même »
+    const pertes = [];
+    Object.keys(origines).forEach(id => {
+      const o = origines[id], quoi = saisiesAgneau(o);
+      if (!quoi.length) return;
+      const nom = 'Agneau n°' + (o.eid ? numeroVisuel(o.eid) : '?');
+      if (!lambs[id]) pertes.push(nom + ' retiré : ' + quoi.join(', ') + ' effacés');
+      else if (o.sexe !== 'Mort-né' && lambs[id].sexe === 'Mort-né') pertes.push(nom + ' passé en mort-né : ' + quoi.join(', ') + ' effacés');
+    });
+    const zonePertes = document.getElementById('agnelage-pertes');
+    const clePertes = pertes.join('|');
+    if (pertes.length && pertesConfirmees !== clePertes) {
+      zonePertes.innerHTML = `<div class="msg-charte alerte"><b>Des saisies seront effacées</b>${pertes.map(t => `<span>${echapperHtml(t)}</span>`).join('')}<button type="button" class="btn btn-secondary btn-supprimer" id="btn-pertes-confirmer" style="margin-top:6px;">Enregistrer quand même</button></div>`;
+      document.getElementById('btn-pertes-confirmer').onclick = () => { pertesConfirmees = clePertes; document.getElementById('btn-save-agnelage').click(); };
+      zonePertes.scrollIntoView && zonePertes.scrollIntoView({ block: 'center' });
+      return;
+    }
+    zonePertes.innerHTML = '';
+    const champs = { date: document.getElementById('f-date').value, lambs: ids.map(id => fusionAgneauModifie(lambs[id], origines[id])), codeRepro, codeSieolRepro: REPRO_CODE_SIEOL[codeRepro] };
+    // modification : la mise bas garde ses autres champs, dont sa campagne (une mise bas d'une campagne passée n'est jamais déplacée dans la campagne en cours)
+    const agnelage = editing ? Object.assign(JSON.parse(JSON.stringify(existing)), champs) : { date: champs.date, lambs: champs.lambs, campagne: DB.campagneDebut, codeRepro, codeSieolRepro: champs.codeSieolRepro };
     agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
     sheep.agnelages = sheep.agnelages || [];
     if (editing) sheep.agnelages[editContext.idx] = agnelage;
