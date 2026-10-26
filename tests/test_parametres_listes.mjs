@@ -1,4 +1,4 @@
-/* Refonte Paramètres, partie 3 : Listes. 6 listes (Acheteurs, Causes de mortalité, Intervenants, Cas particuliers d'échographie, Catégories de notes, Types de journal), chacune avec le module
+/* Refonte Paramètres, partie 3 : Listes. 7 listes (Acheteurs, Causes de mortalité – adultes et – agneaux, Intervenants, Cas particuliers d'échographie, Catégories de notes, Types de journal), chacune avec le module
    où elle sert et le nombre de valeurs ; valeurs en étiquettes, clic -> « Renommer » / « Retirer » ; « Ajouter une valeur » + Ajouter. RENOMMER (option A) : la liste ET les enregistrements actifs
    qui portent la valeur (mouvements, mouvements collectifs, soins, traitements collectifs, échographies, notes, journal) ; le registre archivé reste tel qu'enregistré ; fusion avec
    confirmation si le nouveau nom existe ; « Mise à jour inventaire » ni renommable ni retirable. RETIRER : confirmation, enregistrements conservés. Ajout à la volée : option « Ajouter… »
@@ -20,7 +20,7 @@ for (const bureau of [true, false]) {
   const jeu = () => page.evaluate(() => {
     window.__saves = 0; DB = migrateData({}); saveData = function () { window.__saves++; return true; };
     DB.campagneDebut = 2026; DB.campagneInitialisee = true;
-    DB.acheteurs = ['Acheteur C', 'Acheteur D']; DB.causesMortalite = ['Mammite', 'Gonflée', MOTIF_MAJ_INVENTAIRE]; DB.intervenants = ['Intervenant A', 'Intervenant B'];
+    DB.acheteurs = ['Acheteur C', 'Acheteur D']; DB.causesMortalite = ['Mammite', 'Gonflée', MOTIF_MAJ_INVENTAIRE]; DB.causesMortaliteAgneaux = ['Faiblesse']; DB.intervenants = ['Intervenant A', 'Intervenant B'];
     DB.casParticuliers = ['Pseudogestation', 'Avortée']; DB.categoriesNotes = ['Boiterie', 'Sinus']; DB.typesJournal = ['Lutte', 'Tonte'];
     const brebis = (n, extra) => Object.assign({ id: 'b' + n, eid: '250 0000121000' + n, statut: 'active', mouvements: [], sanitaire: [], echographies: [], notes: [], agnelages: [] }, extra);
     DB.brebis = [
@@ -39,11 +39,11 @@ for (const bureau of [true, false]) {
   const valeurs = (cle) => page.evaluate(c => [...document.querySelectorAll(`.prm-val[data-list="${c}"]`)].map(b => b.textContent), cle);
   await jeu();
   // ---- 1. structure
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-liste .prm-titre')].map(e => e.textContent)), ['Acheteurs', 'Causes de mortalité', 'Intervenants', "Cas particuliers d'échographie", 'Catégories de notes', 'Types de journal'], nom + ' : les 6 listes');
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-liste .prm-note')].map(e => e.textContent)), ["Mouvements d'animaux · ventes · 2 valeurs", "Mouvements d'animaux · morts et mort-nés · 3 valeurs", 'Carnet sanitaire · 2 valeurs', 'Échographies · 2 valeurs', 'Fiche animal · notes · 2 valeurs', 'Calendrier · 2 valeurs'], nom + ' : module et nombre de valeurs');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-liste .prm-titre')].map(e => e.textContent)), ['Acheteurs', 'Causes de mortalité – adultes', 'Causes de mortalité – agneaux', 'Intervenants', "Cas particuliers d'échographie", 'Catégories de notes', 'Types de journal'], nom + ' : les 7 listes (causes adultes et agneaux séparées)');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-liste .prm-note')].map(e => e.textContent)), ["Mouvements d'animaux · ventes · 2 valeurs", 'Brebis et béliers · morts · 3 valeurs', 'Agneaux, mort-nés et agnelles · morts · 1 valeur', 'Carnet sanitaire · 2 valeurs', 'Échographies · 2 valeurs', 'Fiche animal · notes · 2 valeurs', 'Calendrier · 2 valeurs'], nom + ' : module et nombre de valeurs');
   check(await page.evaluate(() => !document.getElementById('app').textContent.includes('❔') && !document.querySelector('.btn-del-liste')), nom + ' : aucun ❔, plus de boutons « Suppr. »');
   check(await page.evaluate(() => !!document.getElementById('btn-gerer-produits')) === !bureau, nom + ' : « Produits sanitaires » seulement sur mobile');
-  check(await page.evaluate(() => document.querySelectorAll('.prm-liste .input-add-liste').length === 6 && [...document.querySelectorAll('.btn-add-liste')].every(b => b.textContent === 'Ajouter')), nom + ' : un champ « Ajouter une valeur » + bouton Ajouter par carte');
+  check(await page.evaluate(() => document.querySelectorAll('.prm-liste .input-add-liste').length === 7 && [...document.querySelectorAll('.btn-add-liste')].every(b => b.textContent === 'Ajouter')), nom + ' : un champ « Ajouter une valeur » + bouton Ajouter par carte');
   // ---- 2. clic sur une valeur : Renommer / Retirer
   check(await page.evaluate(() => !document.querySelector('.prm-renommer')), nom + ' : pas d\'actions avant le clic');
   await page.click(val('acheteurs', 'Acheteur C'));
@@ -54,7 +54,7 @@ for (const bureau of [true, false]) {
   await page.click(val('causesMortalite', 'Mise à jour inventaire'));
   check(await page.evaluate(() => !document.querySelector('.prm-renommer') && !document.querySelector('.prm-retirer') && /ni renommée ni retirée/.test(document.getElementById('liste-causesMortalite').textContent)), nom + ' : « Mise à jour inventaire » ni renommable ni retirable');
   eq(await page.evaluate(() => [renommerValeurListe('causesMortalite', MOTIF_MAJ_INVENTAIRE, 'Autre').ok, DB.causesMortalite.includes(MOTIF_MAJ_INVENTAIRE)]), [false, true], nom + ' : refusé aussi au niveau du code');
-  console.log('OK ' + nom + ' : 6 listes (module, nombre), étiquettes, actions au clic, valeur protégée.');
+  console.log('OK ' + nom + ' : 7 listes (module, nombre), étiquettes, actions au clic, valeur protégée.');
   // ---- 4. renommer : refus, accord, au clavier
   await page.click(val('acheteurs', 'Acheteur C')); await page.click('.prm-renommer');
   await page.fill('.prm-renom-input', ''); await page.click('.prm-renom-input'); await page.keyboard.type('Acheteur C Bio', { delay: 25 });

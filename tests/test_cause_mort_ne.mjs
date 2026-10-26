@@ -24,7 +24,7 @@ async function ouvrir(bureau) {
     DB.brebis = [1, 2, 3, 4, 5].map(n => fiche(n)); DB.beliers = []; DB.agnelles = []; DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
     // ancien mort-né (sans cause) d'une campagne passée : ne doit jamais changer
     DB.brebis[4].agnelages = [{ date: '2025-03-01', campagne: 2025, codeRepro: 'MN', lambs: [{ sexe: 'Mort-né', adopte: false, sexeMortNe: 'Mâle' }] }];
-    DB.causesMortalite = ['Faiblesse', 'Écrasé <b>'];
+    DB.causesMortaliteAgneaux = ['Faiblesse', 'Écrasé <b>']; DB.causesMortalite = ['Maladie adulte'];
     window.__ancien = JSON.stringify(DB.brebis[4].agnelages);
   });
   return page;
@@ -46,13 +46,13 @@ for (const bureau of [false, true]) {
   await saisieRapide(p, 1);
   eq(await p.evaluate(() => !!document.querySelector('.cause-mortne-rapide')), false, nom + ' : pas de menu de cause sur un agneau vivant');
   await p.check('.mortne-check-rapide[data-id="0"]');
-  eq(await options(p, '.cause-mortne-rapide[data-id="0"]'), ['—', 'Faiblesse', 'Écrasé <b>', 'Ajouter…'], nom + ' : menu de cause (liste des causes de mortalité, texte échappé, « Ajouter… »)');
+  eq(await options(p, '.cause-mortne-rapide[data-id="0"]'), ['—', 'Faiblesse', 'Écrasé <b>', 'Ajouter…'], nom + ' : menu de cause (liste des causes AGNEAUX seulement, texte échappé, « Ajouter… »)');
   if (bureau) check(/Adoption \/ cause/.test(await p.evaluate(() => document.querySelector('#app thead').textContent)), 'PC : en-tête « Adoption / cause »');
   else check(/Cause \(facultative\)/.test(await p.evaluate(() => document.querySelector('.mb-ag').textContent)), 'mobile : libellé « Cause (facultative) »');
   // « Ajouter… » : nouvelle cause créée et choisie sans quitter l'écran
   await p.selectOption('.cause-mortne-rapide[data-id="0"]', '__ajouter__');
   await p.fill('#liste-ajout-input', 'Froid'); await p.click('#liste-ajout-ok');
-  eq([await p.evaluate(() => document.querySelector('.cause-mortne-rapide[data-id="0"]').value), await p.evaluate(() => DB.causesMortalite.includes('Froid')), await p.evaluate(() => !!document.querySelector('[data-brebis-trouvee]'))], ['Froid', true, true], nom + ' : « Ajouter… » crée la cause, la choisit, la saisie continue');
+  eq([await p.evaluate(() => document.querySelector('.cause-mortne-rapide[data-id="0"]').value), await p.evaluate(() => DB.causesMortaliteAgneaux.includes('Froid') && !DB.causesMortalite.includes('Froid')), await p.evaluate(() => !!document.querySelector('[data-brebis-trouvee]'))], ['Froid', true, true], nom + ' : « Ajouter… » crée la cause, la choisit, la saisie continue');
   // décocher puis recocher « Mort-né » : la cause est oubliée
   await p.uncheck('.mortne-check-rapide[data-id="0"]'); await p.check('.mortne-check-rapide[data-id="0"]');
   eq(await p.evaluate(() => document.querySelector('.cause-mortne-rapide[data-id="0"]').value), '', nom + ' : un agneau qui n\'est plus mort-né perd sa cause');
@@ -92,8 +92,8 @@ for (const bureau of [false, true]) {
     eq([m.pertes, m.mortNes, m.causes], [4, 3, [['Mort-nés', 2], ['Faiblesse', 2]]], 'accueil PC : chaque perte une fois, mort-né avec cause sous sa cause, sans cause dans « Mort-nés »');
     await p.evaluate(() => render('home'));
     check(/Faiblesse\s*2/.test(await p.evaluate(() => document.getElementById('bloc-mortalite-agneaux').innerText)), 'accueil PC : carte Mortalité agneaux, « Faiblesse 2 »');
-    eq(await p.evaluate(() => [compterUsageCauseMortalite('Faiblesse'), compterPorteursListe('causesMortalite', 'Faiblesse', false)]), [2, 2], 'listes : le compteur d\'utilisation compte le mort-né');
-    eq(await p.evaluate(() => renommerValeurListe('causesMortalite', 'Faiblesse', 'Agneau faible')), { ok: true, modifies: 2, fusion: false }, 'listes : renommer met à jour le mort-né et le mouvement');
+    eq(await p.evaluate(() => [compterUsageCauseMortaliteAgneaux('Faiblesse'), compterPorteursListe('causesMortaliteAgneaux', 'Faiblesse', false), compterUsageCauseMortalite('Faiblesse')]), [2, 2, 0], 'listes : le compteur de la liste agneaux compte le mort-né (et la liste adultes ne le compte pas)');
+    eq(await p.evaluate(() => renommerValeurListe('causesMortaliteAgneaux', 'Faiblesse', 'Agneau faible')), { ok: true, modifies: 2, fusion: false }, 'listes : renommer met à jour le mort-né et le mouvement');
     eq((await lambs(p, 1))[0].cause, 'Agneau faible', 'listes : cause du mort-né renommée');
   }
   eq(await p.evaluate(() => JSON.stringify(DB.brebis[4].agnelages) === window.__ancien), true, nom + ' : ancien mort-né sans cause inchangé');

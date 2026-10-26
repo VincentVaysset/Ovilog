@@ -1699,6 +1699,24 @@ const DB_KEY = 'troupeau_data_v1';
    normal et à la restauration d'une sauvegarde, pour que les deux chemins
    produisent un DB toujours complet et jamais une exception plus tard sur
    un champ manquant (ex: DB.casParticuliers.forEach). */
+/* Deux listes de causes de mortalité : adultes (DB.causesMortalite : brebis, béliers) et agneaux (DB.causesMortaliteAgneaux : agneaux, mort-nés,
+   agnelles gardées). Liste agneaux absente (appareil d'avant la séparation) : remplie UNE fois avec les causes déjà portées par des agneaux, des
+   mort-nés ou des agnelles ; la liste adultes garde toutes ses valeurs (rien de retiré d'office) et aucun enregistrement n'est modifié.
+   Tourne pendant `let DB = loadData()` : n'utilise que `d` (jamais DB ni une constante définie plus bas). */
+function causesMortaliteAgneauxInitiales(d) {
+  const vues = [];
+  const ajoute = (c) => { const v = String(c || '').trim(); if (v && v !== 'Mort' && v !== 'Mise à jour inventaire' && !vues.includes(v)) vues.push(v); };
+  const morts = ['Mort', 'Morte', 'Perte'];   // seules les sorties par mort portent une cause de mortalité (une Entrée porte « Naissance », « Achat »…)
+  const mvts = (f) => (f && f.mouvements || []).forEach(m => { if (m && morts.includes(m.type)) ajoute(m.cause); });
+  (d.brebis || []).forEach(s => (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => { if (!l) return; if (l.sexe === 'Mort-né') ajoute(l.cause); else mvts(l); })));
+  (d.agnelles || []).forEach(mvts);
+  Object.values((d.registre && d.registre.agnelles) || {}).forEach(mvts);
+  (d.mouvementsCollectifs || []).forEach(c => { if (c && (c.categorie === 'agneaux' || c.categorie === 'agnelles') && morts.includes(c.type)) ajoute(c.cause); });
+  return vues;
+}
+// Liste de causes d'une catégorie d'animaux (clé de DB) : agneaux et agnelles → liste agneaux ; brebis et béliers → liste adultes
+function cleCausesMortalite(categorie) { return categorie === 'agneaux' || categorie === 'agnelles' ? 'causesMortaliteAgneaux' : 'causesMortalite'; }
+function causesMortalitePour(categorie) { return DB[cleCausesMortalite(categorie)] || []; }
 function migrateData(d) {
   if (!d.produits) {
     d.produits = {
@@ -1712,6 +1730,7 @@ function migrateData(d) {
   if (!d.produits.autres) d.produits.autres = [];
   if (!d.acheteurs) d.acheteurs = [];
   if (!d.causesMortalite) d.causesMortalite = [];
+  if (!Array.isArray(d.causesMortaliteAgneaux)) d.causesMortaliteAgneaux = causesMortaliteAgneauxInitiales(d);
   if (!d.intervenants) d.intervenants = [];
   if (!d.casParticuliers) d.casParticuliers = ['Pseudogestation', 'Avortée'];
   if (!d.categoriesNotes) d.categoriesNotes = ['Boiterie', 'Sinus', 'Mammite'];
@@ -2142,6 +2161,7 @@ function loadData() {
     },
     acheteurs: [],
     causesMortalite: [],
+    causesMortaliteAgneaux: [],
     intervenants: [],
     produitsInfo: {},
     traitementsCollectifs: [],
@@ -9485,7 +9505,7 @@ function renderMouvementsPc() {
   const effectifs = Object.fromEntries(MV_CATEGORIES_PC.map(([k]) => [k, k === E.categorie ? tous.length : poolLectureMv(k).filter(CATEGORIE_ANIMAL_CONFIG[k].isActive).length]));
   // les ids sélectionnés qui ne sont plus actifs (changement entre deux visites) sont retirés
   Array.from(sel).forEach(id => { if (!tous.some(a => a.id === id)) sel.delete(id); });
-  const causes = DB.causesMortalite || [], acheteurs = DB.acheteurs || [];
+  const causes = causesMortalitePour(E.categorie), acheteurs = DB.acheteurs || [];
   const typeVente = !!E.type && cfg.motifsVente.includes(E.type);
   const typeCause = !!E.type && !typeVente && E.type !== 'Autoconsommation';
   app.innerHTML = `<div class="brd" id="pc-mouvements">
@@ -9549,7 +9569,7 @@ function renderMouvementsPc() {
   $('mv-date').addEventListener('input', ev => { E.date = ev.target.value; dessiner(); });
   $('mv-date').addEventListener('change', ev => { E.date = ev.target.value; dessiner(); });
   $('mv-acheteur').onchange = ev => { if (ev.target.value === OPTION_AJOUTER) { ouvrirAjoutValeurListe('acheteurs', v => { E.acheteur = v; renderMouvementsPc(); }, () => { ev.target.value = E.acheteur || ''; }); return; } E.acheteur = ev.target.value; dessiner(); };
-  $('mv-cause').onchange = ev => { if (ev.target.value === OPTION_AJOUTER) { ouvrirAjoutValeurListe('causesMortalite', v => { E.cause = v; renderMouvementsPc(); }, () => { ev.target.value = E.cause || ''; }); return; } E.cause = ev.target.value; dessiner(); };
+  $('mv-cause').onchange = ev => { if (ev.target.value === OPTION_AJOUTER) { ouvrirAjoutValeurListe(cleCausesMortalite(E.categorie), v => { E.cause = v; renderMouvementsPc(); }, () => { ev.target.value = E.cause || ''; }); return; } E.cause = ev.target.value; dessiner(); };
   $('mv-q').addEventListener('input', ev => { E.q = ev.target.value; dessiner(); });
   $('mv-tout').onclick = () => { filtrerAnimauxMv(tous, E.q).forEach(a => sel.add(a.id)); dessiner(); };
   $('mv-rien').onclick = () => { filtrerAnimauxMv(tous, E.q).forEach(a => sel.delete(a.id)); dessiner(); };
@@ -10516,7 +10536,8 @@ function showLambSortieModal(lamb, type, onDone) {
         <div class="chip-list" id="lambsortie-acheteur-list" style="margin-bottom:8px;"></div>
         <div class="row" style="margin-bottom:14px;"><input type="text" id="lambsortie-new-acheteur" placeholder="Ajouter un nouvel acheteur..."><button type="button" class="btn btn-secondary" id="lambsortie-add-acheteur" style="width:auto;padding:0 16px;">+</button></div>
       ` : ''}
-      <label>Date</label>
+      ${isVendu ? '' : `<label>Cause (facultative)</label>${selectCauseMortNeHtml('lambsortie-cause', 0, '', 'margin-bottom:14px;')}
+      `}<label>Date</label>
       <input type="date" id="lambsortie-date" value="${today}" style="margin-bottom:14px;">
       <div id="lambsortie-err" class="error-box hidden"></div>
       <button type="button" class="btn btn-primary" id="lambsortie-confirm" style="margin-bottom:8px;">Valider</button>
@@ -10554,6 +10575,8 @@ function showLambSortieModal(lamb, type, onDone) {
     };
   }
 
+  let causeMort = '';
+  if (!isVendu) brancherCauseMortNe(overlay.querySelector('.lambsortie-cause'), () => causeMort, v => { causeMort = v; });
   overlay.querySelector('#lambsortie-cancel').onclick = () => document.body.removeChild(overlay);
   overlay.querySelector('#lambsortie-confirm').onclick = () => {
     const err = overlay.querySelector('#lambsortie-err');
@@ -10562,7 +10585,7 @@ function showLambSortieModal(lamb, type, onDone) {
     if (isVendu && !acheteur) { err.textContent = "Sélectionne ou ajoute un acheteur."; err.classList.remove('hidden'); return; }
     if (!confirm((isVendu ? 'Confirmer la vente' : 'Confirmer la mort') + ' de l\'agneau n°' + (lamb.eid ? numeroVisuel(lamb.eid) : '?') + ' ?')) return;
     lamb.mouvements = lamb.mouvements || [];
-    lamb.mouvements.push({ type: isVendu ? 'Vendu' : 'Mort', cause: isVendu ? null : 'Mort', acheteur: isVendu ? acheteur : null, date });
+    lamb.mouvements.push({ type: isVendu ? 'Vendu' : 'Mort', cause: isVendu ? null : (String(causeMort || '').trim() || 'Mort'), acheteur: isVendu ? acheteur : null, date });   // sans cause : « Mort » (affiché « Non renseignée »)
     lamb.statutFinal = type;
     saveData(DB);
     document.body.removeChild(overlay);
@@ -13397,18 +13420,18 @@ function chercherBrebisMiseBas(val) {
   if (r.statut === 'absent') { const conflit = verifierEidUnique(val); return conflit ? { statut: 'conflit', eid: val, conflit } : { statut: 'inconnue', eid: val }; }
   return { statut: 'trouvee', sheep: r.item };
 }
-/* Cause (facultative) d'un mort-né, saisie à la mise bas (fiche brebis, saisie rapide mobile, saisie PC) : même liste que les morts (DB.causesMortalite),
-   « Ajouter… » pour en créer une sans quitter l'écran. Le menu porte la classe `cls` et data-id ; brancherCauseMortNe lit / écrit la valeur par get / set. */
+/* Cause (facultative) d'un mort-né, saisie à la mise bas (fiche brebis, saisie rapide mobile, saisie PC), et d'un agneau déclaré mort
+   (showLambSortieModal) : liste des causes AGNEAUX (DB.causesMortaliteAgneaux), « Ajouter… » pour en créer une sans quitter l'écran. Le menu porte la classe `cls` et data-id ; brancherCauseMortNe lit / écrit la valeur par get / set. */
 function selectCauseMortNeHtml(cls, id, valeur, style) {
-  const causes = (DB.causesMortalite || []).filter(c => c !== MOTIF_MAJ_INVENTAIRE);
+  const causes = (DB.causesMortaliteAgneaux || []).slice();
   if (valeur && !causes.includes(valeur)) causes.push(valeur);   // valeur déjà enregistrée, retirée depuis de la liste : gardée telle quelle
-  return `<select class="${cls}" data-id="${id}" aria-label="Cause du mort-né"${style ? ` style="${style}"` : ''}><option value="">—</option>${causes.map(c => `<option value="${echapperHtml(c)}"${valeur === c ? ' selected' : ''}>${echapperHtml(c)}</option>`).join('')}<option value="${OPTION_AJOUTER}">Ajouter…</option></select>`;
+  return `<select class="${cls}" data-id="${id}" aria-label="Cause de la mort"${style ? ` style="${style}"` : ''}><option value="">—</option>${causes.map(c => `<option value="${echapperHtml(c)}"${valeur === c ? ' selected' : ''}>${echapperHtml(c)}</option>`).join('')}<option value="${OPTION_AJOUTER}">Ajouter…</option></select>`;
 }
 function brancherCauseMortNe(select, get, set) {
   if (!select) return;
   select.onchange = () => {
     if (select.value !== OPTION_AJOUTER) { set(select.value); return; }
-    ouvrirAjoutValeurListe('causesMortalite', v => {
+    ouvrirAjoutValeurListe('causesMortaliteAgneaux', v => {
       set(v);
       if (![...select.options].some(o => o.value === v)) { const o = document.createElement('option'); o.value = v; o.textContent = v; select.insertBefore(o, select.lastElementChild); }
       select.value = v;
@@ -15590,6 +15613,7 @@ function renderAddMouvementAgnelle() {
   app.innerHTML = `<div class="card">${mouvementFormHtml('Agnelle n°' + numeroVisuel(ag.eid), cfg.typeSortie, existing)}</div>`;
 
   wireMouvementForm({
+    cleCauses: 'causesMortaliteAgneaux',
     animal: { label: 'Agnelle n°' + numeroVisuel(ag.eid), obj: ag },
     typeSortie: cfg.typeSortie,
     motifsVente: cfg.motifsVente,
@@ -15861,6 +15885,7 @@ function renderAddMouvementAgneau() {
   app.innerHTML = `<div class="card">${mouvementFormHtml('Agneau n°' + numeroVisuel(lamb.eid), cfg.typeSortie, existing)}</div>`;
 
   wireMouvementForm({
+    cleCauses: 'causesMortaliteAgneaux',
     animal: { label: 'Agneau n°' + numeroVisuel(lamb.eid), obj: lamb },
     typeSortie: cfg.typeSortie,
     motifsVente: cfg.motifsVente,
@@ -18997,9 +19022,11 @@ function mouvementFormHtml(animalLabel, typeSortie, existing) {
     <button class="btn btn-primary" id="btn-save-mouvement">${existing ? 'Enregistrer les modifications' : 'Enregistrer le mouvement'}</button>
   `;
 }
-// opts: { typeSortie, motifsVente, existing, dateEntreeRef, erreurDateAnterieure(dateMouvement, dateEntreeRef), onSave(mouvement) }
+// opts: { typeSortie, motifsVente, existing, dateEntreeRef, erreurDateAnterieure(dateMouvement, dateEntreeRef), onSave(mouvement), cleCauses? (liste de causes : adultes par défaut) }
 function wireMouvementForm(opts) {
   const { typeSortie, motifsVente, existing, dateEntreeRef, erreurDateAnterieure, onSave } = opts;
+  const cleCauses = opts.cleCauses || 'causesMortalite';
+  DB[cleCauses] = DB[cleCauses] || [];
   let type = existing ? existing.type : null, cause = existing ? existing.cause : null, acheteur = existing ? existing.acheteur : null;
   // Alerte (information, PC et mobile) si l'animal est encore sous délai viande à la date d'une vente / autoconsommation (opts.animal = { label, obj })
   let rafraichirAlerteDelai = () => {};
@@ -19012,8 +19039,8 @@ function wireMouvementForm(opts) {
   function renderCauseChips() {
     const list = document.getElementById('cause-list');
     list.innerHTML = '';
-    if (DB.causesMortalite.length === 0) list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">Aucune cause enregistrée pour l\'instant.</div>';
-    DB.causesMortalite.forEach(val => {
+    if (DB[cleCauses].length === 0) list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);">Aucune cause enregistrée pour l\'instant.</div>';
+    DB[cleCauses].forEach(val => {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'chip' + (cause === val ? ' selected' : '');
@@ -19059,7 +19086,7 @@ function wireMouvementForm(opts) {
     const input = document.getElementById('new-cause');
     const val = input.value.trim();
     if (!val) return;
-    if (!DB.causesMortalite.includes(val)) DB.causesMortalite.push(val);
+    if (!DB[cleCauses].includes(val)) DB[cleCauses].push(val);
     saveData(DB); input.value = ''; cause = val; renderCauseChips();
   };
   document.getElementById('add-acheteur').onclick = () => {
@@ -19114,7 +19141,7 @@ function renderNouveauMouvementMobile() {
   const tous = animauxMouvementPc(E.categorie);
   const effectifs = Object.fromEntries(MV_CATEGORIES_MOBILE.map(([k]) => [k, k === E.categorie ? tous.length : poolLectureMv(k).filter(CATEGORIE_ANIMAL_CONFIG[k].isActive).length]));
   Array.from(sel).forEach(id => { if (!tous.some(a => a.id === id)) sel.delete(id); });   // un animal sorti entre-temps n'est plus sélectionné
-  const causes = DB.causesMortalite || [], acheteurs = DB.acheteurs || [];
+  const causes = causesMortalitePour(E.categorie), acheteurs = DB.acheteurs || [];
   const typeVente = !!E.type && cfg.motifsVente.includes(E.type);
   const typeCause = !!E.type && !typeVente && E.type !== 'Autoconsommation';
   const courts = { 'Vente reproduction': 'Vente repro' };
@@ -19162,7 +19189,7 @@ function renderNouveauMouvementMobile() {
   $('mn-date').addEventListener('input', ev => { E.date = ev.target.value; rafraichirAlerte(); });
   $('mn-date').addEventListener('change', ev => { E.date = ev.target.value; rafraichirAlerte(); });
   if ($('mn-acheteur')) $('mn-acheteur').onchange = ev => { if (ev.target.value === OPTION_AJOUTER) { ouvrirAjoutValeurListe('acheteurs', v => { E.acheteur = v; reafficher(); }, () => { ev.target.value = E.acheteur || ''; }); return; } E.acheteur = ev.target.value; };
-  if ($('mn-cause')) $('mn-cause').onchange = ev => { if (ev.target.value === OPTION_AJOUTER) { ouvrirAjoutValeurListe('causesMortalite', v => { E.cause = v; reafficher(); }, () => { ev.target.value = E.cause || ''; }); return; } E.cause = ev.target.value; };
+  if ($('mn-cause')) $('mn-cause').onchange = ev => { if (ev.target.value === OPTION_AJOUTER) { ouvrirAjoutValeurListe(cleCausesMortalite(E.categorie), v => { E.cause = v; reafficher(); }, () => { ev.target.value = E.cause || ''; }); return; } E.cause = ev.target.value; };
   $('mn-bip').onchange = ev => { E.bip = ev.target.checked; reafficher(); };
   if (E.bip) {
     const scan = $('mn-scan'), fb = $('mn-scan-fb');
@@ -27794,7 +27821,27 @@ function compterUsageMouvement(champ, valeur) {
   return n;
 }
 function compterUsageAcheteur(nom) { return compterUsageMouvement('acheteur', nom); }
-function compterUsageCauseMortalite(nom) { return compterUsageMouvement('cause', nom) + mortNesListe().filter(l => l.cause === nom).length; }
+function compterUsageCauseMortalite(nom) { return porteursCauses(false, false).concat(porteursCauses(false, true)).filter(o => o.cause === nom).length; }
+function compterUsageCauseMortaliteAgneaux(nom) { return porteursCauses(true, false).concat(porteursCauses(true, true)).filter(o => o.cause === nom).length; }
+/* Enregistrements qui portent une cause de mortalité (champ `cause`), par liste : agneaux = mouvements des agneaux, mort-nés, agnelles et
+   mouvements collectifs agneaux / agnelles ; adultes = brebis, béliers et les autres mouvements collectifs. archives = registre archivé (lecture seule). */
+function porteursCauses(agneaux, archives) {
+  const objets = [];
+  const mvts = (f) => (f && f.mouvements || []).forEach(m => { if (m) objets.push(m); });
+  if (archives) {
+    (agneaux ? ['agnelles'] : ['brebis', 'beliers']).forEach(cat => Object.values((DB.registre && DB.registre[cat]) || {}).forEach(mvts));
+    return objets;
+  }
+  if (agneaux) {
+    (DB.brebis || []).forEach(s => (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => { if (!l) return; if (l.sexe === 'Mort-né') objets.push(l); else mvts(l); })));
+    (DB.agnelles || []).forEach(mvts);
+  } else {
+    (DB.brebis || []).forEach(mvts);
+    (DB.beliers || []).forEach(mvts);
+  }
+  (DB.mouvementsCollectifs || []).forEach(c => { if (c && (cleCausesMortalite(c.categorie) === 'causesMortaliteAgneaux') === agneaux) objets.push(c); });
+  return objets;
+}
 // Contrairement aux acheteurs/causes (portés par un mouvement), l'intervenant
 // est porté par une entrée du carnet SANITAIRE (voir ecranCarnetSoin) --
 // même principe de comptage, sur sheep.sanitaire plutôt que .mouvements.
@@ -27839,7 +27886,8 @@ function compterUsageCategorieNote(nom) {
 // module = écran où la liste sert ; ajout = libellé de la fenêtre « Ajouter… » ; protegees = valeurs utilisées par le code (ni renommables ni retirables)
 const LISTES_GENERALES_CONFIG = [
   { key: 'acheteurs', label: 'Acheteurs', module: "Mouvements d'animaux · ventes", ajout: 'un acheteur', usage: compterUsageAcheteur, protegees: [] },
-  { key: 'causesMortalite', label: 'Causes de mortalité', module: "Mouvements d'animaux · morts et mort-nés", ajout: 'une cause de mortalité', usage: compterUsageCauseMortalite, protegees: [MOTIF_MAJ_INVENTAIRE] },
+  { key: 'causesMortalite', label: 'Causes de mortalité – adultes', module: 'Brebis et béliers · morts', ajout: 'une cause de mortalité (adultes)', usage: compterUsageCauseMortalite, protegees: [MOTIF_MAJ_INVENTAIRE] },
+  { key: 'causesMortaliteAgneaux', label: 'Causes de mortalité – agneaux', module: 'Agneaux, mort-nés et agnelles · morts', ajout: 'une cause de mortalité (agneaux)', usage: compterUsageCauseMortaliteAgneaux, protegees: [] },
   { key: 'intervenants', label: 'Intervenants', module: 'Carnet sanitaire', ajout: 'un intervenant', usage: compterUsageIntervenant, protegees: [] },
   { key: 'casParticuliers', label: "Cas particuliers d'échographie", module: 'Échographies', ajout: "un cas particulier d'échographie", usage: compterUsageCasParticulier, protegees: [] },
   { key: 'categoriesNotes', label: 'Catégories de notes', module: 'Fiche animal · notes', ajout: 'une catégorie de notes', usage: compterUsageCategorieNote, protegees: [] },
@@ -27861,12 +27909,6 @@ function fichesActivesListe() {
   (DB.agnelles || []).forEach(a => out.push(a));
   return out;
 }
-// Agneaux mort-nés (portent la cause saisie à la mise bas, champ `cause`)
-function mortNesListe() {
-  const out = [];
-  (DB.brebis || []).forEach(s => (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => { if (l && l.sexe === 'Mort-né') out.push(l); })));
-  return out;
-}
 function entreesRegistreListe() {
   const out = [];
   ['brebis', 'beliers', 'agnelles'].forEach(cat => { const reg = DB.registre && DB.registre[cat]; if (reg) Object.values(reg).forEach(e => out.push(e)); });
@@ -27877,7 +27919,8 @@ function porteursListe(key, archives) {
   const fiches = archives ? entreesRegistreListe() : fichesActivesListe();
   const sous = (nom) => { const r = []; fiches.forEach(f => (f[nom] || []).forEach(x => r.push(x))); return r; };
   if (key === 'acheteurs') return { champ: 'acheteur', objets: sous('mouvements').concat(archives ? [] : (DB.mouvementsCollectifs || [])) };
-  if (key === 'causesMortalite') return { champ: 'cause', objets: sous('mouvements').concat(archives ? [] : (DB.mouvementsCollectifs || []), archives ? [] : mortNesListe()) };
+  if (key === 'causesMortalite') return { champ: 'cause', objets: porteursCauses(false, archives) };
+  if (key === 'causesMortaliteAgneaux') return { champ: 'cause', objets: porteursCauses(true, archives) };
   if (key === 'intervenants') return { champ: 'intervenant', objets: sous('sanitaire').concat(archives ? [] : (DB.traitementsCollectifs || [])) };
   if (key === 'casParticuliers') return { champ: 'special', objets: sous('echographies') };
   if (key === 'categoriesNotes') return { champ: 'categorie', objets: sous('notes') };
@@ -30291,7 +30334,7 @@ const fbDb = initializeFirestore(fbApp, {
 // volontairement exclu : propre à l'appareil (appairage physique), il n'a
 // pas de sens partagé entre deux téléphones.
 const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
-  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'intervenants',
+  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   // 'registre' reste ICI (champ meta.registre) volontairement, même après
