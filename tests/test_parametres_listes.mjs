@@ -40,7 +40,7 @@ for (const bureau of [true, false]) {
   await jeu();
   // ---- 1. structure
   eq(await page.evaluate(() => [...document.querySelectorAll('.prm-liste .prm-titre')].map(e => e.textContent)), ['Acheteurs', 'Causes de mortalité', 'Intervenants', "Cas particuliers d'échographie", 'Catégories de notes', 'Types de journal'], nom + ' : les 6 listes');
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-liste .prm-note')].map(e => e.textContent)), ["Mouvements d'animaux · ventes · 2 valeurs", "Mouvements d'animaux · morts · 3 valeurs", 'Carnet sanitaire · 2 valeurs', 'Échographies · 2 valeurs', 'Fiche animal · notes · 2 valeurs', 'Calendrier · 2 valeurs'], nom + ' : module et nombre de valeurs');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-liste .prm-note')].map(e => e.textContent)), ["Mouvements d'animaux · ventes · 2 valeurs", "Mouvements d'animaux · morts et mort-nés · 3 valeurs", 'Carnet sanitaire · 2 valeurs', 'Échographies · 2 valeurs', 'Fiche animal · notes · 2 valeurs', 'Calendrier · 2 valeurs'], nom + ' : module et nombre de valeurs');
   check(await page.evaluate(() => !document.getElementById('app').textContent.includes('❔') && !document.querySelector('.btn-del-liste')), nom + ' : aucun ❔, plus de boutons « Suppr. »');
   check(await page.evaluate(() => !!document.getElementById('btn-gerer-produits')) === !bureau, nom + ' : « Produits sanitaires » seulement sur mobile');
   check(await page.evaluate(() => document.querySelectorAll('.prm-liste .input-add-liste').length === 6 && [...document.querySelectorAll('.btn-add-liste')].every(b => b.textContent === 'Ajouter')), nom + ' : un champ « Ajouter une valeur » + bouton Ajouter par carte');
