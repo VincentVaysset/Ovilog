@@ -1424,6 +1424,9 @@
   #pc-tank, #pc-qualite { display: flex; flex-direction: column; gap: 16px; }
   .prm-titre { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
   .prm-note { font-size: 12.5px; color: var(--text-muted); line-height: 1.45; margin: 2px 0 10px; }
+  .soins-bouclage-ligne { font-size: 13px; color: var(--ch-texte2); margin: 8px 0; }
+  .sb-ligne { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--ch-separateur); }
+  .sb-ajout { margin-top: 12px; }
   .prm-champs2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   @media (max-width: 560px) { .prm-champs2-large { grid-template-columns: 1fr; gap: 0; } }
   .prm-alerte { background: var(--amber-bg); color: var(--amber-fg); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12.5px; line-height: 1.45; margin-bottom: 10px; }
@@ -1751,6 +1754,7 @@ function migrateData(d) {
   if (!d.intervenants) d.intervenants = [];
   if (!d.casParticuliers) d.casParticuliers = ['Pseudogestation', 'Avortée'];
   if (!Array.isArray(d.motifsNonTraite)) d.motifsNonTraite = MOTIFS_NON_TRAITE_DEPART.slice();
+  if (!Array.isArray(d.soinsBouclage)) d.soinsBouclage = [];   // soins au bouclage des agneaux : aucun tant que l'éleveur n'en règle pas
   if (!d.categoriesNotes) d.categoriesNotes = ['Boiterie', 'Sinus', 'Mammite'];
   if (!d.notesArchiveesBrebis) d.notesArchiveesBrebis = {};
   if (!d.produitsInfo) d.produitsInfo = {};
@@ -2169,6 +2173,7 @@ function loadData() {
     campagneDateFin: null,
     casParticuliers: ['Pseudogestation', 'Avortée'],
     motifsNonTraite: MOTIFS_NON_TRAITE_DEPART.slice(),
+    soinsBouclage: [],
     categoriesNotes: ['Boiterie', 'Sinus', 'Mammite'],
     notesArchiveesBrebis: {},
     produits: {
@@ -12532,6 +12537,7 @@ function renderAddAgnelage(sheepId) {
       <div id="repro-question" style="margin-bottom:16px;"></div>
       <div id="lamb-list"></div>
       <button type="button" class="btn btn-secondary" id="add-lamb" style="margin-bottom:14px;">+ Ajouter un agneau</button>
+      ${ligneSoinsBouclageHtml()}
       <div id="err" class="error-box hidden"></div>
       <div id="agnelage-pertes"></div>
       <button class="btn btn-primary" id="btn-save-agnelage">${editing ? 'Enregistrer les modifications' : "Enregistrer l'agnelage"}</button>
@@ -12769,7 +12775,7 @@ function renderAddAgnelage(sheepId) {
             lambs[id].adoptiveEid = adoptVal;
           }
         }
-        // Aucun soin ajouté d'office à la naissance : un soin se saisit toujours par le Carnet sanitaire (les soins déjà présents sont gardés).
+        // Aucun soin ajouté ici (les soins déjà présents sont gardés) ; soins au bouclage réglés par l'éleveur : appliquerSoinsBouclage à l'enregistrement.
         lambs[id].sanitaire = lambs[id].sanitaire || [];
       }
     }
@@ -12796,6 +12802,8 @@ function renderAddAgnelage(sheepId) {
     // modification : la mise bas garde ses autres champs, dont sa campagne (une mise bas d'une campagne passée n'est jamais déplacée dans la campagne en cours)
     const agnelage = editing ? Object.assign(JSON.parse(JSON.stringify(existing)), champs) : { date: champs.date, lambs: champs.lambs, campagne: DB.campagneDebut, codeRepro, codeSieolRepro: champs.codeSieolRepro };
     agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
+    // soins au bouclage : seulement les agneaux qui reçoivent leur n° MAINTENANT (nouveaux, ou sans n° jusqu'ici) ; jamais un agneau déjà bouclé
+    appliquerSoinsBouclage(agnelage.lambs.filter((l, i) => { const o = origines[ids[i]]; return !(o && o.eid); }), agnelage.date);
     sheep.agnelages = sheep.agnelages || [];
     if (editing) sheep.agnelages[editContext.idx] = agnelage;
     else sheep.agnelages.push(agnelage);
@@ -13719,7 +13727,7 @@ function brancherCauseMortNe(select, get, set) {
   };
 }
 /* Construit l'agnelage d'une saisie. saisie : { date, codeRepro, lambs: [{ sexe: 'Mâle' | 'Femelle' | 'Mort-né', sexeMortNe?, cause?, eid?, adopte?, adoptNum? }] }.
-   Retourne { erreur } ou { agnelage }. Mort-né : jamais d'EID (sexeMortNe et cause facultatifs ; cause = liste « Causes de mortalité ») ; aucun soin ajouté d'office (un soin se saisit par le Carnet sanitaire) ; adoption : brebis ACTIVE uniquement. */
+   Retourne { erreur } ou { agnelage }. Mort-né : jamais d'EID (sexeMortNe et cause facultatifs ; cause = liste « Causes de mortalité ») ; aucun soin ajouté ici (soins au bouclage réglés par l'éleveur : enregistrerMiseBas) ; adoption : brebis ACTIVE uniquement. */
 function construireAgnelageMiseBas(sheep, saisie) {
   if (!saisie.codeRepro) return { erreur: 'Choisissez le code Repro de cette mise bas (question ci-dessus).' };
   const lambs = saisie.lambs || [];
@@ -13754,7 +13762,7 @@ function construireAgnelageMiseBas(sheep, saisie) {
         : "Aucune brebis active ne correspond à ce numéro (mère adoptive de l'agneau " + n + ")." };
       lamb.adoptiveEid = mere.eid;
     }
-    lamb.sanitaire = [];   // aucun soin d'office : un soin se saisit par le Carnet sanitaire
+    lamb.sanitaire = [];   // seuls les soins au bouclage réglés par l'éleveur s'ajoutent, à l'enregistrement (appliquerSoinsBouclage)
     out.push(lamb);
   }
   const agnelage = { date: saisie.date, lambs: out, campagne: DB.campagneDebut, codeRepro: saisie.codeRepro, codeSieolRepro: REPRO_CODE_SIEOL[saisie.codeRepro] };
@@ -13763,6 +13771,7 @@ function construireAgnelageMiseBas(sheep, saisie) {
 }
 function enregistrerMiseBas(sheep, agnelage) {
   sheep.agnelages = sheep.agnelages || [];
+  appliquerSoinsBouclage(agnelage.lambs, agnelage.date);   // agneaux bouclés à la saisie : soins réglés par l'éleveur
   sheep.agnelages.push(agnelage);
   saveData(DB);
   return sheep.agnelages.length - 1;
@@ -13797,8 +13806,8 @@ function miseBasRapideStats(campagneRows) {
   return { cb, misesBas: campagneRows.length, nes, males: somme('male'), femelles: somme('femelle'), mortNes: somme('mortNe'), prolificite: campagneRows.length > 0 ? nes / campagneRows.length : null, portees };
 }
 /* ---------- Saisie de mises bas (MOBILE) : maquette « Mise bas rapide » ----------
-   Scan de la brebis, date, une carte par agneau (EID bippé, Mâle / Femelle en segmenté ; mort-né : pas d'EID, sexe facultatif ; adoption vers une brebis ACTIVE seulement ; aucun soin d'office
-   automatique sur chaque agneau vivant), barre fixe « Annuler | Enregistrer et suivante ». Après l'enregistrement : confirmation verte avec « Annuler cette saisie » (un geste, sans confirmation),
+   Scan de la brebis, date, une carte par agneau (EID bippé, Mâle / Femelle en segmenté ; mort-né : pas d'EID, sexe facultatif ; adoption vers une brebis ACTIVE seulement ; soins au bouclage
+   seulement s'ils sont réglés par l'éleveur, Paramètres › Exploitation), barre fixe « Annuler | Enregistrer et suivante ». Après l'enregistrement : confirmation verte avec « Annuler cette saisie » (un geste, sans confirmation),
    puis « Dernières saisies » modifiables d'un toucher. Contrôles discrets : un message n'apparaît que si une règle se déclenche (blocage rouge : déjà mis bas ; alertes : date future, vide définitive).
    Toute la logique métier est dans les fonctions communes (controlesMiseBas, construireAgnelageMiseBas, enregistrerMiseBas, annulerMiseBas, miseBasRapideStats). */
 function miseBasPortee(n) { return n >= 3 ? ['Triple et +', 'ambre'] : n === 2 ? ['Double', 'bleu'] : ['Simple', 'vert']; }
@@ -13929,6 +13938,7 @@ function renderMiseBasRapide() {
       <div class="sec" id="mb-nb-agneaux" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Agneaux · ${form.lambs.length}</div>
       <div id="lamb-list-rapide"></div>
       <button type="button" class="btn btn-secondary" id="add-lamb-rapide" style="border-style:dashed;margin-bottom:8px;">+ Ajouter un agneau</button>
+      ${ligneSoinsBouclageHtml()}
       <div id="err" class="error-box hidden"></div>` : '';
     const derniers = (!form && !currentSheep && rows.length) ? `
       <div class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Dernières saisies</div>
@@ -13957,6 +13967,7 @@ function renderMiseBasRapide() {
         <table class="brd-t" id="mb-table-agneaux"><colgroup><col style="width:8%"><col style="width:25%"><col style="width:19%"><col style="width:10%"><col style="width:24%"><col style="width:14%"></colgroup>
           <thead><tr><th>Agneau</th><th>EID</th><th>Sexe</th><th>Mort-né</th><th>Adoption / cause</th><th></th></tr></thead><tbody id="lamb-list-rapide"></tbody></table>
         <div id="err" class="error-box hidden" style="margin-top:10px;"></div>
+        ${ligneSoinsBouclageHtml()}
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;">
           <button type="button" class="btn btn-secondary" id="add-lamb-rapide" style="width:auto;">+ Ajouter un agneau</button>
           <span class="pc-pill ok" id="pc-portee">Aucun agneau</span>
@@ -19771,6 +19782,55 @@ function construireSoinCarnet(e) {
 function delaisAppliquesFormulaire(e) {
   const fiche = e.produit ? ficheProduit(e.produit) : null;
   return delaisAppliques({ legalLait: entierTexteOuNull(e.delaiLait), legalViande: entierTexteOuNull(e.delaiViande), bio: elevageBioActif(), min48h: fiche ? fiche.min48h : 'a_confirmer' });
+}
+/* Soins au bouclage des agneaux : réglage de COMPTE (DB.soinsBouclage = [{ produit, doseCc, voie? }], dans META_FIELDS ; vide pour un compte neuf).
+   Chaque agneau qui reçoit son n° à la saisie de la mise bas (fiche brebis, saisies rapides mobile et PC) reçoit ces soins, datés de la mise bas,
+   comme un soin du Carnet (délais de la fiche produit copiés, bio figé, intervenant « Éleveur », marque bouclage: true) : fiche, Carnet, registre,
+   modifiable et supprimable. Jamais rétroactif (un agneau déjà bouclé n'en reçoit pas), jamais pour un mort-né. Aucun message à chaque bouclage :
+   une seule ligne grise fixe sur l'écran de saisie (ligneSoinsBouclageHtml). Produit sans délais renseignés ou réservé au vétérinaire : refusé au réglage. */
+function typeSoinProduit(nom) {
+  const cle = categorieProduitCle(nom);
+  if (cle === 'vaccins') return { type: 'Vaccin', categorie: '' };
+  if (cle === 'autres') return { type: 'Autre', categorie: '' };
+  const categorie = { antibiotiques: 'Antibiotique', antiparasitaires: 'Antiparasitaire', antiinflammatoires: 'Anti-inflammatoire' }[cle];
+  return categorie ? { type: 'Traitement', categorie } : null;
+}
+// Raison pour laquelle un produit ne peut pas être donné au bouclage (null si possible)
+function refusSoinBouclage(produit) {
+  if (!produit || !typeSoinProduit(produit)) return 'Produit introuvable dans les listes.';
+  const f = ficheProduit(produit);
+  if (f.reserveVeterinaire) return 'Produit réservé au vétérinaire : à saisir par le Carnet sanitaire.';
+  if (!f.complete) return 'Délais lait et viande à renseigner d\'abord dans Produits et délais.';
+  return null;
+}
+const soinsBouclageRegles = () => (Array.isArray(DB.soinsBouclage) ? DB.soinsBouclage : []).filter(x => x && x.produit && !refusSoinBouclage(x.produit));
+function soinBouclage(entree, date) {
+  const t = typeSoinProduit(entree.produit), f = ficheProduit(entree.produit);
+  const soin = construireSoinCarnet({ type: t.type, categorie: t.categorie, produit: entree.produit, dateDebut: date, dureeJours: '1',
+    dose: entree.doseCc === undefined || entree.doseCc === null ? '' : String(entree.doseCc), voie: entree.voie || '', faitPar: 'Éleveur',
+    delaiLait: String(f.delaiLait), delaiViande: String(f.delaiViande), commentaire: '', ordonnance: '', prescripteur: '', motif: '', lot: '', peremption: '', veterinaireResponsable: '' });
+  if (t.type === 'Autre') delete soin.sousType;   // produit de la liste « autres » : pas un « soin de plaie »
+  soin.id = 'S-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  soin.bouclage = true;
+  return soin;
+}
+// lambs : agneaux qui reçoivent leur n° MAINTENANT (l'appelant écarte ceux déjà bouclés) ; mort-nés et agneaux sans n° ignorés
+function appliquerSoinsBouclage(lambs, date) {
+  const reglage = soinsBouclageRegles();
+  if (!reglage.length || !/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return 0;
+  let n = 0;
+  (lambs || []).forEach(l => {
+    if (!l || l.sexe === 'Mort-né' || !l.eid) return;
+    l.sanitaire = l.sanitaire || [];
+    reglage.forEach(x => { l.sanitaire.push(soinBouclage(x, date)); n++; });
+  });
+  return n;
+}
+const libelleSoinBouclage = x => x.produit + (x.doseCc !== undefined && x.doseCc !== null && x.doseCc !== '' ? ' ' + String(x.doseCc).replace('.', ',') + ' cc' : '');
+// Ligne grise fixe des écrans de saisie de la mise bas ('' si aucun soin réglé)
+function ligneSoinsBouclageHtml() {
+  const r = soinsBouclageRegles();
+  return r.length ? `<div class="soins-bouclage-ligne" id="soins-bouclage-ligne">Au bouclage : ${echapperHtml(r.map(libelleSoinBouclage).join(', '))}</div>` : '';
 }
 // Animaux proposés à l'écran 2 : ACTIFS seulement (brebis scindées en Brebis / Antenaises par le millésime le plus jeune,
 // agnelles du roster, béliers, agneaux actifs). Agneaux : même pool que CATEGORIE_ANIMAL_CONFIG.agneaux (getAgneauxInventaire,
@@ -27958,7 +28018,8 @@ function renderParametresExploitation(content) {
       <label class="prm-case" style="margin-top:14px;"><input type="checkbox" id="f-erreurs-auto"${rapportsErreursCoupes() ? '' : ' checked'}><span>Envoyer les erreurs techniques (sans donnée d'animal)</span></label>
       <div class="prm-note">En cas de plantage, un rapport technique part au concepteur : type d'erreur, écran, version. Aucun n°, aucun nom, aucune note. Réglage propre à cet appareil.</div>
     </div>`;
-  content.innerHTML = prmColonnesHtml(carteIdentite, carteSynchro + carteBio + carteEco + carteContact);
+  content.innerHTML = prmColonnesHtml(carteIdentite + carteSoinsBouclageHtml(), carteSynchro + carteBio + carteEco + carteContact);
+  brancherCarteSoinsBouclage();
   document.getElementById('f-bulle-contact').onchange = (ev) => {
     try { if (ev.target.checked) localStorage.removeItem(CLE_BULLE_MASQUEE); else localStorage.setItem(CLE_BULLE_MASQUEE, '1'); } catch (e) {}
     majBulleContact();
@@ -28024,6 +28085,60 @@ function renderParametresExploitation(content) {
     };
     saveData(DB);
     alert('Informations enregistrées.');
+  };
+}
+// Paramètres › Exploitation : soins au bouclage des agneaux (réglage de compte, voir appliquerSoinsBouclage)
+function carteSoinsBouclageHtml() {
+  const liste = Array.isArray(DB.soinsBouclage) ? DB.soinsBouclage : [];
+  const produits = PRODUIT_CATEGORIES.flatMap(c => (DB.produits[c.key] || []).map(nom => ({ nom, cat: c.label })));
+  const lignes = liste.map((x, i) => {
+    const refus = refusSoinBouclage(x.produit);
+    return `<div class="sb-ligne"><div><div style="font-weight:600;">${echapperHtml(libelleSoinBouclage(x))}</div>${x.voie ? `<div class="prm-note" style="margin:0;">${echapperHtml(x.voie)}</div>` : ''}${refus ? `<div class="prm-note sb-refus" style="margin:0;color:var(--ch-ambre-texte);">Non appliqué : ${echapperHtml(refus)}</div>` : ''}</div><button type="button" class="btn btn-secondary btn-supprimer btn-petit sb-retirer" data-idx="${i}">Retirer</button></div>`;
+  }).join('');
+  return `
+    <div class="card" id="card-soins-bouclage">
+      <div class="prm-titre">Soins au bouclage des agneaux</div>
+      <div class="prm-note">Ajoutés à chaque agneau quand il reçoit son n° à la mise bas, datés de la mise bas. Les agneaux déjà bouclés ne changent pas.</div>
+      ${lignes || '<div class="prm-note" id="sb-aucun">Aucun soin au bouclage.</div>'}
+      ${produits.length ? `<div class="sb-ajout">
+        <label for="f-sb-produit">Produit</label>
+        <select id="f-sb-produit"><option value="">Choisir…</option>${produits.map(p => `<option value="${echapperHtml(p.nom)}">${echapperHtml(p.nom)} (${p.cat})</option>`).join('')}</select>
+        <div class="prm-champs2">
+          <div><label for="f-sb-dose">Dose par agneau (cc)</label><input type="text" inputmode="decimal" id="f-sb-dose"></div>
+          <div><label for="f-sb-voie">Voie</label><select id="f-sb-voie"><option value="">Choisir…</option>${VOIES_ADMINISTRATION.map(v => `<option value="${v}">${v}</option>`).join('')}</select></div>
+        </div>
+        <div id="sb-msg"></div>
+        <div class="prm-actions prm-actions-fin"><button type="button" class="btn btn-secondary" id="btn-sb-ajouter">Ajouter</button></div>
+      </div>` : '<div class="prm-note">Créez d\'abord le produit dans Produits et délais.</div>'}
+    </div>`;
+}
+function brancherCarteSoinsBouclage() {
+  const carte = document.getElementById('card-soins-bouclage');
+  if (!carte) return;
+  const redessiner = () => { carte.outerHTML = carteSoinsBouclageHtml(); brancherCarteSoinsBouclage(); };
+  carte.querySelectorAll('.sb-retirer').forEach(b => { b.onclick = () => {   // retire le réglage seulement : les soins déjà donnés restent sur les agneaux
+    DB.soinsBouclage = (DB.soinsBouclage || []).filter((x, i) => i !== parseInt(b.dataset.idx, 10));
+    saveData(DB); redessiner();
+  }; });
+  const btn = document.getElementById('btn-sb-ajouter');
+  if (!btn) return;
+  btn.onclick = () => {
+    const produit = document.getElementById('f-sb-produit').value;
+    const doseTxt = document.getElementById('f-sb-dose').value.trim().replace(',', '.');
+    const voie = document.getElementById('f-sb-voie').value;
+    const t = produit ? typeSoinProduit(produit) : null;
+    const dose = parseFloat(doseTxt);
+    let erreur = null;
+    if (!produit) erreur = 'Choisissez le produit.';
+    else if ((DB.soinsBouclage || []).some(x => x.produit === produit)) erreur = 'Ce produit est déjà dans les soins au bouclage.';
+    else if (refusSoinBouclage(produit)) erreur = refusSoinBouclage(produit);
+    else if (!/^\d+(\.\d+)?$/.test(doseTxt) || !(dose > 0)) erreur = 'Indiquez la dose par agneau (cc).';
+    else if (!voie && t && t.type !== 'Autre') erreur = 'Choisissez la voie d\'administration.';
+    if (erreur) { document.getElementById('sb-msg').innerHTML = `<div class="msg-charte alerte">${echapperHtml(erreur)}</div>`; return; }
+    const entree = { produit, doseCc: dose };
+    if (voie) entree.voie = voie;
+    DB.soinsBouclage = (DB.soinsBouclage || []).concat([entree]);
+    saveData(DB); redessiner();
   };
 }
 // Texte long derrière « En savoir plus » (remplace les anciennes bulles « ? » des titres de Paramètres : le texte est conservé tel quel)
@@ -30574,7 +30689,7 @@ const fbDb = initializeFirestore(fbApp, {
 // volontairement exclu : propre à l'appareil (appairage physique), il n'a
 // pas de sens partagé entre deux téléphones.
 const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
-  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'intervenants',
+  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'soinsBouclage', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   // 'registre' reste ICI (champ meta.registre) volontairement, même après
