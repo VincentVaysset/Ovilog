@@ -1702,6 +1702,12 @@ document.body.classList.toggle('desktop-shell', isDesktopMode());
 const DB_KEY = 'troupeau_data_v1';
 // Motifs de non-traite proposés au départ (liste modifiable : Paramètres › Listes)
 const MOTIFS_NON_TRAITE_DEPART = ['Agneaux morts', 'Mammite', 'Réforme prévue'];
+/* Type de sortie « Mise à jour inventaire » : animal qu'on ne retrouve plus à l'inventaire (bipage complet des brebis, agneaux sans devenir au
+   changement de campagne). Ce n'est PAS une mort : jamais dans la mortalité ni dans les causes ; compté avec les pertes dans les bilans ; pastille
+   neutre ; posé seulement par l'appli (jamais proposé à la saisie), annulable comme tout mouvement. Les anciennes sorties « Morte » portant ce
+   motif restent telles quelles. Défini ici : utilisé par des listes de types construites au chargement. */
+const SORTIE_INVENTAIRE = 'Mise à jour inventaire';
+const TYPES_SORTIE_AGNEAU = ['Vendu', 'Mort', SORTIE_INVENTAIRE];
 
 /* Complète les champs manquants d'un objet de données (nouvelle installation,
    ancienne sauvegarde JSON, ou version antérieure de l'appli n'ayant pas
@@ -2685,7 +2691,7 @@ function verifierEidUnique(eid, exclureId = null) {
   const sheep = DB.brebis.find(s => s.id !== exclureId && cleanEid(s.eid) === c);
   if (sheep) {
     const active = (sheep.statut || 'active') === 'active';
-    const dateSortie = active ? null : dernierMouvementDate(sheep.mouvements, CATEGORIE_ANIMAL_CONFIG.brebis.typeSortie);
+    const dateSortie = active ? null : dernierMouvementDate(sheep.mouvements, CATEGORIE_ANIMAL_CONFIG.brebis.typeSortie.concat(SORTIE_INVENTAIRE));
     return {
       categorie: 'brebis', numero: numeroVisuel(sheep.eid),
       statutLabel: active ? 'une brebis active' : 'une brebis ' + sheep.statut,
@@ -2696,7 +2702,7 @@ function verifierEidUnique(eid, exclureId = null) {
   const belier = (DB.beliers || []).find(b => b.id !== exclureId && cleanEid(b.eid) === c);
   if (belier) {
     const actif = (belier.statut || 'actif') === 'actif';
-    const dateSortie = actif ? null : dernierMouvementDate(belier.mouvements, CATEGORIE_ANIMAL_CONFIG.beliers.typeSortie);
+    const dateSortie = actif ? null : dernierMouvementDate(belier.mouvements, CATEGORIE_ANIMAL_CONFIG.beliers.typeSortie.concat(SORTIE_INVENTAIRE));
     return {
       categorie: 'belier', numero: numeroVisuel(belier.eid),
       statutLabel: actif ? 'un bélier actif' : 'un bélier ' + belier.statut,
@@ -2717,11 +2723,11 @@ function verifierEidUnique(eid, exclureId = null) {
   const agneauInfo = getAgneauxInventaire().find(it => cleanEid(it.lamb.eid) === c);
   if (agneauInfo) {
     const { lamb, mereEid } = agneauInfo;
-    const sorti = lamb.statutFinal === 'vendu' || lamb.statutFinal === 'mort';
-    const dateSortie = sorti ? dernierMouvementDate(lamb.mouvements, ['Vendu', 'Mort']) : null;
+    const sorti = agneauSorti(lamb);
+    const dateSortie = sorti ? dernierMouvementDate(lamb.mouvements, TYPES_SORTIE_AGNEAU) : null;
     return {
       categorie: 'agneau', numero: numeroVisuel(lamb.eid),
-      statutLabel: 'un agneau ' + (sorti ? lamb.statutFinal : 'actif') + ' (mère n°' + numeroVisuel(mereEid) + ')',
+      statutLabel: 'un agneau ' + (sorti ? (lamb.statutFinal === 'inventaire' ? 'sorti (mise à jour inventaire)' : lamb.statutFinal) : 'actif') + ' (mère n°' + numeroVisuel(mereEid) + ')',
       dateLabel: sorti ? (dateSortie ? 'sortie le ' + formatDateFr(dateSortie) : dateLabel) : dateLabel
     };
   }
@@ -4416,6 +4422,7 @@ function recalculerStatutBrebis(sheep) {
   else if (last && last.type === 'Vente reproduction') sheep.statut = 'vendue reproduction';
   else if (last && last.type === 'Perte') sheep.statut = 'perdue';
   else if (last && last.type === 'Autoconsommation') sheep.statut = 'autoconsommée';
+  else if (last && last.type === SORTIE_INVENTAIRE) sheep.statut = 'sortie inventaire';
   else sheep.statut = 'active';
 }
 function recalculerStatutBelier(belier) {
@@ -4425,6 +4432,7 @@ function recalculerStatutBelier(belier) {
   else if (last && last.type === 'Vente reproduction') belier.statut = 'vendu reproduction';
   else if (last && last.type === 'Perte') belier.statut = 'perdu';
   else if (last && last.type === 'Autoconsommation') belier.statut = 'autoconsommé';
+  else if (last && last.type === SORTIE_INVENTAIRE) belier.statut = 'sorti inventaire';
   else belier.statut = 'actif';
 }
 // Même principe que recalculerStatutBrebis/Belier ci-dessus, mais pour
@@ -4434,11 +4442,16 @@ function recalculerStatutBelier(belier) {
 // supprimable par swipe : sans recalcul, supprimer ou modifier le
 // mouvement de sortie laissait statutFinal figé sur son ancienne valeur.
 function recalculerStatutFinalAgneau(lamb) {
-  const last = dernierMouvementParDate((lamb.mouvements || []).filter(m => m.type === 'Vendu' || m.type === 'Mort'));
+  const last = dernierMouvementParDate((lamb.mouvements || []).filter(m => TYPES_SORTIE_AGNEAU.includes(m.type)));
   if (last && last.type === 'Vendu') lamb.statutFinal = 'vendu';
   else if (last && last.type === 'Mort') lamb.statutFinal = 'mort';
+  else if (last && last.type === SORTIE_INVENTAIRE) lamb.statutFinal = 'inventaire';
   else delete lamb.statutFinal;
 }
+// Agneau sorti (devenir réglé) : vendu, mort ou sorti en « Mise à jour inventaire »
+function agneauSorti(l) { return !!l && (l.statutFinal === 'vendu' || l.statutFinal === 'mort' || l.statutFinal === 'inventaire'); }
+// Libellé court du devenir d'un agneau sorti (pastilles, fiches) ; null s'il est en attente
+function libelleSortieAgneau(l) { return !l ? null : l.statutFinal === 'vendu' ? 'Vendu' : l.statutFinal === 'mort' ? 'Mort' : l.statutFinal === 'inventaire' ? SORTIE_INVENTAIRE : null; }
 
 /* Chiffres-clé de la campagne en cours, partagés par l'Accueil (PC et mobile), le Bilan de campagne et la Saisie de mises bas :
    - Brebis attendues (troupeauAMettreBas) = brebis PRÉSENTES − vides définitives PRÉSENTES (une vide définitive sortie n'est plus dans les présentes : on ne la retire pas deux fois)
@@ -5662,6 +5675,7 @@ function bilanReproductionCampagne(N) {
         cat.nes++;
         if (mort) cat.morts++;
         else if (l.statutFinal === 'vendu') cat.vendus++;
+        else if (l.statutFinal === 'inventaire') cat.pertes = (cat.pertes || 0) + 1;   // champ absent tant qu'il n'y en a pas (résumés figés inchangés)
         else if (l.sexe === 'Femelle' && l.triStatut === 'gardée') cat.gardes++;
         else cat.presents++;
       }
@@ -5727,7 +5741,7 @@ function bilanReproductionCampagne(N) {
         if (x.type === 'Vente') m.sorties.ventes++;
         else if (x.type === 'Vente reproduction') m.sorties.ventesReproduction++;
         else if (x.type === 'Morte' || x.type === 'Mort') m.sorties.mortes++;
-        else if (x.type === 'Perte') m.sorties.pertes++;
+        else if (x.type === 'Perte' || x.type === SORTIE_INVENTAIRE) m.sorties.pertes++;
         else m.sorties.autoconsommation++;
       }
     });
@@ -5746,7 +5760,7 @@ function bilanReproductionCampagne(N) {
         if (x.type === 'Vente') mvAgnelles.sorties.ventes++;
         else if (x.type === 'Vente reproduction') mvAgnelles.sorties.ventesReproduction++;
         else if (x.type === 'Morte' || x.type === 'Mort') mvAgnelles.sorties.mortes++;
-        else if (x.type === 'Perte') mvAgnelles.sorties.pertes++;
+        else if (x.type === 'Perte' || x.type === SORTIE_INVENTAIRE) mvAgnelles.sorties.pertes++;
         else mvAgnelles.sorties.autoconsommation++;
       }
     });
@@ -6433,10 +6447,10 @@ function messageSuppressionAgnelage(agnelage) {
   }
   const lignes = vivants.map(l => {
     const num = l.eid ? 'n°' + numeroVisuel(l.eid) : 'non bouclé';
-    if (l.statutFinal === 'vendu' || l.statutFinal === 'mort') {
+    if (agneauSorti(l)) {
       const mvts = (l.mouvements || []).slice().reverse();
       const dateSortie = mvts[0] && mvts[0].date ? ' le ' + formatDateFr(mvts[0].date) : '';
-      const label = (l.statutFinal === 'vendu' ? 'déjà vendu' : 'déjà mort') + dateSortie;
+      const label = (l.statutFinal === 'vendu' ? 'déjà vendu' : l.statutFinal === 'mort' ? 'déjà mort' : 'déjà sorti (mise à jour inventaire)') + dateSortie;
       return num + ' (' + l.sexe + ', ' + label + ' — cet historique sera perdu aussi)';
     }
     return num + ' (' + l.sexe + ')';
@@ -6965,7 +6979,7 @@ function classementEchoBrebis(sheep, F) {
 // Brebis PRÉSENTE = statut « active » (les vendues, mortes, perdues, autoconsommées ne le sont plus). Règle « résultat figé » : le résultat de la dernière écho se calcule sur les échos
 // enregistrées quel que soit le statut actuel de la brebis ; seule la liste « À repasser à l'écho » (R.videAPasser) et « Sans échographie » ne concernent que les brebis présentes.
 function estBrebisPresente(s) { return (s.statut || 'active') === 'active'; }
-const LIBELLE_STATUT_SORTIE = { morte: 'Morte', vendue: 'Vendue', 'vendue reproduction': 'Vendue repro.', perdue: 'Perdue', 'autoconsommée': 'Autoconsommée' };
+const LIBELLE_STATUT_SORTIE = { morte: 'Morte', vendue: 'Vendue', 'vendue reproduction': 'Vendue repro.', perdue: 'Perdue', 'autoconsommée': 'Autoconsommée', 'sortie inventaire': 'Mise à jour inventaire' };
 function libelleStatutBrebis(s) { const st = s.statut || 'active'; return LIBELLE_STATUT_SORTIE[st] || (st.charAt(0).toUpperCase() + st.slice(1)); }
 function echoRepartitionVide() {
   return { total: 0, videAPasser: 0, derniereDate: '', pleine: 0, stades: { 'Début': 0, 'Milieu': 0, 'Fin': 0, 'IA': 0, 'Retour 1': 0, 'Retour 2': 0, 'Tardive': 0, nonPrecise: 0 },
@@ -7311,8 +7325,8 @@ function causesTriees(compte) {
 function attendueTraiteMotif(sheep) {
   const lambs = getLambsUnderSheep(sheep, DB.brebis);
   let dernier = null;
-  lambs.forEach(l => (l.mouvements || []).forEach(m => { if ((m.type === 'Vendu' || m.type === 'Mort') && m.date && (!dernier || m.date > dernier.date)) dernier = { type: m.type, date: m.date }; }));
-  if (dernier) return dernier.type === 'Vendu' ? { motif: 'Agneau vendu', ton: 'p-n', date: dernier.date } : { motif: 'Agneau mort', ton: 'p-a', date: dernier.date };
+  lambs.forEach(l => (l.mouvements || []).forEach(m => { if (TYPES_SORTIE_AGNEAU.includes(m.type) && m.date && (!dernier || m.date > dernier.date)) dernier = { type: m.type, date: m.date }; }));
+  if (dernier) return dernier.type === 'Vendu' ? { motif: 'Agneau vendu', ton: 'p-n', date: dernier.date } : dernier.type === 'Mort' ? { motif: 'Agneau mort', ton: 'p-a', date: dernier.date } : { motif: 'Agneau sorti (inventaire)', ton: 'p-n', date: dernier.date };
   const dateAgn = (sheep.agnelages || []).map(a => a.date || '').sort().pop() || '';
   if (lambs.every(l => l.sexe === 'Mort-né')) return { motif: 'Mort-né', ton: 'p-a', date: dateAgn };
   if (lambs.some(l => l.sexe === 'Femelle' && l.triStatut === 'gardée')) return { motif: 'Agnelle gardée', ton: 'p-g', date: dateAgn };
@@ -9142,14 +9156,15 @@ function bilanReproductionDesktopHtml() {
   const g4 = f => cols.map(f);
   const lig4 = (cls, label, vals) => `<tr class="${cls}"><td>${label}</td>${vals.map(v => `<td>${v}</td>`).join('')}<td class="tot">${vals.reduce((s, v) => s + v, 0)}</td></tr>`;
   const nesV = g4(c => c.nes), mortsV = g4(c => c.morts), vendusV = g4(c => c.vendus), gardesV = g4(c => c.gardes || 0), presV = g4(c => c.presents);
-  const sortisV = nesV.map((v, i) => mortsV[i] + vendusV[i] + gardesV[i]);
+  const pertesV = g4(c => c.pertes || 0);   // sortis en « Mise à jour inventaire » (ligne affichée seulement s'il y en a)
+  const sortisV = nesV.map((v, i) => mortsV[i] + vendusV[i] + gardesV[i] + pertesV[i]);
   const carteMvAgneaux = `<div class="card">
     <p class="brd-ttl">Mouvements des agneaux</p>
     <p class="brd-note">Agneaux nés pendant la campagne, quelle que soit la date de leur sortie · « renouvelés » : femelles gardées pour le renouvellement${T.nes.mortNes ? ' · ' + T.nes.mortNes + ' mort' + (T.nes.mortNes > 1 ? 's' : '') + '-né' + (T.nes.mortNes > 1 ? 's' : '') + ' non compté' + (T.nes.mortNes > 1 ? 's' : '') + ' dans les nés vivants' : ''}</p>
     <table class="brd-t"><colgroup><col style="width:28%"><col style="width:14%"><col style="width:14%"><col style="width:14%"><col style="width:14%"><col style="width:16%"></colgroup>
       <tr><th></th><th colspan="2" style="text-align:center;">Adultes</th><th colspan="2" style="text-align:center;" class="ant">Antenaises</th><th class="tot">Total</th></tr>
       <tr><th></th><th>F</th><th>M</th><th class="ant">F</th><th class="ant">M</th><th class="tot"></th></tr>
-      ${lig4('b', 'Nés vivants', nesV)}${lig4('b', 'Sortis', sortisV)}${lig4('i', 'Morts', mortsV)}${lig4('i', 'Vendus', vendusV)}${lig4('i', 'Renouvelés', gardesV)}${lig4('b', 'Actifs', presV)}
+      ${lig4('b', 'Nés vivants', nesV)}${lig4('b', 'Sortis', sortisV)}${lig4('i', 'Morts', mortsV)}${lig4('i', 'Vendus', vendusV)}${lig4('i', 'Renouvelés', gardesV)}${pertesV.some(v => v) ? lig4('i', 'Pertes (inventaire)', pertesV) : ''}${lig4('b', 'Actifs', presV)}
     </table>
   </div>`;
 
@@ -9650,7 +9665,7 @@ function renderMouvementsPc() {
    cours (depuis la date de bascule, comme l'ancien affichage) ; autres campagnes et « Toutes » au choix. Annuler (mouvement ou lot) : TOUJOURS avec
    confirmation, l'animal retrouve son statut précédent ; agnelles (archivées) et animaux archivés : pas de bouton (non annulable
    automatiquement). Lecture seule tant qu'on n'a pas confirmé une annulation. */
-const TYPES_SORTIE_MV = ['Morte', 'Mort', 'Vente', 'Vendu', 'Vente reproduction', 'Perte', 'Autoconsommation'];
+const TYPES_SORTIE_MV = ['Morte', 'Mort', 'Vente', 'Vendu', 'Vente reproduction', 'Perte', 'Autoconsommation', SORTIE_INVENTAIRE];
 const CLE_CATEGORIE_MV = { 'Brebis': 'brebis', 'Bélier': 'beliers', 'Agnelle': 'agnelles', 'Agneau': 'agneaux' };
 let mvPassesEtat = { cats: { brebis: true, beliers: true, agnelles: true, agneaux: true }, type: '', periode: 'courante', acheteur: '', q: '', toutVoir: false };
 function mouvementsPassesPc() {
@@ -9699,7 +9714,7 @@ function membresArchivesLot(lot) {
   const poolEids = new Set(poolLectureMv(lot.categorie || 'brebis').map(a => a.eid));
   return (lot.membres || []).filter(eid => !poolEids.has(eid));
 }
-const estLotSystemeMv = lot => !!lot && lot.cause === MOTIF_MAJ_INVENTAIRE;
+const estLotSystemeMv = lot => !!lot && (lot.type === SORTIE_INVENTAIRE || lot.cause === MOTIF_MAJ_INVENTAIRE);   // nouveau type, ou ancien lot « Morte » à ce motif
 function recalculerApresAnnulationMv(cle, animal) {
   if (cle === 'beliers') recalculerStatutBelier(animal); else if (cle === 'agneaux') recalculerStatutFinalAgneau(animal); else recalculerStatutBrebis(animal);
 }
@@ -10277,7 +10292,7 @@ function renderMajInventaire() {
    pour que l'écran d'édition d'un mouvement (voir renderAddMouvement)
    affiche bien le chip correspondant au lieu de perdre silencieusement la
    cause à la prochaine sauvegarde (chip introuvable -> non sélectionné). */
-const MOTIF_MAJ_INVENTAIRE = 'Mise à jour inventaire';
+const MOTIF_MAJ_INVENTAIRE = SORTIE_INVENTAIRE;   // motif des anciennes sorties « Morte » et des entrées créées par le bipage
 
 /* Calcul pur du rapprochement -- aucune écriture dans DB ici. Réutilise
    verifierEidUnique() (déjà partagé par toute l'appli) plutôt que de
@@ -10424,13 +10439,13 @@ function renderMajInventaireValidation() {
       const dateJour = jourAujourdhuiISO();
 
       if (aSortir.length > 0) {
-        if (!DB.causesMortalite.includes(MOTIF_MAJ_INVENTAIRE)) DB.causesMortalite.push(MOTIF_MAJ_INVENTAIRE);
+        // Type de sortie « Mise à jour inventaire » (ce n'est pas une mort) : aucune cause, aucune entrée dans les causes de mortalité
         const collectifId = 'MC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
-        aSortir.forEach(s => CATEGORIE_ANIMAL_CONFIG.brebis.applySortie(s, 'Morte', MOTIF_MAJ_INVENTAIRE, null, dateJour, collectifId));
+        aSortir.forEach(s => CATEGORIE_ANIMAL_CONFIG.brebis.applySortie(s, SORTIE_INVENTAIRE, null, null, dateJour, collectifId));
         DB.mouvementsCollectifs = DB.mouvementsCollectifs || [];
         DB.mouvementsCollectifs.push({
           id: collectifId, categorie: 'brebis', annulable: true,
-          type: 'Morte', cause: MOTIF_MAJ_INVENTAIRE, acheteur: null,
+          type: SORTIE_INVENTAIRE, cause: null, acheteur: null,
           date: dateJour, membres: aSortir.map(s => s.eid), createdAt: Date.now()
         });
       }
@@ -10440,7 +10455,7 @@ function renderMajInventaireValidation() {
         // Même effet que le glisser-suppression déjà disponible sur la
         // fiche (voir deleteItem) : retire le(s) mouvement(s) de sortie,
         // conserve tout le reste (dont un éventuel mouvement "Entrée").
-        s.mouvements = (s.mouvements || []).filter(m => !CATEGORIE_ANIMAL_CONFIG.brebis.typeSortie.includes(m.type));
+        s.mouvements = (s.mouvements || []).filter(m => !CATEGORIE_ANIMAL_CONFIG.brebis.typeSortie.includes(m.type) && m.type !== SORTIE_INVENTAIRE);
         recalculerStatutBrebis(s);
       });
 
@@ -10551,7 +10566,7 @@ function htmlLienMereAdoptive(lamb, cssClass) {
 function isLambResolved(l) {
   if (l.sexe === 'Mort-né') return true;
   if (l.sexe === 'Femelle' && l.triStatut === 'gardée') return true;
-  if (l.statutFinal === 'vendu' || l.statutFinal === 'mort') return true;
+  if (agneauSorti(l)) return true;
   return false;
 }
 
@@ -10652,9 +10667,9 @@ function showLambSortieModal(lamb, type, onDone) {
    pour les agnelles) : retire le dernier mouvement de sortie correspondant
    et remet l'agneau "en attente de devenir". */
 function annulerSortieLamb(lamb, onDone) {
-  const label = lamb.statutFinal === 'vendu' ? 'cette vente' : 'cette mort';
+  const label = lamb.statutFinal === 'vendu' ? 'cette vente' : lamb.statutFinal === 'inventaire' ? 'cette sortie (mise à jour inventaire)' : 'cette mort';
   if (!confirm('Annuler ' + label + ' ? L\'agneau n°' + (lamb.eid ? numeroVisuel(lamb.eid) : '?') + ' repassera "en attente de devenir".')) return;
-  const matchType = lamb.statutFinal === 'vendu' ? 'Vendu' : 'Mort';
+  const matchType = lamb.statutFinal === 'vendu' ? 'Vendu' : lamb.statutFinal === 'inventaire' ? SORTIE_INVENTAIRE : 'Mort';
   if (Array.isArray(lamb.mouvements)) {
     const idx = lamb.mouvements.map(m => m.type).lastIndexOf(matchType);
     if (idx !== -1) lamb.mouvements.splice(idx, 1);
@@ -10906,7 +10921,7 @@ function getAgneauxActifsInventaire() {
       a.lambs.forEach(l => {
         if (l.sexe === 'Mort-né') return;
         if (!l.eid) return; // pas bouclé — pas d'EID à afficher
-        if (l.statutFinal === 'vendu' || l.statutFinal === 'mort') return;
+        if (agneauSorti(l)) return;
         // sexe ajouté (chantier "Accueil desktop") pour le détail mâles/
         // femelles du compteur -- champ en plus, aucun appelant existant
         // ne s'en trouve affecté (ils ne lisent que .eid/.mereEid).
@@ -10919,8 +10934,8 @@ function getAgneauxActifsInventaire() {
 
 /* Onglet affiché de la liste Agneaux mobile (charte) : 'attente' | 'vendus' | 'morts'. */
 let agneauxMobileTab = 'attente';
-const AGNEAUX_ONGLETS = [['attente', 'En attente'], ['vendus', 'Vendus'], ['morts', 'Morts']];
-function agneauOnglet(lamb) { return lamb.statutFinal === 'vendu' ? 'vendus' : lamb.statutFinal === 'mort' ? 'morts' : 'attente'; }
+const AGNEAUX_ONGLETS = [['attente', 'En attente'], ['vendus', 'Vendus'], ['morts', 'Morts'], ['inventaire', 'Inventaire']];   // « Inventaire » affiché seulement s'il y a des agneaux sortis en mise à jour inventaire
+function agneauOnglet(lamb) { return lamb.statutFinal === 'vendu' ? 'vendus' : lamb.statutFinal === 'mort' ? 'morts' : lamb.statutFinal === 'inventaire' ? 'inventaire' : 'attente'; }
 
 /* Liste Agneaux mobile (charte) : segmenté En attente / Vendus / Morts avec effectifs, une carte par agneau
    (n° + sexe, pastille de statut, « Né le … · mère n°… »), boutons Vendu / Mort ou « Annuler cette sortie »,
@@ -10934,19 +10949,21 @@ function renderAgneauxMobile(items) {
     pendingHighlightLambEid = null;
     if (cibleIdx !== -1) agneauxMobileTab = agneauOnglet(items[cibleIdx].lamb);
   }
-  const effectifs = { attente: 0, vendus: 0, morts: 0 };
+  const effectifs = { attente: 0, vendus: 0, morts: 0, inventaire: 0 };
   items.forEach(it => { effectifs[agneauOnglet(it.lamb)]++; });
-  const onglets = `<div class="tab-bar bc-onglets ag-onglets">${AGNEAUX_ONGLETS.map(([k, l]) =>
+  if (agneauxMobileTab === 'inventaire' && !effectifs.inventaire) agneauxMobileTab = 'attente';
+  const onglets = `<div class="tab-bar bc-onglets ag-onglets">${AGNEAUX_ONGLETS.filter(([k]) => k !== 'inventaire' || effectifs.inventaire).map(([k, l]) =>
     `<button type="button" class="tab-btn${agneauxMobileTab === k ? ' active' : ''}" data-tab="${k}">${l} (${effectifs[k]})</button>`).join('')}</div>`;
-  const vides = { attente: 'Aucun agneau en attente de devenir.', vendus: 'Aucun agneau vendu.', morts: 'Aucun agneau mort.' };
+  const vides = { attente: 'Aucun agneau en attente de devenir.', vendus: 'Aucun agneau vendu.', morts: 'Aucun agneau mort.', inventaire: 'Aucun agneau sorti en mise à jour inventaire.' };
   const cartes = items.map((it, i) => ({ it, i })).filter(({ it }) => agneauOnglet(it.lamb) === agneauxMobileTab).map(({ it, i }) => {
     const l = it.lamb;
-    const sortie = l.statutFinal === 'vendu' || l.statutFinal === 'mort';
-    const mv = sortie ? (l.mouvements || []).slice().reverse().find(m => m.type === (l.statutFinal === 'vendu' ? 'Vendu' : 'Mort')) : null;
+    const sortie = agneauSorti(l);
+    const mv = sortie ? (l.mouvements || []).slice().reverse().find(m => m.type === (l.statutFinal === 'vendu' ? 'Vendu' : l.statutFinal === 'inventaire' ? SORTIE_INVENTAIRE : 'Mort')) : null;
     const ligneSortie = !sortie ? '' : l.statutFinal === 'vendu'
       ? `Vendu${mv && mv.date ? ' le ' + dateCourteMobile(mv.date) : ''}${mv && mv.acheteur ? ' · ' + echapperHtml(mv.acheteur) : ''}`
+      : l.statutFinal === 'inventaire' ? `Sorti en mise à jour inventaire${mv && mv.date ? ' le ' + dateCourteMobile(mv.date) : ''}`
       : `Mort${mv && mv.date ? ' le ' + dateCourteMobile(mv.date) : ''}${mv && mv.cause && mv.cause !== 'Mort' ? ' · ' + echapperHtml(mv.cause) : ''}`;
-    const pastille = l.statutFinal === 'vendu' ? '<span class="reg-pastille bleu">Vendu</span>' : l.statutFinal === 'mort' ? '<span class="reg-pastille rouge">Mort</span>' : '<span class="reg-pastille ambre">En attente</span>';
+    const pastille = l.statutFinal === 'vendu' ? '<span class="reg-pastille bleu">Vendu</span>' : l.statutFinal === 'mort' ? '<span class="reg-pastille rouge">Mort</span>' : l.statutFinal === 'inventaire' ? '<span class="reg-pastille gris">Inventaire</span>' : '<span class="reg-pastille ambre">En attente</span>';
     return `<div class="card ag-carte" id="agneau-item-${i}" data-i="${i}">
       <div class="ag-top">
         <span class="al-num">n°${numeroVisuel(l.eid)}</span>
@@ -11027,8 +11044,8 @@ function renderAgneaux() {
     ? '<div class="empty">Aucun agneau bouclé pour l\'instant.</div>'
     : items.map((it, i) => {
       const resolved = isLambResolved(it.lamb);
-      const sortieDecidee = it.lamb.statutFinal === 'vendu' || it.lamb.statutFinal === 'mort';
-      const badge = it.lamb.statutFinal === 'vendu' ? 'Vendu' : it.lamb.statutFinal === 'mort' ? 'Mort' : 'En attente';
+      const sortieDecidee = agneauSorti(it.lamb);
+      const badge = libelleSortieAgneau(it.lamb) || 'En attente';
       const mvts = (it.lamb.mouvements || []).slice().reverse();
       const mvtHtml = mvts.length === 0 ? '' : `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">${mvts.map(m => `<div style="margin-bottom:4px;"><span class="badge badge-muted" style="margin-right:6px;">${m.type}</span>${m.acheteur ? `<span style="font-size:12.5px;">Acheteur : <strong>${echapperHtml(m.acheteur)}</strong></span> ` : ''}<span style="font-size:12px;color:var(--text-muted);">${formatDateFr(m.date)}</span></div>`).join('')}</div>`;
       return `
@@ -11558,11 +11575,10 @@ function renderDetail(id) {
   });
   const devenirHtml = allLiveLambs.map((l, i) => {
     const resolved = isLambResolved(l);
-    const sortieDecidee = l.statutFinal === 'vendu' || l.statutFinal === 'mort';
+    const sortieDecidee = agneauSorti(l);
     let badge = '';
     if (l.sexe === 'Femelle' && l.triStatut === 'gardée') badge = 'Renouvelée';
-    else if (l.statutFinal === 'vendu') badge = 'Vendu';
-    else if (l.statutFinal === 'mort') badge = 'Mort';
+    else if (sortieDecidee) badge = libelleSortieAgneau(l);
     return `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
         <div style="display:flex;align-items:center;gap:10px;">
@@ -14912,7 +14928,7 @@ function getCandidatesATrier() {
       ag.lambs.forEach(l => {
         // Un agneau déjà vendu ou mort (déclaré depuis "Devenir des agneaux")
         // n'a plus vocation à être trié, même s'il n'a jamais eu de triStatut.
-        if (l.sexe === 'Femelle' && l.eid && !l.triStatut && l.statutFinal !== 'vendu' && l.statutFinal !== 'mort') {
+        if (l.sexe === 'Femelle' && l.eid && !l.triStatut && !agneauSorti(l)) {
           candidates.push({ lamb: l, motherEid: sheep.eid, date: ag.date });
         }
       });
@@ -14926,7 +14942,7 @@ function getEcartees() {
   DB.brebis.forEach(sheep => {
     (sheep.agnelages || []).forEach(ag => {
       ag.lambs.forEach(l => {
-        if (l.sexe === 'Femelle' && l.eid && l.triStatut === 'écartée' && l.statutFinal !== 'vendu' && l.statutFinal !== 'mort') {
+        if (l.sexe === 'Femelle' && l.eid && l.triStatut === 'écartée' && !agneauSorti(l)) {
           list.push({ lamb: l, motherEid: sheep.eid, date: ag.date });
         }
       });
@@ -15071,7 +15087,7 @@ function triAgnellesDonnees() {
 function incoherencesTriAgnelles() {
   const res = [], eidsFiches = new Set((DB.agnelles || []).map(a => cleanEid(a.eid)));
   DB.brebis.forEach(sh => (sh.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => {
-    if (l.sexe === 'Femelle' && l.eid && l.triStatut === 'gardée' && l.statutFinal !== 'vendu' && l.statutFinal !== 'mort' && !eidsFiches.has(cleanEid(l.eid)) && !registreContientAgnelle(l.eid))
+    if (l.sexe === 'Femelle' && l.eid && l.triStatut === 'gardée' && !agneauSorti(l) && !eidsFiches.has(cleanEid(l.eid)) && !registreContientAgnelle(l.eid))
       res.push({ type: 'gardée sans fiche d\'agnelle', eid: l.eid, numero: numeroVisuel(l.eid), mere: numeroVisuel(sh.eid) });
   })));
   (DB.agnelles || []).forEach(a => { if (a.origine === 'née') { const l = findLambByEid(a.eid); if (l && l.triStatut !== 'gardée') res.push({ type: 'fiche d\'agnelle née dont l\'agneau n\'est plus « gardé »', eid: a.eid, numero: numeroVisuel(a.eid), mere: a.motherEid ? numeroVisuel(a.motherEid) : '-' }); } });
@@ -15963,8 +15979,8 @@ function renderAgneauDetail() {
     </div>
   `).join('');
 
-  const sortieDecidee = lamb.statutFinal === 'vendu' || lamb.statutFinal === 'mort';
-  const statutBadge = lamb.statutFinal === 'vendu' ? 'Vendu' : lamb.statutFinal === 'mort' ? 'Mort' : 'En attente';
+  const sortieDecidee = agneauSorti(lamb);
+  const statutBadge = libelleSortieAgneau(lamb) || 'En attente';
 
   const desktop = isDesktopMode();
   const desktopHeaderHtml = !desktop ? '' : `
@@ -19165,7 +19181,7 @@ const CATEGORIE_ANIMAL_CONFIG = {
   agneaux: {
     label: 'Agneaux', tous: 'Tous les', actives: 'actifs', singulier: 'un agneau',
     pool: () => getAgneauxInventaire().map(it => { it.lamb.id = it.lamb.id || it.lamb.eid; return it.lamb; }),
-    isActive: l => l.statutFinal !== 'vendu' && l.statutFinal !== 'mort',
+    isActive: l => !agneauSorti(l),
     typeSortie: ['Vendu', 'Mort'],
     motifsVente: ['Vendu'],
     annulable: true,
@@ -19201,6 +19217,8 @@ const CATEGORIE_TABS_COLLECTIF = [...CATEGORIE_TABS, { key: 'agneaux', label: 'A
    renderAddMouvementAgnelle/renderAddMouvementAgneau). */
 function mouvementFormHtml(animalLabel, typeSortie, existing) {
   const today = existing ? existing.date : jourAujourdhuiISO();
+  // « Mise à jour inventaire » n'est jamais proposée à la saisie ; on la montre seulement pour modifier (la date) d'un mouvement qui l'a déjà
+  if (existing && existing.type === SORTIE_INVENTAIRE && !typeSortie.includes(SORTIE_INVENTAIRE)) typeSortie = typeSortie.concat(SORTIE_INVENTAIRE);
   return `
     <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">${animalLabel}</div>
 
@@ -19238,6 +19256,7 @@ function mouvementFormHtml(animalLabel, typeSortie, existing) {
 function wireMouvementForm(opts) {
   const { typeSortie, motifsVente, existing, dateEntreeRef, erreurDateAnterieure, onSave } = opts;
   const cleCauses = opts.cleCauses || 'causesMortalite';
+  const sansCause = t => motifsVente.includes(t) || t === SORTIE_INVENTAIRE;   // vente : acheteur ; mise à jour inventaire : ni cause ni acheteur
   // brebis seulement (opts.alerteTraite) : sortie d'une brebis dont la traite n'est pas renseignée = message ambre, jamais un blocage
   const majAlerteTraite = () => {
     if (!opts.alerteTraite) return;
@@ -19292,7 +19311,7 @@ function wireMouvementForm(opts) {
       cause = null; acheteur = null;
       document.querySelectorAll('.type-opt').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
-      document.getElementById('cause-block').classList.toggle('hidden', motifsVente.includes(type));
+      document.getElementById('cause-block').classList.toggle('hidden', sansCause(type));
       document.getElementById('acheteur-block').classList.toggle('hidden', !motifsVente.includes(type));
       renderCauseChips(); renderAcheteurChips();
       document.getElementById('err').classList.add('hidden');
@@ -19300,7 +19319,7 @@ function wireMouvementForm(opts) {
       majAlerteTraite();
     };
   });
-  if (type && !motifsVente.includes(type)) document.getElementById('cause-block').classList.remove('hidden');
+  if (type && !sansCause(type)) document.getElementById('cause-block').classList.remove('hidden');
   if (type && motifsVente.includes(type)) document.getElementById('acheteur-block').classList.remove('hidden');
 
   document.getElementById('add-cause').onclick = () => {
@@ -19329,7 +19348,7 @@ function wireMouvementForm(opts) {
       return;
     }
     err.classList.add('hidden');
-    onSave({ type, cause: motifsVente.includes(type) ? null : cause, acheteur, date: dateMouvement });
+    onSave({ type, cause: sansCause(type) ? null : cause, acheteur, date: dateMouvement });
   };
 }
 
@@ -19704,7 +19723,7 @@ function animauxEligiblesCarnet() {
   // les objets DB (régression trouvée par test_pc_bio_soins_existants : « affichage seul » comparait DB avant/après).
   getAgneauxInventaire().forEach(it => {
     const l = it.lamb;
-    if (l.statutFinal === 'vendu' || l.statutFinal === 'mort') return;
+    if (agneauSorti(l)) return;
     out.push(item(l, 'agneaux', 'Agneau', '—'));
   });
   return out.sort(comparerAnimauxAgeNumero);   // règle habituelle des tableaux d'animaux : âge décroissant, puis n° croissant à âge égal
@@ -21782,7 +21801,7 @@ function dernierMouvementDate(mouvements, types) {
 // restait donc compté à tort dans l'effectif présent à une date donnée.
 // Vente/Vente reproduction (motif désormais commun aux 3 catégories) +
 // Morte/Mort (accord de genre conservé) + Perte/Autoconsommation.
-const TYPES_SORTIE = ['Vente', 'Vente reproduction', 'Morte', 'Mort', 'Perte', 'Autoconsommation'];
+const TYPES_SORTIE = ['Vente', 'Vente reproduction', 'Morte', 'Mort', 'Perte', 'Autoconsommation', SORTIE_INVENTAIRE];
 
 /* Fusion actifs + archivés dédiée au Registre PAC — même principe que
    registreEntriesFor() (juste au-dessus) mais SANS y toucher (partagée
@@ -22149,7 +22168,7 @@ function registrePastille(texte, teinte) { return `<span class="reg-pastille ${t
 function registreCarteHtml(num, cat, pastille, date, ligne2, campagneHtml) {
   return `<div class="reg-ligne"><div class="reg-l1"><span class="reg-num">${num}</span>${cat ? `<span class="reg-cat">${cat}</span>` : ''}${pastille}<span class="reg-date">${date}</span></div>${ligne2 ? `<div class="reg-l2">${ligne2}</div>` : ''}<div class="reg-l3">${campagneHtml}</div></div>`;
 }
-function registreTeinteMouvement(type) { return type === 'Entrée' ? 'vert' : /^Vent/.test(type) ? 'bleu' : ['Mort', 'Morte', 'Perte'].includes(type) ? 'rouge' : 'ambre'; }
+function registreTeinteMouvement(type) { return type === SORTIE_INVENTAIRE ? 'gris' : type === 'Entrée' ? 'vert' : /^Vent/.test(type) ? 'bleu' : ['Mort', 'Morte', 'Perte'].includes(type) ? 'rouge' : 'ambre'; }
 function registreTeinteSoin(type) { const t0 = String(type || '').split(' · ')[0]; return t0 === 'Vaccin' ? 'vert' : t0 === 'Traitement' ? 'bleu' : 'ambre'; }
 function registreMobileVue(view, filtreNumero, colFiltres) {
   if (view === 'agnelage') {
@@ -23771,10 +23790,11 @@ function buildBilanCompletPdfBytes(N) {
   const v4 = f => cols.map(f);
   const ligne4 = (cls, label, v) => ({ b: cls === 'b', i: cls === 'i', cells: [label].concat(v.map(String), [String(v.reduce((s, x) => s + x, 0))]) });
   const nesV = v4(x => x.nes), mortsV = v4(x => x.morts), vendusV = v4(x => x.vendus), gardesV = v4(x => x.gardes || 0), presV = v4(x => x.presents);
+  const pertesV = v4(x => x.pertes || 0);   // sortis en « Mise à jour inventaire » (ligne seulement s'il y en a)
   assurer(120);
   titre(L, 'Mouvements des agneaux', 'Agneaux nés pendant la campagne (toute date de sortie) · renouvelés = femelles gardées' + (T.nes.mortNes ? ' · ' + T.nes.mortNes + ' mort(s)-né(s) hors nés vivants' : ''));
   tableau({ x: L, largeurs: [150, 66, 66, 66, 66, 101], tailleEntete: 6.5, entete: ['Agneaux', 'Adultes F', 'Adultes M', 'Antenaises F', 'Antenaises M', 'Total'],
-    lignes: [ligne4('b', 'Nés vivants', nesV), ligne4('b', 'Sortis', nesV.map((_, i) => mortsV[i] + vendusV[i] + gardesV[i])), ligne4('i', 'Morts', mortsV), ligne4('i', 'Vendus', vendusV), ligne4('i', 'Renouvelés', gardesV), ligne4('b', 'Actifs', presV)] });
+    lignes: [ligne4('b', 'Nés vivants', nesV), ligne4('b', 'Sortis', nesV.map((_, i) => mortsV[i] + vendusV[i] + gardesV[i] + pertesV[i])), ligne4('i', 'Morts', mortsV), ligne4('i', 'Vendus', vendusV), ligne4('i', 'Renouvelés', gardesV)].concat(pertesV.some(v => v) ? [ligne4('i', 'Pertes (inventaire)', pertesV)] : [], [ligne4('b', 'Actifs', presV)]) });
   y -= 14;
 
   // ---- points de données à vérifier + formules
@@ -24168,7 +24188,7 @@ function registreIndicateursPc() {
   return {
     animaux,
     sanitaire: { soins: san.length, traitements: san.filter(r => typeSoin(r) === 'Traitement').length, vaccins: san.filter(r => typeSoin(r) === 'Vaccin').length, autres: san.filter(r => !['Traitement', 'Vaccin'].includes(typeSoin(r))).length },
-    mouvements: { total: mvt.length, entrees: mvt.filter(r => r.type === 'Entrée').length, ventes: mvt.filter(r => /^Vent/.test(r.type)).length, morts: mvt.filter(r => ['Mort', 'Morte', 'Perte'].includes(r.type)).length, autres: mvt.filter(r => r.type !== 'Entrée' && !/^Vent/.test(r.type) && !['Mort', 'Morte', 'Perte'].includes(r.type)).length },
+    mouvements: { total: mvt.length, entrees: mvt.filter(r => r.type === 'Entrée').length, ventes: mvt.filter(r => /^Vent/.test(r.type)).length, morts: mvt.filter(r => ['Mort', 'Morte', 'Perte', SORTIE_INVENTAIRE].includes(r.type)).length, autres: mvt.filter(r => r.type !== 'Entrée' && !/^Vent/.test(r.type) && !['Mort', 'Morte', 'Perte', SORTIE_INVENTAIRE].includes(r.type)).length },   // mise à jour inventaire : avec les pertes
     agnelage: { agneaux: agn.length, males: agn.filter(r => r.sexe === 'Mâle').length, femelles: agn.filter(r => r.sexe === 'Femelle').length, mortNes: agn.filter(r => r.sexe === 'Mort-né').length }
   };
 }
@@ -26045,11 +26065,11 @@ function verifierDoublonHorsPerimetreNouvelAnimal(eidVal) {
   const agneauInfo = getAgneauxInventaire().find(it => eidAffichageCourt(it.lamb.eid) === v);
   if (agneauInfo) {
     const { lamb, mereEid } = agneauInfo;
-    const sorti = lamb.statutFinal === 'vendu' || lamb.statutFinal === 'mort';
-    const dateSortie = sorti ? dernierMouvementDate(lamb.mouvements, ['Vendu', 'Mort']) : null;
+    const sorti = agneauSorti(lamb);
+    const dateSortie = sorti ? dernierMouvementDate(lamb.mouvements, TYPES_SORTIE_AGNEAU) : null;
     return {
       categorie: 'agneau', numero: numeroVisuel(lamb.eid),
-      statutLabel: 'un agneau ' + (sorti ? lamb.statutFinal : 'actif') + ' (mère n°' + numeroVisuel(mereEid) + ')',
+      statutLabel: 'un agneau ' + (sorti ? (lamb.statutFinal === 'inventaire' ? 'sorti (mise à jour inventaire)' : lamb.statutFinal) : 'actif') + ' (mère n°' + numeroVisuel(mereEid) + ')',
       dateLabel: sorti ? (dateSortie ? 'sortie le ' + formatDateFr(dateSortie) : dateLabel) : dateLabel
     };
   }
