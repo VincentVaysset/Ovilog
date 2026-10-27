@@ -18,7 +18,10 @@ const MIGRES = {
   registre_mouvements: { paysage: true, ajouts: ['Registre', "d'élevage", 'Mouvements', 'Animaux', 'au', 'registre', 'Actifs', 'Entrées', 'Sorties'] },
   registre_sanitaire: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] },
   traitements12: { paysage: true, ajouts: ['Animaux', 'actifs', 'brebis,', 'antenaises,', 'béliers', 'Aucun', 'traitement', 'compté', 'et', 'plus', 'seuil', 'dépassé', '%', 'Traitements', 'sur', '12', 'mois', 'suivi', 'bio', 'Ovilog'] },
-  sous_delai: { paysage: false, ajouts: ["Sous", "délai", "d'attente", 'lait'] },
+  // regroupement voulu (une ligne par BREBIS avec tous ses produits, compteur en brebis) : « 3 traitement(s) » devient « 2 brebis sous délai », la 2e ligne de
+  // n°00018 et son « 6 » (jours restants du 1er soin) disparaissent, les colonnes « Produit » et « Date du soin » deviennent « Produits (soin, fin du délai) »
+  sous_delai: { paysage: false, ajouts: ["Sous", "délai", "d'attente", 'lait', 'brebis', 'sous', 'Produits', '(soin,', 'fin', 'du', 'délai)', 'soin', ';'],
+    ignorer: ['traitement(s)', 'Produit', 'Date'], tolerer: { 3: 1, 6: 1, 'n°00018': 1 } },
   controle_laitier: { paysage: true, ajouts: ['Contrôle', 'laitier'], ignorer: ['undefined'], tolerer: { 0: 1, 2550: 1, 2985: 1, '(mL)': 1, Cumul: 1, campagne: 1 } },   // l'ancien PDF imprimait le mot « undefined » comme sous-titre (défaut) : retiré ; colonne « Cumul campagne (mL) » retirée à la demande (colonnes = écran : N° court, Date de mise bas, C1, C2, C3), son titre et ses 3 valeurs (0, 2550, 2985) disparaissent
   bilan_lactation: { paysage: false, ajouts: ['Litrage', 'total', 'produit', 'L', 'Brebis', 'passées', 'à', 'la', 'traite', '/', 'brebis',
     // deux histogrammes mensuels ajoutés au PDF (mêmes barres que la page PC)

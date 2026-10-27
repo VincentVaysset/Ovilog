@@ -2401,16 +2401,9 @@ function addDaysToDateStr(dateStr, days) {
    l'ancienne intégration ANMV (retirée). */
 function sanitaireDateHtml(s) {
   const dateTxt = formatDateFr(s.date);
-  if (elevageBioActif()) {   // élevage bio : délai appliqué figé dans le soin, sinon délai légal doublé (voir delaiLaitDernierJourSoin)
-    const fin = delaiLaitDernierJourSoin(s);
-    return fin ? dateTxt + ' · délai d\'attente lait jusqu\'au ' + formatDateFr(fin) : dateTxt;
-  }
-  const info = DB.produitsInfo[s.produit];
-  const delai = info && info.delaiAttente;
-  if (delai !== null && delai !== undefined && s.date) {
-    return dateTxt + ' · délai d\'attente lait jusqu\'au ' + formatDateFr(addDaysToDateStr(s.date, delai));
-  }
-  return dateTxt;
+  // délai appliqué (bio : figé dans le soin ou légal doublé / 48 h ; hors bio : délai du produit) ; délai 0 : aucune attente, rien d'affiché
+  const fin = delaiLaitDernierJourSoin(s);
+  return fin ? dateTxt + ' · délai d\'attente lait jusqu\'au ' + formatDateFr(fin) : dateTxt;
 }
 
 /* ---------- Utilitaires EID ---------- */
@@ -20970,28 +20963,27 @@ function renderAddOrdonnance() {
    bio (hors bio : calcul d'origine inchangé, date du soin + delaiAttente du produit). Priorité : 1) délai APPLIQUÉ figé dans le soin
    (+ durée de la cure) ; 2) à défaut (ancien soin sans délai figé) : délai légal du produit, doublé (minimum 48 h selon son option).
    Retourne null si aucun délai n'est connu. */
+// Délai 0 (aucune attente réelle : hors bio, ou en bio sans « minimum 48 h ») : null, le soin n'est jamais « sous délai d'attente ».
 function delaiLaitDernierJourSoin(soin) {
   if (!soin || !soin.date) return null;
   const info = DB.produitsInfo[soin.produit];
-  if (!elevageBioActif()) { const d = info && info.delaiAttente; return (d === null || d === undefined) ? null : addDaysToDateStr(soin.date, d); }
+  if (!elevageBioActif()) { const d = info && info.delaiAttente; return (d === null || d === undefined || !(d > 0)) ? null : addDaysToDateStr(soin.date, d); }
   if (Number.isInteger(soin.delaiLaitJours)) {
+    if (soin.delaiLaitJours <= 0) return null;
     const duree = Number.isInteger(soin.dureeJours) && soin.dureeJours >= 1 ? soin.dureeJours : 1;
     return addDaysToDateStr(soin.date, duree - 1 + soin.delaiLaitJours);
   }
   const legal = info && info.delaiAttente;
   if (legal === null || legal === undefined) return null;
   const ap = delaisAppliques({ legalLait: legal, bio: true, min48h: ficheProduit(soin.produit).min48h });
-  return ap.lait === null ? null : addDaysToDateStr(soin.date, ap.lait);
+  return !(ap.lait > 0) ? null : addDaysToDateStr(soin.date, ap.lait);
 }
 function sousDelaiBrebisRows() {
   const todayStr = jourAujourdhuiISO();
   const rows = [];
   DB.brebis.filter(s => (s.statut || 'active') === 'active').forEach(s => {
     (s.sanitaire || []).forEach(soin => {
-      const info = DB.produitsInfo[soin.produit];
-      const delai = info && info.delaiAttente;
-      if (!elevageBioActif() && (delai === null || delai === undefined || !soin.date)) return;
-      const finDelai = elevageBioActif() ? delaiLaitDernierJourSoin(soin) : addDaysToDateStr(soin.date, delai);
+      const finDelai = delaiLaitDernierJourSoin(soin);   // null : pas de délai, ou délai 0 (aucune attente réelle)
       if (!finDelai || finDelai < todayStr) return;
       rows.push({ sheepId: s.id, eid: s.eid, produit: soin.produit, dateSoin: soin.date, finDelai: finDelai });
     });
@@ -20999,6 +20991,19 @@ function sousDelaiBrebisRows() {
   rows.sort((a, b) => a.finDelai.localeCompare(b.finDelai));
   return rows;
 }
+// Une entrée par brebis (écran mobile et PC, PDF) : ses soins encore en délai, fin la plus tardive ; triées par fin de délai
+function sousDelaiParBrebis() {
+  const parId = new Map();
+  sousDelaiBrebisRows().forEach(r => {
+    if (!parId.has(r.sheepId)) parId.set(r.sheepId, { sheepId: r.sheepId, eid: r.eid, soins: [], finDelai: r.finDelai });
+    const g = parId.get(r.sheepId);
+    g.soins.push(r);
+    if (r.finDelai > g.finDelai) g.finDelai = r.finDelai;
+  });
+  return [...parId.values()].sort((a, b) => a.finDelai.localeCompare(b.finDelai) || a.eid.localeCompare(b.eid));
+}
+// « Hepatocor — soin 27-10-2026 — fin 03-11-2026 » (produits séparés par « ; ») : même texte à l'écran PC et dans le PDF, dates complètes
+const libelleSoinSousDelai = r => r.produit + ' — soin ' + formatDateFr(r.dateSoin) + ' — fin ' + formatDateFr(r.finDelai);
 // Purement pour l'affichage ("jours restants") -- jamais utilisé pour
 // trier ou comparer (voir convention chaîne ISO ci-dessus/ailleurs).
 function joursRestantsAvant(dateIso) {
@@ -21043,28 +21048,29 @@ function ouvrirModalNouveauLot(options) {
 
 function renderSousDelai() {
   pageTitle.textContent = "Sous délai d'attente";
-  const rows = sousDelaiBrebisRows();
+  const rows = sousDelaiParBrebis();   // une ligne / une carte par brebis, avec tous ses produits encore en délai
   const desktopSousDelai = isDesktopMode();
   const cols = [
     { header: 'N°', value: r => 'n°' + numeroVisuel(r.eid) },
-    { header: 'Produit', value: r => r.produit },
-    { header: 'Date du soin', value: r => formatDateFr(r.dateSoin) },
+    { header: 'Produits (soin, fin du délai)', value: r => r.soins.map(libelleSoinSousDelai).join(' ; ') },
     { header: 'Fin du délai', value: r => formatDateFr(r.finDelai) },
     { header: 'Jours restants', value: r => String(joursRestantsAvant(r.finDelai)) }
   ];
   const tableHtml = rows.length === 0 ? '<div class="empty">Aucune brebis sous délai d\'attente actuellement.</div>' : desktopSousDelai ? `<div style="overflow-x:auto;"><table class="table-desktop" style="width:100%;">
     <thead><tr>${cols.map(c => `<th>${c.header}</th>`).join('')}</tr></thead>
-    <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${c.value(r)}</td>`).join('')}</tr>`).join('')}</tbody>
+    <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${echapperHtml(c.value(r))}</td>`).join('')}</tr>`).join('')}</tbody>
   </table></div>`
-    // Mobile : une carte par traitement (n°, jours restants en pastille ambre, produit et date du soin, fin du délai) ; mêmes lignes, même tri
+    // Mobile : une carte par brebis (n°, jours restants avant la fin la plus tardive, une ligne par produit) ; mêmes brebis, même tri que le PC
     : `<div class="cartes-liste" id="sous-delai-cartes">${rows.map(r => {
       const j = joursRestantsAvant(r.finDelai);
-      return carteListeHtml({ nm: xlsxEscape(cols[0].value(r)), pastille: cartePastille('Encore ' + j + ' j', 'ambre'), l2: xlsxEscape(r.produit) + ' · soin du ' + formatDateFr(r.dateSoin), l3: [cartePastille('Fin du délai : ' + formatDateFr(r.finDelai))] });
+      return carteListeHtml({ nm: xlsxEscape(cols[0].value(r)), pastille: cartePastille('Encore ' + j + ' j', 'ambre'),
+        l2: r.soins.map(x => `<div class="sd-soin">${echapperHtml(x.produit)} · soin du ${formatDateFr(x.dateSoin)} · fin le ${formatDateFr(x.finDelai)}</div>`).join(''),
+        l3: [cartePastille('Fin du délai : ' + formatDateFr(r.finDelai))] });
     }).join('')}</div>`;
 
   app.innerHTML = `
-    ${infoLigneHtml("Un produit sans délai renseigné n'apparaît jamais ici.")}
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${rows.length} traitement(s) en cours.</div>
+    ${infoLigneHtml("Un produit sans délai (ou à délai 0) n'apparaît jamais ici.")}
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${rows.length} brebis sous délai d'attente.</div>
     <div class="row${desktopSousDelai ? ' pc-export-droite' : ''}" style="margin-bottom:14px;">
       ${desktopSousDelai ? '' : '<button type="button" class="btn btn-secondary" id="btn-controle-lot-delai">Contrôle de lot (scan)</button>'}
       <button type="button" class="btn btn-secondary" id="btn-sous-delai-creer-lot"${rows.length === 0 ? ' disabled' : ''}>Créer un lot avec ces brebis</button>
@@ -21076,15 +21082,15 @@ function renderSousDelai() {
 
   if (document.getElementById('btn-controle-lot-delai')) document.getElementById('btn-controle-lot-delai').onclick = () => render('controle-lot-delai');
   document.getElementById('btn-sous-delai-creer-lot').onclick = () => {
-    const membres = Array.from(new Set(rows.map(r => r.eid)));
+    const membres = rows.map(r => r.eid);
     ouvrirModalNouveauLot({ membres, onCreated: () => render('sous-delai') });
   };
   document.getElementById('btn-export-sous-delai-pdf').onclick = () => {
     const todayIso = jourAujourdhuiISO();
     const bytes = buildPdfTableCharte({
       title: "Sous délai d'attente lait",
-      subtitle: rows.length + ' traitement(s) — Édité le ' + formatDateFr(todayIso),
-      columns: [{ label: 'N°', x: 0 }, { label: 'Produit', x: 60 }, { label: 'Date du soin', x: 220 }, { label: 'Fin du délai', x: 330 }, { label: 'Jours restants', x: 440 }],
+      subtitle: rows.length + ' brebis sous délai — Édité le ' + formatDateFr(todayIso),
+      columns: cols.map(c => ({ label: c.header })),
       rows: rows.map(r => cols.map(c => c.value(r)))
     });
     saveOrShareBinaryFile('sous-delai-attente_' + todayIso + '.pdf', bytes, 'application/pdf');
