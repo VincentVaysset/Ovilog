@@ -3844,9 +3844,9 @@ function brebisMiseBasSansControleLaitier(campagne) {
     res.misesBasActives++;
     if ((entree ? entree.controleLaitier : b.controleLaitier || []).some(c => c && c.campagne === campagne)) { res.controlees++; return; }
     if (marqueNonTraite(b, campagne)) return;   // marquée « pas traite cette campagne » : information donnée, plus rien à signaler
-    const lambs = getLambsUnderSheep(b, DB.brebis);
+    const lambs = getLambsUnderSheep(b, DB.brebis, campagne);
     const nonRegles = lambs.filter(l => !isLambResolved(l)).length;
-    const attendue = isAttendueTraite(b, DB.brebis);
+    const attendue = isAttendueTraite(b, DB.brebis, campagne);
     const nes = (mb.lambs || []).length;
     res.liste.push({
       id: b.id, eid: b.eid, numero: numeroVisuel(b.eid), dateMiseBas: mb.date || null,
@@ -10685,26 +10685,30 @@ function annulerSortieLamb(lamb, onDone) {
    getLambsUnderSheep, pas cette fonction, qui applique cette restriction
    pour son propre besoin (une brebis devenue inactive ne doit plus compter
    pour la traite, mais son historique d'adoption reste consultable). */
-function getLambsAdoptesPar(sheep, allSheep) {
-  return allSheep.flatMap(s => (s.agnelages || []).flatMap(a => a.lambs.map(l => ({ lamb: l, mereBiologique: s }))))
+function getLambsAdoptesPar(sheep, allSheep, filtreAgnelage) {
+  return allSheep.flatMap(s => (s.agnelages || []).filter(a => !filtreAgnelage || filtreAgnelage(a)).flatMap(a => a.lambs.map(l => ({ lamb: l, mereBiologique: s }))))
     .filter(({ lamb }) => lamb.adopte && cleanEid(lamb.adoptiveEid) === cleanEid(sheep.eid));
 }
 
-function getLambsUnderSheep(sheep, allSheep) {
-  const ownLambs = (sheep.agnelages || []).flatMap(a => a.lambs || []);
+/* Agneaux « sous » la brebis pour la campagne N (par défaut la campagne en cours) : seuls ceux des mises bas de cette campagne comptent,
+   jamais un agneau d'une campagne précédente (réglé ou oublié). Sans campagne réglée (compte neuf) : toutes les mises bas. */
+function getLambsUnderSheep(sheep, allSheep, campagne) {
+  const N = campagne === undefined ? DB.campagneDebut : campagne;
+  const dansCampagne = a => !!a && (N === null || N === undefined || a.campagne === N);
+  const ownLambs = (sheep.agnelages || []).filter(dansCampagne).flatMap(a => a.lambs || []);
   const mereAdoptiveActive = (l) => {
     if (!l.adoptiveEid) return false;
     return allSheep.some(s => (s.statut || 'active') === 'active' && cleanEid(s.eid) === cleanEid(l.adoptiveEid));
   };
   const lambsRestesChezBio = ownLambs.filter(l => !(l.adopte && mereAdoptiveActive(l)));
   const lambsAdoptesParElle = ((sheep.statut || 'active') === 'active')
-    ? getLambsAdoptesPar(sheep, allSheep).map(({ lamb }) => lamb)
+    ? getLambsAdoptesPar(sheep, allSheep, dansCampagne).map(({ lamb }) => lamb)
     : [];
   return [...lambsRestesChezBio, ...lambsAdoptesParElle];
 }
 
-function isAttendueTraite(sheep, allSheep) {
-  const lambs = getLambsUnderSheep(sheep, allSheep);
+function isAttendueTraite(sheep, allSheep, campagne) {
+  const lambs = getLambsUnderSheep(sheep, allSheep, campagne);
   if (lambs.length === 0) return false;
   return lambs.every(l => isLambResolved(l));
 }

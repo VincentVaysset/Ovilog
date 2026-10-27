@@ -52,8 +52,15 @@ for (const bureau of [false, true]) {
   // ================================================================ 1. règle
   eq(await situations(p), { b1: 'attendue', b2: 'allaitante', b3: 'traite@2', b4: 'pasTraite/controleur:Tarie (contrôleur)', b5: 'pasTraite/eleveur:Mammite', b6: 'videDefinitive', b7: 'aRegulariser', b8: 'traite!', b9: 'aRegulariser' },
     nom + ' : situations (traite même tarie au 2e contrôle, Tarie seul = pas traite, marque de l\'éleveur, écart marque/contrôle, marque d\'une autre campagne ignorée)');
-  // accueil : règle des agneaux réglés inchangée (toutes campagnes, b9 compris), moins les pas traites de la campagne (b4, b5)
-  eq(await p.evaluate(() => [attendueTraiteListe().map(b => b.id), dashboardStatsData().attendueTraiteCount]), [['b1', 'b3', 'b8', 'b9'], 4], nom + ' : Attendues à la traite (accueil) : pas traites exclues (b4, b5)');
+  // accueil : agneaux réglés de la campagne en cours seulement (b9 : agneaux de 2025 seulement, plus attendue), moins les pas traites (b4, b5)
+  eq(await p.evaluate(() => [attendueTraiteListe().map(b => b.id), dashboardStatsData().attendueTraiteCount]), [['b1', 'b3', 'b8'], 3], nom + ' : Attendues à la traite (accueil) : pas traites exclues (b4, b5), agneaux d\'une autre campagne ignorés (b9)');
+  // un agneau de la campagne précédente oublié (sans devenir) ne la rend plus « allaitante » ; une adoption d'une autre campagne ne compte pas non plus
+  eq(await p.evaluate(() => {
+    const oublie = { sexe: 'Mâle', adopte: false, eid: '250000004561099', mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2025-10-12' }] };
+    const x = { id: 'x', eid: '250000004569099', statut: 'active', agnelages: [{ date: '2025-10-12', campagne: 2025, lambs: [oublie] }, { date: '2026-10-12', campagne: 2026, lambs: [{ sexe: 'Mort-né', adopte: false }] }], controleLaitier: [], videesDefinitives: [] };
+    const bio = { id: 'y', eid: '250000004569098', statut: 'active', agnelages: [{ date: '2025-10-14', campagne: 2025, lambs: [{ sexe: 'Mâle', adopte: true, adoptiveEid: x.eid, eid: '250000004561098' }] }] };
+    return [isAttendueTraite(x, [x, bio]), getLambsUnderSheep(x, [x, bio]).length, getLambsUnderSheep(x, [x, bio], 2025).length, situationTraiteCampagne(x).code];
+  }), [true, 1, 2, 'attendue'], nom + ' : agneaux de la campagne en cours seulement (oubli et adoption de 2025 ignorés)');
   console.log('OK 1 ' + nom + ' : règle de traite (code 9, marque, écart, campagne).');
 
   // ================================================================ 2. Brebis à régulariser : six groupes exclusifs
