@@ -131,13 +131,11 @@ check(vue.view === 'detail' && vue.saves === 0 && /0002/.test(vue.titre), 'clic 
 console.log('OK 4 carte mobile : retirée de Brebis à régulariser ; dans Contrôle laitier (bande ambre) : 5 lignes (n°, date, agneaux, état), signal fort compté, « Ouvrir la fiche » ouvre la fiche, 0 écriture.');
 await page.context().close();
 
-// ================================================================ 5. PC : même carte dans « Brebis à régulariser »
+// ================================================================ 5. PC : dans « Brebis à régulariser », ces brebis sont dans les groupes Attendues à la traite / Allaitantes (plus de carte en doublon)
 const pc = await ouvrir(true);
 await pc.evaluate(() => { jeuLait(true); bilanCampagneTab = 'incoherences'; render('bilan-campagne'); });
-const nbPc = await pc.evaluate(() => document.querySelectorAll('#carte-sans-controle-laitier .sans-controle-ligne').length);
-check(nbPc === 5, 'carte PC : 5 lignes : ' + nbPc);
-await pc.evaluate(() => { jeuLait(false); bilanCampagneTab = 'incoherences'; render('bilan-campagne'); });
-check(await pc.evaluate(() => !document.getElementById('carte-sans-controle-laitier')), 'PC : pas de carte tant qu\'aucun contrôle n\'est importé');
-console.log('OK 5 PC : même carte dans « Brebis à régulariser », absente avant l\'import du 1er contrôle.');
+const memePc = await pc.evaluate(() => { const sc = brebisMiseBasSansControleLaitier(DB.campagneDebut).liste.map(l => l.eid).sort(); const G = bilanARegulariserData().groupes; const grp = G.attendues.concat(G.allaitantes).map(b => b.eid).sort(); return { sc, grp, carte: !!document.getElementById('carte-sans-controle-laitier') }; });
+check(memePc.sc.length === 5 && JSON.stringify(memePc.sc) === JSON.stringify(memePc.grp) && !memePc.carte, 'PC : les 5 brebis sans contrôle = groupes Attendues à la traite + Allaitantes, sans carte en doublon : ' + JSON.stringify(memePc));
+console.log('OK 5 PC : dans « Brebis à régulariser », les brebis sans contrôle sont dans Attendues à la traite / Allaitantes (une seule fois).');
 await browser.close();
 console.log('\nTOUS LES TESTS DE LA RÈGLE « SANS CONTRÔLE LAITIER » SONT PASSÉS (jeu synthétique, aucune donnée réelle)');

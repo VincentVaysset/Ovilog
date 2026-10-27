@@ -90,9 +90,9 @@ const ligneCarte = await page.evaluate(() => [...document.querySelectorAll('#car
 check(/n°00003 · mise bas le 20\/11 attendue à la traite/.test(ligneCarte[0]), 'signal fort en tête : ' + ligneCarte[0]);
 await page.click('#btn-lact-voir-regulariser');
 check(await page.evaluate(() => bilanCampagneTab === 'incoherences' && !!document.getElementById('pc-regulariser')), '« Voir ... dans Brebis à régulariser » ouvre l\'onglet');
-const kReg = await page.evaluate(() => document.querySelectorAll('#pc-regulariser .pc-kpis .brd-kpi-v')[4].textContent);
-check(kReg === '4', 'même nombre (4) dans Brebis à régulariser : ' + kReg);
-console.log('OK 2 cohérence : indicateur = règle = Brebis à régulariser (4) ; passées à la traite et sans contrôle ne se recoupent pas ; carte de 3 lignes, signal fort en tête.');
+const kReg = await page.evaluate(() => { const v = l => +[...document.querySelectorAll('#pc-regulariser .pc-kpis > *')].find(x => x.textContent.includes(l)).querySelector('.brd-kpi-v').textContent; return [v('Allaitantes'), v('Attendues à la traite')]; });
+check(kReg[0] + kReg[1] === 4 && kReg[1] === 1, 'même nombre (4) dans Brebis à régulariser = allaitantes + attendues à la traite : ' + kReg.join(' + '));
+console.log('OK 2 cohérence : indicateur = règle = Brebis à régulariser (allaitantes 3 + attendue 1) ; passées à la traite et sans contrôle ne se recoupent pas ; carte de 3 lignes, signal fort en tête.');
 
 // ================================================================ 3. valeurs modifiables (mêmes champs que le mobile)
 await page.evaluate(() => ouvrir(2026));

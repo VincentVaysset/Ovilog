@@ -1287,6 +1287,14 @@
   .tri-nav .btn { margin: 0; height: 44px; }
   .tri-snack { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); max-width: 520px; margin: 0 auto; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 8px 4px 14px; min-height: 52px; border-radius: 14px; background: var(--ch-texte); color: var(--ch-carte); font-size: 14px; }
   .tri-snack button { min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--ch-vert-pastel); font: inherit; font-weight: 700; cursor: pointer; }
+  /* « Pas traite cette campagne » : bandeau (motif + Annuler), bloc de la fiche, bouton de ligne */
+  .tri-snack.pt-snack { flex-wrap: wrap; row-gap: 4px; padding-top: 6px; padding-bottom: 6px; }
+  .tri-snack.pt-snack select { margin: 0; width: auto; min-width: 140px; max-width: 100%; height: 40px; padding: 0 10px; font-size: 14px; }
+  .pt-bloc { display: flex; flex-direction: column; gap: 8px; }
+  .pt-bloc .pt-ligne { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .pt-bloc select { margin: 0; width: auto; min-width: 160px; }
+  .pt-bloc .btn, button.btn-pas-traite { width: auto; margin: 0; padding-left: 16px; padding-right: 16px; flex: 0 0 auto; }
+  .pc-li button.btn-pas-traite { min-height: 36px; height: 36px; font-size: 13px; }
   /* Chantier de tri PC : tuiles, onglets segmentés + exports, tableau charte à lignes de 48 px, pastilles d'action */
   #pc-tri-agnelles { display: flex; flex-direction: column; gap: 12px; }
   #pc-tri-agnelles .pc-onglets { margin-bottom: 0; }
@@ -1692,6 +1700,8 @@ document.body.classList.toggle('desktop-shell', isDesktopMode());
 
 /* ---------- Stockage local ---------- */
 const DB_KEY = 'troupeau_data_v1';
+// Motifs de non-traite proposés au départ (liste modifiable : Paramètres › Listes)
+const MOTIFS_NON_TRAITE_DEPART = ['Agneaux morts', 'Mammite', 'Réforme prévue'];
 
 /* Complète les champs manquants d'un objet de données (nouvelle installation,
    ancienne sauvegarde JSON, ou version antérieure de l'appli n'ayant pas
@@ -1733,6 +1743,7 @@ function migrateData(d) {
   if (!Array.isArray(d.causesMortaliteAgneaux)) d.causesMortaliteAgneaux = causesMortaliteAgneauxInitiales(d);
   if (!d.intervenants) d.intervenants = [];
   if (!d.casParticuliers) d.casParticuliers = ['Pseudogestation', 'Avortée'];
+  if (!Array.isArray(d.motifsNonTraite)) d.motifsNonTraite = MOTIFS_NON_TRAITE_DEPART.slice();
   if (!d.categoriesNotes) d.categoriesNotes = ['Boiterie', 'Sinus', 'Mammite'];
   if (!d.notesArchiveesBrebis) d.notesArchiveesBrebis = {};
   if (!d.produitsInfo) d.produitsInfo = {};
@@ -2150,6 +2161,7 @@ function loadData() {
     campagneDateDebut: null,
     campagneDateFin: null,
     casParticuliers: ['Pseudogestation', 'Avortée'],
+    motifsNonTraite: MOTIFS_NON_TRAITE_DEPART.slice(),
     categoriesNotes: ['Boiterie', 'Sinus', 'Mammite'],
     notesArchiveesBrebis: {},
     produits: {
@@ -3831,6 +3843,7 @@ function brebisMiseBasSansControleLaitier(campagne) {
     if (!mb) return;
     res.misesBasActives++;
     if ((entree ? entree.controleLaitier : b.controleLaitier || []).some(c => c && c.campagne === campagne)) { res.controlees++; return; }
+    if (marqueNonTraite(b, campagne)) return;   // marquée « pas traite cette campagne » : information donnée, plus rien à signaler
     const lambs = getLambsUnderSheep(b, DB.brebis);
     const nonRegles = lambs.filter(l => !isLambResolved(l)).length;
     const attendue = isAttendueTraite(b, DB.brebis);
@@ -6807,7 +6820,7 @@ function dashboardStatsData() {
   // le dashboard desktop.
   const tauxReussite = tauxReussiteGlobal(campagneCohortPresente());
 
-  const attendueTraiteCount = active.filter(s => isAttendueTraite(s, DB.brebis)).length;
+  const attendueTraiteCount = active.filter(estAttendueTraiteAffichee).length;
 
   // Moyennes par contrôle : reprises directement du résumé importé (voir
   // litrageTroupeauResume, même source que la carte "Récapitulatif" de
@@ -7182,7 +7195,7 @@ function agneauxActifsSexeData() {
    nouvelle règle. Triée comme partout ailleurs (sortByAge). */
 function attendueTraiteListe() {
   const active = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  return sortByAge(active.filter(s => isAttendueTraite(s, DB.brebis)));
+  return sortByAge(active.filter(estAttendueTraiteAffichee));
 }
 
 /* Écran d'accueil desktop (chantier "Écran d'accueil desktop Ovilog",
@@ -7386,7 +7399,7 @@ function renderHome() {
   lier('ac-tuile-beliers', () => render('beliers'));
   brancherCarteEchoAccueil();
   lier('kpi-attendues-traite', () => {
-    openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(s => isAttendueTraite(s, DB.brebis)).map(s => s.eid));
+    openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(estAttendueTraiteAffichee).map(s => s.eid));
   });
   lier('kpi-bilan-campagne', () => render('bilan-campagne'));
   lier('kpi-sous-delai', () => render('sous-delai'));
@@ -7444,7 +7457,7 @@ function renderList() {
   // ci-dessous, jamais recalculée différemment d'un rendu à l'autre.
   function statutRepro(sheep) {
     const lastAgnelage = agnelageCampagneActuelle(sheep);
-    const badgeHtml = isAttendueTraite(sheep, DB.brebis)
+    const badgeHtml = estAttendueTraiteAffichee(sheep)
       ? `<span class="badge badge-blue">Attendue à la traite</span>`
       : lastAgnelage
         ? `<span class="badge badge-amber">${formatDateFr(lastAgnelage.date)} · ${lastAgnelage.lambs.length} agn.</span>`
@@ -7456,7 +7469,7 @@ function renderList() {
       : repro === 'Gestante (en cours)' ? `<span class="badge badge-green">Gestante</span>`
       : '';
     // Pastilles mobile (charte) : mise bas en ambre (ou grise), statut repro ; « Attendue à la traite » reste bleue.
-    const pastilles = (isAttendueTraite(sheep, DB.brebis)
+    const pastilles = (estAttendueTraiteAffichee(sheep)
       ? '<span class="reg-pastille bleu">Attendue à la traite</span>'
       : lastAgnelage
         ? `<span class="reg-pastille ambre">${dateCourteMobile(lastAgnelage.date)} · ${lastAgnelage.lambs.length} agn.</span>`
@@ -8373,9 +8386,9 @@ function bilanARegulariserMobileHtml() {
   const ages = [...new Set(G.aRegulariser.map(b => b.age))].filter(a => a !== null).sort((a, b) => b - a);
   const nbBrebis = n => n + ' brebis';
   // Section repliable (fermée au départ) : au-delà de REPLI lignes, « Voir les N autres » (simple affichage, aucun calcul)
-  const section = (cle, titre, ton, liste, vide) => `<div class="card bc-sec" id="bc-sec-${cle}">
+  const section = (cle, titre, ton, liste, vide, extra) => `<div class="card bc-sec" id="bc-sec-${cle}">
       <button type="button" class="bc-sec-tete" aria-expanded="false"><span class="bc-sec-t">${titre}</span><span class="reg-pastille ${ton}">${nbBrebis(liste.length)}</span>${BC_CHEVRON}</button>
-      <div class="bc-sec-corps hidden">${liste.length ? liste.map((b, i) => ligne(b, '', i >= REPLI)).join('') + (liste.length > REPLI ? `<button type="button" class="reg-voir bc-plus">Voir les ${liste.length - REPLI} autres</button>` : '') : `<div class="reg-info" style="padding:0 0 14px;">${vide}</div>`}</div>
+      <div class="bc-sec-corps hidden">${liste.length ? liste.map((b, i) => ligne(b, extra ? extra(b) : '', i >= REPLI)).join('') + (liste.length > REPLI ? `<button type="button" class="reg-voir bc-plus">Voir les ${liste.length - REPLI} autres</button>` : '') : `<div class="reg-info" style="padding:0 0 14px;">${vide}</div>`}</div>
     </div>`;
   const inco = G.incoherentes.length ? `<button type="button" class="cl-bande rouge" id="bc-bande-inco" aria-expanded="false">
       <span class="cl-bande-n">${G.incoherentes.length}</span>
@@ -8388,16 +8401,20 @@ function bilanARegulariserMobileHtml() {
     ${inco}
     <div class="card bc-avance">
       <div class="bc-avance-t"><b>Avancement</b><span>${d.informees} sur ${d.actives} renseignées</span></div>
-      <div class="bc-barre" role="img" aria-label="Ont mis bas ${G.misesBas.length}, vides définitives ${G.videsDefinitives.length}, à régulariser ${G.aRegulariser.length}">
-        <div style="flex:${G.misesBas.length};background:var(--ch-vert);"></div><div style="flex:${G.videsDefinitives.length};background:var(--ch-bleu);"></div><div style="flex:${G.aRegulariser.length};background:var(--ch-ambre);"></div>
+      <div class="bc-barre" role="img" aria-label="Traites ${G.traites.length}, pas traites ${G.pasTraites.length}, vides définitives ${G.videsDefinitives.length}, allaitantes ${G.allaitantes.length}, attendues à la traite ${G.attendues.length}, à régulariser ${G.aRegulariser.length}">
+        <div style="flex:${G.traites.length};background:var(--ch-vert);"></div><div style="flex:${G.pasTraites.length};background:var(--ch-icone);"></div><div style="flex:${G.videsDefinitives.length};background:var(--ch-bleu);"></div><div style="flex:${G.allaitantes.length};background:var(--ch-bleu-pastel);"></div><div style="flex:${G.attendues.length};background:var(--ch-ambre);"></div><div style="flex:${G.aRegulariser.length};background:var(--ch-ambre-pastel);"></div>
       </div>
+      <div class="reg-info" style="margin:6px 0 0;">Renseignées : traites, pas traites ou vides définitives.</div>
     </div>
     <div class="reg-tuiles bc-tuiles">
-      <div class="reg-tuile ambre"><div class="reg-tuile-l">À régulariser</div><div class="reg-tuile-v">${G.aRegulariser.length}</div><div class="reg-tuile-s">${pctTxt(G.aRegulariser.length)}</div></div>
-      <div class="reg-tuile vert"><div class="reg-tuile-l">Ont mis bas</div><div class="reg-tuile-v">${G.misesBas.length}</div><div class="reg-tuile-s">${pctTxt(G.misesBas.length)}</div></div>
-      <div class="reg-tuile bleu"><div class="reg-tuile-l">Vides définitives</div><div class="reg-tuile-v">${G.videsDefinitives.length}</div><div class="reg-tuile-s">${pctTxt(G.videsDefinitives.length)}</div></div>
-      <div class="reg-tuile gris"><div class="reg-tuile-l">Brebis présentes</div><div class="reg-tuile-v">${d.actives}</div><div class="reg-tuile-s">actives en campagne</div></div>
+      <div class="reg-tuile ambre"><div class="reg-tuile-l">À régulariser</div><div class="reg-tuile-v">${G.aRegulariser.length}</div><div class="reg-tuile-s">ni mise bas ni vide déf.</div></div>
+      <div class="reg-tuile bleu"><div class="reg-tuile-l">Allaitantes</div><div class="reg-tuile-v">${G.allaitantes.length}</div><div class="reg-tuile-s">agneaux sous elles</div></div>
+      <div class="reg-tuile ambre"><div class="reg-tuile-l">Attendues à la traite</div><div class="reg-tuile-v">${G.attendues.length}</div><div class="reg-tuile-s">traite à renseigner</div></div>
+      <div class="reg-tuile vert"><div class="reg-tuile-l">Traites</div><div class="reg-tuile-v">${G.traites.length}</div><div class="reg-tuile-s">${pctTxt(G.traites.length)}</div></div>
+      <div class="reg-tuile gris"><div class="reg-tuile-l">Pas traites</div><div class="reg-tuile-v">${G.pasTraites.length}</div><div class="reg-tuile-s">cette campagne</div></div>
+      <div class="reg-tuile gris"><div class="reg-tuile-l">Vides définitives</div><div class="reg-tuile-v">${G.videsDefinitives.length}</div><div class="reg-tuile-s">${pctTxt(G.videsDefinitives.length)}</div></div>
     </div>
+    <div class="reg-info" style="margin:-4px 0 12px;">${d.actives} brebis présentes : chacune est dans un seul groupe.</div>
     <div class="card bc-carte" id="pc-carte-a-regulariser">
       <div class="bc-tete"><span class="bc-titre">À régulariser</span><span class="reg-pastille ambre">${nbBrebis(G.aRegulariser.length)}</span></div>
       <div class="reg-info">Ni mise bas, ni vide définitive. Une échographie seule ne suffit pas.</div>
@@ -8409,8 +8426,15 @@ function bilanARegulariserMobileHtml() {
       <div class="reg-info" id="pc-reg-aucune" style="display:none;padding:8px 0 14px;">Aucune brebis ne correspond.</div>
       ${G.aRegulariser.length > VISIBLES ? `<button type="button" class="reg-voir" id="pc-reg-plus" data-total="${G.aRegulariser.length}" data-visibles="${VISIBLES}">Voir les ${G.aRegulariser.length - VISIBLES} autres</button>` : ''}
     </div>
-    ${section('mb', 'Ont mis bas', 'vert', G.misesBas, 'Aucune mise bas enregistrée pour l\'instant.')}
-    ${section('vd', 'Vides définitives', 'bleu', G.videsDefinitives, 'Aucune brebis n\'est marquée vide définitive pour l\'instant.')}
+    <div class="card bc-carte" id="bc-carte-attendues">
+      <div class="bc-tete"><span class="bc-titre">Attendues à la traite</span><span class="reg-pastille ambre">${nbBrebis(G.attendues.length)}</span></div>
+      <div class="reg-info">Agneaux réglés, ni traites ni marquées « pas traite ».</div>
+      ${G.attendues.length ? G.attendues.map(b => ligne(b, boutonPasTraiteHtml(b))).join('') : '<div class="reg-info" style="padding:0 0 14px;">Aucune brebis attendue à la traite.</div>'}
+    </div>
+    ${section('al', 'Allaitantes', 'bleu', G.allaitantes, 'Aucune brebis allaitante.')}
+    ${section('pt', 'Pas traites', 'gris', G.pasTraites, 'Aucune brebis marquée pas traite.', b => b.motif ? `<span class="bc-li-f">${echapperHtml(b.motif)}</span>` : '')}
+    ${section('tr', 'Traites', 'vert', G.traites, 'Aucune brebis traite pour l\'instant.')}
+    ${section('vd', 'Vides définitives', 'gris', G.videsDefinitives, 'Aucune brebis n\'est marquée vide définitive pour l\'instant.')}
     <button type="button" class="btn btn-secondary" id="btn-export-regulariser-xlsx">Export Excel</button>
   </div>`;
 }
@@ -8524,10 +8548,17 @@ function bilanARegulariserData() {
   const N = DB.campagneDebut;
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
   const item = s => ({ id: s.id, eid: s.eid, numero: numeroVisuel(s.eid), age: age(s.eid), annee: anneeNaissance(s.eid) });
-  const groupes = { aRegulariser: [], misesBas: [], videsDefinitives: [], incoherentes: [] };
+  // Six groupes qui ne se recoupent jamais (somme = brebis présentes), d'après situationTraiteCampagne : à régulariser, allaitantes,
+  // attendues à la traite, traites, pas traites, vides définitives. misesBas = réunion des 4 groupes « a mis bas » (compatibilité).
+  const groupes = { aRegulariser: [], misesBas: [], allaitantes: [], attendues: [], traites: [], pasTraites: [], videsDefinitives: [], incoherentes: [] };
+  const groupeDe = { allaitante: 'allaitantes', attendue: 'attendues', traite: 'traites', pasTraite: 'pasTraites' };
   sortByAge(actives).forEach(s => {
     const mb = agnelageCampagneActuelleIdx(s) !== -1, vide = estVideDefinitiveCampagne(s);
-    if (mb) groupes.misesBas.push(item(s));
+    if (mb) {
+      const S = situationTraiteCampagne(s), it = Object.assign(item(s), { motif: S.motif || '', source: S.source || null, tarieAu: S.tarieAu || null, ecart: !!S.ecart });
+      groupes.misesBas.push(it);
+      groupes[groupeDe[S.code]].push(it);
+    }
     else if (vide) groupes.videsDefinitives.push(item(s));
     else groupes.aRegulariser.push(item(s));
     if (mb && vide) groupes.incoherentes.push(item(s));
@@ -8540,24 +8571,37 @@ function bilanARegulariserData() {
   return {
     campagne: N, libelle: N === null || N === undefined ? null : campagneLabel(N),
     actives: actives.length, groupes, sansControle, parMillesime,
-    informees: groupes.misesBas.length + groupes.videsDefinitives.length
+    // information de campagne COMPLÈTE : traite, pas traite ou vide définitive (une mise bas seule ne suffit plus)
+    informees: groupes.traites.length + groupes.pasTraites.length + groupes.videsDefinitives.length
   };
 }
+// Texte complémentaire d'une brebis des groupes « a mis bas » : motif de non-traite, tarie après traite, écart marque / contrôle
+function detailSituationTraite(b) {
+  const t = [];
+  if (b.motif) t.push(b.motif);
+  if (b.tarieAu) t.push('tarie au ' + b.tarieAu + 'e contrôle');
+  if (b.ecart) t.push('marquée pas traite mais contrôlée');
+  return t.join(' · ');
+}
 function brebisARegulariserRows(d) {
-  // Une ligne par brebis active ; « Détail » porte les signaux : sans contrôle laitier (date de mise bas, attendue ou non à la traite) et incohérence
-  const sans = new Map(d.sansControle.liste.map(l => [l.eid, l]));
+  // Une ligne par brebis active, dans son seul groupe ; « Détail » : motif de non-traite, tarie après traite, écart, incohérence
   const inco = new Set(d.groupes.incoherentes.map(b => b.eid));
   const detail = b => {
-    const notes = [], l = sans.get(b.eid);
-    if (l) notes.push('sans contrôle laitier : mise bas le ' + (l.dateMiseBas ? formatDateFr(l.dateMiseBas) : 'date inconnue') + ' · ' + (l.attendueTraite ? 'attendue à la traite' : 'pas encore attendue à la traite'));
+    const notes = [];
+    const s = detailSituationTraite(b);
+    if (s) notes.push(s);
     if (inco.has(b.eid)) notes.push('incohérence : mise bas ET vide définitive');
     return notes.join(' ; ');
   };
   const ligne = (groupe) => b => [b.numero, b.age !== null ? b.age : '', groupe, detail(b)];
+  const G = d.groupes;
   return [['N°', 'Âge (ans)', 'Groupe', 'Détail']]
-    .concat(d.groupes.aRegulariser.map(ligne('À régulariser')))
-    .concat(d.groupes.misesBas.map(ligne('A mis bas')))
-    .concat(d.groupes.videsDefinitives.map(ligne('Vide définitive')));
+    .concat(G.aRegulariser.map(ligne('À régulariser')))
+    .concat(G.allaitantes.map(ligne('Allaitante')))
+    .concat(G.attendues.map(ligne('Attendue à la traite')))
+    .concat(G.traites.map(ligne('Traite')))
+    .concat(G.pasTraites.map(ligne('Pas traite cette campagne')))
+    .concat(G.videsDefinitives.map(ligne('Vide définitive')));
 }
 async function exportBrebisARegulariserXlsx() {
   const d = bilanARegulariserData();
@@ -8580,8 +8624,6 @@ function bilanARegulariserDesktopHtml() {
       ${intro ? `<p class="brd-note" style="margin-top:4px;">${intro}</p>` : '<div style="height:10px;"></div>'}
       ${liste.length ? liste.map(b => ligne(b)).join('') : `<p class="brd-note" style="margin:0;">${vide}</p>`}
     </div>`;
-  const kpiSans = sc.controleImporte ? pcKpi('Sans contrôle laitier', sc.sansControle, sc.sansControle > 0 ? sc.signauxForts + ' attendue' + (sc.signauxForts > 1 ? 's' : '') + ' à la traite' : 'toutes ont un contrôle', sc.sansControle > 0 ? 'ambre' : 'vert')
-    : pcKpi('Sans contrôle laitier', '—', 'dès le 1er contrôle', 'neutre');
   return `<div class="brd" id="pc-regulariser">
     <div class="brd-head">
       <div>
@@ -8595,15 +8637,17 @@ function bilanARegulariserDesktopHtml() {
     <div class="card">
       <div class="pc-cardhead"><p class="brd-ttl" style="margin:0;">Avancement de la campagne</p><span style="font-size:13px;color:var(--text-muted);">${d.informees} brebis sur ${d.actives} ${d.informees > 1 ? 'ont' : 'a'} une information de campagne</span></div>
       <div style="height:8px;"></div>
-      ${pcProgress([{ label: 'Ont mis bas', pct: pct(G.misesBas.length), couleur: 'var(--primary)' }, { label: 'Vides définitives', pct: pct(G.videsDefinitives.length), couleur: 'var(--ch-bleu)' }, { label: 'À régulariser', pct: pct(G.aRegulariser.length), couleur: 'var(--ch-ambre-pastel)' }])}
+      ${pcProgress([{ label: 'Traites', pct: pct(G.traites.length), couleur: 'var(--primary)' }, { label: 'Pas traites', pct: pct(G.pasTraites.length), couleur: 'var(--ch-icone)' }, { label: 'Vides définitives', pct: pct(G.videsDefinitives.length), couleur: 'var(--ch-bleu)' }, { label: 'Allaitantes', pct: pct(G.allaitantes.length), couleur: 'var(--ch-bleu-pastel)' }, { label: 'Attendues à la traite', pct: pct(G.attendues.length), couleur: 'var(--ch-ambre)' }, { label: 'À régulariser', pct: pct(G.aRegulariser.length), couleur: 'var(--ch-ambre-pastel)' }])}
     </div>
 
     <div class="pc-kpis">
       ${pcKpi('Brebis présentes', d.actives, 'actives en campagne', 'vert')}
-      ${pcKpi('À régulariser', G.aRegulariser.length, pctTxt(G.aRegulariser.length), 'ambre')}
-      ${pcKpi('Ont mis bas', G.misesBas.length, pctTxt(G.misesBas.length), 'vert')}
-      ${pcKpi('Vides définitives', G.videsDefinitives.length, pctTxt(G.videsDefinitives.length), 'ambre')}
-      ${kpiSans}
+      ${pcKpi('À régulariser', G.aRegulariser.length, 'ni mise bas ni vide déf.', 'ambre')}
+      ${pcKpi('Allaitantes', G.allaitantes.length, 'agneaux sous elles', 'bleu')}
+      ${pcKpi('Attendues à la traite', G.attendues.length, 'traite à renseigner', 'ambre')}
+      ${pcKpi('Traites', G.traites.length, pctTxt(G.traites.length), 'vert')}
+      ${pcKpi('Pas traites', G.pasTraites.length, 'cette campagne', 'neutre')}
+      ${pcKpi('Vides définitives', G.videsDefinitives.length, pctTxt(G.videsDefinitives.length), 'neutre')}
       ${pcKpi('Incohérences', G.incoherentes.length, 'à trancher par vous', G.incoherentes.length ? 'rouge' : 'vert')}
     </div>
 
@@ -8620,8 +8664,17 @@ function bilanARegulariserDesktopHtml() {
         ${G.aRegulariser.length > VISIBLES ? `<button type="button" class="pc-more" id="pc-reg-plus" data-total="${G.aRegulariser.length}" data-visibles="${VISIBLES}">Voir les ${G.aRegulariser.length - VISIBLES} autres</button>` : ''}
       </div>
       <div class="brd-col">
-        ${carteListe('Ont mis bas', 'ok', G.misesBas, '', 'Aucune mise bas enregistrée pour l\'instant.')}
-        ${carteSansControlePcHtml(sc)}
+        <div class="card" id="pc-carte-attendues">
+          ${pcCardHead('Attendues à la traite', pcPill('warn', G.attendues.length + ' brebis'))}
+          <p class="brd-note" style="margin-top:4px;">Ont mis bas, tous leurs agneaux sont réglés, ni traites ni marquées « pas traite ».</p>
+          ${G.attendues.length ? G.attendues.map(b => ligne(b, boutonPasTraiteHtml(b))).join('') : '<p class="brd-note" style="margin:0;">Aucune brebis attendue à la traite.</p>'}
+        </div>
+        ${carteListe('Allaitantes', 'info', G.allaitantes, 'Ont mis bas, au moins un agneau encore sous elles.', 'Aucune brebis allaitante.')}
+        <div class="card" id="pc-carte-pas-traites">
+          ${pcCardHead('Pas traites cette campagne', pcPill('neutral', G.pasTraites.length + ' brebis'))}
+          ${G.pasTraites.length ? '<div style="height:10px;"></div>' + G.pasTraites.map(b => ligne(b, b.motif ? `<span class="b">${echapperHtml(b.motif)}</span>` : '')).join('') : '<p class="brd-note" style="margin:4px 0 0;">Aucune brebis marquée pas traite.</p>'}
+        </div>
+        ${carteListe('Traites', 'ok', G.traites, 'Au moins un contrôle laitier avec une quantité cette campagne.', 'Aucune brebis traite pour l\'instant.')}
         ${carteListe('Vides définitives', 'neutral', G.videsDefinitives, '', 'Aucune brebis n\'est marquée vide définitive pour l\'instant.')}
         ${G.incoherentes.length ? `<div class="card pc-card-warn" style="border-color:var(--coral-fg) !important;" id="pc-carte-incoherences">
           ${pcCardHead('Contrôle des incohérences', pcPill('danger', G.incoherentes.length + ' brebis'))}
@@ -8646,6 +8699,7 @@ function bilanARegulariserDesktopHtml() {
 function brancherARegulariserDesktop() {
   const racine = document.getElementById('pc-regulariser');   // même branchement sur mobile : bilanARegulariserMobileHtml reprend ces identifiants
   if (!racine) return;
+  brancherBoutonsPasTraite(racine, () => render('bilan-campagne'));
   const rech = document.getElementById('pc-reg-recherche'), selAge = document.getElementById('pc-reg-age');
   const plus = document.getElementById('pc-reg-plus'), aucune = document.getElementById('pc-reg-aucune');
   const lignes = [...document.querySelectorAll('#pc-reg-liste [data-num]')];
@@ -9562,6 +9616,7 @@ function renderMouvementsPc() {
     $('mv-resume').textContent = E.type ? recapMouvementPc(E, n) : 'Choisis un type de mouvement et les animaux concernés';
     $('mv-valider').textContent = 'Valider ' + n + ' mouvement' + (n > 1 ? 's' : '');
     const ambre = $('mv-ambre'); if (ambre) ambre.style.display = ['Morte', 'Perte', 'Autoconsommation'].includes(E.type) ? '' : 'none';
+    majAlerteTraiteMv(E, selectionnes, 'mv-erreurs');
     rafraichirAlerte();
   };
   document.querySelectorAll('.mv-cat').forEach(b => { b.onclick = () => { E.categorie = b.dataset.cat; E.type = null; E.cause = ''; E.acheteur = ''; E.q = ''; E.erreurs = []; E.message = ''; renderMouvementsPc(); }; });
@@ -10654,6 +10709,156 @@ function isAttendueTraite(sheep, allSheep) {
   return lambs.every(l => isLambResolved(l));
 }
 
+/* ---------- « Pas traite cette campagne » et situation de traite ----------
+   Marque de l'éleveur : sheep.nonTraite = [{ campagne, date, motif }] (une entrée par campagne au plus, jamais remise à zéro : l'historique
+   garde chaque campagne). Motif facultatif, pris dans DB.motifsNonTraite. Code « Tarie » (9) du contrôleur : une brebis sans AUCUNE quantité
+   de la campagne et cotée Tarie est « pas traite » ; une brebis qui a eu une quantité est TRAITE, même tarie à un contrôle suivant. */
+const MOTIF_TARIE_CONTROLEUR = 'Tarie (contrôleur)';
+function marqueNonTraite(sheep, campagne) {
+  const N = campagne === undefined ? DB.campagneDebut : campagne;
+  return (Array.isArray(sheep && sheep.nonTraite) ? sheep.nonTraite : []).find(x => x && x.campagne === N) || null;
+}
+// Contrôles de la campagne : ceux de la fiche ET ceux de sa copie au registre (même source que brebisMiseBasSansControleLaitier)
+function controlesLaitCampagne(sheep, campagne) {
+  const reg = sheep && DB.registre && DB.registre.brebis && DB.registre.brebis[sheep.eid];
+  return (Array.isArray(sheep && sheep.controleLaitier) ? sheep.controleLaitier : []).concat(reg && Array.isArray(reg.controleLaitier) ? reg.controleLaitier : [])
+    .filter(c => c && c.campagne === campagne);
+}
+const controleAvecQuantite = c => c.quantite !== null && c.quantite !== undefined && c.quantite !== '';
+const controleTarie = c => Number(c.anomalie) === 9;
+/* Situation de traite d'une brebis pour la campagne en cours (une seule, lue à l'affichage, jamais stockée) :
+   { code: 'traite' | 'pasTraite' | 'attendue' | 'allaitante' | 'videDefinitive' | 'aRegulariser', motif, source ('eleveur' | 'controleur'),
+     tarieAu (n° du contrôle « Tarie » après traite), ecart (marquée pas traite mais contrôlée avec une quantité) }.
+   Mise bas d'abord : sans mise bas, vide définitive ou à régulariser (règle de Brebis à régulariser, inchangée). */
+function situationTraiteCampagne(sheep) {
+  const N = DB.campagneDebut;
+  const mb = agnelageCampagneActuelleIdx(sheep) !== -1;
+  if (!mb) return { code: estVideDefinitiveCampagne(sheep) ? 'videDefinitive' : 'aRegulariser' };
+  const ctrl = controlesLaitCampagne(sheep, N);
+  const marque = marqueNonTraite(sheep, N);
+  if (ctrl.some(controleAvecQuantite)) {
+    const tarie = ctrl.filter(controleTarie).sort((a, b) => (Number(a.controle) || 0) - (Number(b.controle) || 0))[0];
+    return { code: 'traite', tarieAu: tarie ? (Number(tarie.controle) || null) : null, ecart: !!marque };
+  }
+  if (marque) return { code: 'pasTraite', motif: marque.motif || '', source: 'eleveur', date: marque.date || null };
+  if (ctrl.some(controleTarie)) return { code: 'pasTraite', motif: MOTIF_TARIE_CONTROLEUR, source: 'controleur' };
+  return { code: isAttendueTraite(sheep, DB.brebis) ? 'attendue' : 'allaitante' };
+}
+// Pas traite cette campagne (marque de l'éleveur ou code Tarie seul du contrôleur) : la brebis sort des Attendues à la traite et de « sans contrôle laitier »
+function estPasTraiteCampagne(sheep) { return situationTraiteCampagne(sheep).code === 'pasTraite'; }
+// Attendue à la traite (accueil, fiche, listes) : règle des agneaux réglés, moins les brebis pas traites cette campagne
+function estAttendueTraiteAffichee(sheep) { return isAttendueTraite(sheep, DB.brebis) && !estPasTraiteCampagne(sheep); }
+/* Marque / démarque (un geste, aucune confirmation). Retourne true si quelque chose a changé. */
+function marquerNonTraite(sheep, motif) {
+  const N = DB.campagneDebut;
+  if (N === null || N === undefined) return false;
+  sheep.nonTraite = Array.isArray(sheep.nonTraite) ? sheep.nonTraite : [];
+  const existante = sheep.nonTraite.find(x => x && x.campagne === N);
+  const m = String(motif || '').trim();
+  if (existante) { existante.motif = m; return true; }
+  sheep.nonTraite.push({ campagne: N, date: jourAujourdhuiISO(), motif: m });
+  return true;
+}
+function retirerNonTraite(sheep) {
+  const N = DB.campagneDebut;
+  if (!Array.isArray(sheep.nonTraite)) return false;
+  const avant = sheep.nonTraite.length;
+  sheep.nonTraite = sheep.nonTraite.filter(x => !(x && x.campagne === N));
+  return sheep.nonTraite.length !== avant;
+}
+// Menu des motifs (liste DB.motifsNonTraite, « Ajouter… »), valeur déjà enregistrée gardée même si retirée de la liste
+function selectMotifNonTraiteHtml(id, valeur) {
+  const motifs = (DB.motifsNonTraite || []).slice();
+  if (valeur && !motifs.includes(valeur)) motifs.push(valeur);
+  return `<select id="${id}" class="pt-motif" aria-label="Motif de non-traite"><option value="">Motif (facultatif)</option>${motifs.map(m => `<option value="${echapperHtml(m)}"${valeur === m ? ' selected' : ''}>${echapperHtml(m)}</option>`).join('')}<option value="${OPTION_AJOUTER}">Ajouter…</option></select>`;
+}
+function brancherMotifNonTraite(select, sheep, apres) {
+  if (!select) return;
+  select.onchange = () => {
+    const appliquer = (v) => { marquerNonTraite(sheep, v); saveData(DB); if (apres) apres(); };
+    if (select.value !== OPTION_AJOUTER) { appliquer(select.value); return; }
+    const m = marqueNonTraite(sheep);
+    ouvrirAjoutValeurListe('motifsNonTraite', v => {
+      if (![...select.options].some(o => o.value === v)) { const o = document.createElement('option'); o.value = v; o.textContent = v; select.insertBefore(o, select.lastElementChild); }
+      select.value = v; appliquer(v);
+    }, () => { select.value = (m && m.motif) || ''; });
+  };
+}
+/* Bandeau sombre après « Pas traite cette campagne » (6 s, prolongé tant qu'on choisit un motif) : motif facultatif + « Annuler » (retire la marque). */
+let ptSnackMinuterie = null;
+function afficherSnackPasTraite(sheep, redessiner) {
+  document.querySelectorAll('.pt-snack').forEach(el => el.remove());
+  clearTimeout(ptSnackMinuterie);
+  const el = document.createElement('div');
+  el.className = 'tri-snack pt-snack'; el.setAttribute('role', 'status');
+  el.innerHTML = `<span>n°${numeroVisuel(sheep.eid)} · pas traite cette campagne</span>${selectMotifNonTraiteHtml('pt-snack-motif', '')}<button type="button" id="pt-snack-annuler">Annuler</button>`;
+  document.body.appendChild(el);
+  const fermer = () => { clearTimeout(ptSnackMinuterie); el.remove(); };
+  const relancer = () => { clearTimeout(ptSnackMinuterie); ptSnackMinuterie = setTimeout(fermer, 6000); };
+  const sel = el.querySelector('#pt-snack-motif');
+  sel.addEventListener('focus', () => clearTimeout(ptSnackMinuterie));
+  sel.addEventListener('blur', relancer);
+  brancherMotifNonTraite(sel, sheep, () => { relancer(); if (redessiner) redessiner(); });
+  el.querySelector('#pt-snack-annuler').onclick = () => { retirerNonTraite(sheep); saveData(DB); fermer(); if (redessiner) redessiner(); };
+  relancer();
+}
+/* Boutons « Pas traite cette campagne » (classe .btn-pas-traite, data-id = id de la brebis) : un geste, aucune confirmation, puis le bandeau. */
+function brancherBoutonsPasTraite(racine, redessiner) {
+  (racine || document).querySelectorAll('.btn-pas-traite').forEach(b => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      const sheep = findSheep(b.dataset.id);
+      if (!sheep || !marquerNonTraite(sheep, '')) return;
+      saveData(DB);
+      if (redessiner) redessiner();
+      afficherSnackPasTraite(sheep, redessiner);
+    };
+  });
+}
+/* Sortie (vente, mort, perte…) d'une brebis qui a mis bas et dont la traite n'est pas renseignée (allaitante ou attendue à la traite) :
+   message ambre, JAMAIS de blocage ; après la sortie, elle quitte Brebis à régulariser (sa sortie est son information de campagne). */
+function alerteSortieTraiteHtml(brebisListe) {
+  const lib = DB.campagneDebut === null || DB.campagneDebut === undefined ? '' : campagneLabel(DB.campagneDebut);
+  const concernees = (brebisListe || []).filter(b => b && (b.statut || 'active') === 'active').map(b => ({ b, S: situationTraiteCampagne(b) })).filter(x => x.S.code === 'attendue' || x.S.code === 'allaitante');
+  if (!concernees.length) return '';
+  const etat = x => x.S.code === 'attendue' ? 'attendue à la traite' : 'allaitante';
+  const texte = concernees.length === 1
+    ? `n°${numeroVisuel(concernees[0].b.eid)} : ${etat(concernees[0])} en ${lib}. La sortie reste possible ; elle quittera Brebis à régulariser.`
+    : `${concernees.map(x => 'n°' + numeroVisuel(x.b.eid)).join(', ')} : allaitantes ou attendues à la traite en ${lib}. La sortie reste possible ; elles quitteront Brebis à régulariser.`;
+  return `<div class="msg-charte alerte pt-alerte-sortie"><b>Traite non renseignée</b><span>${texte}</span></div>`;
+}
+// Mouvement collectif (PC et mobile), catégorie brebis : même message, placé juste avant la zone `idAncre` (créé seulement s'il y a quelque chose à dire)
+function majAlerteTraiteMv(E, selectionnes, idAncre) {
+  let z = document.getElementById('pt-alerte-mv');
+  const html = (E.categorie === 'brebis' && E.type) ? alerteSortieTraiteHtml(selectionnes().map(a => a.obj)) : '';
+  const ancre = document.getElementById(idAncre);
+  if (!z && html && ancre) { z = document.createElement('div'); z.id = 'pt-alerte-mv'; ancre.parentNode.insertBefore(z, ancre); }
+  if (z) z.innerHTML = html;
+}
+const boutonPasTraiteHtml = (sheep) => `<button type="button" class="btn btn-secondary btn-pas-traite" data-id="${sheep.id}">Pas traite cette campagne</button>`;
+/* Bloc « Traite » de la fiche (onglet Contrôle laitier) : situation de la campagne, action ou marque (motif modifiable, Annuler), écart signalé. */
+function blocTraiteCampagneHtml(sheep) {
+  if ((sheep.statut || 'active') !== 'active' || DB.campagneDebut === null || DB.campagneDebut === undefined) return '';
+  const S = situationTraiteCampagne(sheep), lib = campagneLabel(DB.campagneDebut);
+  let corps = '';
+  if (S.code === 'traite') corps = `<div class="pt-ligne"><span class="reg-pastille vert">Traite ${lib}</span>${S.tarieAu ? `<span class="reg-info" style="margin:0;">tarie au ${S.tarieAu}<sup>e</sup> contrôle</span>` : ''}</div>`
+    + (S.ecart ? `<div class="msg-charte alerte" id="pt-ecart"><b>Marquée pas traite, mais contrôlée</b><span>Un contrôle avec une quantité existe pour cette campagne : elle compte comme traite. Rien n'est corrigé tout seul.</span><button type="button" class="lien" id="pt-retirer-marque">Retirer la marque « pas traite »</button></div>` : '');
+  else if (S.code === 'pasTraite' && S.source === 'controleur') corps = `<div class="pt-ligne"><span class="reg-pastille gris">Pas traite ${lib}</span><span class="reg-info" style="margin:0;">${echapperHtml(S.motif)}</span></div>`;
+  else if (S.code === 'pasTraite') corps = `<div class="pt-ligne"><span class="reg-pastille gris">Pas traite ${lib}</span>${selectMotifNonTraiteHtml('pt-fiche-motif', S.motif)}<button type="button" class="btn btn-secondary" id="pt-fiche-annuler">Annuler</button></div>`;
+  else if (S.code === 'attendue' || S.code === 'allaitante') corps = `<div class="pt-ligne"><span class="reg-pastille bleu">${S.code === 'attendue' ? 'Attendue à la traite' : 'Allaitante'}</span>${boutonPasTraiteHtml(sheep)}</div>`;
+  else return '';
+  return `<div class="card pt-bloc" id="pt-bloc-fiche">${sectionHeaderHtml(ICON_LAIT, 'blue', 'Traite · campagne ' + lib)}${corps}</div>`;
+}
+function brancherBlocTraiteCampagne(sheep, redessiner) {
+  brancherBoutonsPasTraite(document.getElementById('pt-bloc-fiche'), redessiner);
+  brancherBoutonsPasTraite(document.getElementById('pt-badge-attendue'), redessiner);
+  brancherMotifNonTraite(document.getElementById('pt-fiche-motif'), sheep, null);
+  const ann = document.getElementById('pt-fiche-annuler');
+  if (ann) ann.onclick = () => { retirerNonTraite(sheep); saveData(DB); redessiner(); };
+  const ret = document.getElementById('pt-retirer-marque');
+  if (ret) ret.onclick = () => { retirerNonTraite(sheep); saveData(DB); redessiner(); };
+}
+
 /* ---------- Agneaux (vue agrégée, en attente de devenir) ---------- */
 /* Tri commun aux listes d'agneaux/agnelles issues d'agnelages : du plus vieux
    au plus jeune par date de naissance exacte (plus précise que l'année
@@ -11337,8 +11542,8 @@ function renderDetail(id) {
     ? `<div style="background:var(--ch-onglets);color:var(--text-muted);padding:8px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;">Statut actuel : <strong>${sheep.statut}</strong></div>`
     : '';
 
-  const attendueTraiteBadge = ((sheep.statut || 'active') === 'active' && isAttendueTraite(sheep, DB.brebis))
-    ? `<div style="display:flex;align-items:center;gap:10px;background:var(--blue-bg);color:var(--blue-fg);padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">${iconCircle(ICON_LAIT, 'blue', 'sm')}<span>Attendue à la traite — tous ses agneaux sont partis</span></div>`
+  const attendueTraiteBadge = ((sheep.statut || 'active') === 'active' && estAttendueTraiteAffichee(sheep))
+    ? `<div style="display:flex;align-items:center;gap:10px;background:var(--blue-bg);color:var(--blue-fg);padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">${iconCircle(ICON_LAIT, 'blue', 'sm')}<span style="flex:1;">Attendue à la traite — tous ses agneaux sont partis</span><span id="pt-badge-attendue">${boutonPasTraiteHtml(sheep)}</span></div>`
     : '';
 
   const allLiveLambs = [];
@@ -11526,6 +11731,7 @@ function renderDetail(id) {
 
   const ctrlTabHtml = `
     ${SAISIE_MANUELLE_CONTROLE_LAITIER_ACTIVE ? '<button class="btn btn-primary" id="btn-add-controle" style="margin-bottom:16px;">+ Contrôle laitier</button>' : ''}
+    ${blocTraiteCampagneHtml(sheep)}
     <div class="card">
       ${sectionHeaderHtml(ICON_LAIT, 'blue', 'Contrôle laitier · campagne en cours')}
       ${SAISIE_MANUELLE_CONTROLE_LAITIER_ACTIVE ? '<div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>' : ''}
@@ -11693,6 +11899,7 @@ function renderDetail(id) {
   if (document.getElementById('btn-add-mouvement')) document.getElementById('btn-add-mouvement').onclick = () => { editContext = null; render('add-mouvement', sheep.id); };
   const btnAddControle = document.getElementById('btn-add-controle');
   if (btnAddControle) btnAddControle.onclick = () => { editContext = null; render('add-controle', sheep.id); };
+  brancherBlocTraiteCampagne(sheep, () => render('detail', sheep.id));
   const btnCorrigerEid = document.getElementById('btn-corriger-eid');
   if (btnCorrigerEid) btnCorrigerEid.onclick = () => openCorrigerEidSheet(sheep, () => render('detail', sheep.id));
   const btnModifierNumerosTravailSieol = document.getElementById('btn-modifier-numeros-travail-sieol');
@@ -14649,6 +14856,7 @@ function renderAddMouvement(sheepId) {
   app.innerHTML = `<div class="card">${mouvementFormHtml('Brebis n°' + numeroVisuel(sheep.eid), cfg.typeSortie, existing)}</div>`;
 
   wireMouvementForm({
+    alerteTraite: true,
     animal: { label: 'Brebis n°' + numeroVisuel(sheep.eid), obj: sheep },
     typeSortie: cfg.typeSortie,
     motifsVente: cfg.motifsVente,
@@ -19026,6 +19234,14 @@ function mouvementFormHtml(animalLabel, typeSortie, existing) {
 function wireMouvementForm(opts) {
   const { typeSortie, motifsVente, existing, dateEntreeRef, erreurDateAnterieure, onSave } = opts;
   const cleCauses = opts.cleCauses || 'causesMortalite';
+  // brebis seulement (opts.alerteTraite) : sortie d'une brebis dont la traite n'est pas renseignée = message ambre, jamais un blocage
+  const majAlerteTraite = () => {
+    if (!opts.alerteTraite) return;
+    let z = document.getElementById('pt-alerte-mvt');
+    const html = (type && !existing) ? alerteSortieTraiteHtml([opts.animal && opts.animal.obj]) : '';
+    if (!z && html) { z = document.createElement('div'); z.id = 'pt-alerte-mvt'; const err = document.getElementById('err'); err.parentNode.insertBefore(z, err); }
+    if (z) z.innerHTML = html;
+  };
   DB[cleCauses] = DB[cleCauses] || [];
   let type = existing ? existing.type : null, cause = existing ? existing.cause : null, acheteur = existing ? existing.acheteur : null;
   // Alerte (information, PC et mobile) si l'animal est encore sous délai viande à la date d'une vente / autoconsommation (opts.animal = { label, obj })
@@ -19077,6 +19293,7 @@ function wireMouvementForm(opts) {
       renderCauseChips(); renderAcheteurChips();
       document.getElementById('err').classList.add('hidden');
       rafraichirAlerteDelai();
+      majAlerteTraite();
     };
   });
   if (type && !motifsVente.includes(type)) document.getElementById('cause-block').classList.remove('hidden');
@@ -19181,6 +19398,7 @@ function renderNouveauMouvementMobile() {
     document.querySelectorAll('#mn-liste .mn-it').forEach(l => { l.querySelector('input').onchange = ev => { if (ev.target.checked) sel.add(l.dataset.id); else sel.delete(l.dataset.id); dessiner(); }; });
     $('mn-tout').textContent = filtres.length && filtres.every(a => sel.has(a.id)) ? 'Tout décocher' : 'Tout cocher';
     $('mn-valider').textContent = libValidationMv(E.type, E.categorie, n);
+    majAlerteTraiteMv(E, selectionnes, 'mn-erreurs');
     rafraichirAlerte();
   };
   const reafficher = () => renderNouveauMouvementMobile();
@@ -27822,6 +28040,8 @@ function compterUsageMouvement(champ, valeur) {
 }
 function compterUsageAcheteur(nom) { return compterUsageMouvement('acheteur', nom); }
 function compterUsageCauseMortalite(nom) { return porteursCauses(false, false).concat(porteursCauses(false, true)).filter(o => o.cause === nom).length; }
+// Motif de non-traite : porté par les marques « pas traite » des brebis (sheep.nonTraite[].motif), toutes campagnes
+function compterUsageMotifNonTraite(nom) { return porteursListe('motifsNonTraite', false).objets.filter(o => o.motif === nom).length; }
 function compterUsageCauseMortaliteAgneaux(nom) { return porteursCauses(true, false).concat(porteursCauses(true, true)).filter(o => o.cause === nom).length; }
 /* Enregistrements qui portent une cause de mortalité (champ `cause`), par liste : agneaux = mouvements des agneaux, mort-nés, agnelles et
    mouvements collectifs agneaux / agnelles ; adultes = brebis, béliers et les autres mouvements collectifs. archives = registre archivé (lecture seule). */
@@ -27888,6 +28108,7 @@ const LISTES_GENERALES_CONFIG = [
   { key: 'acheteurs', label: 'Acheteurs', module: "Mouvements d'animaux · ventes", ajout: 'un acheteur', usage: compterUsageAcheteur, protegees: [] },
   { key: 'causesMortalite', label: 'Causes de mortalité – adultes', module: 'Brebis et béliers · morts', ajout: 'une cause de mortalité (adultes)', usage: compterUsageCauseMortalite, protegees: [MOTIF_MAJ_INVENTAIRE] },
   { key: 'causesMortaliteAgneaux', label: 'Causes de mortalité – agneaux', module: 'Agneaux, mort-nés et agnelles · morts', ajout: 'une cause de mortalité (agneaux)', usage: compterUsageCauseMortaliteAgneaux, protegees: [] },
+  { key: 'motifsNonTraite', label: 'Motifs de non-traite', module: 'Pas traite cette campagne', ajout: 'un motif de non-traite', usage: compterUsageMotifNonTraite, protegees: [] },
   { key: 'intervenants', label: 'Intervenants', module: 'Carnet sanitaire', ajout: 'un intervenant', usage: compterUsageIntervenant, protegees: [] },
   { key: 'casParticuliers', label: "Cas particuliers d'échographie", module: 'Échographies', ajout: "un cas particulier d'échographie", usage: compterUsageCasParticulier, protegees: [] },
   { key: 'categoriesNotes', label: 'Catégories de notes', module: 'Fiche animal · notes', ajout: 'une catégorie de notes', usage: compterUsageCategorieNote, protegees: [] },
@@ -27921,6 +28142,7 @@ function porteursListe(key, archives) {
   if (key === 'acheteurs') return { champ: 'acheteur', objets: sous('mouvements').concat(archives ? [] : (DB.mouvementsCollectifs || [])) };
   if (key === 'causesMortalite') return { champ: 'cause', objets: porteursCauses(false, archives) };
   if (key === 'causesMortaliteAgneaux') return { champ: 'cause', objets: porteursCauses(true, archives) };
+  if (key === 'motifsNonTraite') return { champ: 'motif', objets: archives ? [] : (DB.brebis || []).flatMap(b => (Array.isArray(b.nonTraite) ? b.nonTraite : []).filter(Boolean)) };
   if (key === 'intervenants') return { champ: 'intervenant', objets: sous('sanitaire').concat(archives ? [] : (DB.traitementsCollectifs || [])) };
   if (key === 'casParticuliers') return { champ: 'special', objets: sous('echographies') };
   if (key === 'categoriesNotes') return { champ: 'categorie', objets: sous('notes') };
@@ -30334,7 +30556,7 @@ const fbDb = initializeFirestore(fbApp, {
 // volontairement exclu : propre à l'appareil (appairage physique), il n'a
 // pas de sens partagé entre deux téléphones.
 const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
-  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'intervenants',
+  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   // 'registre' reste ICI (champ meta.registre) volontairement, même après

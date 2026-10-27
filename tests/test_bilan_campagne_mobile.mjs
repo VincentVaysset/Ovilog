@@ -62,18 +62,18 @@ console.log('OK 1 onglets : libellés raccourcis sur mobile (une ligne, ≥ 44 p
 // ================================================================ 2. Brebis à régulariser : chiffres = page PC
 const kpiPc = Object.fromEntries(await pc.evaluate(() => [...document.querySelectorAll('#pc-regulariser .brd-kpi')].map(k => [k.querySelector('.brd-kpi-l').textContent.trim(), [k.querySelector('.brd-kpi-v').textContent.trim(), (k.querySelector('.brd-kpi-s') || { textContent: '' }).textContent.trim()]])));
 const tuiles = await mob.evaluate(() => [...document.querySelectorAll('.bc-tuiles .reg-tuile')].map(t => [t.querySelector('.reg-tuile-l').textContent, t.querySelector('.reg-tuile-v').textContent, t.querySelector('.reg-tuile-s').textContent, t.className.replace('reg-tuile ', '')]));
-eq(tuiles.map(t => t[0]), ['À régulariser', 'Ont mis bas', 'Vides définitives', 'Brebis présentes'], 'ordre des tuiles');
-eq(tuiles.map(t => t[3]), ['ambre', 'vert', 'bleu', 'gris'], 'couleurs des tuiles');
+eq(tuiles.map(t => t[0]), ['À régulariser', 'Allaitantes', 'Attendues à la traite', 'Traites', 'Pas traites', 'Vides définitives'], 'ordre des tuiles (six groupes sans doublons)');
+eq(tuiles.map(t => t[3]), ['ambre', 'bleu', 'ambre', 'vert', 'gris', 'gris'], 'couleurs des tuiles');
 tuiles.forEach(t => { check(kpiPc[t[0]] && kpiPc[t[0]][0] === t[1], 'tuile « ' + t[0] + ' » = page PC : ' + t[1] + ' / ' + JSON.stringify(kpiPc[t[0]])); });
-eq(tuiles.slice(0, 3).map(t => norm(t[2])), ['À régulariser', 'Ont mis bas', 'Vides définitives'].map(l => norm(kpiPc[l][1])), 'pourcentages = page PC');
-const d = await mob.evaluate(() => { const x = bilanARegulariserData(); return { reg: x.groupes.aRegulariser.length, mb: x.groupes.misesBas.length, vd: x.groupes.videsDefinitives.length, inco: x.groupes.incoherentes.length, actives: x.actives, informees: x.informees }; });
+eq(tuiles.map(t => norm(t[2])), tuiles.map(t => norm(kpiPc[t[0]][1])), 'sous-titres et pourcentages = page PC');
+const d = await mob.evaluate(() => { const x = bilanARegulariserData(), G = x.groupes; return { reg: G.aRegulariser.length, mb: G.misesBas.length, vd: G.videsDefinitives.length, inco: G.incoherentes.length, actives: x.actives, informees: x.informees, al: G.allaitantes.length, at: G.attendues.length, tr: G.traites.length, pt: G.pasTraites.length }; });
 eq([d.mb, d.vd, d.inco, d.actives], [363, 3, 2, 401], 'jeu : 363 mises bas, 3 vides, 2 incohérences, 401 brebis');
-check(d.reg + d.mb + d.vd === d.actives, 'groupes = brebis actives');
+check(d.reg + d.mb + d.vd === d.actives && d.al + d.at + d.tr + d.pt === d.mb, 'groupes = brebis actives ; les quatre groupes « a mis bas » = mises bas');
 check(await mob.evaluate(() => /sur/.test(document.querySelector('.bc-avance-t span').textContent)) && norm(await mob.textContent('.bc-avance-t span')) === d.informees + ' sur ' + d.actives + ' renseignées', 'avancement : ' + await mob.textContent('.bc-avance-t span'));
-check(await mob.evaluate(() => document.querySelector('.bc-barre').children.length === 3), 'barre d\'avancement à 3 segments');
+check(await mob.evaluate(() => document.querySelector('.bc-barre').children.length === 6), 'barre d\'avancement à 6 segments');
 check(norm(await mob.textContent('#bc-bande-inco .cl-bande-n')) === kpiPc['Incohérences'][0] && /Incohérences à trancher/.test(await mob.textContent('#bc-bande-inco')), 'bande rouge : même nombre que la page PC (' + kpiPc['Incohérences'][0] + ')');
 check(await mob.evaluate(() => !document.getElementById('carte-sans-controle-laitier') && !/sans contrôle laitier/i.test(document.getElementById('app').textContent) && !document.querySelector('table')), 'plus de carte « sans contrôle laitier », aucun tableau');
-console.log('OK 2 Brebis à régulariser : 4 tuiles (ambre / vert / bleu / gris) = chiffres et pourcentages de la page PC, avancement ' + d.informees + ' sur ' + d.actives + ', bande rouge = ' + d.inco + ', plus de carte « sans contrôle laitier ».');
+console.log('OK 2 Brebis à régulariser : 6 tuiles = chiffres et pourcentages de la page PC, avancement ' + d.informees + ' sur ' + d.actives + ', bande rouge = ' + d.inco + ', plus de carte « sans contrôle laitier ».');
 
 // ================================================================ 3. liste, recherche, filtre d'âge, « Voir les autres »
 const vis = () => mob.evaluate(() => [...document.querySelectorAll('#pc-reg-liste [data-num]:not(.hidden)')].length);
@@ -99,18 +99,21 @@ await mob.selectOption('#pc-reg-age', '');
 console.log('OK 3 liste : 8 lignes puis « Voir les ' + (d.reg - 8) + ' autres », mêmes brebis et même ordre que le PC, recherche par n°, filtre d\'âge, aucun résultat.');
 
 // ================================================================ 4. sections repliables, bande rouge, fiches
+const SEC = d.tr >= d.al ? 'tr' : 'al', NSEC = Math.max(d.tr, d.al);   // section repliable la plus longue (Traites ou Allaitantes)
 const corps = id => mob.evaluate(i => { const c = document.querySelector('#bc-sec-' + i + ' .bc-sec-corps'); return { cache: c.classList.contains('hidden'), lignes: c.querySelectorAll('[data-num]').length, visibles: c.querySelectorAll('[data-num]:not(.hidden)').length, aria: document.querySelector('#bc-sec-' + i + ' .bc-sec-tete').getAttribute('aria-expanded') }; }, id);
-eq(await corps('mb'), { cache: true, lignes: d.mb, visibles: 20, aria: 'false' }, 'Ont mis bas : repliée, ' + d.mb + ' brebis (20 lignes visibles une fois dépliée)');
-await mob.click('#bc-sec-mb .bc-sec-tete');
-eq(await corps('mb'), { cache: false, lignes: d.mb, visibles: 20, aria: 'true' }, 'Ont mis bas : dépliée (20 premières lignes)');
-check(norm(await mob.textContent('#bc-sec-mb .bc-plus')) === 'Voir les ' + (d.mb - 20) + ' autres', '« Voir les autres » de la section');
-await mob.click('#bc-sec-mb .bc-plus');
-eq((await corps('mb')).visibles, d.mb, 'section dépliée : toutes les lignes');
-await mob.click('#bc-sec-mb .bc-sec-tete');
-check((await corps('mb')).cache, 'Ont mis bas : repliée de nouveau');
+eq(await corps(SEC), { cache: true, lignes: NSEC, visibles: Math.min(20, NSEC), aria: 'false' }, 'section repliée, ' + NSEC + ' brebis (20 lignes visibles au plus une fois dépliée)');
+await mob.click('#bc-sec-' + SEC + ' .bc-sec-tete');
+eq(await corps(SEC), { cache: false, lignes: NSEC, visibles: Math.min(20, NSEC), aria: 'true' }, 'section dépliée (20 premières lignes au plus)');
+if (NSEC > 20) {
+  check(norm(await mob.textContent('#bc-sec-' + SEC + ' .bc-plus')) === 'Voir les ' + (NSEC - 20) + ' autres', '« Voir les autres » de la section');
+  await mob.click('#bc-sec-' + SEC + ' .bc-plus');
+}
+eq((await corps(SEC)).visibles, NSEC, 'section dépliée : toutes les lignes');
+await mob.click('#bc-sec-' + SEC + ' .bc-sec-tete');
+check((await corps(SEC)).cache, 'section repliée de nouveau');
 await mob.click('#bc-sec-vd .bc-sec-tete');
 eq(await corps('vd'), { cache: false, lignes: d.vd, visibles: d.vd, aria: 'true' }, 'Vides définitives : dépliée');
-check(norm(await mob.textContent('#bc-sec-vd .reg-pastille')) === d.vd + ' brebis' && norm(await mob.textContent('#bc-sec-mb .reg-pastille')) === d.mb + ' brebis', 'pastilles « N brebis »');
+check(norm(await mob.textContent('#bc-sec-vd .reg-pastille')) === d.vd + ' brebis' && norm(await mob.textContent('#bc-sec-' + SEC + ' .reg-pastille')) === NSEC + ' brebis', 'pastilles « N brebis »');
 check(await mob.evaluate(() => document.getElementById('bc-liste-inco').classList.contains('hidden')), 'liste des incohérences repliée');
 await mob.click('#bc-bande-inco');
 const inco = await mob.evaluate(() => [...document.querySelectorAll('#bc-liste-inco .bc-li')].map(l => [l.querySelector('.bc-li-n').textContent, l.querySelector('.bc-li-f').textContent]));
