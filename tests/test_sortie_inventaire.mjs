@@ -97,5 +97,61 @@ for (const bureau of [false, true]) {
   console.log('OK 4 ' + nom + ' : registre et Mouvements.');
   await p.context().close();
 }
+
+// ================================================================ 5. changement de campagne : agneaux sans devenir sortis en « Mise à jour inventaire »
+for (const bureau of [false, true]) {
+  const nom = bureau ? 'PC' : 'mobile';
+  const page = await (await browser.newContext({ viewport: bureau ? { width: 1400, height: 1000 } : { width: 390, height: 844 } })).newPage();
+  await page.clock.setFixedTime(new Date('2027-10-15T09:00:00'));   // bascule après la fin de la campagne 2026 (30/09/2027)
+  if (bureau) await page.addInitScript(() => { window.electronAPI = { isDesktop: true, version: '1.0.test' }; });
+  page.on('pageerror', e => { throw new Error('PAGEERROR: ' + e.message); });
+  page.on('dialog', d => d.accept());
+  page.on('download', d => d.cancel().catch(() => {}));
+  await page.goto(URL_APP, { waitUntil: 'load' }); await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    DB = migrateData({}); DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
+    DB.exploitation.campagneMoisDebut = 10; DB.exploitation.campagneJourDebut = 1;
+    const ag = (n, sexe, x) => Object.assign({ sexe, adopte: false, eid: '250000004561' + String(n).padStart(3, '0'), sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-10-12' }] }, x || {});
+    const fiche = (n, agnelages) => ({ id: 'b' + n, eid: '250000004569' + String(n).padStart(3, '0'), statut: 'active', createdAt: 1, echographies: [], agnelages, sanitaire: [], notes: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [], videesDefinitives: [] });
+    DB.brebis = [
+      fiche(1, [{ date: '2026-10-12', campagne: 2026, codeRepro: 'MN', lambs: [
+        ag(1, 'Mâle'),                                                                                     // sans devenir → sort
+        ag(2, 'Mâle', { statutFinal: 'vendu', mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2026-10-12' }, { type: 'Vendu', acheteur: 'Acheteur C', date: '2027-01-10' }] }),
+        { sexe: 'Mort-né', adopte: false },
+        ag(4, 'Femelle', { triStatut: 'gardée' }),                                                           // agnelle gardée : ne sort pas
+        { sexe: 'Mâle', adopte: false, mouvements: [] }                                                      // non bouclé : jamais touché
+      ] }]),
+      fiche(2, [{ date: '2025-10-20', campagne: 2025, codeRepro: 'MN', lambs: [ag(6, 'Femelle', { triStatut: 'écartée', mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2025-10-20' }] })] },   // oublié de 2025 → sort
+                { date: '2027-10-05', campagne: 2027, codeRepro: 'MN', lambs: [ag(7, 'Mâle', { mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2027-10-05' }] })] }])                // déjà de la nouvelle campagne : reste
+    ];
+    DB.beliers = []; DB.agnelles = []; DB.lots = []; DB.mouvementsCollectifs = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
+    saveData(DB);
+    render('confirmation-nouvelle-campagne');
+  });
+  const carte = await page.evaluate(() => { const c = document.getElementById('carte-agneaux-sans-devenir'); return c ? c.innerText : null; });
+  check(carte && /Agneaux sans devenir \(2\)/.test(carte) && /30-09-2027/.test(carte) && /n°61001/.test(carte) && /n°61006/.test(carte) && !/61007|61002|61004/.test(carte), nom + ' : écran de vérification : 2 agneaux listés, date de sortie : ' + carte);
+  const avant = await page.evaluate(() => JSON.stringify(DB.brebis));
+  const r = await page.evaluate(async () => await executerChangementCampagne({ debut: '2027-10-01', fin: '2028-09-30' }));
+  check(r.ok && r.agneauxSortisInventaire === 2, nom + ' : bascule réussie, 2 agneaux sortis : ' + JSON.stringify(r));
+  const apres = await page.evaluate(() => {
+    const L = DB.brebis.flatMap(s => s.agnelages.flatMap(a => a.lambs));
+    const parN = n => L.find(l => l.eid && l.eid.endsWith(n));
+    const lot = DB.mouvementsCollectifs.find(c => c.categorie === 'agneaux');
+    return { s1: [parN('61001').statutFinal, parN('61001').mouvements.slice(-1)[0]], s6: parN('61006').statutFinal, s2: parN('61002').statutFinal, s4: parN('61004').statutFinal || null, s7: parN('61007').statutFinal || null,
+      nonBoucle: L.filter(l => !l.eid && l.sexe !== 'Mort-né').map(l => [l.statutFinal || null, l.mouvements.length]), lot: lot && [lot.type, lot.cause, lot.date, lot.membres.length, lot.annulable], N: DB.campagneDebut,
+      eids: L.map(l => l.eid || null), causes: DB.causesMortaliteAgneaux.slice() };
+  });
+  eq([apres.s1[0], apres.s1[1].type, apres.s1[1].cause, apres.s1[1].date, apres.s6], ['inventaire', 'Mise à jour inventaire', null, '2027-09-30', 'inventaire'], nom + ' : agneaux sans devenir sortis le dernier jour de la campagne');
+  eq([apres.s2, apres.s4, apres.s7, apres.nonBoucle], ['vendu', null, null, [[null, 0]]], nom + ' : vendu, agnelle gardée, agneau de la nouvelle campagne et non bouclé inchangés');
+  eq([apres.lot, apres.N, apres.causes], [['Mise à jour inventaire', null, '2027-09-30', 2, true], 2027, []], nom + ' : un mouvement collectif annulable ; campagne avancée ; aucune cause ajoutée');
+  eq(JSON.parse(avant).flatMap(s => s.agnelages.flatMap(a => a.lambs.map(l => l.eid || null))), apres.eids, nom + ' : aucun numéro modifié');
+  // résultat affiché
+  await page.evaluate(() => renderResultatNouvelleCampagne(1, 0, [], [], [], 2));
+  check(/2 agneaux sortis en « Mise à jour inventaire »/.test(await page.evaluate(() => document.getElementById('resultat-agneaux-inventaire').innerText)), nom + ' : écran de résultat');
+  // « Annuler le lot » : les deux agneaux repassent en attente
+  eq(await page.evaluate(() => { annulerLotMv(DB.mouvementsCollectifs.find(c => c.categorie === 'agneaux')); return DB.brebis.flatMap(s => s.agnelages.flatMap(a => a.lambs)).filter(l => l.eid && /6100[16]$/.test(l.eid)).map(l => l.statutFinal || 'attente'); }), ['attente', 'attente'], nom + ' : lot annulable');
+  console.log('OK 5 ' + nom + ' : changement de campagne : agneaux sans devenir listés puis sortis en « Mise à jour inventaire », lot annulable.');
+  await page.context().close();
+}
 await browser.close();
 console.log('\nTOUS LES TESTS « MISE À JOUR INVENTAIRE » (type de sortie) SONT PASSÉS (jeu synthétique, aucune donnée réelle)');

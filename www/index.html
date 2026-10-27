@@ -27381,6 +27381,9 @@ async function executerChangementCampagne(dates) {   // dates : { debut, fin } A
     // écrasé si un résumé existe déjà (voir etatResumeFinCampagne).
     poserResumeFinCampagne(etatResume);
 
+    // Agneaux bouclés restés sans devenir : sortis en « Mise à jour inventaire » (ce n'est pas une mort ; annulable dans Mouvements)
+    const agneauxSortisInventaire = sortirAgneauxSansDevenir(DB.campagneDebut);
+
     // DB.luttes n'est plus alimenté depuis le module Reproduction (voir
     // modesRepro, campagne-tagué comme les agnelages/échographies) : plus
     // rien à remettre à zéro ici, contrairement à l'ancien pense-bête "Lutte".
@@ -27497,7 +27500,7 @@ async function executerChangementCampagne(dates) {   // dates : { debut, fin } A
     journaliserArchivageRegistre('bascule', resultatArchivage);
 
     saveData(DB);
-    return { ok: true, agnellesEnConflit, archivesSorties: resultatArchivage.archives, echecsArchivage: resultatArchivage.echecs };
+    return { ok: true, agnellesEnConflit, archivesSorties: resultatArchivage.archives, echecsArchivage: resultatArchivage.echecs, agneauxSortisInventaire };
   } finally {
     campagneChangeEnCours = false;
     operationGroupeeEnCours = false;
@@ -27515,6 +27518,42 @@ async function executerChangementCampagne(dates) {   // dates : { debut, fin } A
    campagne — remplace l'ancien confirm() natif. Purement informatif : pas
    de cases à cocher, juste une relecture avant un vrai bouton "Valider"
    (voir executerChangementCampagne) ou "Annuler". */
+/* Agneaux bouclés SANS DEVENIR à la fin de la campagne N (ni vendus, ni morts, ni sortis, ni agnelles gardées ; nés la campagne N ou avant ;
+   mort-nés et agneaux non bouclés exclus). Au changement de campagne ils sortent en « Mise à jour inventaire » (sortirAgneauxSansDevenir),
+   datée du dernier jour de la campagne qui se termine (aujourd'hui si la bascule a lieu avant), jamais avant l'entrée de l'agneau. Lecture seule. */
+function agneauxSansDevenirFinCampagne(N) {
+  if (N === null || N === undefined) return [];
+  const out = [];
+  DB.brebis.forEach(sheep => (sheep.agnelages || []).forEach(a => {
+    if (!a || (a.campagne !== null && a.campagne !== undefined && a.campagne > N)) return;
+    (a.lambs || []).forEach(l => {
+      if (!l || l.sexe === 'Mort-né' || !l.eid || agneauSorti(l)) return;
+      if (l.sexe === 'Femelle' && l.triStatut === 'gardée') return;
+      out.push({ lamb: l, mereEid: sheep.eid, date: a.date });
+    });
+  }));
+  return sortLambItemsByAge(out);
+}
+function dateSortieInventaireFinCampagne(N) {
+  const fin = campagneFinISO(N), auj = jourAujourdhuiISO();
+  return fin && fin < auj ? fin : auj;
+}
+// Applique la sortie (un mouvement par agneau + un mouvement collectif annulable « Mise à jour inventaire ») ; renvoie le nombre d'agneaux sortis
+function sortirAgneauxSansDevenir(N) {
+  const items = agneauxSansDevenirFinCampagne(N);
+  if (!items.length) return 0;
+  const date = dateSortieInventaireFinCampagne(N);
+  const collectifId = 'MC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  items.forEach(it => {
+    const entree = premierMouvementDate(it.lamb.mouvements || [], ['Entrée']);
+    CATEGORIE_ANIMAL_CONFIG.agneaux.applySortie(it.lamb, SORTIE_INVENTAIRE, null, null, entree && entree > date ? entree : date, collectifId);
+  });
+  DB.mouvementsCollectifs = DB.mouvementsCollectifs || [];
+  DB.mouvementsCollectifs.push({ id: collectifId, categorie: 'agneaux', annulable: true, type: SORTIE_INVENTAIRE, cause: null, acheteur: null,
+    date, membres: items.map(it => it.lamb.eid), createdAt: Date.now() });
+  return items.length;
+}
+
 function renderConfirmationNouvelleCampagne() {
   pageTitle.textContent = 'Vérifier avant de valider';
 
@@ -27532,6 +27571,13 @@ function renderConfirmationNouvelleCampagne() {
   });
   const agesKeys = Object.keys(agesCount).sort((a, b) => a === '?' ? 1 : b === '?' ? -1 : Number(a) - Number(b));
   const brebisParAgeHtml = agesKeys.map(k => `<div class="history-item"><div class="content">${k === '?' ? 'Âge inconnu' : k + ' an(s)'} — ${agesCount[k]} brebis</div></div>`).join('');
+  const agneauxSansDevenir = agneauxSansDevenirFinCampagne(DB.campagneDebut);
+  const agneauxSansDevenirHtml = !agneauxSansDevenir.length ? '' : `
+    <div class="card" id="carte-agneaux-sans-devenir">
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Agneaux sans devenir (${agneauxSansDevenir.length})</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Ni vendus ni morts : ils sortiront en « Mise à jour inventaire » le ${formatDateFr(dateSortieInventaireFinCampagne(DB.campagneDebut))} (annulable dans Mouvements).</div>
+      ${agneauxSansDevenir.map(it => `<div class="history-item"><div class="content">n°${numeroVisuel(it.lamb.eid)} — ${it.lamb.sexe === 'Femelle' ? 'femelle' : 'mâle'}, mère n°${numeroVisuel(it.mereEid)}</div></div>`).join('')}
+    </div>`;
 
   // Correctif de l'audit "Changement de campagne" (point 3) : la date du
   // jour, comparée au seuil configuré (1er octobre par défaut) -- jamais un
@@ -27576,6 +27622,7 @@ function renderConfirmationNouvelleCampagne() {
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Répartition par âge.</div>
       ${brebisParAgeHtml || '<div class="empty">Aucune brebis active.</div>'}
     </div>
+    ${agneauxSansDevenirHtml}
     <div class="card" style="border-color:var(--danger);">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px;color:var(--danger);">Sera remis à zéro</div>
       <div style="font-size:13px;">Les mouvements (ventes, morts...) de la campagne écoulée seront retirés des fiches actives — mais conservés dans le registre d'élevage réglementaire.</div>
@@ -27641,7 +27688,7 @@ function renderConfirmationNouvelleCampagne() {
       btn.textContent = originalLabel;
       return;
     }
-    renderResultatNouvelleCampagne(activesAvant, agnellesAvant, result.agnellesEnConflit, result.archivesSorties || [], result.echecsArchivage || []);
+    renderResultatNouvelleCampagne(activesAvant, agnellesAvant, result.agnellesEnConflit, result.archivesSorties || [], result.echecsArchivage || [], result.agneauxSortisInventaire || 0);
   };
 }
 
@@ -27653,7 +27700,7 @@ function renderConfirmationNouvelleCampagne() {
    sur l'accueil. Les agnelles écartées pour cause de doublon d'EID (voir
    executerChangementCampagne) sont listées explicitement : elles restent
    dans DB.agnelles, à traiter à la main. */
-function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnConflit, archivesSorties, echecsArchivage) {
+function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnConflit, archivesSorties, echecsArchivage, agneauxSortisInventaire) {
   pageTitle.textContent = 'Changement de campagne effectué';
   const activesApres = DB.brebis.filter(s => (s.statut || 'active') === 'active').length;
   const attendu = activesAvant + agnellesAvant - agnellesEnConflit.length;
@@ -27685,6 +27732,7 @@ function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnC
     </div>
     ${conflitHtml}
     ${archivageHtml}
+    ${agneauxSortisInventaire ? `<div class="card" id="resultat-agneaux-inventaire"><div style="font-size:14px;font-weight:600;margin-bottom:6px;">${agneauxSortisInventaire} agneau${agneauxSortisInventaire > 1 ? 'x' : ''} sorti${agneauxSortisInventaire > 1 ? 's' : ''} en « Mise à jour inventaire »</div><div style="font-size:12px;color:var(--text-muted);">Annulable dans Mouvements si l'un d'eux a en fait été vendu ou est mort.</div></div>` : ''}
     <button class="btn btn-primary" id="btn-continuer-resultat-campagne">Continuer</button>
   `;
   document.getElementById('btn-continuer-resultat-campagne').onclick = () => render('parametres');
