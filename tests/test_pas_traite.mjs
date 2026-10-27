@@ -52,8 +52,8 @@ for (const bureau of [false, true]) {
   // ================================================================ 1. règle
   eq(await situations(p), { b1: 'attendue', b2: 'allaitante', b3: 'traite@2', b4: 'pasTraite/controleur:Tarie (contrôleur)', b5: 'pasTraite/eleveur:Mammite', b6: 'videDefinitive', b7: 'aRegulariser', b8: 'traite!', b9: 'aRegulariser' },
     nom + ' : situations (traite même tarie au 2e contrôle, Tarie seul = pas traite, marque de l\'éleveur, écart marque/contrôle, marque d\'une autre campagne ignorée)');
-  // accueil : agneaux réglés de la campagne en cours seulement (b9 : agneaux de 2025 seulement, plus attendue), moins les pas traites (b4, b5)
-  eq(await p.evaluate(() => [attendueTraiteListe().map(b => b.id), dashboardStatsData().attendueTraiteCount]), [['b1', 'b3', 'b8'], 3], nom + ' : Attendues à la traite (accueil) : pas traites exclues (b4, b5), agneaux d\'une autre campagne ignorés (b9)');
+  // accueil : agneaux réglés de la campagne en cours seulement (b9 : agneaux de 2025 seulement), ni pas traites (b4, b5) ni traites (b3, b8 : contrôlées avec une quantité)
+  eq(await p.evaluate(() => [attendueTraiteListe().map(b => b.id), dashboardStatsData().attendueTraiteCount]), [['b1'], 1], nom + ' : Attendues à la traite (accueil) = groupe « attendues » de Brebis à régulariser (traites, pas traites et autre campagne exclues)');
   // un agneau de la campagne précédente oublié (sans devenir) ne la rend plus « allaitante » ; une adoption d'une autre campagne ne compte pas non plus
   eq(await p.evaluate(() => {
     const oublie = { sexe: 'Mâle', adopte: false, eid: '250000004561099', mouvements: [{ type: 'Entrée', cause: 'Naissance', date: '2025-10-12' }] };
