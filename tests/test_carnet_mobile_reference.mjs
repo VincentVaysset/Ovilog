@@ -1,5 +1,5 @@
 /* Référence « mobile identique » du Carnet sanitaire (écrans mobiles : Sanitaire -- devenu le même parcours unifié que le
-   PC, chantier « Carnet sanitaire mobile/PC unifié » --, Gérer les produits, Sous délai d'attente, historique des
+   PC, chantier « Carnet sanitaire mobile/PC unifié » --, Sous délai d'attente, historique des
    traitements collectifs, Ordonnances, carnet ouvert depuis la fiche d'une brebis avec cet animal présélectionné, fiche
    brebis) : HTML comparé octet pour octet à tests/ref/carnet_mobile.json (jeu SYNTHÉTIQUE, horloge figée). Les anciens
    écrans « Traitement collectif (nouveau) » et « Ajout carnet sanitaire » individuel (routes 'traitement-collectif' /
@@ -38,7 +38,6 @@ const res = await page.evaluate(() => {
   const app = () => document.getElementById('app').innerHTML;
   const R = {};
   render('sanitaire'); R.sanitaire = app();
-  render('gerer-produits'); R.gerer_produits = app();
   render('sous-delai'); R.sous_delai = app();
   render('traitements-collectifs'); R.traitements_collectifs = app();
   render('ordonnances'); R.ordonnances = app();

@@ -1,6 +1,6 @@
 /* Fiche produit « Produits et délais » (PC) : modèle (delaiLait, delaiViande, surOrdonnance, reserveVeterinaire), anciennes
    valeurs à confirmer / corriger (delaiAttente = lait seul, clés héritées de l'ANMV jamais lues), délais obligatoires à la
-   création (0 autorisé), fusion des écritures de l'écran mobile « Gérer les produits », modifier une fiche ne change aucun
+   création (0 autorisé), modifier une fiche ne change aucun
    soin déjà enregistré, rien d'écrit sans action. saveData est REMPLACÉ par un compteur (rien n'est persisté). Jeu synthétique. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
@@ -108,16 +108,17 @@ const np = await page.evaluate(() => ficheProduit('Nouveau produit test'));
 check(np.complete && np.delaiLait === 0 && np.delaiViande === 0 && np.categorie === 'vaccins', 'nouveau produit : délais 0 / 0 acceptés, rangé dans Vaccins : ' + JSON.stringify(np));
 console.log('OK 4 nouveau produit : nom unique, catégorie, délais obligatoires (0 autorisé).');
 
-// ================================================================ 5. écran mobile « Gérer les produits » : fusion, jamais d'effacement
-const mob = await page.evaluate(() => {
-  ecrireInfoProduitMobile('Intramicine', '9 cc', 10);                  // modification du lait côté mobile
-  const a = JSON.parse(JSON.stringify(DB.produitsInfo.Intramicine));
-  ecrireInfoProduitMobile('Finadyne', '', null);                       // vider côté mobile : la fiche complète n'est pas supprimée
-  return { a, finadyne: !!DB.produitsInfo.Finadyne, f: JSON.parse(JSON.stringify(DB.produitsInfo.Finadyne)) };
-});
-check(mob.a.delaiLait === 10 && mob.a.delaiAttente === 10 && mob.a.delaiViande === 28 && mob.a.posologie === '9 cc', 'écriture mobile : delaiLait suit delaiAttente, délai viande conservé : ' + JSON.stringify(mob.a));
-check(mob.finadyne && mob.f.delaiViande === 5 && mob.f.surOrdonnance === true, 'écriture mobile vide : la fiche complète n\'est pas supprimée : ' + JSON.stringify(mob.f));
-console.log('OK 5 écran mobile « Gérer les produits » : écritures fusionnées (nouveaux champs jamais effacés), delaiLait suit delaiAttente.');
+// ================================================================ 5. une seule fenêtre de création : depuis une ordonnance, la fiche complète
+await page.evaluate(() => { editContext = null; render('add-ordonnance'); });
+await page.click('#btn-ordonnance-nouveau-produit');
+check(await page.evaluate(() => !!document.getElementById('fp-nom') && !!document.getElementById('fp-lait') && document.getElementById('fp-cat').value === ''), 'ordonnance › nouveau produit : fiche complète (délais obligatoires), aucune catégorie choisie d\'office');
+await page.fill('#fp-nom', 'Produit ordonnance'); await page.fill('#fp-lait', '2'); await page.fill('#fp-viande', '4');
+await page.click('#fp-ok');
+check(await page.evaluate(() => /Choisis la catégorie/.test(document.getElementById('fp-err').textContent) && !(DB.produits.antibiotiques || []).includes('Produit ordonnance')), 'catégorie obligatoire : rien d\'enregistré sans elle');
+await page.selectOption('#fp-cat', 'antibiotiques'); await page.click('#fp-ok');
+check(await page.evaluate(() => (DB.produits.antibiotiques || []).includes('Produit ordonnance') && ficheProduit('Produit ordonnance').complete && /Produit ordonnance/.test(document.getElementById('app').textContent)), 'produit créé avec sa fiche complète et ajouté à l\'ordonnance');
+check(await page.evaluate(() => typeof ouvrirModalNouveauProduitSanitaire === 'undefined' && typeof renderGererProduits === 'undefined'), 'ancienne fenêtre et ancien écran « Gérer les produits » retirés');
+console.log('OK 5 une seule fenêtre de création de produit (ordonnance comprise), catégorie obligatoire.');
 
 // ================================================================ 6. soins déjà enregistrés inchangés
 check(await page.evaluate(() => JSON.stringify(DB.brebis.map(b => b.sanitaire)) === window.__soinsAvant), 'modifier / confirmer des fiches produit n\'a changé AUCUN soin déjà enregistré');

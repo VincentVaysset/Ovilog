@@ -73,8 +73,6 @@ await page.evaluate(() => render('sous-delai'));
 { const T = 'Un produit sans délai (ou à délai 0) n\'apparaît jamais ici.'; const e = await sansBulle('Sous délai d\'attente'); eq(e.infos.map(i => i.t), [T], 'Sous délai d\'attente : une seule ligne'); uneInfo(e, T, 'Sous délai d\'attente'); }
 await page.evaluate(() => render('controle-lot-delai'));
 { const T = 'Rien n\'est enregistré : simple aide-mémoire pendant la traite.'; const e = await sansBulle('Contrôle de lot'); eq(e.infos.map(i => i.t), [T], 'Contrôle de lot : une seule ligne'); uneInfo(e, T, 'Contrôle de lot'); }
-await page.evaluate(() => render('gerer-produits'));
-eq((await sansBulle('Gérer les produits')).infos, [], 'Gérer les produits : aucune ligne d\'information (texte dans le manuel)');
 await page.evaluate(() => render('traitements-collectifs'));
 { const T = 'Supprimer un traitement l\'enlève d\'un coup de toutes les fiches concernées : vérifie le nombre d\'animaux et les dates.'; const e = await sansBulle('Traitements collectifs'); eq(e.infos.map(i => i.t), [T], 'Traitements collectifs : une seule ligne en haut (« Anciennes saisies » fusionnée avec elle)'); uneInfo(e, T, 'Traitements collectifs');
   check(await page.evaluate(() => document.getElementById('app').textContent.includes('Anciennes saisies (sans identifiant)')), 'Traitements collectifs : le titre « Anciennes saisies (sans identifiant) » reste, sans bulle'); }

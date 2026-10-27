@@ -37,7 +37,7 @@ function pieger() {
 
 const VUES = [
   'home', 'list', 'beliers', 'agneaux', 'agnelles', 'agnelles-inventaire', 'inventaire', 'inventaire-actifs', 'sanitaire', 'sous-delai', 'ordonnances', 'produits-delais',
-  'gerer-produits', 'journal', 'registre', 'controle-laitier', 'qualite', 'lots', 'mouvement-groupe', 'mouvements', 'traitements-collectifs', 'historique-echo', 'echo-rapide',
+  'journal', 'registre', 'controle-laitier', 'qualite', 'lots', 'mouvement-groupe', 'mouvements', 'traitements-collectifs', 'historique-echo', 'echo-rapide',
   'misebas-rapide', 'declaration-annuelle', 'liste-serie', 'soins-sans-bio',
   ['bilan-campagne', 'bilanCampagneTab="reproduction"'], ['bilan-campagne', 'bilanCampagneTab="lactation"'],
   ['parametres', 'parametresRubrique="exploitation";parametresTab="exploitation"'], ['parametres', 'parametresRubrique="listes";parametresTab="listes"'], ['parametres', 'parametresRubrique="campagne";parametresTab="campagne"'],
@@ -90,7 +90,7 @@ async function passe(nom, contexte, bureau) {
     if (r.injectes.length) fuites.push(etiquette + ' : éléments injectés ' + [...new Set(r.injectes)].join(', '));
     if (r.entites.length) fuites.push(etiquette + ' : double échappement visible ' + r.entites.join(' '));
     if (r.piege) fuites.push(etiquette + ' : code injecté exécuté');
-    if (/^(detail|belier-detail|agnelle-detail|ordonnances|lots|gerer-produits)$/.test(vue) && !r.montre) fuites.push(etiquette + ' : le texte piégé n\'est pas affiché tel qu\'il a été saisi');
+    if (/^(detail|belier-detail|agnelle-detail|ordonnances|lots|produits-delais)$/.test(vue) && !r.montre) fuites.push(etiquette + ' : le texte piégé n\'est pas affiché tel qu\'il a été saisi');
     await page.evaluate(() => { window.__piege = 0; });
   }
   await page.waitForTimeout(300);

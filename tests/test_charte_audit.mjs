@@ -321,7 +321,7 @@ console.log('J OK');
   // boutons de ligne relevés à 44 px : pilule, 16 px de marge latérale, texte inchangé, carte qui grandit de 20 px au plus, rien qui déborde
   const SEL_LIGNE = '.btn-edit-produit, .btn-del-produit, .btn-retirer-lot, .btn-del-lot, #btn-modifier-numeros-travail-sieol, #btn-modifier-numeros-travail-sieol-ag, #btn-modifier-numero-travail-sieol-belier';
   let nl = 0;
-  for (const code of ["render('gerer-produits')", "currentLotId = 'L1'; render('lot-repro-detail')", "render('lots')", "currentSheepId = 'B1'; render('detail')", "currentBelierId = 'bel1'; render('belier-detail')", "currentAgnelleId = 'ag1'; render('agnelle-detail')"]) {
+  for (const code of ["currentLotId = 'L1'; render('lot-repro-detail')", "render('lots')", "currentSheepId = 'B1'; render('detail')", "currentBelierId = 'bel1'; render('belier-detail')", "currentAgnelleId = 'ag1'; render('agnelle-detail')"]) {
     await ecran(mob, code);
     const L = await mob.evaluate(SEL => [...document.querySelectorAll(SEL)].filter(b => b.offsetParent).map(b => { const s = getComputedStyle(b), r = b.getBoundingClientRect(), c = (b.closest('.card') || b.parentElement).getBoundingClientRect();
       return { t: b.textContent.trim(), h: Math.round(r.height), rayon: parseFloat(s.borderTopLeftRadius), pad: [s.paddingLeft, s.paddingRight], fs: s.fontSize, deborde: r.right > c.right + 1 || r.right > innerWidth || b.scrollWidth > b.clientWidth + 1 }; }), SEL_LIGNE);
@@ -331,9 +331,9 @@ console.log('J OK');
       nl++;
     }
   }
-  check(nl >= 10, 'H. boutons de ligne vérifiés (' + nl + ')');
-  await ecran(pc, "render('gerer-produits')");
-  eq(await pc.evaluate(() => getComputedStyle(document.querySelector('.btn-edit-produit')).paddingLeft), '10px', 'H. PC : boutons de ligne inchangés');
+  check(nl >= 5, 'H. boutons de ligne vérifiés (' + nl + ')');   // « Gérer les produits » (5 boutons) retiré : création et modification des produits dans « Produits et délais » seulement
+  await ecran(pc, "currentLotId = 'L1'; render('lot-repro-detail')");
+  eq(await pc.evaluate(() => { const b = document.querySelector('.btn-retirer-lot, .btn-del-lot'); return b ? getComputedStyle(b).paddingLeft !== '16px' || getComputedStyle(b).minHeight !== '44px' : 'absent'; }), true, 'H. PC : boutons de ligne inchangés (règle mobile seule)');
   await ecran(mob, "currentSheepId = 'B1'; render('add-echo')");
   check(await mob.evaluate(() => !!document.querySelector('#add-special') && Math.round(document.querySelector('#add-special').getBoundingClientRect().height) <= 48), 'H. « + » de l\'échographie ramené à 48 px au plus');
   // PC : règle desktop inchangée (44 px, 32 px dans un tableau)

@@ -6383,7 +6383,7 @@ btnBack.onclick = () => {
   else if (currentView === 'mouvements-collectifs') render('inventaire');
   else if (currentView === 'traitements-collectifs') render('sanitaire');
   else if (currentView === 'sous-delai') render('sanitaire');
-  else if (currentView === 'produits-delais') render('sanitaire');
+  else if (currentView === 'produits-delais') { const o = produitsDelaisOrigine; produitsDelaisOrigine = null; render(o || 'sanitaire'); }
   else if (currentView === 'soins-sans-bio') render('sanitaire');
   else if (currentView === 'traitements-12-mois') render('sanitaire');
   else if (currentView === 'controle-lot-delai') render('sous-delai');
@@ -6398,7 +6398,6 @@ btnBack.onclick = () => {
   else if (currentView === 'echo-rapide' || currentView === 'misebas-rapide') render('home');
   else if (currentView === 'bilan-campagne') render('home');
   else if (currentView === 'saisie-resume-campagne') { saisieResumeEtat = null; bilanCampagneTab = 'reproduction'; render('bilan-campagne'); }
-  else if (currentView === 'gerer-produits') render('parametres');
   else if (currentView === 'historique-echo') render('echo-rapide');
   else if (currentView === 'diag-bluetooth') { btDiagLeaveScreen(); render('parametres'); }
   else if (currentView === 'maj-inventaire') render('inventaire-actifs');
@@ -6695,7 +6694,6 @@ function render(view, sheepId) {
     else if (view === 'registre') renderRegistre();
     else if (view === 'declaration-annuelle') renderDeclarationAnnuelle();
     else if (view === 'bilan-campagne') renderBilanCampagne();
-    else if (view === 'gerer-produits') renderGererProduits();
     else if (view === 'historique-echo') renderHistoriqueEcho();
     else if (view === 'boot') renderBoot();
     else if (view === 'auth') renderAuthGate();
@@ -14877,8 +14875,7 @@ function renderControleLaitier() {
 }
 
 /* Modale de nommage avant la création du lot de recherche depuis Contrôle
-   laitier (voir renderControleLaitier) -- même gabarit que
-   showRenommerProduitModal. Réutilise ensuite tel quel le flux de recherche
+   laitier (voir renderControleLaitier). Réutilise ensuite tel quel le flux de recherche
    en bergerie (renderLotSearch) déjà utilisé par les lots d'échographie. */
 function showCreerLotControleLaitierModal(eids) {
   const overlay = document.createElement('div');
@@ -20883,8 +20880,8 @@ function renderAddOrdonnance() {
   renderProduitsOrdonnance();
 
   document.getElementById('btn-ordonnance-nouveau-produit').onclick = () => {
-    ouvrirModalNouveauProduitSanitaire({
-      onCreated: (nom) => {
+    ouvrirFicheProduitModal({   // une seule fenêtre de création de produit : la fiche complète de « Produits et délais »
+      onSaved: (nom) => {
         produitsOrdonnance.push({ nom, quantite: null });
         renderProduitsOrdonnance();
       }
@@ -21308,17 +21305,6 @@ function ecrireFicheProduit(nom, f) {
   if (min48 !== undefined) e.minimum48hBio = min48;
   DB.produitsInfo[nom] = e;
 }
-// Écritures de l'ancien écran « Gérer les produits » (mobile) : on fusionne au lieu de remplacer, pour ne jamais effacer les
-// nouveaux champs ; si la fiche est déjà saisie (delaiLait présent), delaiLait suit le délai lait modifié.
-function ecrireInfoProduitMobile(nom, posologie, delaiAttente) {
-  DB.produitsInfo = DB.produitsInfo || {};
-  const ancien = DB.produitsInfo[nom] || {};
-  const autres = ['delaiLait', 'delaiViande', 'surOrdonnance', 'reserveVeterinaire', 'compteTraitements', 'minimum48hBio'].some(k => ancien[k] !== undefined);
-  if (!posologie && delaiAttente === null && !autres) { delete DB.produitsInfo[nom]; return; }
-  const e = Object.assign({}, ancien, { posologie: posologie || null, delaiAttente });
-  if (ancien.delaiLait !== undefined) e.delaiLait = delaiAttente;
-  DB.produitsInfo[nom] = e;
-}
 
 /* Fenêtre de création / modification d'une fiche produit (PC) : délais lait et viande obligatoires (0 autorisé).
    options : { nom (modification) | categorieKey (création), prefill: { delaiLait, delaiViande, posologie }, onSaved(nom) } */
@@ -21337,7 +21323,7 @@ function ouvrirFicheProduitModal(options) {
       <input type="text" id="fp-nom" value="${echapperHtml(edition ? options.nom : (options.nomPrefill || ''))}" style="margin-bottom:12px;">
       <label>Type et catégorie *</label>
       <select id="fp-cat" ${edition ? 'disabled' : ''} style="margin-bottom:12px;">
-        ${PRODUIT_CATEGORIES.map(c => `<option value="${c.key}"${(edition ? fiche.categorie : options.categorieKey) === c.key ? ' selected' : ''}>${c.label}</option>`).join('')}
+        ${!edition && !options.categorieKey ? '<option value="" selected>Choisir la catégorie</option>' : ''}${PRODUIT_CATEGORIES.map(c => `<option value="${c.key}"${(edition ? fiche.categorie : options.categorieKey) === c.key ? ' selected' : ''}>${c.label}</option>`).join('')}
       </select>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
         <div><label>Délai viande (jours) *</label><input type="number" id="fp-viande" min="0" step="1" value="${v(pre.delaiViande)}" placeholder="0 = aucune attente"></div>
@@ -21369,6 +21355,7 @@ function ouvrirFicheProduitModal(options) {
     const nom = overlay.querySelector('#fp-nom').value.trim();
     if (!nom) return montrer('Le nom commercial est obligatoire.');
     const cat = overlay.querySelector('#fp-cat').value;
+    if (!cat) return montrer('Choisis la catégorie du produit.');   // création sans catégorie connue (ordonnance) : jamais de catégorie par défaut
     const doublon = trouverProduitExistant(nom, edition ? options.nom : undefined);
     if (doublon) return montrer(`Un produit « ${doublon.nom} » existe déjà (${doublon.categorie}).`);
     const lire = id => { const t = overlay.querySelector(id).value.trim(); return /^\d+$/.test(t) ? parseInt(t, 10) : null; };
@@ -21492,69 +21479,6 @@ function renderProduitsDelais() {
   });
 }
 
-/* Point d'entrée unique pour créer un produit sanitaire (nom, catégorie,
-   posologie, délai d'attente lait) -- appelé depuis "Gérer les produits"
-   (catégorie à choisir) et depuis la création "à la volée" au fil de la
-   saisie d'un soin (catégorie déjà connue du contexte, verrouillée). Le
-   futur chantier Ordonnances doit réutiliser cette même fonction plutôt
-   que dupliquer la logique de création.
-   options: { categoriePreselectionnee, categorieVerrouillee, nomPrerempli, onCreated } */
-function ouvrirModalNouveauProduitSanitaire(options) {
-  options = options || {};
-  let catChoisie = options.categoriePreselectionnee || null;
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  const categorieChampHtml = options.categorieVerrouillee
-    ? `<label>Catégorie</label><div style="margin-bottom:14px;font-size:13.5px;">${(PRODUIT_CATEGORIES.find(c => c.key === catChoisie) || {}).label || ''}</div>`
-    : `<label>Catégorie</label>
-       <div class="grid2" id="nouveau-produit-cat-group" style="margin-bottom:14px;">
-         ${PRODUIT_CATEGORIES.map(c => `<button type="button" class="opt-btn nouveau-produit-cat-opt${catChoisie === c.key ? ' selected' : ''}" data-val="${c.key}">${c.label === 'Autres' ? 'Autre' : c.label}</button>`).join('')}
-       </div>`;
-  overlay.innerHTML = `
-    <div class="modal-card">
-      <div style="font-weight:700;font-size:15px;margin-bottom:12px;">Nouveau produit</div>
-      <label>Nom</label>
-      <input type="text" id="nouveau-produit-nom-input" value="${options.nomPrerempli || ''}" style="margin-bottom:14px;">
-      ${categorieChampHtml}
-      <label>Posologie (facultatif)</label>
-      <input type="text" id="nouveau-produit-posologie-input" placeholder="ex: 2cc/kg" style="margin-bottom:14px;">
-      <label>Délai d'attente lait en jours (facultatif)</label>
-      <input type="number" id="nouveau-produit-delai-input" placeholder="ex: 7" min="0" style="margin-bottom:14px;">
-      <div id="nouveau-produit-err" class="error-box hidden"></div>
-      <button type="button" class="btn btn-primary" id="nouveau-produit-confirm" style="margin-bottom:8px;">Créer</button>
-      <button type="button" class="btn btn-secondary" id="nouveau-produit-cancel">Annuler</button>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  overlay.querySelector('#nouveau-produit-cancel').onclick = () => document.body.removeChild(overlay);
-  if (!options.categorieVerrouillee) {
-    overlay.querySelectorAll('.nouveau-produit-cat-opt').forEach(btn => {
-      if (btn.dataset.val === catChoisie) btn.classList.add('selected');
-      btn.onclick = () => {
-        catChoisie = btn.dataset.val;
-        overlay.querySelectorAll('.nouveau-produit-cat-opt').forEach(b => b.classList.toggle('selected', b === btn));
-        overlay.querySelector('#nouveau-produit-err').classList.add('hidden');
-      };
-    });
-  }
-  overlay.querySelector('#nouveau-produit-confirm').onclick = () => {
-    const err = overlay.querySelector('#nouveau-produit-err');
-    const nom = overlay.querySelector('#nouveau-produit-nom-input').value.trim();
-    if (!nom) { err.textContent = "Le nom est obligatoire."; err.classList.remove('hidden'); return; }
-    if (!catChoisie) { err.textContent = "Choisissez une catégorie."; err.classList.remove('hidden'); return; }
-    const doublon = trouverProduitExistant(nom);
-    if (doublon) { err.textContent = `Un produit « ${doublon.nom} » existe déjà (${doublon.categorie}).`; err.classList.remove('hidden'); return; }
-    const delaiVal = overlay.querySelector('#nouveau-produit-delai-input').value.trim();
-    if (delaiVal !== '' && (isNaN(parseInt(delaiVal, 10)) || parseInt(delaiVal, 10) < 0)) { err.textContent = "Le délai d'attente doit être un nombre de jours positif."; err.classList.remove('hidden'); return; }
-    const posologieVal = overlay.querySelector('#nouveau-produit-posologie-input').value.trim();
-    DB.produits[catChoisie] = DB.produits[catChoisie] || [];
-    DB.produits[catChoisie].push(nom);
-    if (posologieVal || delaiVal !== '') ecrireInfoProduitMobile(nom, posologieVal, delaiVal !== '' ? parseInt(delaiVal, 10) : null);
-    saveData(DB);
-    document.body.removeChild(overlay);
-    if (options.onCreated) options.onCreated(nom, catChoisie);
-  };
-}
 
 function renameProduitPartout(oldName, newName) {
   if (DB.produitsInfo && DB.produitsInfo[oldName] !== undefined) {
@@ -21577,113 +21501,6 @@ function renameProduitPartout(oldName, newName) {
   });
   (DB.traitementsCollectifs || []).forEach(t => { if (t.produit === oldName) t.produit = newName; });
 }
-
-// Posologie/délai d'attente : système déclaratif géré par l'éleveur
-// (aucun lien avec l'ancienne intégration ANMV, retirée) -- les deux
-// facultatifs, remplis une seule fois ici et réutilisés en rappel/calcul
-// partout où ce produit est ensuite sélectionné (voir ecranCarnetSoin
-// et sanitaireDateHtml).
-function showRenommerProduitModal(cat, oldName) {
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  const info = DB.produitsInfo[oldName] || {};
-  overlay.innerHTML = `
-    <div class="modal-card">
-      <div style="font-weight:700;font-size:15px;margin-bottom:12px;">Modifier « ${oldName} »</div>
-      <label>Nom</label>
-      <input type="text" id="renommer-produit-input" value="${oldName}" style="margin-bottom:14px;">
-      <label>Posologie (facultatif)</label>
-      <input type="text" id="renommer-posologie-input" placeholder="ex: 2cc/kg" value="${echapperHtml(info.posologie || '')}" style="margin-bottom:14px;">
-      <label>Délai d'attente lait en jours (facultatif)</label>
-      <input type="number" id="renommer-delai-input" placeholder="ex: 7" min="0" value="${info.delaiAttente != null ? info.delaiAttente : ''}" style="margin-bottom:14px;">
-      <div id="renommer-err" class="error-box hidden"></div>
-      <button type="button" class="btn btn-primary" id="renommer-confirm" style="margin-bottom:8px;">Enregistrer</button>
-      <button type="button" class="btn btn-secondary" id="renommer-cancel">Annuler</button>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  overlay.querySelector('#renommer-cancel').onclick = () => document.body.removeChild(overlay);
-  overlay.querySelector('#renommer-confirm').onclick = () => {
-    const newName = overlay.querySelector('#renommer-produit-input').value.trim();
-    const err = overlay.querySelector('#renommer-err');
-    if (!newName) { err.textContent = "Le nom ne peut pas être vide."; err.classList.remove('hidden'); return; }
-    if (newName !== oldName) {
-      const doublon = trouverProduitExistant(newName, oldName);
-      if (doublon) { err.textContent = `Un produit « ${doublon.nom} » existe déjà (${doublon.categorie}).`; err.classList.remove('hidden'); return; }
-    }
-    const delaiVal = overlay.querySelector('#renommer-delai-input').value.trim();
-    if (delaiVal !== '' && (isNaN(parseInt(delaiVal, 10)) || parseInt(delaiVal, 10) < 0)) { err.textContent = "Le délai d'attente doit être un nombre de jours positif."; err.classList.remove('hidden'); return; }
-    const posologieVal = overlay.querySelector('#renommer-posologie-input').value.trim();
-    const appliquer = () => {
-      if (newName !== oldName) {
-        const idx = DB.produits[cat].indexOf(oldName);
-        if (idx !== -1) DB.produits[cat][idx] = newName;
-        renameProduitPartout(oldName, newName);
-      }
-      ecrireInfoProduitMobile(newName, posologieVal, delaiVal !== '' ? parseInt(delaiVal, 10) : null);
-      saveData(DB);
-      document.body.removeChild(overlay);
-      render('gerer-produits');
-    };
-    if (newName === oldName) { appliquer(); return; }
-    if (!confirm('Renommer « ' + oldName + ' » en « ' + newName + ' » ? Toutes les saisies déjà enregistrées avec ce produit seront mises à jour.')) return;
-    appliquer();
-  };
-}
-
-function renderGererProduits() {
-  pageTitle.textContent = 'Gérer les produits';
-  const html = PRODUIT_CATEGORIES.map(cat => {
-    const items = DB.produits[cat.key] || [];
-    const rows = items.length === 0
-      ? '<div style="font-size:13px;color:var(--text-muted);padding:6px 0;">Aucun produit.</div>'
-      : items.map(nom => {
-          const info = DB.produitsInfo[nom];
-          const sousLignes = [
-            info && info.posologie ? 'Posologie : ' + info.posologie : null,
-            info && info.delaiAttente != null ? 'Délai d\'attente lait : ' + info.delaiAttente + ' j' : null
-          ].filter(Boolean).join(' · ');
-          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);">
-          <div>
-            <div>${echapperHtml(nom)}</div>
-            ${sousLignes ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${echapperHtml(sousLignes)}</div>` : ''}
-          </div>
-          <div style="display:flex;gap:6px;">
-            <button type="button" class="btn btn-secondary btn-edit-produit" data-cat="${cat.key}" data-nom="${echapperHtml(nom)}" style="width:auto;padding:4px 10px;font-size:12px;">Modifier</button>
-            <button type="button" class="btn btn-secondary btn-del-produit" data-cat="${cat.key}" data-nom="${echapperHtml(nom)}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button>
-          </div>
-        </div>`;
-        }).join('');
-    return `<div class="card" style="margin-bottom:12px;">
-      <div style="font-weight:600;margin-bottom:4px;">${cat.label}</div>
-      ${rows}
-    </div>`;
-  }).join('');
-
-  app.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 2px 10px;">
-      <button type="button" class="btn btn-secondary" id="btn-ajouter-produit" style="width:auto;padding:6px 14px;">+ Ajouter un produit</button>
-    </div>
-    ${html}
-  `;
-
-  document.getElementById('btn-ajouter-produit').onclick = () => {
-    ouvrirModalNouveauProduitSanitaire({ onCreated: () => render('gerer-produits') });
-  };
-
-  document.querySelectorAll('.btn-del-produit').forEach(btn => {
-    btn.onclick = () => {
-      if (!confirm('Retirer « ' + btn.dataset.nom + ' » de la liste des produits proposés ? L\'historique déjà saisi avec ce produit est conservé.')) return;
-      DB.produits[btn.dataset.cat] = DB.produits[btn.dataset.cat].filter(n => n !== btn.dataset.nom);
-      saveData(DB);
-      render('gerer-produits');
-    };
-  });
-  document.querySelectorAll('.btn-edit-produit').forEach(btn => {
-    btn.onclick = () => showRenommerProduitModal(btn.dataset.cat, btn.dataset.nom);
-  });
-}
-
 
 /* ---------- Historique des traitements collectifs (suppression en masse) ----------
    Les traitements créés après l'ajout du collectifId sont retrouvés via
@@ -27832,6 +27649,7 @@ function renderResultatNouvelleCampagne(activesAvant, agnellesAvant, agnellesEnC
    (...DB.exploitation) pour ne pas écraser un champ absent du formulaire
    affiché. */
 let parametresTab = 'exploitation';
+let produitsDelaisOrigine = null;   // « Produits et délais » ouvert depuis Paramètres › Listes : le retour y ramène
 // Message du nettoyage ponctuel du registre, persisté ici (pas seulement dans
 // le DOM) : archiverSortiesAnterieures écrit directement dans la collection
 // registre pendant l'opération, ce qui peut déclencher un re-rendu de cet
@@ -28380,19 +28198,17 @@ function renderParametresListes(content) {
       <div class="row" style="margin-top:10px;"><input type="text" class="input-add-liste" data-list="${cfg.key}" placeholder="Ajouter une valeur" aria-label="Ajouter une valeur à ${cfg.label}"><button type="button" class="btn btn-secondary btn-add-liste" data-list="${cfg.key}" style="width:auto;padding:0 18px;">Ajouter</button></div>
     </div>`;
   };
-  // Carte « Produits sanitaires » masquée sur PC : la création, la modification et
-  // maintenant la suppression des produits se font uniquement depuis « Produits
-  // et délais » (carnet sanitaire), plus complet (délais lait/viande, ordonnance,
-  // vétérinaire, bio) -- gardée sur mobile, qui n'a pas cet écran. Ce n'est pas une des 6 listes.
+  // Carte « Produits sanitaires » (mobile ; le PC y accède par le Carnet sanitaire) : ouvre « Produits et délais », SEUL écran de
+  // création et de modification des produits (fiche complète : délais lait / viande, ordonnance, vétérinaire, bio). Ce n'est pas une des listes.
   const carteProduits = isDesktopMode() ? '' : `
     <div class="card">
       <div class="prm-titre" style="margin-bottom:6px;">Produits sanitaires</div>
-      <div class="prm-note">Vaccins, antibiotiques, antiparasitaires, anti-inflammatoires -- par catégorie, avec renommage.</div>
-      <button type="button" class="btn btn-secondary" id="btn-gerer-produits">Gérer les produits</button>
+      <div class="prm-note">Vaccins, antibiotiques, antiparasitaires, anti-inflammatoires, autres : fiches et délais d'attente.</div>
+      <button type="button" class="btn btn-secondary" id="btn-gerer-produits">Produits et délais</button>
     </div>`;
   content.innerHTML = prmGrilleHtml(carteProduits + LISTES_GENERALES_CONFIG.map(carteListe).join(''));
 
-  if (document.getElementById('btn-gerer-produits')) document.getElementById('btn-gerer-produits').onclick = () => render('gerer-produits');
+  if (document.getElementById('btn-gerer-produits')) document.getElementById('btn-gerer-produits').onclick = () => { produitsDelaisOrigine = 'parametres'; render('produits-delais'); };
   // clic sur une valeur : affiche « Renommer » et « Retirer » (un second clic referme)
   document.querySelectorAll('.prm-val').forEach(btn => {
     btn.onclick = () => {
