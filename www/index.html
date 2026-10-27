@@ -6870,7 +6870,7 @@ function dashboardKpiHtml() {
     prolificite, misesBasActives, troupeauAMettreBas, misesBasRestantes, pctMisesBasRealisees,
     attendueTraiteCount, resume1, resume2, resume3
   } = dashboardStatsData();
-  const sousDelaiCount = new Set(sousDelaiBrebisRows().map(r => r.sheepId)).size;
+  const sousDelaiCount = nbBrebisSousDelai();   // brebis sous délai lait OU viande ; les autres animaux : onglets de l'écran
 
   const nbBrebisActives = DB.brebis.filter(s => (s.statut || 'active') === 'active').length;
   const nbAgnelles = (DB.agnelles || []).length;
@@ -7295,7 +7295,7 @@ function accueilPcData() {
   const points = cmp.map((c, i) => ({ libelle: ['1er', '2e', '3e'][i] + ' contrôle', actuel: c.actuel, precedent: c.precedent, nbBrebis: resumes[i].nbBrebis }));
   return {
     brebis: s.total, beliers: DB.beliers.filter(b => (b.statut || 'actif') === 'actif').length, agnelles: (DB.agnelles || []).length, agneaux: sexe,
-    sousDelai: new Set(sousDelaiBrebisRows().map(x => x.sheepId)).size,
+    sousDelai: nbBrebisSousDelai(),
     misesBas: { faites: s.misesBasActives, attendues: s.troupeauAMettreBas, restantes: s.misesBasRestantes, pct: s.pctMisesBasRealisees, prolificite: s.prolificite, agneauxNes: s.totalAgneaux, mortNes: s.totalMortNes, presentes: s.total, videsDefinitivesPresentes: vdPresentes },
     repro: { date: R.derniereDate, pleines: R.pleine, vides: R.vide, videsDefinitives: R.videDefinitive, reussite: echoReussite(R) },
     mouvements: derniersMouvementsPcData(5),
@@ -7382,7 +7382,7 @@ function renderHome() {
     lier('compteur-agneaux-actifs', () => render('agneaux'));
     lier('compteur-beliers-actifs', () => render('beliers'));
     lier('compteur-agnelles-actives', () => render('agnelles-inventaire'));
-    lier('compteur-sous-delai', () => render('sous-delai'));
+    lier('compteur-sous-delai', () => { sousDelaiOnglet = 'brebis'; render('sous-delai'); });
     lier('apc-mises-bas', () => render('bilan-campagne'));
     lier('apc-reproduction', () => render('echo-rapide'));
     lier('bloc-controle-laitier', () => render('controle-laitier'));
@@ -7408,7 +7408,7 @@ function renderHome() {
     openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(estAttendueTraiteAffichee).map(s => s.eid));
   });
   lier('kpi-bilan-campagne', () => render('bilan-campagne'));
-  lier('kpi-sous-delai', () => render('sous-delai'));
+  lier('kpi-sous-delai', () => { sousDelaiOnglet = 'brebis'; render('sous-delai'); });
 }
 
 /* ---------- Onglet "Brebis" du menu ----------
@@ -20988,7 +20988,46 @@ function sousDelaiBrebisRows() {
   rows.sort((a, b) => a.finDelai.localeCompare(b.finDelai));
   return rows;
 }
-// Une entrée par brebis (écran mobile et PC, PDF) : ses soins encore en délai, fin la plus tardive ; triées par fin de délai
+// Dernier jour du délai d'attente VIANDE d'un soin (vente, réforme, abattage) ; null si aucune attente réelle (délai 0 ou inconnu).
+// Délai appliqué copié sur le soin s'il existe ; sinon délai viande de la fiche produit (en bio : doublé, ou 48 h selon l'option du produit).
+function delaiViandeDernierJourSoin(soin) {
+  if (!soin || !soin.date) return null;
+  const duree = Number.isInteger(soin.dureeJours) && soin.dureeJours >= 1 ? soin.dureeJours : 1;
+  if (Number.isInteger(soin.delaiViandeJours)) return soin.delaiViandeJours > 0 ? addDaysToDateStr(soin.date, duree - 1 + soin.delaiViandeJours) : null;
+  const info = DB.produitsInfo && DB.produitsInfo[soin.produit];
+  const legal = info && Number.isInteger(info.delaiViande) ? info.delaiViande : null;
+  if (legal === null) return null;
+  const j = elevageBioActif() ? delaisAppliques({ legalViande: legal, bio: true, min48h: ficheProduit(soin.produit).min48h }).viande : legal;
+  return j > 0 ? addDaysToDateStr(soin.date, duree - 1 + j) : null;
+}
+/* Sous délai d'attente, par catégorie (onglets de l'écran) : brebis = délais LAIT et VIANDE (traite, vente réforme) ; agnelles, agneaux, béliers =
+   délai VIANDE. Une entrée par animal actif : ses soins encore en délai (un par type de délai), fin la plus tardive ; triées par fin de délai. */
+const SOUS_DELAI_CATEGORIES = [['brebis', 'Brebis'], ['agnelles', 'Agnelles'], ['agneaux', 'Agneaux'], ['beliers', 'Béliers']];
+function animauxSousDelaiPool(cat) {
+  if (cat === 'brebis') return DB.brebis.filter(s => (s.statut || 'active') === 'active').map(a => ({ id: a.id, eid: a.eid, sanitaire: a.sanitaire }));
+  if (cat === 'agnelles') return (DB.agnelles || []).filter(a => (a.statut || 'active') === 'active').map(a => ({ id: a.id, eid: a.eid, sanitaire: a.sanitaire }));
+  if (cat === 'beliers') return (DB.beliers || []).filter(b => (b.statut || 'actif') === 'actif').map(b => ({ id: b.id, eid: b.eid, sanitaire: b.sanitaire }));
+  return getAgneauxInventaire().filter(it => !agneauSorti(it.lamb)).map(it => ({ id: it.lamb.eid, eid: it.lamb.eid, sanitaire: it.lamb.sanitaire }));
+}
+function sousDelaiParAnimal(cat) {
+  const t = jourAujourdhuiISO(), out = [];
+  animauxSousDelaiPool(cat).forEach(a => {
+    const soins = [];
+    (a.sanitaire || []).forEach(soin => {
+      const fins = [['viande', delaiViandeDernierJourSoin(soin)]];
+      if (cat === 'brebis') fins.unshift(['lait', delaiLaitDernierJourSoin(soin)]);
+      fins.forEach(([type, fin]) => { if (fin && fin >= t) soins.push({ produit: soin.produit, dateSoin: soin.date, type, finDelai: fin }); });
+    });
+    if (!soins.length) return;
+    soins.sort((x, y) => x.finDelai.localeCompare(y.finDelai) || (x.type === 'lait' ? -1 : 1));
+    out.push({ id: a.id, eid: a.eid, soins, finDelai: soins[soins.length - 1].finDelai });
+  });
+  return out.sort((a, b) => a.finDelai.localeCompare(b.finDelai) || a.eid.localeCompare(b.eid));
+}
+// Brebis sous délai d'attente (lait OU viande) : tuile de l'accueil
+const nbBrebisSousDelai = () => sousDelaiParAnimal('brebis').length;
+let sousDelaiOnglet = 'brebis';
+// Une entrée par brebis, délai LAIT seulement (Contrôle de lot à l'entrée en salle de traite) : ses soins encore en délai, fin la plus tardive
 function sousDelaiParBrebis() {
   const parId = new Map();
   sousDelaiBrebisRows().forEach(r => {
@@ -20999,8 +21038,8 @@ function sousDelaiParBrebis() {
   });
   return [...parId.values()].sort((a, b) => a.finDelai.localeCompare(b.finDelai) || a.eid.localeCompare(b.eid));
 }
-// « Hepatocor — soin 27-10-2026 — fin 03-11-2026 » (produits séparés par « ; ») : même texte à l'écran PC et dans le PDF, dates complètes
-const libelleSoinSousDelai = r => r.produit + ' — soin ' + formatDateFr(r.dateSoin) + ' — fin ' + formatDateFr(r.finDelai);
+// « Hepatocor — lait — soin 27-10-2026 — fin 03-11-2026 » (produits séparés par « ; ») : même texte à l'écran PC et dans le PDF, dates complètes
+const libelleSoinSousDelai = r => r.produit + ' — ' + r.type + ' — soin ' + formatDateFr(r.dateSoin) + ' — fin ' + formatDateFr(r.finDelai);
 // Purement pour l'affichage ("jours restants") -- jamais utilisé pour
 // trier ou comparer (voir convention chaîne ISO ci-dessus/ailleurs).
 function joursRestantsAvant(dateIso) {
@@ -21045,7 +21084,12 @@ function ouvrirModalNouveauLot(options) {
 
 function renderSousDelai() {
   pageTitle.textContent = "Sous délai d'attente";
-  const rows = sousDelaiParBrebis();   // une ligne / une carte par brebis, avec tous ses produits encore en délai
+  // Onglets Brebis | Agnelles | Agneaux | Béliers (effectifs) ; une ligne / une carte par animal, avec tous ses produits encore en délai
+  const parCat = Object.fromEntries(SOUS_DELAI_CATEGORIES.map(([k]) => [k, sousDelaiParAnimal(k)]));
+  if (!parCat[sousDelaiOnglet]) sousDelaiOnglet = 'brebis';
+  const rows = parCat[sousDelaiOnglet];
+  const libCat = (SOUS_DELAI_CATEGORIES.find(c => c[0] === sousDelaiOnglet) || [])[1];
+  const onglets = `<div class="tab-bar bc-onglets sd-onglets">${SOUS_DELAI_CATEGORIES.map(([k, l]) => `<button type="button" class="tab-btn${k === sousDelaiOnglet ? ' active' : ''}" data-tab="${k}">${l} (${parCat[k].length})</button>`).join('')}</div>`;
   const desktopSousDelai = isDesktopMode();
   const cols = [
     { header: 'N°', value: r => 'n°' + numeroVisuel(r.eid) },
@@ -21053,7 +21097,7 @@ function renderSousDelai() {
     { header: 'Fin du délai', value: r => formatDateFr(r.finDelai) },
     { header: 'Jours restants', value: r => String(joursRestantsAvant(r.finDelai)) }
   ];
-  const tableHtml = rows.length === 0 ? '<div class="empty">Aucune brebis sous délai d\'attente actuellement.</div>' : desktopSousDelai ? `<div style="overflow-x:auto;"><table class="table-desktop" style="width:100%;">
+  const tableHtml = rows.length === 0 ? `<div class="empty">Aucun animal (${libCat.toLowerCase()}) sous délai d'attente actuellement.</div>` : desktopSousDelai ? `<div style="overflow-x:auto;"><table class="table-desktop" style="width:100%;">
     <thead><tr>${cols.map(c => `<th>${c.header}</th>`).join('')}</tr></thead>
     <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${echapperHtml(c.value(r))}</td>`).join('')}</tr>`).join('')}</tbody>
   </table></div>`
@@ -21061,22 +21105,24 @@ function renderSousDelai() {
     : `<div class="cartes-liste" id="sous-delai-cartes">${rows.map(r => {
       const j = joursRestantsAvant(r.finDelai);
       return carteListeHtml({ nm: xlsxEscape(cols[0].value(r)), pastille: cartePastille('Encore ' + j + ' j', 'ambre'),
-        l2: r.soins.map(x => `<div class="sd-soin">${echapperHtml(x.produit)} · soin du ${formatDateFr(x.dateSoin)} · fin le ${formatDateFr(x.finDelai)}</div>`).join(''),
+        l2: r.soins.map(x => `<div class="sd-soin">${echapperHtml(x.produit)} · ${x.type} · soin du ${formatDateFr(x.dateSoin)} · fin le ${formatDateFr(x.finDelai)}</div>`).join(''),
         l3: [cartePastille('Fin du délai : ' + formatDateFr(r.finDelai))] });
     }).join('')}</div>`;
 
   app.innerHTML = `
-    ${infoLigneHtml("Un produit sans délai (ou à délai 0) n'apparaît jamais ici.")}
-    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${rows.length} brebis sous délai d'attente.</div>
+    ${infoLigneHtml(sousDelaiOnglet === 'brebis' ? "Délais lait (traite) et viande (vente, réforme). Un produit sans délai (ou à délai 0) n'apparaît jamais ici." : "Délai viande (vente, abattage). Un produit sans délai (ou à délai 0) n'apparaît jamais ici.")}
+    ${onglets}
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${rows.length} ${libCat.toLowerCase()} sous délai d'attente.</div>
     <div class="row${desktopSousDelai ? ' pc-export-droite' : ''}" style="margin-bottom:14px;">
-      ${desktopSousDelai ? '' : '<button type="button" class="btn btn-secondary" id="btn-controle-lot-delai">Contrôle de lot (scan)</button>'}
-      <button type="button" class="btn btn-secondary" id="btn-sous-delai-creer-lot"${rows.length === 0 ? ' disabled' : ''}>Créer un lot avec ces brebis</button>
+      ${desktopSousDelai || sousDelaiOnglet !== 'brebis' ? '' : '<button type="button" class="btn btn-secondary" id="btn-controle-lot-delai">Contrôle de lot (scan)</button>'}
+      <button type="button" class="btn btn-secondary" id="btn-sous-delai-creer-lot"${rows.length === 0 ? ' disabled' : ''}>Créer un lot avec ces animaux</button>
       ${desktopSousDelai ? '<button type="button" class="btn btn-primary" id="btn-export-sous-delai-pdf">Export PDF</button>' : ''}
     </div>
     ${tableHtml}
     ${desktopSousDelai ? '' : '<div class="row" style="margin-top:14px;"><button type="button" class="btn btn-primary" id="btn-export-sous-delai-pdf">Export PDF</button></div>'}
   `;
 
+  app.querySelectorAll('.sd-onglets .tab-btn').forEach(b => { b.onclick = () => { sousDelaiOnglet = b.dataset.tab; render('sous-delai'); }; });
   if (document.getElementById('btn-controle-lot-delai')) document.getElementById('btn-controle-lot-delai').onclick = () => render('controle-lot-delai');
   document.getElementById('btn-sous-delai-creer-lot').onclick = () => {
     const membres = rows.map(r => r.eid);
@@ -21085,12 +21131,12 @@ function renderSousDelai() {
   document.getElementById('btn-export-sous-delai-pdf').onclick = () => {
     const todayIso = jourAujourdhuiISO();
     const bytes = buildPdfTableCharte({
-      title: "Sous délai d'attente lait",
-      subtitle: rows.length + ' brebis sous délai — Édité le ' + formatDateFr(todayIso),
+      title: "Sous délai d'attente · " + libCat,
+      subtitle: rows.length + ' ' + libCat.toLowerCase() + ' sous délai — Édité le ' + formatDateFr(todayIso),
       columns: cols.map(c => ({ label: c.header })),
       rows: rows.map(r => cols.map(c => c.value(r)))
     });
-    saveOrShareBinaryFile('sous-delai-attente_' + todayIso + '.pdf', bytes, 'application/pdf');
+    saveOrShareBinaryFile('sous-delai-attente_' + sousDelaiOnglet + '_' + todayIso + '.pdf', bytes, 'application/pdf');
   };
 }
 

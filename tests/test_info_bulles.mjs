@@ -70,7 +70,7 @@ await page.evaluate(() => {
 await page.evaluate(() => render('ordonnances'));
 eq((await sansBulle('Ordonnances')).infos, [], 'Ordonnances : aucune ligne d\'information (texte dans le manuel)');
 await page.evaluate(() => render('sous-delai'));
-{ const T = 'Un produit sans délai (ou à délai 0) n\'apparaît jamais ici.'; const e = await sansBulle('Sous délai d\'attente'); eq(e.infos.map(i => i.t), [T], 'Sous délai d\'attente : une seule ligne'); uneInfo(e, T, 'Sous délai d\'attente'); }
+{ const T = 'Délais lait (traite) et viande (vente, réforme). Un produit sans délai (ou à délai 0) n\'apparaît jamais ici.'; const e = await sansBulle('Sous délai d\'attente'); eq(e.infos.map(i => i.t), [T], 'Sous délai d\'attente : une seule ligne'); uneInfo(e, T, 'Sous délai d\'attente'); }
 await page.evaluate(() => render('controle-lot-delai'));
 { const T = 'Rien n\'est enregistré : simple aide-mémoire pendant la traite.'; const e = await sansBulle('Contrôle de lot'); eq(e.infos.map(i => i.t), [T], 'Contrôle de lot : une seule ligne'); uneInfo(e, T, 'Contrôle de lot'); }
 await page.evaluate(() => render('traitements-collectifs'));
