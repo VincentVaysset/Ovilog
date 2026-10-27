@@ -82,10 +82,9 @@ err = await $t('#cs-erreurs');
 check(/dose par animal/.test(err) && /voie/.test(err) && !/délai/.test(err) && !/produit \(nom/.test(err), 'dose et voie obligatoires pour un traitement : ' + err);
 // produit sur ordonnance (Finadyne)
 await page.selectOption('#cs-categorie', 'Anti-inflammatoire'); await page.selectOption('#cs-produit', 'Finadyne');
-check(await page.evaluate(() => document.getElementById('cs-ord-etoile').textContent.trim() === '*') && /sur ordonnance/i.test(await $t('#cs-alertes')), 'Finadyne sur ordonnance : n° ordonnance marqué obligatoire');
+check(await page.evaluate(() => document.getElementById('cs-ord-etoile').textContent.trim() === '') && /sur ordonnance/i.test(await $t('#cs-alertes')) && /compléter le n° plus tard/.test(await $t('#cs-alertes')), 'Finadyne sur ordonnance : n° facultatif, alerte ambre « à compléter plus tard »');
 await page.fill('#cs-dose', '2'); await page.selectOption('#cs-voie', { index: 1 });
-await page.click('#cs-suivant');
-check(/ordonnance est obligatoire/.test(await $t('#cs-erreurs')), 'ordonnance manquante : refusé');
+check(await page.evaluate(() => !erreursSoinCarnet(carnetSanitaireEtat).some(m => /ordonnance/.test(m))), 'ordonnance manquante : jamais bloquant (traitement en bergerie, n° complété plus tard)');
 await page.selectOption('#cs-ordonnance', 'ORD-2026-1');
 check(await page.evaluate(() => document.getElementById('cs-prescripteur').value === 'Dr Martin'), 'prescripteur proposé depuis l\'ordonnance');
 // réservé au vétérinaire (Ivomec)
