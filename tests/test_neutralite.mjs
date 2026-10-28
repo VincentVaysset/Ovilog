@@ -73,7 +73,7 @@ const naissance = await page.evaluate(() => {
   const r = construireAgnelageMiseBas(brebis, { date: '2026-10-05', codeRepro: 'MN', lambs: [{ sexe: 'Mâle', eid: '250000000000101' }, { sexe: 'Femelle', eid: '250000000000102' }, { sexe: 'Mort-né' }] });
   if (r.erreur) return r.erreur;
   enregistrerMiseBas(brebis, r.agnelage);   // soins au bouclage : aucun réglé sur un compte neuf
-  return JSON.stringify(DB.soinsBouclage) + JSON.stringify(brebis.agnelages[0].lambs.map(l => (l.sanitaire || []).length));
+  return JSON.stringify(soinsBouclageRegles()) + JSON.stringify(brebis.agnelages[0].lambs.map(l => (l.sanitaire || []).length));
 });
 eq(naissance, '[][0,0,0]', 'compte neuf : aucun soin au bouclage réglé, une mise bas n\'ajoute aucun soin aux agneaux');
 check(!/Injection systématique|ajouté à chaque agneau vivant|2 cc administré|Créer la fiche Séléphérol/.test(source), 'aucun soin d\'office ni texte qui l\'annonce dans l\'appli');

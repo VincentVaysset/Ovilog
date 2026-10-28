@@ -1425,8 +1425,6 @@
   .prm-titre { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
   .prm-note { font-size: 12.5px; color: var(--text-muted); line-height: 1.45; margin: 2px 0 10px; }
   .soins-bouclage-ligne { font-size: 13px; color: var(--ch-texte2); margin: 8px 0; }
-  .sb-ligne { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--ch-separateur); }
-  .sb-ajout { margin-top: 12px; }
   .prm-champs2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   @media (max-width: 560px) { .prm-champs2-large { grid-template-columns: 1fr; gap: 0; } }
   .prm-alerte { background: var(--amber-bg); color: var(--amber-fg); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12.5px; line-height: 1.45; margin-bottom: 10px; }
@@ -1754,7 +1752,12 @@ function migrateData(d) {
   if (!d.intervenants) d.intervenants = [];
   if (!d.casParticuliers) d.casParticuliers = ['Pseudogestation', 'Avortée'];
   if (!Array.isArray(d.motifsNonTraite)) d.motifsNonTraite = MOTIFS_NON_TRAITE_DEPART.slice();
-  if (!Array.isArray(d.soinsBouclage)) d.soinsBouclage = [];   // soins au bouclage des agneaux : aucun tant que l'éleveur n'en règle pas
+  // soins au bouclage : réglés sur la fiche produit (produitsInfo[nom].bouclage) ; reprise UNE fois de l'ancienne liste de compte (version de test)
+  if (Array.isArray(d.soinsBouclage)) {
+    d.produitsInfo = d.produitsInfo || {};
+    d.soinsBouclage.forEach(x => { if (x && x.produit && d.produitsInfo[x.produit] && !d.produitsInfo[x.produit].bouclage && Number(x.doseCc) > 0) d.produitsInfo[x.produit].bouclage = Object.assign({ doseCc: Number(x.doseCc) }, x.voie ? { voie: x.voie } : {}); });
+    delete d.soinsBouclage;
+  }
   if (!d.categoriesNotes) d.categoriesNotes = ['Boiterie', 'Sinus', 'Mammite'];
   if (!d.notesArchiveesBrebis) d.notesArchiveesBrebis = {};
   if (!d.produitsInfo) d.produitsInfo = {};
@@ -2173,7 +2176,6 @@ function loadData() {
     campagneDateFin: null,
     casParticuliers: ['Pseudogestation', 'Avortée'],
     motifsNonTraite: MOTIFS_NON_TRAITE_DEPART.slice(),
-    soinsBouclage: [],
     categoriesNotes: ['Boiterie', 'Sinus', 'Mammite'],
     notesArchiveesBrebis: {},
     produits: {
@@ -13807,7 +13809,7 @@ function miseBasRapideStats(campagneRows) {
 }
 /* ---------- Saisie de mises bas (MOBILE) : maquette « Mise bas rapide » ----------
    Scan de la brebis, date, une carte par agneau (EID bippé, Mâle / Femelle en segmenté ; mort-né : pas d'EID, sexe facultatif ; adoption vers une brebis ACTIVE seulement ; soins au bouclage
-   seulement s'ils sont réglés par l'éleveur, Paramètres › Exploitation), barre fixe « Annuler | Enregistrer et suivante ». Après l'enregistrement : confirmation verte avec « Annuler cette saisie » (un geste, sans confirmation),
+   seulement s'ils sont réglés par l'éleveur sur la fiche produit), barre fixe « Annuler | Enregistrer et suivante ». Après l'enregistrement : confirmation verte avec « Annuler cette saisie » (un geste, sans confirmation),
    puis « Dernières saisies » modifiables d'un toucher. Contrôles discrets : un message n'apparaît que si une règle se déclenche (blocage rouge : déjà mis bas ; alertes : date future, vide définitive).
    Toute la logique métier est dans les fonctions communes (controlesMiseBas, construireAgnelageMiseBas, enregistrerMiseBas, annulerMiseBas, miseBasRapideStats). */
 function miseBasPortee(n) { return n >= 3 ? ['Triple et +', 'ambre'] : n === 2 ? ['Double', 'bleu'] : ['Simple', 'vert']; }
@@ -19783,7 +19785,8 @@ function delaisAppliquesFormulaire(e) {
   const fiche = e.produit ? ficheProduit(e.produit) : null;
   return delaisAppliques({ legalLait: entierTexteOuNull(e.delaiLait), legalViande: entierTexteOuNull(e.delaiViande), bio: elevageBioActif(), min48h: fiche ? fiche.min48h : 'a_confirmer' });
 }
-/* Soins au bouclage des agneaux : réglage de COMPTE (DB.soinsBouclage = [{ produit, doseCc, voie? }], dans META_FIELDS ; vide pour un compte neuf).
+/* Soins au bouclage des agneaux : réglés sur la FICHE PRODUIT (Produits et délais, case « Donné à chaque agneau au bouclage » :
+   produitsInfo[nom].bouclage = { doseCc, voie? }, synchronisé avec produitsInfo ; aucun pour un compte neuf, qui n'a aucun produit).
    Chaque agneau qui reçoit son n° à la saisie de la mise bas (fiche brebis, saisies rapides mobile et PC) reçoit ces soins, datés de la mise bas,
    comme un soin du Carnet (délais de la fiche produit copiés, bio figé, intervenant « Éleveur », marque bouclage: true) : fiche, Carnet, registre,
    modifiable et supprimable. Jamais rétroactif (un agneau déjà bouclé n'en reçoit pas), jamais pour un mort-né. Aucun message à chaque bouclage :
@@ -19803,7 +19806,8 @@ function refusSoinBouclage(produit) {
   if (!f.complete) return 'Délais lait et viande à renseigner d\'abord dans Produits et délais.';
   return null;
 }
-const soinsBouclageRegles = () => (Array.isArray(DB.soinsBouclage) ? DB.soinsBouclage : []).filter(x => x && x.produit && !refusSoinBouclage(x.produit));
+const soinsBouclageRegles = () => PRODUIT_CATEGORIES.flatMap(c => (DB.produits[c.key] || []).map(nom => ({ nom, b: ficheProduit(nom).bouclage })))
+  .filter(x => x.b && !refusSoinBouclage(x.nom)).map(x => Object.assign({ produit: x.nom }, x.b));
 function soinBouclage(entree, date) {
   const t = typeSoinProduit(entree.produit), f = ficheProduit(entree.produit);
   const soin = construireSoinCarnet({ type: t.type, categorie: t.categorie, produit: entree.produit, dateDebut: date, dureeJours: '1',
@@ -21384,6 +21388,7 @@ function ficheProduit(nom) {
     delaiLait, delaiViande,
     surOrdonnance: !!(info && info.surOrdonnance), reserveVeterinaire: !!(info && info.reserveVeterinaire),
     complete: delaiLait !== null && delaiViande !== null,
+    bouclage: info && info.bouclage && Number(info.bouclage.doseCc) > 0 ? { doseCc: Number(info.bouclage.doseCc), voie: info.bouclage.voie || '' } : null,
     aConfirmer, ancienLait, posologieAncienne, heritageAnmv,
     // options bio : valeur choisie par l'éleveur, sinon défaut de la catégorie (jamais écrit tant que l'éleveur n'a pas validé la fiche)
     compte: info && ETATS_OPTION_PRODUIT.some(x => x[0] === info.compteTraitements) ? info.compteTraitements : (DEFAUT_COMPTE_TRAITEMENTS[categorieProduitCle(nom)] || 'a_confirmer'),
@@ -21404,6 +21409,9 @@ function ecrireFicheProduit(nom, f) {
     posologie: f.posologie || null, delaiAttente: f.delaiLait, delaiLait: f.delaiLait, delaiViande: f.delaiViande,
     surOrdonnance: !!f.surOrdonnance, reserveVeterinaire: !!f.reserveVeterinaire
   };
+  // soin au bouclage des agneaux : celui passé par l'appelant (null = retiré), sinon celui déjà réglé
+  const bouclage = f.bouclage !== undefined ? f.bouclage : ancien.bouclage;
+  if (bouclage) e.bouclage = bouclage;
   // options bio : celles passées par l'appelant, sinon celles déjà choisies par l'éleveur (jamais effacées, jamais inventées)
   const compte = f.compte !== undefined ? f.compte : ancien.compteTraitements;
   const min48 = f.min48h !== undefined ? f.min48h : ancien.minimum48hBio;
@@ -21438,6 +21446,11 @@ function ouvrirFicheProduitModal(options) {
       <label>Posologie habituelle (facultatif)</label>
       <input type="text" id="fp-poso" value="${v(pre.posologie)}" placeholder="ex: 2 cc par animal" style="margin-bottom:12px;">
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" id="fp-ord" style="width:16px;height:16px;margin:0;"${fiche && fiche.surOrdonnance ? ' checked' : ''}> Sur ordonnance</label>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" id="fp-bouclage" style="width:16px;height:16px;margin:0;"${fiche && fiche.bouclage ? ' checked' : ''}> Donné à chaque agneau au bouclage</label>
+      <div id="fp-bouclage-detail" style="display:${fiche && fiche.bouclage ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div><label>Dose par agneau (cc) *</label><input type="text" inputmode="decimal" id="fp-bouclage-dose" value="${fiche && fiche.bouclage ? String(fiche.bouclage.doseCc).replace('.', ',') : ''}"></div>
+        <div><label>Voie</label><select id="fp-bouclage-voie"><option value="">Choisir…</option>${VOIES_ADMINISTRATION.map(x => `<option value="${x}"${fiche && fiche.bouclage && fiche.bouclage.voie === x ? ' selected' : ''}>${x}</option>`).join('')}</select></div>
+      </div>
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><input type="checkbox" id="fp-veto" style="width:16px;height:16px;margin:0;"${fiche && fiche.reserveVeterinaire ? ' checked' : ''}> Réservé au vétérinaire</label>
       ${elevageBioActif() ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
         <div><label>Minimum 48 h bio${fiche && fiche.min48hDefaut ? ' <span style="font-size:11px;color:var(--text-muted);">(défaut de la catégorie)</span>' : ''}</label><select id="fp-min48">${ETATS_OPTION_PRODUIT.map(([k, l]) => `<option value="${k}"${(fiche ? fiche.min48h : (DEFAUT_MINIMUM_48H_BIO[options.categorieKey] || 'a_confirmer')) === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
@@ -21450,6 +21463,8 @@ function ouvrirFicheProduitModal(options) {
     </div>`;
   document.body.appendChild(overlay);
   overlay.querySelector('#fp-annuler').onclick = () => document.body.removeChild(overlay);
+  // dose et voie du bouclage : affichées seulement quand la case est cochée (fiche légère)
+  overlay.querySelector('#fp-bouclage').onchange = e => { overlay.querySelector('#fp-bouclage-detail').style.display = e.target.checked ? 'grid' : 'none'; };
   // création : le choix de la catégorie propose les défauts bio de cette catégorie (modifiables)
   if (!edition && overlay.querySelector('#fp-min48')) overlay.querySelector('#fp-cat').addEventListener('change', e => {
     overlay.querySelector('#fp-min48').value = DEFAUT_MINIMUM_48H_BIO[e.target.value] || 'a_confirmer';
@@ -21469,6 +21484,13 @@ function ouvrirFicheProduitModal(options) {
     if (viande === null) return montrer('Le délai viande est obligatoire (nombre de jours entier, 0 autorisé).');
     if (lait === null) return montrer('Le délai lait est obligatoire (nombre de jours entier, 0 autorisé).');
     const fiche2 = { posologie: overlay.querySelector('#fp-poso').value.trim(), delaiLait: lait, delaiViande: viande, surOrdonnance: overlay.querySelector('#fp-ord').checked, reserveVeterinaire: overlay.querySelector('#fp-veto').checked };
+    if (overlay.querySelector('#fp-bouclage').checked) {
+      const doseTxt = overlay.querySelector('#fp-bouclage-dose').value.trim().replace(',', '.');
+      if (!/^\d+(\.\d+)?$/.test(doseTxt) || !(parseFloat(doseTxt) > 0)) return montrer('Indique la dose par agneau (cc) donnée au bouclage.');
+      const voie = overlay.querySelector('#fp-bouclage-voie').value;
+      if (!voie && cat !== 'autres') return montrer('Choisis la voie d\'administration du soin au bouclage.');
+      fiche2.bouclage = Object.assign({ doseCc: parseFloat(doseTxt) }, voie ? { voie } : {});
+    } else fiche2.bouclage = null;
     const sel48 = overlay.querySelector('#fp-min48'), selCompte = overlay.querySelector('#fp-compte');
     if (sel48) fiche2.min48h = sel48.value;
     if (selCompte) fiche2.compte = selCompte.value;
@@ -21520,7 +21542,7 @@ function renderProduitsDelais() {
       nm: xlsxEscape(f.nom),
       pastille: f.complete ? cartePastille('Complète', 'vert') : cartePastille(f.aConfirmer ? 'À confirmer' : 'Incomplète', 'ambre'),
       l2: 'Viande' + (bio ? ' (légal)' : '') + ' : ' + jours(f.delaiViande) + ' · Lait' + (bio ? ' (légal)' : '') + ' : ' + jours(f.delaiLait) + (f.posologie ? '<br>Posologie : ' + xlsxEscape(f.posologie) : ''),
-      l3: [cartePastille('Ordonnance : ' + (dispo ? (f.surOrdonnance ? 'sur ordonnance' : 'non') : '—')), cartePastille('Réservé vétérinaire : ' + (dispo ? (f.reserveVeterinaire ? 'oui' : 'non') : '—')),
+      l3: [f.bouclage ? cartePastille(echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage))), 'vert') : '', cartePastille('Ordonnance : ' + (dispo ? (f.surOrdonnance ? 'sur ordonnance' : 'non') : '—')), cartePastille('Réservé vétérinaire : ' + (dispo ? (f.reserveVeterinaire ? 'oui' : 'non') : '—')),
         bio ? cartePastille('Minimum 48 h bio : ' + etatBioTexte(f.min48h, 'à confirmer', f.min48hDefaut), f.min48h === 'a_confirmer' ? 'ambre' : '') : '', bio ? cartePastille('Compte dans les 3 traitements : ' + etatBioTexte(f.compte, 'à confirmer', f.compteDefaut), f.compte === 'a_confirmer' ? 'ambre' : '') : ''],
       acts: `<button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}">Modifier</button><button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="color:var(--ch-rouge);">Supprimer</button>`
     });
@@ -21554,7 +21576,7 @@ function renderProduitsDelais() {
     ${fiches.map(({ cat, produits }) => `<div class="card">
       ${pcCardHead(cat.label, pcPill('neutral', produits.length + ' produit' + (produits.length > 1 ? 's' : '')))}
       ${produits.length === 0 ? '<p class="brd-note" style="margin:8px 0 0;">Aucun produit.</p>' : mobile ? `<div class="cartes-liste" style="margin-top:12px;">${produits.map(f => carteProduit(f, cat)).join('')}</div>` : `<div style="overflow-x:auto;"><table class="pc-t" style="margin-top:8px;"><tr><th class="l">Produit</th><th class="l">Fiche</th><th>Viande${bio ? ' (légal)' : ''}</th><th>Lait${bio ? ' (légal)' : ''}</th><th class="l">Posologie habituelle</th><th class="l">Ordonnance</th><th class="l">Réservé vétérinaire</th>${bio ? '<th class="l" style="white-space:normal;max-width:120px;">Minimum 48 h bio</th><th class="l" style="white-space:normal;max-width:130px;">Compte dans les 3 traitements</th>' : ''}<th></th></tr>
-      ${produits.map(f => `<tr><td class="l"><b>${echapperHtml(f.nom)}</b></td><td class="l">${statut(f)}</td><td>${jours(f.delaiViande)}</td><td>${jours(f.delaiLait)}</td><td class="l">${echapperHtml(f.posologie || '—')}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.surOrdonnance ? 'Sur ordonnance' : 'Non') : '—'}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.reserveVeterinaire ? 'Oui' : 'Non') : '—'}</td>${bio ? `<td class="l pd-min48" style="white-space:normal;max-width:150px;">${etatBio(f.min48h, 'minimum 48 h bio à confirmer', f.min48hDefaut)}</td><td class="l pd-compte">${etatBio(f.compte, 'à confirmer', f.compteDefaut)}</td>` : ''}<td style="white-space:nowrap;"><button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`).join('')}</table></div>`}
+      ${produits.map(f => `<tr><td class="l"><b>${echapperHtml(f.nom)}</b>${f.bouclage ? ' ' + pcPill('ok', echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage)))) : ''}</td><td class="l">${statut(f)}</td><td>${jours(f.delaiViande)}</td><td>${jours(f.delaiLait)}</td><td class="l">${echapperHtml(f.posologie || '—')}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.surOrdonnance ? 'Sur ordonnance' : 'Non') : '—'}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.reserveVeterinaire ? 'Oui' : 'Non') : '—'}</td>${bio ? `<td class="l pd-min48" style="white-space:normal;max-width:150px;">${etatBio(f.min48h, 'minimum 48 h bio à confirmer', f.min48hDefaut)}</td><td class="l pd-compte">${etatBio(f.compte, 'à confirmer', f.compteDefaut)}</td>` : ''}<td style="white-space:nowrap;"><button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`).join('')}</table></div>`}
     </div>`).join('')}
   </div>`;
   const rafraichir = () => render('produits-delais');
@@ -28018,8 +28040,7 @@ function renderParametresExploitation(content) {
       <label class="prm-case" style="margin-top:14px;"><input type="checkbox" id="f-erreurs-auto"${rapportsErreursCoupes() ? '' : ' checked'}><span>Envoyer les erreurs techniques (sans donnée d'animal)</span></label>
       <div class="prm-note">En cas de plantage, un rapport technique part au concepteur : type d'erreur, écran, version. Aucun n°, aucun nom, aucune note. Réglage propre à cet appareil.</div>
     </div>`;
-  content.innerHTML = prmColonnesHtml(carteIdentite + carteSoinsBouclageHtml(), carteSynchro + carteBio + carteEco + carteContact);
-  brancherCarteSoinsBouclage();
+  content.innerHTML = prmColonnesHtml(carteIdentite, carteSynchro + carteBio + carteEco + carteContact);
   document.getElementById('f-bulle-contact').onchange = (ev) => {
     try { if (ev.target.checked) localStorage.removeItem(CLE_BULLE_MASQUEE); else localStorage.setItem(CLE_BULLE_MASQUEE, '1'); } catch (e) {}
     majBulleContact();
@@ -28085,60 +28106,6 @@ function renderParametresExploitation(content) {
     };
     saveData(DB);
     alert('Informations enregistrées.');
-  };
-}
-// Paramètres › Exploitation : soins au bouclage des agneaux (réglage de compte, voir appliquerSoinsBouclage)
-function carteSoinsBouclageHtml() {
-  const liste = Array.isArray(DB.soinsBouclage) ? DB.soinsBouclage : [];
-  const produits = PRODUIT_CATEGORIES.flatMap(c => (DB.produits[c.key] || []).map(nom => ({ nom, cat: c.label })));
-  const lignes = liste.map((x, i) => {
-    const refus = refusSoinBouclage(x.produit);
-    return `<div class="sb-ligne"><div><div style="font-weight:600;">${echapperHtml(libelleSoinBouclage(x))}</div>${x.voie ? `<div class="prm-note" style="margin:0;">${echapperHtml(x.voie)}</div>` : ''}${refus ? `<div class="prm-note sb-refus" style="margin:0;color:var(--ch-ambre-texte);">Non appliqué : ${echapperHtml(refus)}</div>` : ''}</div><button type="button" class="btn btn-secondary btn-supprimer btn-petit sb-retirer" data-idx="${i}">Retirer</button></div>`;
-  }).join('');
-  return `
-    <div class="card" id="card-soins-bouclage">
-      <div class="prm-titre">Soins au bouclage des agneaux</div>
-      <div class="prm-note">Ajoutés à chaque agneau quand il reçoit son n° à la mise bas, datés de la mise bas. Les agneaux déjà bouclés ne changent pas.</div>
-      ${lignes || '<div class="prm-note" id="sb-aucun">Aucun soin au bouclage.</div>'}
-      ${produits.length ? `<div class="sb-ajout">
-        <label for="f-sb-produit">Produit</label>
-        <select id="f-sb-produit"><option value="">Choisir…</option>${produits.map(p => `<option value="${echapperHtml(p.nom)}">${echapperHtml(p.nom)} (${p.cat})</option>`).join('')}</select>
-        <div class="prm-champs2">
-          <div><label for="f-sb-dose">Dose par agneau (cc)</label><input type="text" inputmode="decimal" id="f-sb-dose"></div>
-          <div><label for="f-sb-voie">Voie</label><select id="f-sb-voie"><option value="">Choisir…</option>${VOIES_ADMINISTRATION.map(v => `<option value="${v}">${v}</option>`).join('')}</select></div>
-        </div>
-        <div id="sb-msg"></div>
-        <div class="prm-actions prm-actions-fin"><button type="button" class="btn btn-secondary" id="btn-sb-ajouter">Ajouter</button></div>
-      </div>` : '<div class="prm-note">Créez d\'abord le produit dans Produits et délais.</div>'}
-    </div>`;
-}
-function brancherCarteSoinsBouclage() {
-  const carte = document.getElementById('card-soins-bouclage');
-  if (!carte) return;
-  const redessiner = () => { carte.outerHTML = carteSoinsBouclageHtml(); brancherCarteSoinsBouclage(); };
-  carte.querySelectorAll('.sb-retirer').forEach(b => { b.onclick = () => {   // retire le réglage seulement : les soins déjà donnés restent sur les agneaux
-    DB.soinsBouclage = (DB.soinsBouclage || []).filter((x, i) => i !== parseInt(b.dataset.idx, 10));
-    saveData(DB); redessiner();
-  }; });
-  const btn = document.getElementById('btn-sb-ajouter');
-  if (!btn) return;
-  btn.onclick = () => {
-    const produit = document.getElementById('f-sb-produit').value;
-    const doseTxt = document.getElementById('f-sb-dose').value.trim().replace(',', '.');
-    const voie = document.getElementById('f-sb-voie').value;
-    const t = produit ? typeSoinProduit(produit) : null;
-    const dose = parseFloat(doseTxt);
-    let erreur = null;
-    if (!produit) erreur = 'Choisissez le produit.';
-    else if ((DB.soinsBouclage || []).some(x => x.produit === produit)) erreur = 'Ce produit est déjà dans les soins au bouclage.';
-    else if (refusSoinBouclage(produit)) erreur = refusSoinBouclage(produit);
-    else if (!/^\d+(\.\d+)?$/.test(doseTxt) || !(dose > 0)) erreur = 'Indiquez la dose par agneau (cc).';
-    else if (!voie && t && t.type !== 'Autre') erreur = 'Choisissez la voie d\'administration.';
-    if (erreur) { document.getElementById('sb-msg').innerHTML = `<div class="msg-charte alerte">${echapperHtml(erreur)}</div>`; return; }
-    const entree = { produit, doseCc: dose };
-    if (voie) entree.voie = voie;
-    DB.soinsBouclage = (DB.soinsBouclage || []).concat([entree]);
-    saveData(DB); redessiner();
   };
 }
 // Texte long derrière « En savoir plus » (remplace les anciennes bulles « ? » des titres de Paramètres : le texte est conservé tel quel)
@@ -30689,7 +30656,7 @@ const fbDb = initializeFirestore(fbApp, {
 // volontairement exclu : propre à l'appareil (appairage physique), il n'a
 // pas de sens partagé entre deux téléphones.
 const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
-  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'soinsBouclage', 'intervenants',
+  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   // 'registre' reste ICI (champ meta.registre) volontairement, même après

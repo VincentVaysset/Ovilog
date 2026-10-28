@@ -1,8 +1,9 @@
-/* Soins au bouclage des agneaux (mobile et PC) : réglage de COMPTE (Paramètres › Exploitation, DB.soinsBouclage, synchronisé), vide pour un compte
-   neuf. Chaque agneau qui reçoit son n° à la saisie de la mise bas (saisie rapide mobile / PC, fiche brebis) reçoit ces soins, datés de la mise bas,
-   comme un soin du Carnet (délais de la fiche produit, intervenant « Éleveur », marque bouclage) ; jamais un mort-né, jamais un agneau déjà bouclé
-   (modification d'un agnelage : seuls les agneaux qui reçoivent leur n° maintenant). Une seule ligne grise fixe sur l'écran de saisie, aucun message
-   à chaque bouclage. Produit sans délais ou réservé au vétérinaire : refusé au réglage. saveData REMPLACÉ ; jeu synthétique (indicatif 000456). */
+/* Soins au bouclage des agneaux (mobile et PC) : réglés sur la FICHE PRODUIT (Produits et délais, case « Donné à chaque agneau au bouclage »,
+   dose et voie affichées seulement si cochée ; produitsInfo[nom].bouclage, synchronisé avec produitsInfo), aucun pour un compte neuf. Chaque agneau
+   qui reçoit son n° à la saisie de la mise bas (saisie rapide mobile / PC, fiche brebis) reçoit ces soins, datés de la mise bas, comme un soin du
+   Carnet (délais de la fiche produit, intervenant « Éleveur », marque bouclage) ; jamais un mort-né, jamais un agneau déjà bouclé (modification d'un
+   agnelage : seuls les agneaux qui reçoivent leur n° maintenant). Une seule ligne grise fixe sur l'écran de saisie, aucun message à chaque bouclage.
+   L'ancienne liste de compte (version de test) est reprise une fois sur les fiches. saveData REMPLACÉ ; jeu synthétique (indicatif 000456). */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
@@ -40,26 +41,28 @@ const soinsAgneaux = (p, n) => p.evaluate(n => DB.brebis[n - 1].agnelages.slice(
 for (const bureau of [false, true]) {
   const nom = bureau ? 'PC' : 'mobile';
   const p = await ouvrir(bureau);
-  // ================================================================ 1. compte neuf : aucun réglage, aucune ligne, aucun soin
-  eq(await p.evaluate(() => [DB.soinsBouclage, migrateData({}).soinsBouclage, ligneSoinsBouclageHtml()]), [[], [], ''], nom + ' : compte neuf sans soin au bouclage');
-  check(/const META_FIELDS = \[[^\]]*'soinsBouclage'/.test(SOURCE), 'réglage de compte synchronisé (META_FIELDS)');
+  // ================================================================ 1. compte neuf : aucun réglage, aucune ligne ; reprise de l'ancienne liste de compte
+  eq(await p.evaluate(() => [soinsBouclageRegles(), ligneSoinsBouclageHtml(), 'soinsBouclage' in migrateData({})]), [[], '', false], nom + ' : compte neuf sans soin au bouclage');
+  check(!/'soinsBouclage'/.test(SOURCE.slice(SOURCE.indexOf('const META_FIELDS'), SOURCE.indexOf('const META_FIELDS') + 3000)), 'plus de liste de compte synchronisée : le réglage suit produitsInfo');
+  eq(await p.evaluate(() => { const d = migrateData({ soinsBouclage: [{ produit: 'Prod Y', doseCc: 3, voie: 'Orale' }, { produit: 'Inconnu', doseCc: 1 }], produitsInfo: { 'Prod Y': { delaiLait: 0, delaiViande: 0 } } }); return [d.produitsInfo['Prod Y'].bouclage, 'soinsBouclage' in d, 'Inconnu' in d.produitsInfo]; }),
+    [{ doseCc: 3, voie: 'Orale' }, false, false], nom + ' : ancienne liste reprise une fois sur la fiche produit, rien inventé');
 
-  // ================================================================ 2. réglage dans Paramètres › Exploitation
-  await p.evaluate(() => { parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
-  await p.evaluate(() => { const r = document.querySelector('[data-prm-rubrique="exploitation"], [data-onglet="exploitation"]'); if (r && !document.getElementById('card-soins-bouclage')) r.click(); });
-  check(await p.evaluate(() => /Aucun soin au bouclage/.test(document.getElementById('card-soins-bouclage').innerText)), nom + ' : carte « Soins au bouclage des agneaux », vide');
-  const ajouter = async (produit, dose, voie) => {
-    await p.selectOption('#f-sb-produit', produit); await p.fill('#f-sb-dose', dose); if (voie) await p.selectOption('#f-sb-voie', voie);
-    await p.click('#btn-sb-ajouter');
-    return p.evaluate(() => { const m = document.querySelector('#sb-msg .msg-charte'); return m ? m.innerText : null; });
-  };
-  eq(await ajouter('Antibio Veto', '2', 'Intramusculaire'), 'Produit réservé au vétérinaire : à saisir par le Carnet sanitaire.', nom + ' : produit réservé au vétérinaire refusé');
-  eq(await ajouter('Produit sans fiche', '2', ''), "Délais lait et viande à renseigner d'abord dans Produits et délais.", nom + ' : produit sans délais refusé');
-  eq(await ajouter('Vaccin X', '', 'Sous-cutanée'), 'Indiquez la dose par agneau (cc).', nom + ' : dose obligatoire');
-  eq(await ajouter('Séléphérol', '2', 'Orale'), null, nom + ' : Séléphérol 2 cc ajouté');
-  eq(await ajouter('Séléphérol', '3', 'Orale'), 'Ce produit est déjà dans les soins au bouclage.', nom + ' : pas deux fois le même produit');
-  eq(await p.evaluate(() => [DB.soinsBouclage, document.getElementById('card-soins-bouclage').querySelectorAll('.sb-ligne').length]), [[{ produit: 'Séléphérol', doseCc: 2, voie: 'Orale' }], 1], nom + ' : réglage enregistré');
-  console.log('OK 1-2 ' + nom + ' : compte neuf vide ; réglage (refus, dose, doublon, ajout).');
+  // ================================================================ 2. réglage dans la fiche produit (Produits et délais)
+  const ouvrirFiche = async (produit) => { await p.evaluate(() => render('produits-delais')); await p.click(`.pd-modifier[data-nom="${encodeURIComponent(produit)}"]`); };
+  await ouvrirFiche('Séléphérol');
+  eq(await p.evaluate(() => [document.getElementById('fp-bouclage').checked, getComputedStyle(document.getElementById('fp-bouclage-detail')).display]), [false, 'none'], nom + ' : case décochée, dose et voie cachées (fiche légère)');
+  await p.check('#fp-bouclage');
+  eq(await p.evaluate(() => getComputedStyle(document.getElementById('fp-bouclage-detail')).display), 'grid', nom + ' : case cochée : dose et voie affichées');
+  await p.click('#fp-ok');
+  eq(await p.evaluate(() => document.getElementById('fp-err').textContent), 'Indique la dose par agneau (cc) donnée au bouclage.', nom + ' : dose obligatoire');
+  await p.fill('#fp-bouclage-dose', '2'); await p.selectOption('#fp-bouclage-voie', 'Orale'); await p.click('#fp-ok');
+  eq(await p.evaluate(() => [DB.produitsInfo['Séléphérol'].bouclage, DB.produitsInfo['Séléphérol'].delaiLait, soinsBouclageRegles()]), [{ doseCc: 2, voie: 'Orale' }, 0, [{ produit: 'Séléphérol', doseCc: 2, voie: 'Orale' }]], nom + ' : réglage enregistré sur la fiche, délais gardés');
+  check(/Au bouclage · 2 cc/.test(await p.evaluate(() => document.getElementById('app').innerText)), nom + ' : pastille « Au bouclage · 2 cc » dans la liste des produits');
+  // réouverture : réglage relu ; un autre enregistrement de la fiche le garde
+  await ouvrirFiche('Séléphérol');
+  eq(await p.evaluate(() => [document.getElementById('fp-bouclage').checked, document.getElementById('fp-bouclage-dose').value, document.getElementById('fp-bouclage-voie').value]), [true, '2', 'Orale'], nom + ' : fiche rouverte : réglage relu');
+  await p.click('#fp-annuler');
+  console.log('OK 1-2 ' + nom + ' : compte neuf vide, reprise de l\'ancienne liste ; réglage sur la fiche produit (case, dose, voie, pastille).');
 
   // ================================================================ 3. saisie rapide : ligne grise fixe, soin sur chaque agneau bouclé, jamais sur le mort-né
   await p.evaluate(() => { resetMisebasRapideSession(); render('misebas-rapide'); });
@@ -103,11 +106,10 @@ for (const bureau of [false, true]) {
   eq((await soinsAgneaux(p, 3)).map(x => x.length), [0, 1, 1], nom + ' : modifier sans rien changer n\'ajoute aucun soin');
   console.log('OK 4 ' + nom + ' : fiche brebis (création, modification non rétroactive, pas de doublon).');
 
-  // ================================================================ 5. réglage retiré : plus de ligne, plus de soin ; les soins déjà donnés restent
-  await p.evaluate(() => { parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
-  await p.evaluate(() => { const r = document.querySelector('[data-prm-rubrique="exploitation"], [data-onglet="exploitation"]'); if (r && !document.getElementById('card-soins-bouclage')) r.click(); });
-  await p.click('.sb-retirer[data-idx="0"]');
-  eq(await p.evaluate(() => [DB.soinsBouclage, ligneSoinsBouclageHtml(), DB.brebis[1].agnelages[0].lambs[0].sanitaire.length]), [[], '', 1], nom + ' : réglage retiré : plus de ligne ni de soin, les soins déjà donnés restent');
+  // ================================================================ 5. case décochée : plus de ligne, plus de soin ; les soins déjà donnés restent
+  await ouvrirFiche('Séléphérol');
+  await p.uncheck('#fp-bouclage'); await p.click('#fp-ok');
+  eq(await p.evaluate(() => ['bouclage' in DB.produitsInfo['Séléphérol'], ligneSoinsBouclageHtml(), DB.brebis[1].agnelages[0].lambs[0].sanitaire.length]), [false, '', 1], nom + ' : case décochée : plus de ligne ni de soin, les soins déjà donnés restent');
   console.log('OK 5 ' + nom + ' : retrait du réglage.');
   await p.context().close();
 }
