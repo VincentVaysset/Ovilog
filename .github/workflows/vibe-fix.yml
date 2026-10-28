@@ -1,11 +1,9 @@
 # Correctif « bip agneau » : livraison complète par CI (www/index.html est trop gros pour l'édition directe par l'assistant,
 # et les pousses via l'API GitHub ne déclenchent pas l'événement push : la CI part de l'événement pull_request de cette branche).
 #   1. patch : applique tools/patch_bip_agneau.py et pousse le commit sur la branche (GITHUB_TOKEN — ne déclenche rien d'autre).
-#   2. batterie : tests.yml complet avant toute construction (le premier tour, avant le patch, échoue : rien n'est publié sans correctif ;
-#      le tour suivant, déclenché par l'édition de la pull request, tourne sur le code patché).
+#      Si l'ancre est introuvable, le script écrit un diagnostic (tools/diag_oneidscanned.txt) sans rien modifier : la CI le committe.
+#   2. batterie : tests.yml complet avant toute construction.
 #   3. apk : APK signé + pre-release « [test] Ovilog 1.0.320 » (marqueurs du canal de test) + ménage des [test] anciennes.
-# Le numéro 320 est volontairement au-dessus des run_number actuels de build-apk (~315) : il s'installe par-dessus la 1.0.315 ; les
-# prochaines publications de build-apk reprendront leur numéro (316, 317…) — voir etat_avancement.md, « Correctif bip agneau ».
 name: Correctif bip agneau (Vibe)
 on:
   pull_request:
@@ -26,18 +24,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
-      - name: Appliquer le correctif
+      - name: Appliquer le correctif (ou écrire un diagnostic si l'ancre a changé)
         run: python3 tools/patch_bip_agneau.py
-      - name: Committer si le fichier a changé
+      - name: Committer le résultat (correctif ou diagnostic)
         run: |
           git config user.name "ovilog-ci"
           git config user.email "actions@users.noreply.github.com"
           git add www/index.html
+          [ -f tools/diag_oneidscanned.txt ] && git add tools/diag_oneidscanned.txt
           if git diff --cached --quiet; then
-            echo "Correctif déjà présent : rien à pousser."
+            echo "Rien à committer."
             exit 0
           fi
-          git commit -m "Mise bas : le bip du lecteur saisit le n° de l'agneau dans sa case (plus de nouvelle recherche de brebis)"
+          git commit -m "CI correctif bip agneau : patch appliqué ou diagnostic d'ancre"
           git push origin HEAD:${{ github.head_ref }}
   batterie:
     name: Batterie complète avant toute construction
@@ -49,13 +48,15 @@ jobs:
   apk:
     name: APK signé + pre-release de test 1.0.320
     needs: batterie
-    if: github.event.pull_request.head.ref == 'claude/vibe-fix-bip-agneau'
+    if: github.event.pull_request.head.ref == 'claude/vibe-fix-bip-agneau' && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - name: Récupérer le code (branche de la PR, avec le correctif appliqué)
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
+      - name: Garde-fou : le correctif doit être présent
+        run: grep -q "caseBip" www/index.html || { echo "::error::Correctif absent : pas de construction"; exit 1; }
       - name: Installer Java 21
         uses: actions/setup-java@v4
         with:
@@ -107,7 +108,6 @@ jobs:
           fi
           echo "Keystore : OK"
       - name: Builder l'APK signé (release)
-        # Numéro 320 figé (au-dessus de la 1.0.315 installée et des run_number de build-apk à venir : voir l'en-tête du workflow).
         working-directory: android
         env:
           OVILOG_KEYSTORE_PATH: ovilog-release.keystore

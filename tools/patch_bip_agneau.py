@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Correctif « bip agneau » : à la mise bas (saisie rapide et fiche « Ajouter un agnelage »), le bip du lecteur Allflex doit saisir
 le n° dans la case qui a le curseur (EID de l'agneau ou de sa mère adoptive) au lieu de relancer une recherche de brebis
-(rapport du 28/10/2026). Appliqué par .github/workflows/vibe-fix.yml sur la branche claude/vibe-fix-bip-agneau, car www/index.html
-est trop gros pour l'édition directe par l'assistant. Idempotent ; échoue franchement (sans rien modifier) si le point d'ancrage
-n'est pas trouvé exactement tel qu'attendu."""
+(rapport du 28/10/2026). Appliqué par .github/workflows/vibe-fix.yml (événement pull_request), car www/index.html est trop gros
+pour l'édition directe par l'assistant. Idempotent. Si le point d'ancrage n'est pas trouvé exactement tel qu'attendu, RIEN n'est
+modifié : un diagnostic (extrait du code réel autour de onEidScanned) est écrit dans tools/diag_oneidscanned.txt pour l'assistant."""
 import pathlib
 import sys
 
-FICHIER = pathlib.Path(__file__).resolve().parents[1] / "www" / "index.html"
+RACINE = pathlib.Path(__file__).resolve().parents[1]
+FICHIER = RACINE / "www" / "index.html"
+DIAG = pathlib.Path(__file__).resolve().parent / "diag_oneidscanned.txt"
 ANCRE = "  if (panneauContact) return;"
 LIGNE_SUIVANTE = "  if (!activeScanTarget || !activeScanTarget.isConnected) { activeScanTarget = null; return; }"
 BLOC = (
@@ -23,17 +25,40 @@ BLOC = (
 )
 
 texte = FICHIER.read_text(encoding="utf-8")
+
+def echec(raison):
+    print("ÉCHEC DU PATCH : " + raison + " — rien n'a été modifié.")
+    morceaux = []
+    j = texte.find("function onEidScanned")
+    if j == -1:
+        morceaux.append("function onEidScanned : INTROUVABLE dans www/index.html")
+    else:
+        morceaux.append("--- function onEidScanned (extrait du code réel) ---\n" + texte[j: j + 1800])
+    for aiguille in ("panneauContact", "activeScanTarget", "function onScanRecu", "ecran-lecteur"):
+        i = texte.find(aiguille)
+        if i == -1:
+            morceaux.append(aiguille + " : introuvable")
+        else:
+            morceaux("--- " + aiguille + " ---")
+    pathlib.Path(DIAG).write_text(
+        "DIAGNOSTIC (échec du patch, aucune modification du code). Raison : " + raison + "\n\n" + "\n\n".join(morceaux),
+        encoding="utf-8")
+    print("Diagnostic écrit dans tools/diag_oneidscanned.txt (la CI le committe).")
+
 if "caseBip" in texte:
     print("Correctif déjà appliqué (caseBip présent) : rien à faire.")
     sys.exit(0)
 debut = texte.find(ANCRE)
 if debut == -1:
-    sys.exit("ERREUR : ancre introuvable dans onEidScanned — rien n'a été modifié.")
+    echec("ancre introuvable (onEidScanned a-t-il changé ?)")
+    sys.exit(0)
 if texte.find(ANCRE, debut + 1) != -1:
-    sys.exit("ERREUR : ancre présente plusieurs fois — rien n'a été modifié.")
+    echec("ancre présente plusieurs fois")
+    sys.exit(0)
 fin_de_ligne = texte.find("\n", debut)
 ligne_suivante = texte[fin_de_ligne + 1: fin_de_ligne + 1 + len(LIGNE_SUIVANTE)]
 if ligne_suivante != LIGNE_SUIVANTE:
-    sys.exit("ERREUR : la ligne suivant l'ancre n'est pas celle attendue — rien n'a été modifié.")
+    echec("la ligne suivant l'ancre n'est pas celle attendue")
+    sys.exit(0)
 FICHIER.write_text(texte[:fin_de_ligne + 1] + BLOC + texte[fin_de_ligne + 1:], encoding="utf-8")
 print("Correctif appliqué : à la mise bas, le bip saisit le n° dans la case qui a le curseur (agneau ou mère adoptive).")
