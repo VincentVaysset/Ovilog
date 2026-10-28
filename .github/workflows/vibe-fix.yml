@@ -1,0 +1,112 @@
+# Focus automatique après le choix du sexe (livraison pilotée par l'assistant Vibe) : applique
+# tools/patch_focus_sexe.py dans www/index.html (fichier trop gros pour l'édition directe), pousse le commit sur la
+# branche, puis lance UNIQUEMENT tests/test_focus_sexe_misebas.mjs et tests/test_bip_agneau_misebas.mjs sur le code
+# corrigé — journaux complets publiés en commentaire de l'issue #20 (les logs Actions ne sont pas lisibles par
+# l'assistant). La construction APK, la batterie complète et la pre-release [test] restent portées par build-apk.yml
+# (déclenché par push) : rien n'est publié tant que le nouveau test échoue sur le code non corrigé.
+name: Correctif focus après sexe (Vibe)
+on:
+  pull_request:
+    branches: [claude/sheep-herd-android-app-7tlcq1]
+    types: [opened, synchronize, edited, reopened]
+concurrency:
+  group: vibe-fix-focus-sexe
+  cancel-in-progress: true
+permissions:
+  contents: write
+  issues: write
+jobs:
+  patch:
+    name: Appliquer le focus automatique dans www/index.html (journal sur l'issue 20)
+    if: github.event.pull_request.head.ref == 'claude/vibe-fix-bip-agneau'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code (branche de la PR, pas le merge)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Appliquer le correctif, tout journaliser
+        run: |
+          set +e
+          J=tools/journal_patch.txt
+          {
+            echo "== $(date -u) — événement ${{ github.event_name }}, run ${{ github.run_number }} =="
+            echo "== head_ref : ${{ github.head_ref }} =="
+            python3 --version
+            echo "== exécution du script de patch =="
+            python3 tools/patch_focus_sexe.py
+            echo "== code de sortie du script : $? =="
+            echo "== git status =="
+            git status --short
+            git config user.name "ovilog-ci"
+            git config user.email "actions@users.noreply.github.com"
+            git add www/index.html
+            [ -f tools/diag_focus_sexe.txt ] && git add tools/diag_focus_sexe.txt
+            if git diff --cached --quiet; then
+              echo "== rien à committer =="
+            else
+              git commit -m "Mise bas : le choix du sexe met le curseur dans la case EID de l'agneau (bip direct)"
+              git push origin HEAD:${{ github.head_ref }}
+              echo "== code de sortie du push : $? =="
+            fi
+            echo "== fin =="
+          } > "$J" 2>&1
+          cat "$J"
+      - name: Publier le journal en commentaire de l'issue 20 (toujours)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/issues/20/comments" -F body="$(cat tools/journal_patch.txt)" || echo "::warning::publication du journal impossible"
+
+  controle:
+    name: Lancer les tests focus et bip agneau seuls (journal sur l'issue 20)
+    needs: patch
+    if: github.event.pull_request.head.ref == 'claude/vibe-fix-bip-agneau'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code (branche de la PR, avec le correctif)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Installer Playwright et Chromium
+        run: |
+          cd tests
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Servir l'appli puis lancer les deux tests
+        run: |
+          cd www
+          nohup python3 -m http.server 8998 > /tmp/serveur.log 2>&1 &
+          cd ..
+          sleep 2
+          cd tests
+          echo "== test focus après sexe =="
+          node test_focus_sexe_misebas.mjs > /tmp/test-focus.log 2>&1
+          code1=$?
+          cat /tmp/test-focus.log
+          echo "== test bip agneau (non-régression) =="
+          node test_bip_agneau_misebas.mjs > /tmp/test-bip.log 2>&1
+          code2=$?
+          cat /tmp/test-bip.log
+          echo "codes de sortie : focus=$code1 bip=$code2"
+          [ "$code1" -eq 0 ] && [ "$code2" -eq 0 ]
+      - name: Publier la sortie des tests sur l'issue 20 (toujours)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "== Contrôle tests focus + bip agneau — $(date -u) — run ${{ github.run_number }} =="
+            echo
+            echo "--- test_focus_sexe_misebas ---"
+            cat /tmp/test-focus.log 2>/dev/null || echo "(pas de sortie)"
+            echo
+            echo "--- test_bip_agneau_misebas ---"
+            cat /tmp/test-bip.log 2>/dev/null || echo "(pas de sortie)"
+          } > /tmp/commentaire.md
+          gh api -X POST "repos/${{ github.repository }}/issues/20/comments" -F body="$(cat /tmp/commentaire.md)" || echo "::warning::publication impossible"
