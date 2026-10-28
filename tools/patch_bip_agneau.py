@@ -34,13 +34,13 @@ def echec(raison):
         morceaux.append("function onEidScanned : INTROUVABLE dans www/index.html")
     else:
         morceaux.append("--- function onEidScanned (extrait du code réel) ---\n" + texte[j: j + 1800])
-    for aiguille in ("panneauContact", "activeScanTarget", "function onScanRecu", "ecran-lecteur"):
+    for aiguille in ("panneauContact", "activeScanTarget"):
         i = texte.find(aiguille)
         if i == -1:
             morceaux.append(aiguille + " : introuvable")
         else:
-            morceaux("--- " + aiguille + " ---")
-    pathlib.Path(DIAG).write_text(
+            morceaux.append("--- premier \"" + aiguille + "\" ---\n" + texte[max(0, i - 300): i + 600])
+    DIAG.write_text(
         "DIAGNOSTIC (échec du patch, aucune modification du code). Raison : " + raison + "\n\n" + "\n\n".join(morceaux),
         encoding="utf-8")
     print("Diagnostic écrit dans tools/diag_oneidscanned.txt (la CI le committe).")
