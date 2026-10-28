@@ -1,19 +1,32 @@
-# Correctif « bip agneau » appliqué dans www/index.html par CI (fichier trop gros pour l'édition directe par l'assistant).
-# Se déclenche sur la branche claude/vibe-fix-bip-agneau ; idempotent ; le commit est poussé avec GITHUB_TOKEN
-# (il ne redéclenche volontairement aucun workflow : la batterie et l'APK partent du push suivant avec le token App).
-name: Correctif bip agneau
+# Correctif « bip agneau » : livraison complète par CI (www/index.html est trop gros pour l'édition directe par l'assistant,
+# et les pousses via l'API GitHub ne déclenchent pas l'événement push : la CI part de l'événement pull_request de cette branche).
+#   1. patch : applique tools/patch_bip_agneau.py et pousse le commit sur la branche (GITHUB_TOKEN — ne déclenche rien d'autre).
+#   2. batterie : tests.yml complet avant toute construction (le premier tour, avant le patch, échoue : rien n'est publié sans correctif ;
+#      le tour suivant, déclenché par l'édition de la pull request, tourne sur le code patché).
+#   3. apk : APK signé + pre-release « [test] Ovilog 1.0.320 » (marqueurs du canal de test) + ménage des [test] anciennes.
+# Le numéro 320 est volontairement au-dessus des run_number actuels de build-apk (~315) : il s'installe par-dessus la 1.0.315 ; les
+# prochaines publications de build-apk reprendront leur numéro (316, 317…) — voir etat_avancement.md, « Correctif bip agneau ».
+name: Correctif bip agneau (Vibe)
 on:
-  push:
-    branches: [claude/vibe-fix-bip-agneau]
+  pull_request:
+    branches: [claude/sheep-herd-android-app-7tlcq1]
+    types: [opened, synchronize, edited, reopened]
+concurrency:
+  group: vibe-fix-bip-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 permissions:
   contents: write
 jobs:
   patch:
-    name: Appliquer le correctif et le committer
+    name: Appliquer le correctif dans www/index.html
+    if: github.event.pull_request.head.ref == 'claude/vibe-fix-bip-agneau'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Appliquer le correctif dans www/index.html
+      - name: Récupérer le code (branche de la PR, pas le merge)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Appliquer le correctif
         run: python3 tools/patch_bip_agneau.py
       - name: Committer si le fichier a changé
         run: |
@@ -21,8 +34,120 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add www/index.html
           if git diff --cached --quiet; then
-            echo "Rien à committer : correctif déjà présent."
+            echo "Correctif déjà présent : rien à pousser."
             exit 0
           fi
           git commit -m "Mise bas : le bip du lecteur saisit le n° de l'agneau dans sa case (plus de nouvelle recherche de brebis)"
-          git push
+          git push origin HEAD:${{ github.head_ref }}
+  batterie:
+    name: Batterie complète avant toute construction
+    needs: patch
+    if: github.event.pull_request.head.ref == 'claude/vibe-fix-bip-agneau'
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+  apk:
+    name: APK signé + pre-release de test 1.0.320
+    needs: batterie
+    if: github.event.pull_request.head.ref == 'claude/vibe-fix-bip-agneau'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code (branche de la PR, avec le correctif appliqué)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Installer Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Installer le SDK Android
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Installer les dépendances npm
+        run: npm install --legacy-peer-deps
+      - name: Injecter le numéro de version (date + hash court du commit)
+        run: |
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+          SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
+          sed -i "s/__OVILOG_BUILD_VERSION__/${BUILD_DATE} · ${SHORT_SHA}/" www/index.html
+      - name: Synchroniser Capacitor
+        run: npx cap sync android
+      - name: Rendre gradlew exécutable
+        run: chmod +x android/gradlew
+      - name: Contrôler et décoder le keystore de signature (secrets GitHub)
+        working-directory: android/app
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          manque=0
+          for nom in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!nom:-}" ]; then
+              echo "::error title=Signature APK::Secret ${nom} absent ou vide (Settings › Secrets and variables › Actions)"
+              manque=1
+            fi
+          done
+          [ "$manque" -eq 0 ] || exit 1
+          if ! printf '%s' "$KEYSTORE_BASE64" | base64 -d > ovilog-release.keystore 2>/dev/null || [ ! -s ovilog-release.keystore ]; then
+            echo "::error title=Signature APK::Keystore décodé vide ou illisible (secret KEYSTORE_BASE64)"
+            exit 1
+          fi
+          if ! keytool -list -keystore ovilog-release.keystore -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null 2>&1; then
+            echo "::error title=Signature APK::Keystore impossible à ouvrir avec ce mot de passe ou cet alias (secrets KEYSTORE_PASSWORD / KEY_ALIAS)"
+            exit 1
+          fi
+          echo "Keystore : OK"
+      - name: Builder l'APK signé (release)
+        # Numéro 320 figé (au-dessus de la 1.0.315 installée et des run_number de build-apk à venir : voir l'en-tête du workflow).
+        working-directory: android
+        env:
+          OVILOG_KEYSTORE_PATH: ovilog-release.keystore
+          OVILOG_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          OVILOG_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          OVILOG_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease --stacktrace \
+            -PappVersionCode=320 \
+            -PappVersionName=1.0.320
+      - name: Publier l'APK comme artefact téléchargeable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovilog-apk-v1.0.320
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publier la pre-release de test (canal de test, même format que build-apk.yml)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v320
+          target_commitish: ${{ github.event.pull_request.head.sha }}
+          name: "[test] Ovilog 1.0.320 (claude/vibe-fix-bip-agneau)"
+          prerelease: true
+          body: |
+            <!-- ovilog-canal-test -->
+            Version de test (branche claude/vibe-fix-bip-agneau) — proposée seulement aux appareils de l'administrateur qui ont activé « Recevoir les versions de test ».
+
+            Mise bas : le bip du lecteur saisit le n° de l'agneau dans sa case (plus de nouvelle recherche de brebis), saisie rapide et fiche « Ajouter un agnelage », pour l'agneau et sa mère adoptive. Contrôle : test_bip_agneau_misebas.
+          files: android/app/build/outputs/apk/release/app-release.apk
+          fail_on_unmatched_files: true
+      - name: Ménage des pre-releases de test (garder les 3 plus récentes)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq '.[] | select(.prerelease == true and .draft == false and (.name // "" | startswith("[test] ")) and (.body // "" | startswith("<!-- ovilog-canal-test -->")) and (.tag_name | test("^v[0-9]+$"))) | "\(.tag_name | ltrimstr(\"v\"))\t\(.id)\t\(.tag_name)"' \
+            | sort -t$'\t' -k1,1nr | tail -n +4 | while IFS=$'\t' read -r num id tag; do
+              echo "Suppression de la pre-release de test ${tag} (id ${id})"
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${id}"
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${tag}" || echo "Tag ${tag} déjà absent"
+            done
