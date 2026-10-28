@@ -19747,10 +19747,7 @@ function erreursSoinCarnet(e) {
     ['delaiViande', 'delaiLait'].forEach(k => { if (String(e[k]).trim() !== '' && entierTexteOuNull(e[k]) === null) err.push('Le délai ' + (k === 'delaiViande' ? 'viande' : 'lait') + ' doit être un nombre de jours entier.'); });
   }
   // n° d'ordonnance FACULTATIF à la saisie, même pour un produit sur ordonnance (traitement en bergerie) : alerte ambre, à compléter plus tard
-  if (fiche && fiche.reserveVeterinaire) {
-    if (!e.faitPar.trim() || /^éleveur$/i.test(e.faitPar.trim())) err.push('Produit réservé au vétérinaire : indique le nom de la personne qui administre.');
-    if (!e.veterinaireResponsable.trim()) err.push('Produit réservé au vétérinaire : le nom du vétérinaire responsable est obligatoire.');
-  } else if (!e.faitPar.trim()) err.push('Indique qui a fait le soin.');
+  if (!e.faitPar.trim()) err.push('Indique qui a fait le soin.');
   return err;
 }
 // Soin « modèle » à enregistrer (une copie par animal) ; champs facultatifs absents plutôt que vides ; délais et durée copiés sur le soin.
@@ -19767,7 +19764,7 @@ function construireSoinCarnet(e) {
   if (e.ordonnance) soin.numeroOrdonnance = e.ordonnance;
   const opt = (k, v) => { if (v && String(v).trim()) soin[k] = String(v).trim(); };
   opt('veterinairePrescripteur', e.prescripteur); opt('motif', e.motif); opt('lot', e.lot); opt('peremption', e.peremption);
-  if (fiche && fiche.reserveVeterinaire) opt('veterinaireResponsable', e.veterinaireResponsable);
+  opt('veterinaireResponsable', e.veterinaireResponsable);   // ancien champ (option « réservé au vétérinaire » retirée) : gardé tel quel en modification
   // Délais saisis = LÉGAUX ; délais APPLIQUÉS (doublés en bio, minimum 48 h selon le produit) et indicateur bio FIGÉS dans le soin :
   // ni le réglage bio ni la fiche produit ne les modifieront plus jamais.
   const bio = elevageBioActif(), ap = delaisAppliquesFormulaire(e);
@@ -19790,7 +19787,7 @@ function delaisAppliquesFormulaire(e) {
    Chaque agneau qui reçoit son n° à la saisie de la mise bas (fiche brebis, saisies rapides mobile et PC) reçoit ces soins, datés de la mise bas,
    comme un soin du Carnet (délais de la fiche produit copiés, bio figé, intervenant « Éleveur », marque bouclage: true) : fiche, Carnet, registre,
    modifiable et supprimable. Jamais rétroactif (un agneau déjà bouclé n'en reçoit pas), jamais pour un mort-né. Aucun message à chaque bouclage :
-   une seule ligne grise fixe sur l'écran de saisie (ligneSoinsBouclageHtml). Produit sans délais renseignés ou réservé au vétérinaire : refusé au réglage. */
+   une seule ligne grise fixe sur l'écran de saisie (ligneSoinsBouclageHtml). Produit sans délais renseignés : jamais appliqué. */
 function typeSoinProduit(nom) {
   const cle = categorieProduitCle(nom);
   if (cle === 'vaccins') return { type: 'Vaccin', categorie: '' };
@@ -19802,7 +19799,6 @@ function typeSoinProduit(nom) {
 function refusSoinBouclage(produit) {
   if (!produit || !typeSoinProduit(produit)) return 'Produit introuvable dans les listes.';
   const f = ficheProduit(produit);
-  if (f.reserveVeterinaire) return 'Produit réservé au vétérinaire : à saisir par le Carnet sanitaire.';
   if (!f.complete) return 'Délais lait et viande à renseigner d\'abord dans Produits et délais.';
   return null;
 }
@@ -19987,9 +19983,7 @@ function ecranCarnetSoin() {
         <div><label>N° ordonnance <span class="pc-req" id="cs-ord-etoile"></span><span class="pc-opt" id="cs-ord-fac"> (facultatif)</span></label><select id="cs-ordonnance"><option value="">—</option>${ordonnances.map(o => opt(o.numero, o.numero + (o.date ? ' · ' + formatDateFr(o.date) : ''), E.ordonnance)).join('')}</select></div>
         <div><label>Vétérinaire prescripteur <span class="pc-opt">(facultatif)</span></label><input type="text" id="cs-prescripteur" value="${E.prescripteur}" placeholder="Nom du vétérinaire"></div>
         <div><label>Fait par <span class="pc-req">*</span></label><input type="text" id="cs-faitpar" list="cs-faitpar-liste" value="${echapperHtml(E.faitPar)}" autocomplete="off"><datalist id="cs-faitpar-liste">${intervenants.map(n => `<option value="${echapperHtml(n)}">`).join('')}</datalist></div>
-        <div id="cs-veto-resp" style="display:none;"><label>Vétérinaire responsable <span class="pc-req">*</span></label><input type="text" id="cs-vetoresp" value="${E.veterinaireResponsable}" placeholder="Nom du vétérinaire"></div>
       </div>
-      <p class="brd-note" style="margin:8px 0 0;">Si le produit est réservé au vétérinaire, le nom de la personne qui administre et celui du vétérinaire responsable deviennent obligatoires.</p>
       <p class="pc-sec">${elevageBioActif() ? 'Délais légaux' : 'Délais d\'attente'} <span style="text-transform:none;font-weight:400;">(repris de la fiche produit, modifiables pour ce soin${elevageBioActif() ? ' ; doublés automatiquement en bio' : ''})</span></p>
       <div class="pc-fg" style="max-width:440px;">
         <div><label>Viande (jours) ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><input type="number" id="cs-viande" min="0" step="1" value="${E.delaiViande}" placeholder="0 = aucune attente"></div>
@@ -20031,7 +20025,6 @@ function ecranCarnetSoin() {
       <div class="pc-cl"><span>Délai lait${elevageBioActif() ? ' (légal)' : ''}</span><b>${fiche.delaiLait === null ? '—' : fiche.delaiLait + ' j'}</b></div>
       <div class="pc-cl"><span>Posologie habituelle</span><b>${echapperHtml(fiche.posologie || '—')}</b></div>
       <div class="pc-cl"><span>Sur ordonnance</span><b>${fiche.complete || !fiche.aConfirmer ? (fiche.surOrdonnance ? 'Oui' : 'Non') : '—'}</b></div>
-      <div class="pc-cl"><span>Réservé au vétérinaire</span><b>${fiche.complete || !fiche.aConfirmer ? (fiche.reserveVeterinaire ? 'Oui' : 'Non') : '—'}</b></div>
       ${elevageBioActif() ? `<div class="pc-cl"><span>Minimum 48 h bio</span><b>${fiche.min48h === 'a_confirmer' ? 'à confirmer' : libelleEtatOption(fiche.min48h)}</b></div><div class="pc-cl"><span>Compte dans les 3 traitements</span><b>${fiche.compte === 'a_confirmer' ? 'à confirmer' : libelleEtatOption(fiche.compte)}</b></div>` : ''}
       <p class="brd-note" style="margin:8px 0 0;">Délais saisis une fois, repris à chaque soin. Les modifier dans la fiche ne change pas les soins déjà enregistrés.</p>`);
     const al = [];
@@ -20039,16 +20032,14 @@ function ecranCarnetSoin() {
     if (fiche && fiche.complete && ((entierTexteOuNull(E.delaiLait) !== null && entierTexteOuNull(E.delaiLait) !== fiche.delaiLait) || (entierTexteOuNull(E.delaiViande) !== null && entierTexteOuNull(E.delaiViande) !== fiche.delaiViande))) al.push(['info', 'Délais différents de la fiche produit : seul ce soin est concerné, la fiche n\'est pas modifiée.']);
     if (fiche && fiche.surOrdonnance && !E.ordonnance) al.push(['warn', 'Produit sur ordonnance : n° d\'ordonnance non renseigné. Le soin s\'enregistre quand même ; tu pourras compléter le n° plus tard (Modifier le soin).']);
     if (fiche && E.ordonnance) { const o = (DB.ordonnances || []).find(x => x.numero === E.ordonnance); if (o && !(o.produits || []).some(p => p.nom === E.produit)) al.push(['warn', 'Ce produit n\'est pas listé sur l\'ordonnance ' + E.ordonnance + ' (information, rien n\'est bloqué).']); }
-    if (fiche && fiche.reserveVeterinaire) al.push(['info', 'Réservé au vétérinaire : nom de la personne qui administre et vétérinaire responsable obligatoires.']);
     if (bio && ap.min48AConfirmer) al.push(['warn', 'Minimum 48 h bio à confirmer pour ' + (fiche ? 'ce produit' : 'ce soin') + ' : le délai légal est 0, aucun minimum n\'est appliqué tant que l\'option n\'est pas confirmée dans « Produits et délais ». Seul ce soin est concerné ; il garde ce calcul.']);
     $('cs-alertes').innerHTML = `<p class="brd-ttl">Alertes liées</p>` + (al.length ? al.map(([t, m]) => `<div class="brd-alert ${t === 'warn' ? 'warn' : 'info'}" style="margin-top:8px;">${m}</div>`).join('') : '<p class="brd-note" style="margin:0;">Aucune alerte pour ce soin.</p>');
-    $('cs-veto-resp').style.display = fiche && fiche.reserveVeterinaire ? '' : 'none';
     $('cs-ord-etoile').textContent = '';   // n° d'ordonnance toujours facultatif à la saisie
     $('cs-ord-fac').style.display = fiche && fiche.surOrdonnance ? 'none' : '';
   };
   const lier = (id, cle, ev) => { $(id).addEventListener(ev || 'input', e => { E[cle] = e.target.value; colonneDroite(); }); };
   lier('cs-date', 'dateDebut'); lier('cs-duree', 'dureeJours'); lier('cs-dose', 'dose'); lier('cs-motif', 'motif'); lier('cs-lot', 'lot'); lier('cs-peremption', 'peremption'); lier('cs-commentaire', 'commentaire');
-  lier('cs-prescripteur', 'prescripteur'); lier('cs-faitpar', 'faitPar'); lier('cs-vetoresp', 'veterinaireResponsable'); lier('cs-viande', 'delaiViande'); lier('cs-lait', 'delaiLait');
+  lier('cs-prescripteur', 'prescripteur'); lier('cs-faitpar', 'faitPar'); lier('cs-viande', 'delaiViande'); lier('cs-lait', 'delaiLait');
   lier('cs-voie', 'voie', 'change');
   $('cs-ordonnance').addEventListener('change', e => {
     E.ordonnance = e.target.value;
@@ -21333,7 +21324,7 @@ function trouverProduitExistant(nom, nomAExclure) {
 
 /* ---------- Fiche produit « Produits et délais » (carnet sanitaire PC) ----------
    DB.produitsInfo[nom] = { posologie, delaiAttente (ancien : LAIT seul, jours), delaiLait, delaiViande, surOrdonnance,
-   reserveVeterinaire }. Les délais sont saisis par l'éleveur UNIQUEMENT (aucune base externe), obligatoires à la création
+   reserveVeterinaire (ancien, plus lu) }. Les délais sont saisis par l'éleveur UNIQUEMENT (aucune base externe), obligatoires à la création
    d'une fiche (0 autorisé), repris à chaque soin et copiés sur le soin (modifier une fiche ne change jamais un soin déjà
    enregistré). delaiAttente reste égal à delaiLait pour que les écrans mobiles (Sous délai d'attente, fiche animal) gardent
    leur calcul. Anciennes données : un delaiAttente sans delaiLait est une « ancienne valeur à confirmer » (jamais reprise
@@ -21386,7 +21377,7 @@ function ficheProduit(nom) {
     nom, existe: !!info, categorie: categorieProduitCle(nom),
     posologie: nouvelle ? (info.posologie || null) : (heritageAnmv ? null : (info ? info.posologie || null : null)),
     delaiLait, delaiViande,
-    surOrdonnance: !!(info && info.surOrdonnance), reserveVeterinaire: !!(info && info.reserveVeterinaire),
+    surOrdonnance: !!(info && info.surOrdonnance),
     complete: delaiLait !== null && delaiViande !== null,
     bouclage: info && info.bouclage && Number(info.bouclage.doseCc) > 0 ? { doseCc: Number(info.bouclage.doseCc), voie: info.bouclage.voie || '' } : null,
     aConfirmer, ancienLait, posologieAncienne, heritageAnmv,
@@ -21407,8 +21398,9 @@ function ecrireFicheProduit(nom, f) {
   const ancien = DB.produitsInfo[nom] || {};
   const e = {
     posologie: f.posologie || null, delaiAttente: f.delaiLait, delaiLait: f.delaiLait, delaiViande: f.delaiViande,
-    surOrdonnance: !!f.surOrdonnance, reserveVeterinaire: !!f.reserveVeterinaire
+    surOrdonnance: !!f.surOrdonnance
   };
+  if (ancien.reserveVeterinaire) e.reserveVeterinaire = true;   // option retirée : la valeur déjà enregistrée n'est jamais effacée (plus lue)
   // soin au bouclage des agneaux : celui passé par l'appelant (null = retiré), sinon celui déjà réglé
   const bouclage = f.bouclage !== undefined ? f.bouclage : ancien.bouclage;
   if (bouclage) e.bouclage = bouclage;
@@ -21451,7 +21443,6 @@ function ouvrirFicheProduitModal(options) {
         <div><label>Dose par agneau (cc) *</label><input type="text" inputmode="decimal" id="fp-bouclage-dose" value="${fiche && fiche.bouclage ? String(fiche.bouclage.doseCc).replace('.', ',') : ''}"></div>
         <div><label>Voie</label><select id="fp-bouclage-voie"><option value="">Choisir…</option>${VOIES_ADMINISTRATION.map(x => `<option value="${x}"${fiche && fiche.bouclage && fiche.bouclage.voie === x ? ' selected' : ''}>${x}</option>`).join('')}</select></div>
       </div>
-      <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><input type="checkbox" id="fp-veto" style="width:16px;height:16px;margin:0;"${fiche && fiche.reserveVeterinaire ? ' checked' : ''}> Réservé au vétérinaire</label>
       ${elevageBioActif() ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
         <div><label>Minimum 48 h bio${fiche && fiche.min48hDefaut ? ' <span style="font-size:11px;color:var(--text-muted);">(défaut de la catégorie)</span>' : ''}</label><select id="fp-min48">${ETATS_OPTION_PRODUIT.map(([k, l]) => `<option value="${k}"${(fiche ? fiche.min48h : (DEFAUT_MINIMUM_48H_BIO[options.categorieKey] || 'a_confirmer')) === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
         <div><label>Compte dans les 3 traitements${fiche && fiche.compteDefaut ? ' <span style="font-size:11px;color:var(--text-muted);">(défaut)</span>' : ''}</label><select id="fp-compte">${ETATS_OPTION_PRODUIT.map(([k, l]) => `<option value="${k}"${(fiche ? fiche.compte : (DEFAUT_COMPTE_TRAITEMENTS[options.categorieKey] || 'a_confirmer')) === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
@@ -21483,7 +21474,7 @@ function ouvrirFicheProduitModal(options) {
     const viande = lire('#fp-viande'), lait = lire('#fp-lait');
     if (viande === null) return montrer('Le délai viande est obligatoire (nombre de jours entier, 0 autorisé).');
     if (lait === null) return montrer('Le délai lait est obligatoire (nombre de jours entier, 0 autorisé).');
-    const fiche2 = { posologie: overlay.querySelector('#fp-poso').value.trim(), delaiLait: lait, delaiViande: viande, surOrdonnance: overlay.querySelector('#fp-ord').checked, reserveVeterinaire: overlay.querySelector('#fp-veto').checked };
+    const fiche2 = { posologie: overlay.querySelector('#fp-poso').value.trim(), delaiLait: lait, delaiViande: viande, surOrdonnance: overlay.querySelector('#fp-ord').checked };
     if (overlay.querySelector('#fp-bouclage').checked) {
       const doseTxt = overlay.querySelector('#fp-bouclage-dose').value.trim().replace(',', '.');
       if (!/^\d+(\.\d+)?$/.test(doseTxt) || !(parseFloat(doseTxt) > 0)) return montrer('Indique la dose par agneau (cc) donnée au bouclage.');
@@ -21542,7 +21533,7 @@ function renderProduitsDelais() {
       nm: xlsxEscape(f.nom),
       pastille: f.complete ? cartePastille('Complète', 'vert') : cartePastille(f.aConfirmer ? 'À confirmer' : 'Incomplète', 'ambre'),
       l2: 'Viande' + (bio ? ' (légal)' : '') + ' : ' + jours(f.delaiViande) + ' · Lait' + (bio ? ' (légal)' : '') + ' : ' + jours(f.delaiLait) + (f.posologie ? '<br>Posologie : ' + xlsxEscape(f.posologie) : ''),
-      l3: [f.bouclage ? cartePastille(echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage))), 'vert') : '', cartePastille('Ordonnance : ' + (dispo ? (f.surOrdonnance ? 'sur ordonnance' : 'non') : '—')), cartePastille('Réservé vétérinaire : ' + (dispo ? (f.reserveVeterinaire ? 'oui' : 'non') : '—')),
+      l3: [f.bouclage ? cartePastille(echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage))), 'vert') : '', cartePastille('Ordonnance : ' + (dispo ? (f.surOrdonnance ? 'sur ordonnance' : 'non') : '—')),
         bio ? cartePastille('Minimum 48 h bio : ' + etatBioTexte(f.min48h, 'à confirmer', f.min48hDefaut), f.min48h === 'a_confirmer' ? 'ambre' : '') : '', bio ? cartePastille('Compte dans les 3 traitements : ' + etatBioTexte(f.compte, 'à confirmer', f.compteDefaut), f.compte === 'a_confirmer' ? 'ambre' : '') : ''],
       acts: `<button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}">Modifier</button><button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="color:var(--ch-rouge);">Supprimer</button>`
     });
@@ -21575,8 +21566,8 @@ function renderProduitsDelais() {
     </div>` : ''}
     ${fiches.map(({ cat, produits }) => `<div class="card">
       ${pcCardHead(cat.label, pcPill('neutral', produits.length + ' produit' + (produits.length > 1 ? 's' : '')))}
-      ${produits.length === 0 ? '<p class="brd-note" style="margin:8px 0 0;">Aucun produit.</p>' : mobile ? `<div class="cartes-liste" style="margin-top:12px;">${produits.map(f => carteProduit(f, cat)).join('')}</div>` : `<div style="overflow-x:auto;"><table class="pc-t" style="margin-top:8px;"><tr><th class="l">Produit</th><th class="l">Fiche</th><th>Viande${bio ? ' (légal)' : ''}</th><th>Lait${bio ? ' (légal)' : ''}</th><th class="l">Posologie habituelle</th><th class="l">Ordonnance</th><th class="l">Réservé vétérinaire</th>${bio ? '<th class="l" style="white-space:normal;max-width:120px;">Minimum 48 h bio</th><th class="l" style="white-space:normal;max-width:130px;">Compte dans les 3 traitements</th>' : ''}<th></th></tr>
-      ${produits.map(f => `<tr><td class="l"><b>${echapperHtml(f.nom)}</b>${f.bouclage ? ' ' + pcPill('ok', echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage)))) : ''}</td><td class="l">${statut(f)}</td><td>${jours(f.delaiViande)}</td><td>${jours(f.delaiLait)}</td><td class="l">${echapperHtml(f.posologie || '—')}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.surOrdonnance ? 'Sur ordonnance' : 'Non') : '—'}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.reserveVeterinaire ? 'Oui' : 'Non') : '—'}</td>${bio ? `<td class="l pd-min48" style="white-space:normal;max-width:150px;">${etatBio(f.min48h, 'minimum 48 h bio à confirmer', f.min48hDefaut)}</td><td class="l pd-compte">${etatBio(f.compte, 'à confirmer', f.compteDefaut)}</td>` : ''}<td style="white-space:nowrap;"><button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`).join('')}</table></div>`}
+      ${produits.length === 0 ? '<p class="brd-note" style="margin:8px 0 0;">Aucun produit.</p>' : mobile ? `<div class="cartes-liste" style="margin-top:12px;">${produits.map(f => carteProduit(f, cat)).join('')}</div>` : `<div style="overflow-x:auto;"><table class="pc-t" style="margin-top:8px;"><tr><th class="l">Produit</th><th class="l">Fiche</th><th>Viande${bio ? ' (légal)' : ''}</th><th>Lait${bio ? ' (légal)' : ''}</th><th class="l">Posologie habituelle</th><th class="l">Ordonnance</th>${bio ? '<th class="l" style="white-space:normal;max-width:120px;">Minimum 48 h bio</th><th class="l" style="white-space:normal;max-width:130px;">Compte dans les 3 traitements</th>' : ''}<th></th></tr>
+      ${produits.map(f => `<tr><td class="l"><b>${echapperHtml(f.nom)}</b>${f.bouclage ? ' ' + pcPill('ok', echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage)))) : ''}</td><td class="l">${statut(f)}</td><td>${jours(f.delaiViande)}</td><td>${jours(f.delaiLait)}</td><td class="l">${echapperHtml(f.posologie || '—')}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.surOrdonnance ? 'Sur ordonnance' : 'Non') : '—'}</td>${bio ? `<td class="l pd-min48" style="white-space:normal;max-width:150px;">${etatBio(f.min48h, 'minimum 48 h bio à confirmer', f.min48hDefaut)}</td><td class="l pd-compte">${etatBio(f.compte, 'à confirmer', f.compteDefaut)}</td>` : ''}<td style="white-space:nowrap;"><button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`).join('')}</table></div>`}
     </div>`).join('')}
   </div>`;
   const rafraichir = () => render('produits-delais');
@@ -21600,7 +21591,7 @@ function renderProduitsDelais() {
       const err = document.getElementById('pd-err');
       const t = tr.querySelector('.pd-viande').value.trim();
       if (!/^\d+$/.test(t)) { err.textContent = 'Pour « ' + nom + ' » : saisis le délai viande (nombre de jours entier, 0 autorisé) avant de confirmer.'; err.classList.remove('hidden'); return; }
-      ecrireFicheProduit(nom, { posologie: f.heritageAnmv ? null : f.posologie, delaiLait: f.ancienLait, delaiViande: parseInt(t, 10), surOrdonnance: false, reserveVeterinaire: false });
+      ecrireFicheProduit(nom, { posologie: f.heritageAnmv ? null : f.posologie, delaiLait: f.ancienLait, delaiViande: parseInt(t, 10), surOrdonnance: false });
       saveData(DB);
       rafraichir();
     };

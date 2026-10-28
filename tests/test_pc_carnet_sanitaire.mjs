@@ -87,13 +87,12 @@ await page.fill('#cs-dose', '2'); await page.selectOption('#cs-voie', { index: 1
 check(await page.evaluate(() => !erreursSoinCarnet(carnetSanitaireEtat).some(m => /ordonnance/.test(m))), 'ordonnance manquante : jamais bloquant (traitement en bergerie, n° complété plus tard)');
 await page.selectOption('#cs-ordonnance', 'ORD-2026-1');
 check(await page.evaluate(() => document.getElementById('cs-prescripteur').value === 'Dr Martin'), 'prescripteur proposé depuis l\'ordonnance');
-// réservé au vétérinaire (Ivomec)
+// option « réservé au vétérinaire » retirée : une ancienne fiche qui la porte (Ivomec) n'impose plus rien
 await page.selectOption('#cs-categorie', 'Antiparasitaire'); await page.selectOption('#cs-produit', 'Ivomec');
-check(await page.evaluate(() => document.getElementById('cs-veto-resp').style.display !== 'none'), 'réservé vétérinaire : champ « Vétérinaire responsable » affiché');
+check(await page.evaluate(() => !document.getElementById('cs-veto-resp') && !/Réservé au vétérinaire/.test(document.getElementById('app').innerText)), 'plus de champ « Vétérinaire responsable » ni de mention « Réservé au vétérinaire »');
 await page.fill('#cs-dose', '1'); await page.selectOption('#cs-voie', { index: 1 });
-await page.click('#cs-suivant');
-check(/vétérinaire responsable est obligatoire/.test(await $t('#cs-erreurs')) && /personne qui administre/.test(await $t('#cs-erreurs')), 'réservé vétérinaire avec « Éleveur » : personne qui administre ET vétérinaire responsable exigés : ' + await $t('#cs-erreurs'));
-await page.fill('#cs-faitpar', 'Marie'); await page.fill('#cs-vetoresp', 'Dr Martin');
+check(!/vétérinaire responsable|personne qui administre/.test(await page.evaluate(() => erreursSoinCarnet(carnetSanitaireEtat).join(' '))), 'ancienne fiche « réservé vétérinaire » : « Éleveur » accepté, aucun vétérinaire exigé');
+await page.fill('#cs-faitpar', 'Marie');
 // produit à confirmer (Cefalex) : délais à saisir, rien d'hérité
 await page.selectOption('#cs-categorie', 'Antibiotique'); await page.selectOption('#cs-produit', 'Cefalex');
 check(await page.evaluate(() => document.getElementById('cs-viande').value === '' && document.getElementById('cs-lait').value === '') && /ancienne valeur à confirmer/i.test(await $t('#cs-fiche')), 'ancienne valeur : délais non préremplis, fiche signalée « à confirmer »');
@@ -107,7 +106,7 @@ await page.click('.cs-type[data-val="Autre"]');
 await page.click('#cs-suivant');
 check(await page.evaluate(() => document.querySelector('.pc-etapes .s.on').textContent.startsWith('2')), '« Autre · Soin de plaie » : sans produit, dose, voie ni délais, passe à l\'écran 2');
 check(/Soin de plaie/.test(await $t('#cs-recap')), 'récapitulatif du soin de plaie');
-console.log('OK 2 règles : délais repris et modifiables sans toucher la fiche, dates en direct, délai 0, durée, ordonnance / réservé vétérinaire / fiche à confirmer, soin « Autre » avec champs facultatifs.');
+console.log('OK 2 règles : délais repris et modifiables sans toucher la fiche, dates en direct, délai 0, durée, ordonnance / plus de réservé vétérinaire / fiche à confirmer, soin « Autre » avec champs facultatifs.');
 
 // ================================================================ 3. écran 2 : filtres, sélection
 await page.click('#cs-modifier');
@@ -177,7 +176,7 @@ const soins = await page.evaluate(() => DB.brebis.concat(DB.beliers, DB.agnelles
 check(soins.length === 7 && new Set(soins.map(s => s.collectifId)).size === 1 && soins.every(s => s.collectif === true), 'même lot (collectifId) pour les 7 soins');
 const s0 = soins[0];
 check(s0.produit === 'Intramicine' && s0.type === 'Traitement' && s0.sousType === 'Antibiotique' && s0.date === '2026-10-02' && s0.dureeJours === 2 && s0.quantiteCc === 8 && typeof s0.voie === 'string' && s0.voie && s0.intervenant === 'Marie' && s0.numeroOrdonnance === 'ORD-2026-1' && s0.veterinairePrescripteur === 'Dr Martin' && s0.delaiLaitJours === 7 && s0.delaiViandeJours === 28 && s0.motif === 'boiterie' && s0.lot === 'LOT123', 'contenu du soin : ' + JSON.stringify(s0));
-check(!('veterinaireResponsable' in s0) && !('peremption' in s0), 'champs facultatifs vides ou sans objet (produit non réservé au vétérinaire) absents du soin');
+check(!('veterinaireResponsable' in s0) && !('peremption' in s0), 'champs facultatifs vides ou sans objet absents du soin');
 check(await page.evaluate(() => { const objs = DB.brebis.concat(DB.beliers, DB.agnelles).flatMap(a => a.sanitaire || []).filter(s => s.collectifId); return new Set(objs).size === 7; }), 'sept objets distincts (un soin par animal, pas un objet partagé)');
 check(await page.evaluate(() => DB.traitementsCollectifs.length === 1 && DB.traitementsCollectifs[0].categorie === 'multi' && DB.traitementsCollectifs[0].membres.length === 7), 'historique collectif : 1 entrée « multi » avec 7 membres');
 check(await page.evaluate(() => DB.brebis[0].sanitaire.length === 2 && DB.brebis[0].sanitaire[0].date === '2026-09-30'), 'le soin déjà présent d\'une brebis n\'est pas modifié (le nouveau s\'ajoute)');

@@ -1,4 +1,4 @@
-/* Fiche produit « Produits et délais » (PC) : modèle (delaiLait, delaiViande, surOrdonnance, reserveVeterinaire), anciennes
+/* Fiche produit « Produits et délais » (PC) : modèle (delaiLait, delaiViande, surOrdonnance ; option « réservé au vétérinaire » retirée), anciennes
    valeurs à confirmer / corriger (delaiAttente = lait seul, clés héritées de l'ANMV jamais lues), délais obligatoires à la
    création (0 autorisé), modifier une fiche ne change aucun
    soin déjà enregistré, rien d'écrit sans action. saveData est REMPLACÉ par un compteur (rien n'est persisté). Jeu synthétique. */
@@ -58,7 +58,7 @@ await page.fill('#pd-anciennes tr[data-nom="Intramicine"] .pd-viande', '28');
 await page.click('#pd-anciennes tr[data-nom="Intramicine"] .pd-confirmer');
 await page.waitForFunction(() => DB.produitsInfo.Intramicine.delaiLait === 7);
 const intr = await page.evaluate(() => JSON.parse(JSON.stringify(DB.produitsInfo.Intramicine)));
-check(intr.delaiLait === 7 && intr.delaiViande === 28 && intr.delaiAttente === 7 && intr.posologie === '8 cc' && intr.surOrdonnance === false && intr.reserveVeterinaire === false, 'Confirmer : lait 7 conservé, viande 28, delaiAttente = lait (mobile inchangé), posologie conservée : ' + JSON.stringify(intr));
+check(intr.delaiLait === 7 && intr.delaiViande === 28 && intr.delaiAttente === 7 && intr.posologie === '8 cc' && intr.surOrdonnance === false && !('reserveVeterinaire' in intr), 'Confirmer : lait 7 conservé, viande 28, delaiAttente = lait (mobile inchangé), posologie conservée : ' + JSON.stringify(intr));
 check(await page.evaluate(() => window.__saves) === 1 && await page.evaluate(() => document.querySelectorAll('#pd-anciennes tr[data-nom]').length) === 2, 'une écriture, 2 anciennes valeurs restantes');
 // l'écran mobile « Sous délai d'attente » lit toujours delaiAttente
 check(await page.evaluate(() => { const o = isDesktopMode; return sousDelaiBrebisRows().length; }) === 0, 'sous délai (lait 7 j depuis le 20/09) : terminé au 02/10 : 0 ligne, calcul mobile inchangé');
@@ -76,12 +76,13 @@ check(/délai lait est obligatoire/.test(await page.evaluate(() => document.getE
 await page.fill('#fp-lait', '2.5');
 await page.click('#fp-ok');
 check(/délai lait est obligatoire/.test(await page.evaluate(() => document.getElementById('fp-err').textContent)), 'lait non entier : refusé');
-await page.fill('#fp-lait', '4'); await page.check('#fp-ord'); await page.check('#fp-veto');
+await page.fill('#fp-lait', '4'); await page.check('#fp-ord');
+check(await page.evaluate(() => !document.getElementById('fp-veto') && !/vétérinaire/i.test(document.querySelector('.modal-card').innerText)), 'fiche produit : plus d\'option « Réservé au vétérinaire »');
 const sauvAvant = await page.evaluate(() => window.__saves);
 await page.click('#fp-ok');
 await page.waitForFunction(() => DB.produitsInfo.Ivomec.delaiViande === 0);
 const ivo = await page.evaluate(() => JSON.parse(JSON.stringify(DB.produitsInfo.Ivomec)));
-check(ivo.delaiLait === 4 && ivo.delaiViande === 0 && ivo.delaiAttente === 4 && ivo.surOrdonnance && ivo.reserveVeterinaire && await page.evaluate(() => window.__saves) === sauvAvant + 1, 'Corriger : lait 4 / viande 0 (0 autorisé), ordonnance + réservé vétérinaire : ' + JSON.stringify(ivo));
+check(ivo.delaiLait === 4 && ivo.delaiViande === 0 && ivo.delaiAttente === 4 && ivo.surOrdonnance && !('reserveVeterinaire' in ivo) && await page.evaluate(() => window.__saves) === sauvAvant + 1, 'Corriger : lait 4 / viande 0 (0 autorisé), ordonnance : ' + JSON.stringify(ivo));
 // héritage ANMV : la posologie n'est pas préremplie, les clés ANMV disparaissent à la validation
 await page.click('#pd-anciennes tr[data-nom="Cefalex"] .pd-corriger');
 await page.waitForSelector('#fp-ok');
@@ -90,9 +91,10 @@ await page.fill('#fp-viande', '21'); await page.fill('#fp-lait', '5'); await pag
 await page.click('#fp-ok');
 await page.waitForFunction(() => DB.produitsInfo.Cefalex.delaiLait === 5);
 const cef = await page.evaluate(() => JSON.parse(JSON.stringify(DB.produitsInfo.Cefalex)));
-check(JSON.stringify(Object.keys(cef).sort()) === JSON.stringify(['delaiAttente', 'delaiLait', 'delaiViande', 'posologie', 'reserveVeterinaire', 'surOrdonnance']) && cef.posologie === '1 cc / 10 kg' && cef.delaiViande === 21, 'fiche Cefalex saisie par l\'éleveur : clés ANMV retirées de CE produit à sa validation : ' + JSON.stringify(cef));
+check(JSON.stringify(Object.keys(cef).sort()) === JSON.stringify(['delaiAttente', 'delaiLait', 'delaiViande', 'posologie', 'surOrdonnance']) && cef.posologie === '1 cc / 10 kg' && cef.delaiViande === 21, 'fiche Cefalex saisie par l\'éleveur : clés ANMV retirées de CE produit à sa validation : ' + JSON.stringify(cef));
 check(await page.evaluate(() => !document.getElementById('pd-anciennes')), 'plus aucune ancienne valeur à confirmer');
-console.log('OK 3 Corriger : fiche complète préremplie (lait ancien, viande vide), refus des délais vides / non entiers, 0 autorisé, ordonnance et réservé vétérinaire ; héritage ANMV jamais prérempli.');
+check(await page.evaluate(() => { DB.produitsInfo['Ancien Veto'] = { delaiLait: 1, delaiViande: 1, reserveVeterinaire: true, surOrdonnance: true }; ecrireFicheProduit('Ancien Veto', { delaiLait: 2, delaiViande: 2, surOrdonnance: true }); const r = DB.produitsInfo['Ancien Veto'].reserveVeterinaire === true && DB.produitsInfo['Ancien Veto'].delaiLait === 2; delete DB.produitsInfo['Ancien Veto']; return r; }), 'option retirée : une valeur « réservé vétérinaire » déjà enregistrée n\'est jamais effacée');
+console.log('OK 3 Corriger : fiche complète préremplie (lait ancien, viande vide), refus des délais vides / non entiers, 0 autorisé, ordonnance (plus de « réservé vétérinaire ») ; héritage ANMV jamais prérempli.');
 
 // ================================================================ 4. nouveau produit
 await page.click('#pd-nouveau');
