@@ -240,5 +240,81 @@ for (const desktop of [false, true]) {
   await page.close();
 }
 
+// ================================================================ 4. le père de l'IA suit l'agneau (mise bas, tri, bascule de campagne, saisie tardive)
+{
+  const page = await ouvrir(true);
+  await page.evaluate(() => {
+    const fiche = (n, o) => Object.assign({ id: 'h' + n, eid: '2500000121' + String(n).padStart(5, '0'), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
+    const evt = o => Object.assign({ date: '2026-10-01', mode: 'IA', campagne: 2027, codeSieol: 1, lotId: 'lot1' }, o || {});
+    const iaLait = { orientation: 'lait', paternite: 'connue', pereNumero: '00099900001', pereCourt: '12345', pereNom: 'Rex', indexIsol: 112.5, source: 'import' };
+    DB.brebis = [fiche(201, { modesRepro: [evt({ ia: iaLait })] }), fiche(202, { modesRepro: [evt({ ia: { orientation: 'viande', paternite: 'inconnue' } })] }), fiche(203, { modesRepro: [evt()] }), fiche(204, { modesRepro: [evt({ ia: iaLait })] })];
+    DB.agnelles = []; DB.beliers = [];
+    window.miseBas = (idx, date, code, lambs) => { const sh = DB.brebis[idx]; const r = construireAgnelageMiseBas(sh, { date, codeRepro: code, lambs }); if (r.erreur) throw new Error(r.erreur); enregistrerMiseBas(sh, r.agnelage); return r.agnelage; };
+  });
+  const L = (n, sexe) => ({ sexe, eid: '2500000127' + String(n).padStart(5, '0') });
+  // IA du 01/10/2026 + 148 j = mise bas du 26/02/2027, code IA
+  const ag1 = await page.evaluate(([a, b]) => miseBas(0, '2027-02-26', 'IA', [a, b, { sexe: 'Mort-né' }]), [L(1, 'Femelle'), L(2, 'Mâle')]);
+  eq(ag1.codeRepro, 'IA', 'mise bas dans la fenêtre : code IA d\'office');
+  const l1 = await page.evaluate(() => DB.brebis[0].agnelages[0].lambs.map(l => ({ pere: l.pere, orientation: l.pereIa && l.pereIa.orientation, isol: l.pereIa && l.pereIa.indexIsol })));
+  eq(l1[0], { pere: 'Rex · 000999 00001', orientation: 'lait', isol: 112.5 }, 'agneau né : père de l\'IA reporté (nom, n° officiel, index)');
+  eq(l1[1].pere, 'Rex · 000999 00001', 'second agneau : même père');
+  eq(l1[2], {}, 'mort-né : aucun père reporté');
+  // paternité inconnue : rien
+  await page.evaluate(([a]) => miseBas(1, '2027-02-26', 'IA', [a]), [L(3, 'Femelle')]);
+  eq(await page.evaluate(() => DB.brebis[1].agnelages[0].lambs[0].pere), undefined, 'IA à paternité inconnue : aucun père');
+  // retour (RE) et monte naturelle : rien, même si l'IA a un père
+  await page.evaluate(([a]) => miseBas(3, '2027-03-15', 'RE', [a]), [L(4, 'Mâle')]);
+  eq(await page.evaluate(() => DB.brebis[3].agnelages[0].lambs[0].pere), undefined, 'retour (RE) : le père de l\'IA ne va pas sur l\'agneau');
+
+  // fiche agneau : généalogie
+  await page.evaluate(() => { const l = DB.brebis[0].agnelages[0].lambs[0]; agneauDetailOrigin = 'home'; currentAgneauEid = l.eid; render('agneau-detail', l.eid); });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { const b = [...document.querySelectorAll('.fiche-tab, [data-tab]')].find(e => /Généalogie/.test(e.textContent)); if (b) b.click(); });
+  await page.waitForTimeout(200);
+  const gen = await page.locator('#app').innerText();
+  check(/Père : Rex · 000999 00001/.test(gen) && /Père d'une IA lait · index ISOL 112,5/.test(gen), 'fiche agneau : père et index dans la généalogie : ' + gen.slice(0, 300));
+
+  // tri : garder l'agnelle -> le père suit
+  const ag = await page.evaluate(() => { const c = getCandidatesATrier().find(x => cleanEid(x.lamb.eid) === '250000012700001'); return c ? garderAgnelleTri(c) : null; });
+  check(ag && ag.pere === 'Rex · 000999 00001' && ag.pereIa.indexIsol === 112.5, 'agnelle gardée au tri : père et index repris');
+  // sans père (paternité inconnue) : rien
+  const ag2 = await page.evaluate(() => { const c = getCandidatesATrier().find(x => cleanEid(x.lamb.eid) === '250000012700003'); return c ? garderAgnelleTri(c) : null; });
+  check(ag2 && ag2.pere === undefined && ag2.pereIa === undefined, 'agnelle gardée sans père d\'IA : rien');
+  // fiche agnelle
+  await page.evaluate(() => { currentAgnelleId = DB.agnelles[0].id; agnelleDetailOrigin = 'home'; render('agnelle-detail'); });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { const b = [...document.querySelectorAll('.fiche-tab, [data-tab]')].find(e => /Généalogie/.test(e.textContent)); if (b) b.click(); });
+  await page.waitForTimeout(200);
+  check(/Père : Rex · 000999 00001/.test(await page.locator('#app').innerText()), 'fiche agnelle : père dans la généalogie');
+
+  // saisie TARDIVE : l'IA de 203 n'avait pas de père à la mise bas ; on le renseigne après -> l'agneau, l'agnelle gardée suivent
+  await page.evaluate(([a]) => miseBas(2, '2027-02-26', 'IA', [a]), [L(5, 'Femelle')]);
+  eq(await page.evaluate(() => DB.brebis[2].agnelages[0].lambs[0].pere), undefined, 'IA sans père à la mise bas : rien');
+  await page.evaluate(() => { const c = getCandidatesATrier().find(x => cleanEid(x.lamb.eid) === '250000012700005'); garderAgnelleTri(c); });
+  await page.evaluate(() => { editPaterniteTarget = { kind: 'brebis', id: 'h203' }; render('edit-paternite-ia'); });
+  await page.waitForSelector('#btn-save-paternite-ia');
+  await page.click('#pia-orientation [data-val="viande"]');
+  await page.click('#pia-paternite [data-val="connue"]');
+  await page.fill('#pia-court', '67890');
+  await page.fill('#pia-viande', 'bouch. 2');
+  await page.click('#btn-save-paternite-ia');
+  await page.waitForTimeout(200);
+  const tard = await page.evaluate(() => ({ lamb: DB.brebis[2].agnelages[0].lambs[0].pere, agnelle: DB.agnelles.find(a => a.eid === '250000012700005').pere, idx: DB.agnelles.find(a => a.eid === '250000012700005').pereIa.indexViande }));
+  eq(tard, { lamb: '67890', agnelle: '67890', idx: 'bouch. 2' }, 'père renseigné après la mise bas : agneau et agnelle gardée mis à jour');
+  // un père saisi à la main sur l'agneau n'est jamais écrasé
+  await page.evaluate(() => { DB.brebis[3].agnelages[0].lambs[0].pere = 'Père déclaré à la main'; });
+  await page.evaluate(() => { const e = DB.brebis[3].modesRepro[0]; e.ia = { orientation: 'lait', paternite: 'connue', pereCourt: '11111' }; reporterPereIaApresSaisie(DB.brebis[3], e); });
+  eq(await page.evaluate(() => DB.brebis[3].agnelages[0].lambs[0].pere), 'Père déclaré à la main', 'père saisi à la main : jamais remplacé');
+
+  // bascule de campagne : l'agnelle devenue brebis garde le père
+  await page.evaluate(() => { DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true; DB.exploitation.campagneMoisDebut = 10; DB.exploitation.campagneJourDebut = 1; });
+  const res = await page.evaluate(async () => await executerChangementCampagne());
+  check(res.ok, 'bascule de campagne : ' + JSON.stringify(res));
+  const brebis1 = await page.evaluate(() => { const b = DB.brebis.find(x => x.eid === '250000012700001'); return b ? { pere: b.pere, isol: b.pereIa && b.pereIa.indexIsol } : null; });
+  eq(brebis1, { pere: 'Rex · 000999 00001', isol: 112.5 }, 'agnelle devenue brebis : père et index conservés');
+  console.log('OK 4 le père de l\'IA suit l\'agneau (mise bas, tri, saisie tardive, bascule de campagne).');
+  await page.close();
+}
+
 await browser.close();
 console.log('OK test_ia_paternite');
