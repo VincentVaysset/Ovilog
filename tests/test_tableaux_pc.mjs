@@ -27,6 +27,8 @@ const BEIGE = 'rgb(246, 241, 228)', BLANC = 'rgb(255, 255, 255)';
 let total = 0;
 for (const [nom, code, n] of VUES) {
   await pc.evaluate(code); await pc.waitForTimeout(120);
+  // aperçus chargés en différé (Paramètres › Imports) : on attend qu'ils soient tous affichés, jamais un délai fixe seul
+  await pc.waitForFunction(n => [...document.querySelectorAll('#app table')].filter(t => t.getBoundingClientRect().width > 0).length >= n, n, { timeout: 8000 }).catch(() => {});
   const tabs = await pc.evaluate(() => [...document.querySelectorAll('#app table')].filter(t => t.getBoundingClientRect().width > 0).map(t => {
     const cs = e => getComputedStyle(e), th = t.querySelector('th'), rows = [...t.querySelectorAll('tr')], entetes = rows.filter(r => r.querySelector('th') && !r.querySelector('td')), data = rows.filter(r => r.querySelector('td'));
     const premTd = r => [...r.children].find(c => c.tagName === 'TD' && !c.classList.contains('cb')) || r.querySelector('td');
