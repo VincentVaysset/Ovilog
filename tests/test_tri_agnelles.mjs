@@ -59,16 +59,16 @@ check(/1 triées sur 4 femelles nées actives/.test(await $t('#ta-compteur')), '
 const tuilesPc = await page.evaluate(() => [...document.querySelectorAll('.tri-pc-tuiles .tuile-pc')].map(t => [t.className.replace(/brd-kpi|tuile-pc/g, '').trim(), t.innerText.replace(/\s+/g, ' ').trim()]));
 check(JSON.stringify(tuilesPc) === JSON.stringify([['ambre', 'À trier 2'], ['vert', 'Gardées 2 dont 1 achetée'], ['neutre', 'Écartées 1']]), 'tuiles PC : ' + JSON.stringify(tuilesPc));
 const th1 = await page.evaluate(() => [...document.querySelectorAll('#ta-table-atrier th')].map(x => x.textContent).join('|'));
-check(th1 === 'N°|Naissance|Portée|Mère|Origine|État|Action|Classe mère|Lactation 2026', 'colonnes À trier : ' + th1);
+check(th1 === 'N°|Naissance|Portée|Mère|Origine|État|Action|Classe mère|Lactation 2026|ISOL père', 'colonnes À trier : ' + th1);
 const r1 = await page.evaluate(() => [...document.querySelectorAll('#ta-table-atrier tr[data-eid]')].map(r => [...r.children].filter((c, i) => i !== 6).map(c => c.textContent.replace(/\s+/g, ' ').trim()).join('|')));
-check(r1[0] === '60001|14-01-2026|Triple|n°80133|IA|À trier|1|452,0 L' && r1[1] === '60004|19-01-2026|Simple|n°90059|MN|À trier|—|—', 'lignes À trier (portée, mère, origine = code de la mise bas de la mère, classe et lactation de la mère, « — » sans donnée) : ' + JSON.stringify(r1));
+check(r1[0] === '60001|14-01-2026|Triple|n°80133|IA|À trier|1|452,0 L|—' && r1[1] === '60004|19-01-2026|Simple|n°90059|MN|À trier|—|—|—', 'lignes À trier (portée, mère, origine = code de la mise bas de la mère, classe et lactation de la mère, « — » sans donnée) : ' + JSON.stringify(r1));
 check(await page.evaluate(() => document.querySelectorAll('#pc-tri-agnelles .pc-t td')[0].getBoundingClientRect().height) >= 47, 'lignes du tableau de 48 px');
 check(/Incohérences à trancher/.test(await $t('#ta-incoherences')) && /n°60007/.test(await $t('#ta-incoherences')) && await page.evaluate(() => document.getElementById('ta-incoherences').classList.contains('alerte')), 'incohérence affichée en ambre, non corrigée');
 // onglets : Gardées (Reconsidérer sauf achetée) et Écartées
 await page.click('.tri-onglet[data-onglet="gardees"]');
 check(await page.evaluate(() => !document.querySelector('.ta-reconsiderer[data-eid="' + E(5, 42) + '"]') && !!document.querySelector('.ta-reconsiderer[data-eid="' + E(6, 2) + '"]') && !!document.getElementById('ta-ajout')), 'Gardées : Reconsidérer pour une née, pas pour une achetée ; « Ajouter une agnelle » conservé');
 const g2 = await page.evaluate(() => [...document.querySelectorAll('#ta-table-gardees tr[data-eid]')].map(r => [...r.children].filter((c, i) => i !== 6).map(c => c.textContent.replace(/\s+/g, ' ').trim()).join('|')));
-check(g2[0] === '60002|14-01-2026|Triple|n°80133|IA|Gardée|1|452,0 L' && g2[1] === '50042|—|—|—|—|Achetéeentrée le 10-09-2026|—|—', 'Gardées (née : portée, mère, origine ; achetée : « — » et date d\'entrée) : ' + JSON.stringify(g2));
+check(g2[0] === '60002|14-01-2026|Triple|n°80133|IA|Gardée|1|452,0 L|—' && g2[1] === '50042|—|—|—|—|Achetéeentrée le 10-09-2026|—|—|—', 'Gardées (née : portée, mère, origine ; achetée : « — » et date d\'entrée) : ' + JSON.stringify(g2));
 await page.click('.tri-onglet[data-onglet="ecartees"]');
 check(await page.evaluate(() => !!document.querySelector('.ta-reconsiderer[data-eid="' + E(6, 5) + '"]')), 'Écartées : Reconsidérer');
 await page.click('.tri-onglet[data-onglet="aTrier"]');
@@ -120,9 +120,9 @@ await page.click('#ta-ajout'); check(await page.evaluate(() => currentView) === 
 await page.evaluate(() => { triPcEtat = null; render('agnelles'); });
 await page.evaluate(() => { window.__xl = []; window.__noms = []; buildXlsxWorkbook = async (f) => { window.__xl.push(f); return new Uint8Array([1]); }; saveOrShareBinaryFile = async (nom) => { window.__noms.push(nom); }; });
 await page.click('#ta-export'); await page.waitForTimeout(100);
-check(await page.evaluate(() => window.__noms[0]) === 'agnelles-a-trier_2026-10-03.xlsx' && await page.evaluate(() => window.__xl[0][0].rows[0].join()) === 'N°,Naissance,Portée,Mère,Origine,État,Classe mère,Lactation N-1 (L)' && await page.evaluate(() => window.__xl[0][0].rows.length) === 3, 'Export Excel de l\'onglet À trier : en-têtes, 2 lignes');
+check(await page.evaluate(() => window.__noms[0]) === 'agnelles-a-trier_2026-10-03.xlsx' && await page.evaluate(() => window.__xl[0][0].rows[0].join()) === 'N°,Naissance,Portée,Mère,Origine,État,Classe mère,Lactation N-1 (L),ISOL père' && await page.evaluate(() => window.__xl[0][0].rows.length) === 3, 'Export Excel de l\'onglet À trier : en-têtes, 2 lignes');
 await page.click('.tri-onglet[data-onglet="gardees"]'); await page.click('#ta-export'); await page.waitForTimeout(100);
-check(await page.evaluate(() => window.__noms[1]) === 'agnelles-triees_2026-10-03.xlsx' && await page.evaluate(() => window.__xl[1][0].rows[0].join()) === 'N°,Naissance,Portée,Mère,Origine,État,Entrée le,Classe mère,Lactation N-1 (L)', 'Export Excel de l\'onglet Gardées (colonne « Entrée le » en plus)');
+check(await page.evaluate(() => window.__noms[1]) === 'agnelles-triees_2026-10-03.xlsx' && await page.evaluate(() => window.__xl[1][0].rows[0].join()) === 'N°,Naissance,Portée,Mère,Origine,État,Entrée le,Classe mère,Lactation N-1 (L),ISOL père', 'Export Excel de l\'onglet Gardées (colonne « Entrée le » en plus)');
 await page.evaluate(() => { pendingHighlightLambEid = E(5, 42); render('agnelles'); });
 check(await page.evaluate(() => document.querySelector('#pc-tri-agnelles tr.sel') && document.querySelector('#pc-tri-agnelles tr.sel').dataset.eid === E(5, 42)), 'arrivée depuis « Agneaux adoptés » : la ligne est sélectionnée dans son onglet');
 await page.click('#ta-tab-lots'); check(await page.evaluate(() => !!document.getElementById('pc-lots')), 'onglet « Lots »');
