@@ -22,7 +22,7 @@ const VUES = [
   ['Ordonnances', 'render("ordonnances")', 1], ['Sous délai d\'attente', 'render("sous-delai")', 1], ['Contrôle laitier', 'render("controle-laitier")', 1], ['Registre', 'render("registre")', 1],
   ['Inventaire (actifs)', 'render("inventaire-actifs")', 1], ['Échographies', 'render("echo-rapide")', 2], ['Historique des échos', 'render("historique-echo")', 1], ['Mise bas rapide', 'render("misebas-rapide")', 1],
   ['Bilan de reproduction', 'bilanCampagneTab="reproduction";render("bilan-campagne")', 5], ['Bilan de lactation', 'bilanCampagneTab="lactation";render("bilan-campagne")', 1], ['Bilan économique', 'bilanCampagneTab="economique";render("bilan-campagne")', 1],
-  ['Paramètres › Imports', 'parametresTab="imports";render("parametres")', 4]];
+  ['Paramètres › Imports', 'parametresTab="imports";render("parametres")', 5]];
 const BEIGE = 'rgb(246, 241, 228)', BLANC = 'rgb(255, 255, 255)';
 let total = 0;
 for (const [nom, code, n] of VUES) {
