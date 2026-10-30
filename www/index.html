@@ -6440,7 +6440,7 @@ btnBack.onclick = () => {
   else if (currentView === 'maj-inventaire') render('inventaire-actifs');
   else if (currentView === 'maj-inventaire-validation') render('maj-inventaire');
   else if (currentView === 'import-controle-laitier-sieol') { parametresTab = 'imports'; render('parametres'); }
-  else if (currentView === 'import-controle-laitier-modele' || currentView === 'import-nouveaux-animaux' || currentView === 'import-lactation-modele' || currentView === 'confirmation-nouvelle-campagne') render('parametres');
+  else if (currentView === 'import-controle-laitier-modele' || currentView === 'import-nouveaux-animaux' || currentView === 'import-inseminations' || currentView === 'import-lactation-modele' || currentView === 'confirmation-nouvelle-campagne') render('parametres');
   // Filet de sécurité (BUG "bouton retour intermittent") : cette chaîne
   // if/else est maintenue à la main, un écran par écran, et a fini par
   // désynchroniser de la liste réelle des vues (voir ROOT_VIEWS, qui décide
@@ -6725,6 +6725,7 @@ function render(view, sheepId) {
     else if (view === 'import-correspondance-sieol') renderImportCorrespondanceSieol();
     else if (view === 'import-lactation-modele') renderImportLactationModele();
     else if (view === 'import-nouveaux-animaux') renderImportNouveauxAnimaux();
+    else if (view === 'import-inseminations') renderImportInseminations();
     else if (view === 'import-controle-laitier-modele') renderImportControleLaitierModele();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
@@ -26259,6 +26260,215 @@ function renderImportNouveauxAnimaux() {
   };
 }
 
+/* ---------- Import « Inséminations » (Paramètres > Imports, PC) ----------
+   La liste fournie par l'inséminateur APRÈS l'IA : pour chaque brebis (ou agnelle), l'orientation (lait / viande), la paternité (connue / inconnue), le père
+   (n° officiel de 11 chiffres, code court du centre, nom) et ses index (ISOL en lait, index viande en texte libre). Fichier .xlsx (modèle Ovilog) ou .csv.
+   Les colonnes sont repérées PAR LEUR TITRE (ordre libre, ligne de titres cherchée dans les 15 premières lignes) : le fichier réel du centre pourra être lu tel quel
+   dès que ses titres sont connus (IA_IMPORT_ALIAS). Rien n'est créé : le bloc `ia` s'écrit sur l'évènement IA / éponge DÉJÀ présent dans un lot de la brebis (même date à
+   3 jours près si le fichier en donne une, sinon l'évènement de la campagne) ; une brebis sans IA en lot est listée et laissée de côté. Aucun numéro existant n'est modifié.
+   Une IA déjà renseignée différemment n'est remplacée que si la case « Remplacer » est cochée ; identique : ignorée. Aperçu complet AVANT toute écriture. */
+const IA_IMPORT_FEUILLE = 'Inséminations';
+const IA_IMPORT_ENTETES = ['N° brebis', 'Date IA', 'Orientation', 'Paternité', 'N° officiel du père', 'Code court du père', 'Nom du père', 'Index ISOL', 'Index viande', 'Centre'];
+const IA_IMPORT_EXEMPLE = ['00045600001', '01/10/2026', 'Lait', 'Connue', '00099900001', '12345', 'Bélier A', '112', '', 'Centre A'];
+const IA_IMPORT_ALIAS = {
+  animal: ['n brebis', 'numero brebis', 'brebis', 'n animal', 'numero animal', 'animal', 'n', 'numero', 'eid', 'numero national', 'n national', 'identifiant', 'n boucle', 'boucle', 'n travail', 'numero travail'],
+  date: ['date ia', 'date d ia', 'date insemination', 'date de l ia', 'date d insemination', 'date'],
+  orientation: ['orientation', 'orientation ia', 'type ia', 'type d ia', 'objectif', 'destination'],
+  paternite: ['paternite', 'type de paternite', 'paternite connue'],
+  pereNumero: ['n officiel du pere', 'n officiel pere', 'numero officiel du pere', 'numero officiel pere', 'n national du pere', 'numero national pere', 'n pere', 'numero pere', 'n belier', 'numero belier', 'identifiant pere', 'id pere', 'n officiel du belier', 'numero officiel belier'],
+  pereCourt: ['code court du pere', 'code court pere', 'code pere', 'code belier', 'code court', 'code court du belier'],
+  pereNom: ['nom du pere', 'nom pere', 'nom du belier', 'nom belier', 'nom'],
+  pereLibre: ['pere', 'belier', 'taureau', 'semence'],
+  isol: ['index isol', 'isol'],
+  viande: ['index viande', 'index'],
+  centre: ['centre', 'centre ia', 'centre d insemination', 'centre d ia']
+};
+const enteteIaNorm = s => String(s === null || s === undefined ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+// Repère la ligne de titres (parmi les 15 premières) et la colonne de chaque champ ; null si aucune colonne « brebis » n'est reconnue.
+function reperageColonnesIa(rows) {
+  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+    const row = rows[i] || [], cols = {};
+    row.forEach((c, j) => {
+      const n = enteteIaNorm(c);
+      if (!n) return;
+      for (const k of Object.keys(IA_IMPORT_ALIAS)) if (cols[k] === undefined && IA_IMPORT_ALIAS[k].includes(n)) { cols[k] = j; break; }
+    });
+    if (cols.animal !== undefined && Object.keys(cols).length >= 2) return { ligneEntete: i, cols };
+  }
+  return null;
+}
+function dateIaFichier(raw) {
+  const s = String(raw === undefined || raw === null ? '' : raw).trim();
+  if (!s) return null;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3];
+  return parserDateModeleOvilog(s);
+}
+// Une ligne du fichier -> { numero, date, dateBrute, ia } ou { erreur } (rien d'écrit ici). orientationDefaut : 'lait' | 'viande' | '' (choisie à l'écran).
+function lireLigneInsemination(row, cols, orientationDefaut) {
+  const get = k => cols[k] === undefined ? '' : String(row[cols[k]] === undefined || row[cols[k]] === null ? '' : row[cols[k]]).trim();
+  const numero = get('animal'), dateBrute = get('date'), date = dateIaFichier(dateBrute);
+  const base = { numero, date, dateBrute };
+  if (dateBrute && !date) return Object.assign(base, { erreur: 'date « ' + dateBrute + ' » illisible' });
+  const o = enteteIaNorm(get('orientation'));
+  const orientation = o ? (/^l/.test(o) ? 'lait' : /^v/.test(o) ? 'viande' : null) : (orientationDefaut || '');
+  if (orientation === null) return Object.assign(base, { erreur: 'orientation « ' + get('orientation') + ' » non reconnue (Lait ou Viande)' });
+  if (!orientation) return Object.assign(base, { erreur: 'orientation absente : choisis Lait ou Viande au-dessus' });
+  let pereNumero = get('pereNumero'), pereCourt = get('pereCourt'), pereNom = get('pereNom');
+  const libre = get('pereLibre');
+  if (libre && !pereNumero && !pereCourt) {
+    const ch = chiffresSeuls(libre);
+    if (/^\d+$/.test(ch)) { if (ch.length >= 9) pereNumero = ch; else pereCourt = ch; } else if (!pereNom) pereNom = libre;
+  }
+  const p = enteteIaNorm(get('paternite'));
+  const aUnPere = !!(chiffresSeuls(pereNumero) || chiffresSeuls(pereCourt) || pereNom);
+  const paternite = p ? (/^(c|o)/.test(p) ? 'connue' : /^(i|n)/.test(p) ? 'inconnue' : null) : (aUnPere ? 'connue' : 'inconnue');
+  if (paternite === null) return Object.assign(base, { erreur: 'paternité « ' + get('paternite') + ' » non reconnue (connue ou inconnue)' });
+  const r = normaliserPaterniteIa({ orientation, paternite, pereNumero, pereCourt, pereNom, indexIsol: get('isol'), indexViande: get('viande'), centre: get('centre'), source: 'import' });
+  if (r.erreur) return Object.assign(base, { erreur: r.erreur });
+  return Object.assign(base, { ia: r.ia });
+}
+// Brebis active ou agnelle active d'après le n° du fichier : EID de 15 chiffres, n° national de 11 chiffres (les zéros de tête perdus par Excel sont rétablis), n° court, SIEOL.
+function resoudreAnimalInsemination(val) {
+  const pool = [...DB.brebis.filter(s => (s.statut || 'active') === 'active'), ...(DB.agnelles || []).filter(a => (a.statut || 'active') === 'active')];
+  let v = cleanEid(val || '');
+  if (!v) return { statut: 'absent' };
+  if (v.length >= 12) { const exact = pool.filter(a => cleanEid(a.eid) === v); if (exact.length === 1) return { statut: 'trouve', item: exact[0] }; }
+  if (v.length >= 6 && v.length <= 10) v = v.padStart(11, '0');
+  if (v.length >= 11) {
+    const k = v.slice(-11), r = pool.filter(a => eidAffichageCourt(a.eid) === k);
+    return r.length === 1 ? { statut: 'trouve', item: r[0] } : r.length > 1 ? { statut: 'ambigu', candidats: r } : { statut: 'absent' };
+  }
+  return trouverUnParEidOuNumero(pool, v);
+}
+// IA / éponge de l'animal visée par une ligne : à 3 jours près de la date du fichier ; sans date, l'évènement de la campagne (evenementIaDeFiche).
+function evenementIaPourLigne(animal, date) {
+  const evts = (animal.modesRepro || []).filter(m => m && (m.mode === 'IA' || m.mode === 'EP') && /^\d{4}-\d{2}-\d{2}/.test(m.date || ''));
+  if (!date) return evenementIaDeFiche(animal);
+  const proches = evts.map(m => ({ m, ecart: Math.abs(joursEntreDates(m.date, date)) })).filter(x => x.ecart <= 3).sort((a, b) => a.ecart - b.ecart);
+  return proches.length ? proches[0].m : null;
+}
+const sansSourceIa = ia => { const c = Object.assign({}, ia); delete c.source; return canonJson(c); };
+function classerInseminations(rows, opts) {
+  const rep = reperageColonnesIa(rows);
+  const res = { aImporter: [], identiques: [], conflits: [], sansIa: [], introuvables: [], ambigus: [], invalides: [], colonnes: !!rep };
+  if (!rep) return res;
+  const vus = new Set();
+  for (let i = rep.ligneEntete + 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    if (!row.some(c => String(c === undefined || c === null ? '' : c).trim() !== '')) continue;
+    const l = lireLigneInsemination(row, rep.cols, opts.orientationDefaut);
+    l.ligne = i + 1;
+    if (!l.numero) { res.invalides.push(Object.assign(l, { erreur: 'n° de la brebis absent' })); continue; }
+    if (l.erreur) { res.invalides.push(l); continue; }
+    const r = resoudreAnimalInsemination(l.numero);
+    if (r.statut === 'absent') { res.introuvables.push(l); continue; }
+    if (r.statut === 'ambigu') { l.candidats = r.candidats; res.ambigus.push(l); continue; }
+    l.animal = r.item;
+    const e = evenementIaPourLigne(r.item, l.date);
+    if (!e) { res.sansIa.push(l); continue; }
+    l.evenement = e;
+    if (vus.has(e)) { res.invalides.push(Object.assign(l, { erreur: 'cette IA figure déjà plus haut dans le fichier' })); continue; }
+    vus.add(e);
+    if (!e.ia) res.aImporter.push(l);
+    else if (sansSourceIa(e.ia) === sansSourceIa(l.ia)) res.identiques.push(l);
+    else if (opts.remplacer) { l.remplace = true; res.aImporter.push(l); }
+    else res.conflits.push(l);
+  }
+  return res;
+}
+async function telechargerModeleInseminations() {
+  const bytes = await buildXlsxWorkbook([
+    { name: IA_IMPORT_FEUILLE, colWidths: [16, 12, 13, 12, 20, 18, 22, 12, 22, 18], rows: [IA_IMPORT_ENTETES] },
+    { name: 'Mode d\'emploi', colWidths: [120], rows: [
+      ['Une ligne par brebis (ou agnelle) inséminée. Seule la colonne « N° brebis » est obligatoire, avec l\'orientation (Lait ou Viande).'],
+      ['N° brebis : EID de 15 chiffres, n° national de 11 chiffres, n° court ou n° SIEOL. Date IA : jj/mm/aaaa (facultative ; sans date, l\'IA de la campagne est utilisée).'],
+      ['Paternité : Connue ou Inconnue (sans colonne, elle est déduite : un n° de père renseigné = connue). Paternité inconnue : pas de père ni d\'index.'],
+      ['Père : n° officiel (11 chiffres) et/ou code court du centre (5 chiffres), nom facultatif. Index ISOL pour le lait ; index viande en texte libre.'],
+      ['Rien n\'est créé : la brebis doit déjà être dans un lot IA ou éponge. Un aperçu s\'affiche avant toute écriture.']
+    ] }
+  ]);
+  await saveOrShareBinaryFile('Modele_Inseminations.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+function renderImportInseminations() {
+  pageTitle.textContent = 'Import Inséminations';
+  let rows = null;                       // lignes du fichier, gardées pour recalculer l'aperçu quand on change l'orientation ou la case « Remplacer »
+  const etat = { orientationDefaut: '', remplacer: false, message: '' };
+  let classement = null;
+  app.innerHTML = `
+    <div class="card">
+      <label>Fichier de l'inséminateur (.xlsx ou .csv)</label>
+      <input type="file" id="import-ia-file" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv">
+      <div id="import-ia-err" class="error-box hidden"></div>
+      <label style="margin-top:12px;">Orientation des IA du fichier <span class="pc-opt">(utilisée si le fichier n'a pas de colonne Orientation)</span></label>
+      <div class="pc-seg2" id="import-ia-orientation" style="max-width:420px;">${[['', 'Selon le fichier'], ['lait', 'Lait'], ['viande', 'Viande']].map(([v, l]) => `<button type="button" class="opt-btn${etat.orientationDefaut === v ? ' selected' : ''}" data-val="${v}">${l}</button>`).join('')}</div>
+      <label style="margin-top:12px;display:flex;gap:8px;align-items:center;"><input type="checkbox" id="import-ia-remplacer" style="width:auto;margin:0;"> Remplacer les IA déjà renseignées différemment</label>
+    </div>
+    <div id="import-ia-message"></div>
+    <div id="import-ia-preview"></div>
+    <button class="btn btn-primary hidden" id="btn-confirm-import-ia" style="margin-top:14px;">Confirmer l'import</button>`;
+  const err = document.getElementById('import-ia-err');
+  const numeroTxt = l => echapperHtml(l.animal ? 'n°' + numeroVisuel(l.animal.eid) : (l.numero || '—'));
+  const detailIa = l => echapperHtml([IA_ORIENTATIONS[l.ia.orientation], l.ia.paternite === 'connue' ? (paterniteIaPereTexte(l.ia) || '') : 'paternité inconnue', paterniteIaIndexTexte(l.ia) || ''].filter(Boolean).join(' · '));
+  const bloc = (titre, note, items, ligne, ton) => !items.length ? '' : `<div class="card" style="margin-top:10px;">
+      <div style="font-weight:600;margin-bottom:6px;${ton ? 'color:var(--amber-fg);' : ''}">${titre} (${items.length})</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">${note}</div>
+      ${items.slice(0, 60).map(l => `<div style="font-size:13px;padding:5px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;gap:10px;">${ligne(l)}</div>`).join('')}
+      ${items.length > 60 ? `<div style="font-size:12px;color:var(--text-muted);padding-top:6px;">… et ${items.length - 60} autres</div>` : ''}</div>`;
+  function renderPreview() {
+    const preview = document.getElementById('import-ia-preview'), btn = document.getElementById('btn-confirm-import-ia');
+    document.getElementById('import-ia-message').innerHTML = etat.message ? `<div class="card" style="margin-top:14px;background:var(--green-bg);color:var(--green-fg);">${echapperHtml(etat.message)}</div>` : '';
+    if (!classement) { preview.innerHTML = ''; btn.classList.add('hidden'); return; }
+    const c = classement;
+    if (!c.colonnes) { preview.innerHTML = `<div class="error-box" style="margin-top:14px;">Aucune colonne « N° brebis » reconnue dans ce fichier. Télécharge le modèle dans Paramètres › Imports, ou renomme la colonne.</div>`; btn.classList.add('hidden'); return; }
+    const probleme = c.sansIa.length + c.introuvables.length + c.ambigus.length + c.invalides.length;
+    preview.innerHTML = `<div class="pc-kpis" style="margin-top:14px;">${pcKpi('IA à renseigner', c.aImporter.length, c.aImporter.some(l => l.remplace) ? 'dont ' + c.aImporter.filter(l => l.remplace).length + ' à remplacer' : '', 'vert')}${pcKpi('Déjà à jour', c.identiques.length, '', 'bleu')}${pcKpi('Déjà renseignées autrement', c.conflits.length, c.conflits.length ? 'non modifiées' : '', 'ambre')}${pcKpi('Lignes laissées de côté', probleme, '', 'ambre')}</div>`
+      + bloc('Déjà renseignées autrement', 'Ces IA ont déjà un père ou une orientation différents : non modifiées. Coche « Remplacer » pour les écraser.', c.conflits, l => `<span>${numeroTxt(l)}</span><span style="color:var(--text-muted);">fichier : ${detailIa(l)}</span>`, true)
+      + bloc('Sans IA dans un lot', 'Aucune IA ni éponge de cette brebis ne correspond (date à 3 jours près). Mets-la d\'abord dans le lot IA, puis réimporte.', c.sansIa, l => `<span>${numeroTxt(l)}</span><span style="color:var(--text-muted);">${l.dateBrute ? echapperHtml(l.dateBrute) : 'sans date'}</span>`, true)
+      + bloc('Brebis introuvables', 'Aucune brebis ou agnelle active ne porte ce numéro.', c.introuvables, l => `<span>${numeroTxt(l)}</span><span style="color:var(--text-muted);">ligne ${l.ligne}</span>`, true)
+      + bloc('Numéros ambigus', 'Plusieurs animaux portent ce numéro : indique l\'EID ou le n° national de 11 chiffres.', c.ambigus, l => `<span>${numeroTxt(l)}</span><span style="color:var(--text-muted);">ligne ${l.ligne}</span>`, true)
+      + bloc('Lignes invalides', 'Ces lignes ne sont pas lues.', c.invalides, l => `<span>${numeroTxt(l)}</span><span style="color:var(--text-muted);">ligne ${l.ligne} : ${echapperHtml(l.erreur)}</span>`, true)
+      + bloc('Seront renseignées', 'Orientation, père et index écrits sur l\'IA de la brebis.', c.aImporter, l => `<span>${numeroTxt(l)}${l.remplace ? ' · remplace' : ''}</span><span style="color:var(--text-muted);">${detailIa(l)}</span>`, false);
+    btn.classList.toggle('hidden', c.aImporter.length === 0);
+  }
+  const recalculer = () => { classement = rows ? classerInseminations(rows, { orientationDefaut: etat.orientationDefaut, remplacer: etat.remplacer }) : null; renderPreview(); };
+  document.querySelectorAll('#import-ia-orientation .opt-btn').forEach(b => { b.onclick = () => {
+    etat.orientationDefaut = b.dataset.val; etat.message = '';
+    document.querySelectorAll('#import-ia-orientation .opt-btn').forEach(x => x.classList.toggle('selected', x === b));
+    recalculer();
+  }; });
+  document.getElementById('import-ia-remplacer').onchange = e => { etat.remplacer = e.target.checked; etat.message = ''; recalculer(); };
+  document.getElementById('import-ia-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    err.classList.add('hidden'); rows = null; etat.message = '';
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        rows = /\.xlsx$/i.test(file.name) ? await readXlsxRows(reader.result, IA_IMPORT_FEUILLE) : decodeCsvBuffer(reader.result);
+        recalculer();
+      } catch (ex) {
+        rows = null; classement = null; renderPreview();
+        err.textContent = 'Impossible de lire ce fichier : ' + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => { err.textContent = 'Erreur de lecture du fichier.'; err.classList.remove('hidden'); };
+    reader.readAsArrayBuffer(file);
+  });
+  document.getElementById('btn-confirm-import-ia').onclick = () => {
+    if (!classement || !classement.aImporter.length) return;
+    // l'état LIVE est relu juste avant d'écrire (le classement vient d'être calculé sur la même base, mais l'évènement doit toujours exister)
+    const a = classement.aImporter.filter(l => l.evenement && (l.animal.modesRepro || []).includes(l.evenement));
+    a.forEach(l => { l.evenement.ia = l.ia; });
+    saveData(DB);
+    noterDernierImport('inseminations', null, a.length);
+    const reste = classement.conflits.length + classement.sansIa.length + classement.introuvables.length + classement.ambigus.length + classement.invalides.length;
+    etat.message = a.length + ' IA renseignée' + (a.length > 1 ? 's' : '') + (reste ? ' · ' + reste + ' ligne' + (reste > 1 ? 's' : '') + ' laissée' + (reste > 1 ? 's' : '') + ' de côté.' : '.');
+    recalculer();
+  };
+}
+
 /* ---------- Import "Contrôle laitier" (mode fichier modèle Ovilog) ----------
    REPRISE COMPLÈTE (remplace intégralement les versions précédentes de ce
    chantier) -- distinct de l'import "Cahier de contrôle laitier SIEOL" déjà
@@ -28093,7 +28303,8 @@ const IMPORTS_PC = [
   { key: 'controle-laitier', titre: 'Contrôle laitier', desc: 'Lait et anomalies des contrôles de la campagne en cours, par brebis.', modele: 'controle-laitier', feuille: 'Contrôle laitier', ligneEntete: 5, vue: 'import-controle-laitier-modele', btn: 'btn-import-controle-laitier-modele', avecCampagne: true },
   { key: 'sieol-cl', titre: 'Contrôle laitier · fichiers SIEOL', desc: 'Fichier résumé (les moyennes SIEOL) et fichier cahier de contrôle SIEOL brut, par campagne et par contrôle C1, C2, C3.', csv: true, vue: 'import-controle-laitier-sieol', btn: 'btn-import-controle-laitier-sieol', avecCampagne: true },
   { key: 'lactation', titre: 'Lactation', desc: 'Lactation totale et indicateurs de la campagne en cours (suivi CLS ou CLO).', modele: null, feuille: 'Lactation', ligneEntete: 4, vue: 'import-lactation-modele', btn: 'btn-import-lactation-modele', avecCampagne: true },
-  { key: 'nouveaux-animaux', titre: 'Nouveaux animaux', desc: 'Crée les fiches manquantes et complète les fiches existantes. Trois feuilles : Brebis, Béliers, Agnelles.', modele: 'nouveaux-animaux', feuille: 'Brebis', ligneEntete: 4, vue: 'import-nouveaux-animaux', btn: 'btn-import-nouveaux-animaux', avecCampagne: false }
+  { key: 'nouveaux-animaux', titre: 'Nouveaux animaux', desc: 'Crée les fiches manquantes et complète les fiches existantes. Trois feuilles : Brebis, Béliers, Agnelles.', modele: 'nouveaux-animaux', feuille: 'Brebis', ligneEntete: 4, vue: 'import-nouveaux-animaux', btn: 'btn-import-nouveaux-animaux', avecCampagne: false },
+  { key: 'inseminations', titre: 'Inséminations', desc: 'Père, paternité et index de chaque IA, d\'après la liste de l\'inséminateur (lait ou viande, paternité connue ou inconnue).', genere: true, vue: 'import-inseminations', btn: 'btn-import-inseminations', avecCampagne: false }
 ];
 // Modèle réellement utilisé par une carte : la Lactation dépend du type de suivi laitier (CLS ou CLO)
 function modeleImportPour(cfg) { return cfg.modele || (DB.exploitation.typeSuivi === 'clo' ? 'lactation-clo' : 'lactation-cls'); }
@@ -28140,7 +28351,11 @@ function renderParametresImports(content) {
     </div>`;
   const note = lactationDispo ? '' : `<div class="prm-note" id="imports-note-lactation" style="margin-top:12px;">La carte « Lactation » apparaît quand le type de suivi laitier est CLS ou CLO (réglage dans l'onglet Exploitation).</div>`;
   content.innerHTML = `<div class="prm-grid prm-grid-large">${cartes.map(carte).join('')}</div>${note}`;
-  cartes.filter(c => !c.csv).forEach(cfg => {
+  cartes.filter(c => c.genere).forEach(cfg => {
+    const zone = document.getElementById('apercu-' + cfg.key);
+    if (zone) zone.innerHTML = `<table class="brd-t prm-apercu-t"><thead><tr>${IA_IMPORT_ENTETES.map(h => `<th>${xlsxEscape(h)}</th>`).join('')}</tr></thead><tbody><tr>${IA_IMPORT_EXEMPLE.map(v => `<td>${v ? xlsxEscape(v) : '—'}</td>`).join('')}</tr></tbody></table>`;
+  });
+  cartes.filter(c => !c.csv && !c.genere).forEach(cfg => {
     const cle = modeleImportPour(cfg);
     apercuColonnesModele(cle, cfg).then(ap => {
       const zone = document.getElementById('apercu-' + cfg.key);
@@ -28149,7 +28364,7 @@ function renderParametresImports(content) {
     }).catch(e => { const zone = document.getElementById('apercu-' + cfg.key); if (zone) zone.innerHTML = `<div class="prm-note" style="color:var(--danger);">Impossible de lire le modèle (${xlsxEscape(e && e.message ? e.message : 'erreur')}).</div>`; });
   });
   document.querySelectorAll('.btn-modele-import').forEach(btn => {
-    btn.onclick = () => { const cfg = IMPORTS_PC.find(c => c.key === btn.dataset.cle); lancerExportAvecBouton(btn, () => telechargerModeleImport(modeleImportPour(cfg))); };
+    btn.onclick = () => { const cfg = IMPORTS_PC.find(c => c.key === btn.dataset.cle); lancerExportAvecBouton(btn, () => cfg.genere ? telechargerModeleInseminations() : telechargerModeleImport(modeleImportPour(cfg))); };
   });
   cartes.forEach(cfg => { const b = document.getElementById(cfg.btn); if (b) b.onclick = () => render(cfg.vue); });
 }
