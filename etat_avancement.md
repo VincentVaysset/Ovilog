@@ -80,6 +80,8 @@ ampagne, Listes, Imports sur PC, Sauvegarde ; Lecteur sur mobile), première con
 ## 6. Pistes pour plus tard
 
 - Multi-grilles de paiement du lait (au-delà de la grille actuelle) : spécifié, en pause.
+- Paternité des IA en suivi CLO : même principe que le CLS (import par lot, père qui suit l'agneau), mais avec l'index production et l'index ISOL des brebis à la place du seul ISOL (décision du propriétaire, 30/10/2026 : à faire plus tard). Index viande : plus tard aussi.
+- Tri des agnelles : filtres sur les colonnes (Classe mère, Lactation, ISOL père) ; le tri par colonne existe déjà. À revoir plus tard.
 - Audit complet du changement de campagne : partiellement couvert par les tests, à reprendre si un problème apparaît en vraie bascule.
 - Écrans restant à migrer
  vers la charte : `docs/ecrans_a_migrer.md`.
