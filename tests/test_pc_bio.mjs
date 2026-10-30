@@ -59,7 +59,7 @@ console.log('OK 1 calcul : ×2 en bio, minimum 48 h (oui / non / à confirmer), 
 
 // ================================================================ 2. options du produit : défauts par catégorie, valeurs choisies
 const f = await page.evaluate(() => Object.fromEntries(['Intramicine', 'Ivomec', 'Bravoxin 10', 'Aluspray'].map(n => { const x = ficheProduit(n); return [n, [x.compte, x.min48h, x.compteDefaut, x.min48hDefaut]]; })));
-check(JSON.stringify(f.Intramicine) === '["oui","oui",true,true]' && JSON.stringify(f.Ivomec) === '["non","oui",true,true]' && JSON.stringify(f['Bravoxin 10']) === '["non","a_confirmer",true,true]' && JSON.stringify(f.Aluspray) === '["a_confirmer","a_confirmer",true,true]', 'défauts : antibiotique oui/oui, antiparasitaire non/oui, vaccin non/à confirmer, soin de plaie à confirmer/à confirmer : ' + JSON.stringify(f));
+check(JSON.stringify(f.Intramicine) === '["oui","oui",true,true]' && JSON.stringify(f.Ivomec) === '["non","oui",true,true]' && JSON.stringify(f['Bravoxin 10']) === '["non","non",true,true]' && JSON.stringify(f.Aluspray) === '["a_confirmer","a_confirmer",true,true]', 'défauts : antibiotique oui/oui, antiparasitaire non/oui, vaccin non/non, soin de plaie à confirmer/à confirmer : ' + JSON.stringify(f));
 check(await page.evaluate(() => JSON.stringify(DB.produitsInfo).indexOf('minimum48hBio') === -1 && window.__saves === 0), 'les défauts ne sont jamais écrits tant que l\'éleveur n\'a pas validé une fiche');
 console.log('OK 2 options du produit : défauts de la catégorie, non écrits.');
 
@@ -84,7 +84,12 @@ check((await dates()).join() === '20-09-2026,23-09-2026,23-09-2026' && /minimum 
 await ouvrir();
 await preparer('Vaccin', null, 'Bravoxin 10');
 let dv = await $t('#cs-dates');
-check(/aucune attente/.test(dv) && /minimum 48 h bio à confirmer/.test(dv) && /non appliqué/.test(dv) && /minimum 48 h bio à confirmer/i.test(await $t('#cs-alertes')), 'vaccin légal 0, à confirmer (défaut) : non appliqué, mention visible (dates + alertes) : ' + dv);
+check(/aucune attente/.test(dv) && !/à confirmer/.test(dv), 'vaccin légal 0, minimum 48 h = non (défaut des vaccins, exclus) : aucune attente, aucune mention : ' + dv);
+await page.evaluate(() => { DB.produitsInfo['Bravoxin 10'].minimum48hBio = 'a_confirmer'; });   // option réglée à la main sur « à confirmer »
+await ouvrir();
+await preparer('Vaccin', null, 'Bravoxin 10');
+dv = await $t('#cs-dates');
+check(/aucune attente/.test(dv) && /minimum 48 h bio à confirmer/.test(dv) && /non appliqué/.test(dv) && /minimum 48 h bio à confirmer/i.test(await $t('#cs-alertes')), 'vaccin légal 0, à confirmer (réglé) : non appliqué, mention visible (dates + alertes) : ' + dv);
 await page.click('#cs-suivant'); await page.waitForSelector('#cs-table');
 check(/minimum 48 h bio à confirmer/.test(await $t('#cs-recap')), 'mention aussi dans le récapitulatif de l\'écran 2');
 await page.click('#cs-modifier');
@@ -102,13 +107,14 @@ await jeu(true);
 await ouvrir(); await preparer('Traitement', 'Antibiotique', 'Intramicine');
 await page.click('#cs-suivant'); await page.waitForSelector('#cs-table'); await page.click('#cs-tout'); await page.click('#cs-enregistrer');
 await page.waitForSelector('#cs-dernier-lot');
+await page.evaluate(() => { DB.produitsInfo['Bravoxin 10'].minimum48hBio = 'a_confirmer'; });   // vaccins exclus par défaut : option réglée à la main pour vérifier la mention
 await ouvrir(); await preparer('Vaccin', null, 'Bravoxin 10');
 await page.click('#cs-suivant'); await page.waitForSelector('#cs-table'); await page.click('tr[data-eid="' + await page.evaluate(() => E(3, 1)) + '"]'); await page.click('#cs-enregistrer');
 await page.waitForSelector('#cs-dernier-lot');
 const soins = await page.evaluate(() => DB.brebis[0].sanitaire.map(s => JSON.parse(JSON.stringify(s))));
 const sA = soins.find(s => s.produit === 'Intramicine'), sV = soins.find(s => s.produit === 'Bravoxin 10');
 check(sA.bio === true && sA.delaiLaitLegalJours === 7 && sA.delaiViandeLegalJours === 28 && sA.delaiLaitJours === 14 && sA.delaiViandeJours === 56 && sA.min48h === 'oui' && !sA.min48hAConfirmer, 'soin Intramicine : bio, légal 7/28, appliqué 14/56 : ' + JSON.stringify(sA));
-check(sV.bio === true && sV.delaiLaitJours === 0 && sV.delaiViandeJours === 0 && sV.min48h === 'a_confirmer' && sV.min48hAConfirmer === true, 'soin vaccin : 0/0 appliqués, minimum 48 h à confirmer figé dans le soin : ' + JSON.stringify(sV));
+check(sV.bio === true && sV.delaiLaitJours === 0 && sV.delaiViandeJours === 0 && sV.min48h === 'a_confirmer' && sV.min48hAConfirmer === true, 'soin vaccin (option réglée « à confirmer ») : 0/0 appliqués, minimum 48 h à confirmer figé dans le soin : ' + JSON.stringify(sV));
 // tableaux : délais appliqués, mentions
 await page.waitForSelector('#cs-en-delai');
 const enDelai = await $t('#cs-en-delai'), derniers = await $t('#cs-derniers');
@@ -149,11 +155,11 @@ check(await page.evaluate(() => !document.querySelector('.pd-min48') && !/Minimu
 await page.evaluate(() => { DB.exploitation.elevageBio = true; render('produits-delais'); });
 check(await page.evaluate(() => document.querySelectorAll('.pd-min48').length === 5 && /Viande \(légal\)/.test(document.getElementById('pc-produits-delais').textContent)), 'en bio : colonnes « Minimum 48 h bio » et « Compte » pour les 5 produits, délais « (légal) »');
 const lig = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#pc-produits-delais tr')].filter(r => r.querySelector('.pd-min48')).map(r => [r.querySelector('b').textContent, [r.querySelector('.pd-min48').textContent.replace(/\s+/g, ' ').trim(), r.querySelector('.pd-compte').textContent.replace(/\s+/g, ' ').trim()]])));
-check(/Oui \(défaut\)/.test(lig.Intramicine[0]) && /minimum 48 h bio à confirmer/.test(lig['Bravoxin 10'][0]) && /Non \(défaut\)/.test(lig['Bravoxin 10'][1]) && /à confirmer/.test(lig.Aluspray[1]), 'liste : Intramicine oui, vaccin « minimum 48 h bio à confirmer » visible, soin de plaie à confirmer : ' + JSON.stringify(lig));
+check(/Oui \(défaut\)/.test(lig.Intramicine[0]) && /Non \(défaut\)/.test(lig['Bravoxin 10'][0]) && /Non \(défaut\)/.test(lig['Bravoxin 10'][1]) && /minimum 48 h bio à confirmer/.test(lig.Aluspray[0]) && /à confirmer/.test(lig.Aluspray[1]), 'liste : Intramicine oui, vaccin exclu (non), « autres » : « minimum 48 h bio à confirmer » visible : ' + JSON.stringify(lig));
 check(await page.evaluate(() => /Bio à confirmer/.test(document.getElementById('pc-produits-delais').textContent)), 'indicateur « Bio à confirmer »');
 await page.click('.pd-modifier[data-nom="' + encodeURIComponent('Bravoxin 10') + '"]');
 await page.waitForSelector('#fp-min48');
-check(await page.evaluate(() => document.getElementById('fp-min48').value === 'a_confirmer' && document.getElementById('fp-compte').value === 'non'), 'fenêtre de fiche : options bio préremplies avec le défaut de la catégorie');
+check(await page.evaluate(() => document.getElementById('fp-min48').value === 'non' && document.getElementById('fp-compte').value === 'non'), 'fenêtre de fiche : options bio préremplies avec le défaut de la catégorie');
 await page.selectOption('#fp-min48', 'oui'); await page.selectOption('#fp-compte', 'non');
 await page.click('#fp-ok');
 await page.waitForFunction(() => DB.produitsInfo['Bravoxin 10'].minimum48hBio === 'oui');
@@ -171,7 +177,7 @@ await page.evaluate(() => { DB.exploitation.elevageBio = true; ouvrirFicheProdui
 await page.waitForSelector('#fp-min48');
 check(await page.evaluate(() => document.getElementById('fp-min48').value === 'oui' && document.getElementById('fp-compte').value === 'oui'), 'création antibiotique : oui / oui');
 await page.selectOption('#fp-cat', 'vaccins');
-check(await page.evaluate(() => document.getElementById('fp-min48').value === 'a_confirmer' && document.getElementById('fp-compte').value === 'non'), 'catégorie vaccins : à confirmer / non');
+check(await page.evaluate(() => document.getElementById('fp-min48').value === 'non' && document.getElementById('fp-compte').value === 'non'), 'catégorie vaccins : non / non (exclus du minimum 48 h)');
 await page.click('#fp-annuler');
 console.log('OK 8 Produits et délais : colonnes bio (oui / non / à confirmer, défauts), mention « minimum 48 h bio à confirmer », fenêtre de fiche, options conservées.');
 

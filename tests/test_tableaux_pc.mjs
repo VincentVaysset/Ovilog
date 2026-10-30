@@ -22,11 +22,13 @@ const VUES = [
   ['Ordonnances', 'render("ordonnances")', 1], ['Sous délai d\'attente', 'render("sous-delai")', 1], ['Contrôle laitier', 'render("controle-laitier")', 1], ['Registre', 'render("registre")', 1],
   ['Inventaire (actifs)', 'render("inventaire-actifs")', 1], ['Échographies', 'render("echo-rapide")', 2], ['Historique des échos', 'render("historique-echo")', 1], ['Mise bas rapide', 'render("misebas-rapide")', 1],
   ['Bilan de reproduction', 'bilanCampagneTab="reproduction";render("bilan-campagne")', 5], ['Bilan de lactation', 'bilanCampagneTab="lactation";render("bilan-campagne")', 1], ['Bilan économique', 'bilanCampagneTab="economique";render("bilan-campagne")', 1],
-  ['Paramètres › Imports', 'parametresTab="imports";render("parametres")', 3]];
+  ['Paramètres › Imports', 'parametresTab="imports";render("parametres")', 5]];
 const BEIGE = 'rgb(246, 241, 228)', BLANC = 'rgb(255, 255, 255)';
 let total = 0;
 for (const [nom, code, n] of VUES) {
   await pc.evaluate(code); await pc.waitForTimeout(120);
+  // aperçus chargés en différé (Paramètres › Imports) : on attend qu'ils soient tous affichés, jamais un délai fixe seul
+  await pc.waitForFunction(n => [...document.querySelectorAll('#app table')].filter(t => t.getBoundingClientRect().width > 0).length >= n, n, { timeout: 8000 }).catch(() => {});
   const tabs = await pc.evaluate(() => [...document.querySelectorAll('#app table')].filter(t => t.getBoundingClientRect().width > 0).map(t => {
     const cs = e => getComputedStyle(e), th = t.querySelector('th'), rows = [...t.querySelectorAll('tr')], entetes = rows.filter(r => r.querySelector('th') && !r.querySelector('td')), data = rows.filter(r => r.querySelector('td'));
     const premTd = r => [...r.children].find(c => c.tagName === 'TD' && !c.classList.contains('cb')) || r.querySelector('td');

@@ -1,6 +1,7 @@
 /* Page PC « Brebis à régulariser » (écran PC simulé) : mêmes groupes et mêmes prédicats que l'écran mobile,
    indicateurs, barre d'avancement, listes avec n° et âge, recherche par n° saisi (pas de bip sur PC) et filtre par
-   âge, « Voir les N autres », carte « sans contrôle laitier » (après l'import du 1er contrôle), incohérences
+   âge, « Voir les N autres », six groupes sans doublons (à régulariser, allaitantes, attendues à la traite avec
+   « Pas traite cette campagne », traites, pas traites, vides définitives ; voir test_pas_traite), incohérences
    signalées jamais corrigées, répartition par millésime, export Excel. Cohérence des chiffres avec l'écran mobile
    et avec la règle. Mobile inchangé (voir test_mobile_ecrans_reference). Jeu synthétique, aucune donnée réelle. */
 import { chromium } from 'playwright';
@@ -62,18 +63,19 @@ check(/avant la clôture de la campagne 2027/.test(await page.evaluate(() => doc
 let k = await kpis();
 // actives : 12 + 6 + 4 (à régulariser) + 3 (mises bas) + 2 (vides) + 1 (incohérente : comptée parmi les mises bas) = 28
 check(k['Brebis présentes'][0] === '28' && /actives en campagne/.test(k['Brebis présentes'][1]), 'brebis présentes 28 : ' + JSON.stringify(k));
-check(k['À régulariser'][0] === '22' && k['À régulariser'][1] === '78,6 %', 'à régulariser 22 (78,6 %) : ' + JSON.stringify(k['À régulariser']));
-check(k['Ont mis bas'][0] === '4' && k['Ont mis bas'][1] === '14,3 %', 'ont mis bas 4 (3 + l\'incohérente) : ' + JSON.stringify(k['Ont mis bas']));
+check(k['À régulariser'][0] === '22' && k['À régulariser'][1] === 'ni mise bas ni vide déf.', 'à régulariser 22 : ' + JSON.stringify(k['À régulariser']));
+// mises bas : 00400 (agneau vendu : attendue à la traite), 00401, 00402 et l'incohérente 00600 (agneau non réglé : allaitantes)
+check(k['Allaitantes'][0] === '3' && k['Attendues à la traite'][0] === '1' && k['Traites'][0] === '0' && k['Pas traites'][0] === '0', 'allaitantes 3, attendues 1, traites 0, pas traites 0 : ' + JSON.stringify(k));
 check(k['Vides définitives'][0] === '2' && k['Vides définitives'][1] === '7,1 %', 'vides définitives 2 : ' + JSON.stringify(k['Vides définitives']));
-check(k['Sans contrôle laitier'][0] === '—' && /dès le 1er contrôle/.test(k['Sans contrôle laitier'][1]), 'sans contrôle laitier : tiret avant le 1er contrôle : ' + JSON.stringify(k['Sans contrôle laitier']));
+check(!k['Ont mis bas'] && !k['Sans contrôle laitier'], 'plus d\'indicateurs « Ont mis bas » ni « Sans contrôle laitier » (groupes sans doublons)');
 check(k['Incohérences'][0] === '1', 'incohérences 1 : ' + JSON.stringify(k['Incohérences']));
 const avanc = await page.evaluate(() => document.querySelector('#pc-regulariser .card').textContent.replace(/\s+/g, ' '));
-check(/6 brebis sur 28 ont une information de campagne/.test(avanc) && /Ont mis bas/.test(avanc) && /Vides définitives/.test(avanc), 'avancement : ' + avanc);
+check(/2 brebis sur 28 ont une information de campagne/.test(avanc) && /Traites/.test(avanc) && /Vides définitives/.test(avanc), 'avancement (informations complètes seulement) : ' + avanc);
 check(await page.evaluate(() => !document.getElementById('carte-sans-controle-laitier')), 'pas de carte « sans contrôle laitier » avant le 1er contrôle');
 // carte incohérence en alerte, jamais corrigée
 const inco = await page.evaluate(() => { const c = document.getElementById('pc-carte-incoherences'); return { texte: c.textContent.replace(/\s+/g, ' '), lignes: c.querySelectorAll('.pc-li').length }; });
 check(/Contrôle des incohérences/.test(inco.texte) && inco.lignes === 1 && /Ovilog ne corrige jamais seul/.test(inco.texte), 'carte incohérences : ' + JSON.stringify(inco));
-console.log('OK 1 indicateurs (28 présentes, 22 à régulariser, 4 ont mis bas, 2 vides, 1 incohérence), avancement, « sans contrôle laitier » = tiret avant le 1er contrôle.');
+console.log('OK 1 indicateurs (28 présentes, 22 à régulariser, 3 allaitantes, 1 attendue, 2 vides, 1 incohérence), avancement 2 sur 28.');
 
 // liste « à régulariser » : 8 lignes visibles, n° + âge + « Ouvrir la fiche », triée du plus vieux au plus jeune
 const liste = await page.evaluate(() => [...document.querySelectorAll('#pc-reg-liste .pc-li:not(.hidden)')].map(l => [...l.children].map(c => c.textContent.replace(/\s+/g, ' ').trim()).join(' ')));
@@ -113,7 +115,7 @@ const coh = await page.evaluate(() => {
   return { d: [d.groupes.aRegulariser.length, d.groupes.misesBas.length, d.groupes.videsDefinitives.length, d.actives], f: [regul, mb, vd, actives.length], mobile };
 });
 check(JSON.stringify(coh.d) === JSON.stringify(coh.f), 'groupes PC = prédicats de l\'appli : ' + JSON.stringify(coh));
-check(/22 brebis/.test(coh.mobile) && /4 brebis/.test(coh.mobile) && /2 brebis/.test(coh.mobile), 'écran mobile : mêmes compteurs 22 / 4 / 2 : ' + coh.mobile.slice(0, 300));
+check(/22 brebis/.test(coh.mobile) && /3 brebis/.test(coh.mobile) && /1 brebis/.test(coh.mobile) && /2 brebis/.test(coh.mobile), 'écran mobile : mêmes compteurs 22 / 3 / 1 / 2 : ' + coh.mobile.slice(0, 300));
 const mill = await page.evaluate(() => bilanARegulariserData().parMillesime.map(m => m.annee + ':' + m.n).join(','));
 const somme = await page.evaluate(() => bilanARegulariserData().parMillesime.reduce((a, m) => a + m.n, 0));
 check(somme === 28, 'millésimes : la somme égale les brebis présentes (28) : ' + mill);
@@ -121,19 +123,16 @@ const barres = await page.evaluate(() => [...document.querySelectorAll('#pc-regu
 check(barres === await page.evaluate(() => bilanARegulariserData().parMillesime.map(m => m.n).join(',')), 'histogramme = données : ' + barres);
 console.log('OK 3 cohérence : groupes PC = prédicats de l\'appli = compteurs de l\'écran mobile ; millésimes (' + mill + ') = 28 brebis.');
 
-// ================================================================ 4. après l'import du 1er contrôle laitier
+// ================================================================ 4. après l'import du 1er contrôle laitier : 00402 traite
 await page.evaluate(() => { jeu(true); ouvrirPage(); });
 k = await kpis();
-check(k['Sans contrôle laitier'][0] === '3' && /1 attendue à la traite/.test(k['Sans contrôle laitier'][1]), 'sans contrôle laitier 3 (1 attendue à la traite) : ' + JSON.stringify(k['Sans contrôle laitier']));
-const sc = await page.evaluate(() => [...document.querySelectorAll('#carte-sans-controle-laitier .pc-li')].map(l => [...l.children].map(c => c.textContent.replace(/\s+/g, ' ').trim()).join(' ')));
-// brebis 00400 (agneaux tous vendus : attendue), 00401 (agneau non réglé), 00600 (incohérente, agneau non réglé) ; 00402 contrôlée : absente
-check(sc.length === 3 && /n°00400\s*mise bas le 10\/11 · 1 agneau attendue à la traite/.test(sc[0]) && /n°00401\s*mise bas le 20\/11 · 1 agneau pas encore attendue \(1 agneau non réglé\)/.test(sc[1]) && !sc.some(t => /00402/.test(t)), 'carte sans contrôle : ' + JSON.stringify(sc));
-const regle = await page.evaluate(() => brebisMiseBasSansControleLaitier(2026).sansControle);
-check(regle === 3, 'cohérence avec la règle : 3');
-// « Ouvrir la fiche » depuis la carte
-await page.click('#carte-sans-controle-laitier .pc-li >> nth=0');
-check(await page.evaluate(() => currentView === 'detail' && window.__saves === 0), 'fiche ouverte, 0 saveData');
-console.log('OK 4 après le 1er contrôle : carte « sans contrôle laitier » (3 lignes, 1 attendue à la traite = signal fort), indicateur 3, brebis contrôlée absente, fiche ouverte sans écriture.');
+check(k['Traites'][0] === '1' && k['Allaitantes'][0] === '2' && k['Attendues à la traite'][0] === '1', 'après le contrôle : traites 1, allaitantes 2, attendues 1 : ' + JSON.stringify(k));
+const att = await page.evaluate(() => [...document.querySelectorAll('#pc-carte-attendues .pc-li')].map(l => [l.dataset.num, !!l.querySelector('.btn-pas-traite')]));
+check(JSON.stringify(att) === '[["00400",true]]', 'carte « Attendues à la traite » : 00400 avec « Pas traite cette campagne » : ' + JSON.stringify(att));
+check(await page.evaluate(() => !document.getElementById('carte-sans-controle-laitier')), 'plus de carte « sans contrôle laitier » en doublon');
+await page.click('#pc-carte-attendues .pc-li .a');
+check(await page.evaluate(() => currentView === 'detail' && window.__saves === 0), 'toucher la ligne ouvre la fiche, 0 saveData');
+console.log('OK 4 après le 1er contrôle : traite / allaitantes / attendue, carte des attendues avec l\'action, fiche ouverte sans écriture.');
 
 // ================================================================ 5. export Excel
 await page.evaluate(() => { jeu(true); ouvrirPage(); window.__export = null;
@@ -144,11 +143,12 @@ await page.waitForFunction(() => window.__export);
 const ex = await page.evaluate(() => ({ e: window.__export, f: window.__feuilles }));
 const rows = ex.f[0].rows;
 check(/^brebis-a-regulariser_2027_\d{4}-\d{2}-\d{2}\.xlsx$/.test(ex.e.nom) && /spreadsheetml/.test(ex.e.mime), 'nom et type du fichier : ' + JSON.stringify(ex.e));
-check(rows[0].join('|') === 'N°|Âge (ans)|Groupe|Détail' && rows.length === 1 + 22 + 4 + 2, 'export : en-tête + une ligne par brebis active (22 + 4 + 2) : ' + rows.length);
-check(rows.filter(r => r[2] === 'À régulariser').length === 22 && rows.filter(r => /sans contrôle laitier/.test(r[3])).length === 3 && rows.filter(r => /incohérence/.test(r[3])).length === 1 && new Set(rows.slice(1).map(r => r[0])).size === 28, 'une ligne par brebis, signaux dans le détail');
-check(rows.find(r => r[0] === '00400')[3] === 'sans contrôle laitier : mise bas le 10-11-2026 · attendue à la traite', 'détail de la brebis 00400 : ' + rows.find(r => r[0] === '00400'));
+check(rows[0].join('|') === 'N°|Âge (ans)|Groupe|Détail' && rows.length === 1 + 28, 'export : en-tête + une ligne par brebis active (28) : ' + rows.length);
+const parGroupe = {}; rows.slice(1).forEach(r => { parGroupe[r[2]] = (parGroupe[r[2]] || 0) + 1; });
+check(JSON.stringify(parGroupe) === JSON.stringify({ 'À régulariser': 22, 'Allaitante': 2, 'Attendue à la traite': 1, 'Traite': 1, 'Vide définitive': 2 }) && rows.filter(r => /incohérence/.test(r[3])).length === 1 && new Set(rows.slice(1).map(r => r[0])).size === 28, 'une ligne par brebis, dans son seul groupe : ' + JSON.stringify(parGroupe));
+check(rows.find(r => r[0] === '00400')[2] === 'Attendue à la traite', 'groupe de la brebis 00400 : ' + rows.find(r => r[0] === '00400'));
 check(await page.evaluate(() => window.__saves) === 0, 'aucun saveData');
-console.log('OK 5 export Excel : fichier daté, 28 lignes (une par brebis), détail « attendue à la traite », 0 écriture.');
+console.log('OK 5 export Excel : fichier daté, 28 lignes (une par brebis, dans son seul groupe), 0 écriture.');
 
 // ================================================================ 6. cas limites
 await page.evaluate(() => { DB.brebis = []; ouvrirPage(); });

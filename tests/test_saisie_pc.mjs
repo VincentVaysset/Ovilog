@@ -118,7 +118,6 @@ const ETATS_PC = [
   ['Carnet sanitaire', "render('sanitaire');"],
   ['Produits et délais', "render('produits-delais');"],
   ['Produits et délais · fiche produit (fenêtre)', "ouvrirFicheProduitModal({ categorieKey: 'antibiotiques' });"],
-  ['Carnet · nouveau produit (fenêtre)', "ouvrirModalNouveauProduitSanitaire({});"],
   ['Traitements sur 12 mois', "render('traitements-12-mois');"],
   ['Soins sans indicateur bio', "render('soins-sans-bio');"],
   ['Sous délai d\'attente', "render('sous-delai');"],

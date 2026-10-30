@@ -43,7 +43,6 @@ const ECRANS = [
   ['Fenêtre Qualité', `render('qualite'); openQualiteSheet(null)`, ['#qs-listeria .opt-btn[data-val="negatif"]']],
   ['Fenêtre Pénalité', `openPenaliteSheet(null, '2026-11', function () {})`, ['.cause-opt[data-val="listeria"]']],
   ['Fenêtre Retrait de lot', `ouvrirModalRetraitLot({ id: 'l1', nom: 'Lot test', membres: [EID(101)] }, EID(101), function () {})`, ['.motif-retrait[data-val="Malade"]']],
-  ['Fenêtre Nouveau produit', `ouvrirModalNouveauProduitSanitaire({ onCreated: function () {} })`, ['.nouveau-produit-cat-opt[data-val="antibiotiques"]']],
 ];
 const mesure = () => [...document.querySelectorAll('.opt-btn')].filter(b => b.offsetParent !== null).map(b => {
   const s = getComputedStyle(b), r = b.getBoundingClientRect(), p = (b.parentElement || b).getBoundingClientRect();

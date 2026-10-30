@@ -113,15 +113,15 @@ console.log('OK 4 cases à cocher : barre de sélection (compteur), sélection c
 await ouvrir(true);
 const carte = await page.evaluate(() => ({ lignes: [...document.querySelectorAll('#carte-sans-controle-laitier .pc-li')].map(l => [...l.children].map(c => c.textContent.replace(/\s+/g, ' ').trim()).join(' ')), lien: document.getElementById('btn-cl-voir-regulariser').textContent }));
 check(carte.lignes.length === 2 && /n°00200\s*mise bas le 20\/11 · 1 agneau attendue à la traite/.test(carte.lignes[0]) && /n°00201\s*mise bas le 01\/12 · 1 agneau pas encore attendue \(1 agneau non réglé\)/.test(carte.lignes[1]), 'carte : signal fort en tête : ' + JSON.stringify(carte.lignes));
-const memes = await page.evaluate(() => { const a = brebisMiseBasSansControleLaitier(DB.campagneDebut).liste.map(l => l.eid).join(); bilanCampagneTab = 'incoherences'; render('bilan-campagne'); const b = [...document.querySelectorAll('#carte-sans-controle-laitier .pc-li')].length; const kpi = document.querySelectorAll('#pc-regulariser .pc-kpis .brd-kpi-v')[4].textContent; render('controle-laitier'); return { n: a.split(',').length, b, kpi }; });
-check(memes.n === 2 && memes.b === 2 && memes.kpi === '2', 'même résultat dans Brebis à régulariser (2 lignes, indicateur 2) : ' + JSON.stringify(memes));
+const memes = await page.evaluate(() => { const a = brebisMiseBasSansControleLaitier(DB.campagneDebut).liste.map(l => l.eid).sort().join(); bilanCampagneTab = 'incoherences'; render('bilan-campagne'); const G = bilanARegulariserData().groupes; const b = G.attendues.concat(G.allaitantes).map(x => x.eid).sort().join(); const lignes = document.querySelectorAll('#pc-carte-attendues .pc-li').length; render('controle-laitier'); return { n: a.split(',').length, memes: a === b, lignes }; });
+check(memes.n === 2 && memes.memes && memes.lignes === 1, 'même résultat dans Brebis à régulariser (attendue à la traite + allaitante) : ' + JSON.stringify(memes));
 await page.click('#carte-sans-controle-laitier .pc-li >> nth=0');
 check(await page.evaluate(() => currentView === 'detail' && detailOrigin === 'controle-laitier' && window.__saves === 0), '« Ouvrir la fiche » : fiche de la brebis, retour prévu vers Contrôle laitier, aucune écriture');
 await page.click('#btn-back').catch(() => {});
 await ouvrir(true);
 await page.click('#btn-cl-voir-regulariser');
 check(await page.evaluate(() => bilanCampagneTab === 'incoherences' && !!document.getElementById('pc-regulariser')), 'lien vers Brebis à régulariser');
-console.log('OK 5 carte « mises bas sans contrôle laitier » : 2 brebis (signal fort en tête), identique à Brebis à régulariser (même fonction), « Ouvrir la fiche » sans écriture, lien vers Brebis à régulariser.');
+console.log('OK 5 carte « mises bas sans contrôle laitier » : 2 brebis (signal fort en tête), mêmes brebis dans Brebis à régulariser (Attendues à la traite / Allaitantes), « Ouvrir la fiche » sans écriture, lien vers Brebis à régulariser.');
 
 // ================================================================ 6. exports qui suivent les filtres
 await ouvrir(true);

@@ -1,6 +1,6 @@
 /* Refonte Paramètres, partie 0 : structure. PC : 5 onglets dans l'ordre Exploitation, Campagne, Listes, Imports, Sauvegarde, chacun avec un titre et une ligne d'explication.
    Mobile : plus d'onglets, un écran d'arrivée à 5 rubriques (Exploitation, Campagne, Listes, Lecteur, Sauvegarde ; pas d'Imports) avec un résumé chacune, qui ouvrent chacune leur écran avec retour
-   (flèche de l'en-tête) ; état de synchro et version en pied ; retour d'un sous-écran (Gérer les produits) sur la bonne rubrique ; le menu rouvre toujours l'écran d'arrivée. saveData REMPLACÉ. */
+   (flèche de l'en-tête) ; état de synchro et version en pied ; retour d'un sous-écran (Produits et délais) sur la bonne rubrique ; le menu rouvre toujours l'écran d'arrivée. saveData REMPLACÉ. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
@@ -45,7 +45,7 @@ const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? docume
   await page.evaluate(() => render('parametres'));
   check(await page.evaluate(() => !document.querySelector('.tab-bar')), 'mobile : plus d\'onglets');
   eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Lecteur', 'Sauvegarde'], 'mobile : 5 rubriques (dont Lecteur), pas d\'Imports');
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-resume')].map(e => e.textContent)), ['Exploitation B · cheptel 00000001', 'Campagne 2027 · réglages de reproduction', '6 listes · acheteurs, causes de mortalité…', 'À régler dans l\'appli du téléphone', 'Aucune sauvegarde vérifiée sur cet appareil'], 'résumés des rubriques');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-resume')].map(e => e.textContent)), ['Exploitation B · cheptel 00000001', 'Campagne 2027 · réglages de reproduction', '8 listes · acheteurs, causes de mortalité…', 'À régler dans l\'appli du téléphone', 'Aucune sauvegarde vérifiée sur cet appareil'], 'résumés des rubriques');
   check(/Synchronisation|Connexion|Hors ligne/.test(await txt(page, '#prm-accueil-sync')) && /Version .* · les imports de fichiers se font sur PC/.test(await txt(page, '.prm-pied')), 'pied : état de synchro + version : ' + await txt(page, '.prm-pied'));
   check(await page.evaluate(() => !document.getElementById('btn-back').classList.contains('hidden') === false && !document.getElementById('btn-menu').classList.contains('hidden')), 'écran d\'arrivée : menu visible, pas de flèche de retour');
   // une rubrique + retour
@@ -57,11 +57,12 @@ const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? docume
     await page.click('#btn-back');
     check(await page.evaluate(() => !!document.querySelector('.prm-rub')) && await txt(page, '#page-title') === 'Paramètres', 'retour à l\'écran d\'arrivée depuis ' + cle);
   }
-  // sous-écran (Gérer les produits) : retour sur la rubrique Listes
+  // sous-écran (Produits et délais, ouvert depuis la carte « Produits sanitaires ») : retour sur la rubrique Listes
   await page.click('.prm-rub[data-rub="listes"]');
   await page.click('#btn-gerer-produits');
+  check(await page.evaluate(() => currentView === 'produits-delais'), 'la carte « Produits sanitaires » ouvre « Produits et délais » (seul écran de création des produits)');
   await page.click('#btn-back');
-  eq(await txt(page, '#page-title'), 'Paramètres · Listes', 'retour de « Gérer les produits » : rubrique Listes');
+  eq(await txt(page, '#page-title'), 'Paramètres · Listes', 'retour de « Produits et délais » : rubrique Listes');
   // le menu rouvre toujours l'écran d'arrivée
   await page.evaluate(() => { parametresRubrique = 'campagne'; render('home'); });
   await page.click('#btn-menu'); await page.click('.nav-item[data-view="parametres"]');

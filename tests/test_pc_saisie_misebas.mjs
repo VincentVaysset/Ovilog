@@ -72,7 +72,7 @@ check(/n°00101/.test(bar) && /3 an\(s\)/.test(bar), 'brebis trouvée par son n�
 check(await page.evaluate(() => !document.getElementById('mb-blocage') && document.querySelectorAll('#mb-alertes .mb-msg').length === 0), 'contrôles discrets : aucun message tant qu\'aucune règle ne se déclenche');
 check(await page.evaluate(() => window.__saves) === 0, 'rien n\'est enregistré tant qu\'on ne valide pas');
 const entetes = await page.evaluate(() => [...document.querySelectorAll('#mb-table-agneaux th')].map(t => t.textContent.trim()));
-check(entetes.slice(0, 5).join() === 'Agneau,EID,Sexe,Mort-né,Adoption', 'tableau des agneaux : ' + entetes.join());
+check(entetes.slice(0, 5).join() === 'Agneau,EID,Sexe,Mort-né,Adoption / cause', 'tableau des agneaux : ' + entetes.join());
 check(await page.evaluate(() => document.querySelectorAll('#lamb-list-rapide tr').length) === 1, 'un agneau à saisir au départ');
 const sexe = async (i, v) => page.click(`.sexe-opt-rapide[data-id="${i}"][data-val="${v}"]`);
 await sexe(0, 'Mâle'); await page.click('#add-lamb-rapide'); await sexe(1, 'Femelle');

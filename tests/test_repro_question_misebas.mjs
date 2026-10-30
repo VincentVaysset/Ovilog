@@ -40,6 +40,13 @@ eq(r1, { 130: 'Q:IA/MN', 143: 'Q:IA/MN', 144: 'IA', 152: 'IA', 153: 'Q:IA/RE/MN'
 const r2 = {}; for (const j of [120, 148, 156, 165]) r2[j] = await situ(page, 7, j);
 eq(r2, { 120: 'Q:EP/MN', 148: 'EP', 156: 'Q:EP/RE/MN', 165: 'RE' }, 'lot éponge : EP au lieu de IA');
 eq([await situ(page, 8, 148), await situ(page, 8, 130)], ['MN', 'MN'], 'brebis hors lot : MN, sans question');
+// lot SUPPRIMÉ dont l'évènement est resté sur la fiche (ex. membre gardé à cause d'une mise bas de test) : ni question, ni code d'office, comme le badge
+// de la fiche (dernierModeReproValide) ; un évènement saisi sans lot compte toujours
+eq(await page.evaluate(() => { const b = DB.brebis[5]; const s0 = situationReproMiseBas(b, J(130)), ancien = DB.lots; DB.lots = DB.lots.filter(l => l.id !== 'LIA');
+  const s1 = situationReproMiseBas(b, J(130)), s2 = situationReproMiseBas(b, J(148)), badge = codeReproActuel(b, null, false).code;
+  b.modesRepro.push({ date: '2026-10-20', mode: 'IA', campagne: 2026 }); const s3 = situationReproMiseBas(b, J(148)); b.modesRepro.pop(); DB.lots = ancien;
+  return [s0.question ? 'Q' : s0.code, s1.question ? 'Q' : s1.code, s2.code, badge, s3.code]; }),
+  ['Q', 'MN', 'MN', 'MN', 'IA'], 'lot supprimé : plus de question ni d\'IA d\'office (badge et question d\'accord) ; IA saisie sans lot : comptée');
 console.log('OK 1 règle aux bornes par défaut : question avant G min et entre G max et R min ; IA/EP et RE d\'office ; hors lot MN.');
 
 // ================================================================ 2. bornes réglées par le compte (145-150 / 158-170), puis bornes qui se touchent

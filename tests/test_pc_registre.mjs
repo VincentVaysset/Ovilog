@@ -92,17 +92,21 @@ console.log('OK 3 onglets Mouvements (11 = 8 entrées + 2 ventes + 1 mort) et Ag
 // Le Sanitaire a gagné des colonnes (carnet sanitaire PC) : sa feuille Excel et son PDF sont comparés à part, colonne par colonne, par
 // test_export_sanitaire. Ici : les autres feuilles (Agnelage, Mouvements) et les autres PDF restent identiques à la référence ; pour le
 // Sanitaire on ne compare que le nom de fichier.
+// Mise à jour VOULUE de la référence (un seul nom par événement dans Mouvements : chantier « registre unifié ») :
+// OVILOG_MAJ_REF_REGISTRE=1 réécrit les exports de la référence, puis la différence est relue à la main (git diff).
+const MAJ_REF = process.env.OVILOG_MAJ_REF_REGISTRE === '1';
+const refOu = (cle, got) => { if (MAJ_REF) REF.exports[cle] = JSON.parse(JSON.stringify(got)); return REF.exports[cle]; };
 const sansSanitaire = cap => JSON.parse(JSON.stringify(cap)).map(c => c.t === 'xlsx' ? { ...c, s: c.s.filter(f => f.name !== 'Sanitaire') } : c);
 const pdfSanitaire = cap => cap.map(c => c.t === 'file' ? { nom: c.nom, mime: c.mime } : c);
 const capturer = async (declencheur) => { await page.evaluate(() => { window.__cap.length = 0; }); await declencheur(); await page.waitForFunction(() => window.__cap.some(c => c.t === 'file')); return page.evaluate(() => JSON.parse(JSON.stringify(window.__cap))); };
 // sans filtre
 for (const o of ['agnelage', 'mouvements', 'sanitaire']) { await ouvrirOnglet(o); await page.click('#btn-registre-reset'); }
 let got = await capturer(() => page.click('#btn-export-registre'));
-check(JSON.stringify(sansSanitaire(got)) === JSON.stringify(sansSanitaire(REF.exports.sans_filtre_xlsx)), 'export Excel sans filtre identique à la référence (feuilles Agnelage et Mouvements)');
+check(JSON.stringify(sansSanitaire(got)) === JSON.stringify(sansSanitaire(refOu('sans_filtre_xlsx', got))), 'export Excel sans filtre identique à la référence (feuilles Agnelage et Mouvements)');
 for (const o of ['agnelage', 'mouvements', 'sanitaire']) {
   await ouvrirOnglet(o);
   got = await capturer(() => page.click('#btn-export-registre-pdf'));
-  check(o === 'sanitaire' ? JSON.stringify(pdfSanitaire(got)) === JSON.stringify(pdfSanitaire(REF.exports['sans_filtre_pdf_' + o])) : JSON.stringify(got) === JSON.stringify(REF.exports['sans_filtre_pdf_' + o]), 'export PDF « ' + o + ' » sans filtre identique à la référence (contenu = arguments de la mise en page ; Sanitaire : nom de fichier, colonnes vérifiées par test_export_sanitaire)');
+  check(o === 'sanitaire' ? JSON.stringify(pdfSanitaire(got)) === JSON.stringify(pdfSanitaire(refOu('sans_filtre_pdf_' + o, got))) : JSON.stringify(got) === JSON.stringify(refOu('sans_filtre_pdf_' + o, got)), 'export PDF « ' + o + ' » sans filtre identique à la référence (contenu = arguments de la mise en page ; Sanitaire : nom de fichier, colonnes vérifiées par test_export_sanitaire)');
 }
 // avec filtres (posés sur chaque onglet depuis les listes déroulantes de la page PC)
 await ouvrirOnglet('agnelage'); await page.fill('#registre-filtre', '1');
@@ -113,12 +117,13 @@ await ouvrirOnglet('sanitaire');
 await page.selectOption('#pc-registre-selects select[data-col="categorie"]', 'Brebis'); await page.selectOption('#pc-registre-selects select[data-col="type"]', 'Traitement · Antibiotique'); await page.selectOption('#pc-registre-selects select[data-col="campagne"]', '2025');
 check(await page.evaluate(() => registreFiltre === '1'), 'le filtre numéro est partagé entre onglets (comportement existant)');
 got = await capturer(() => page.click('#btn-export-registre'));
-check(JSON.stringify(sansSanitaire(got)) === JSON.stringify(sansSanitaire(REF.exports.avec_filtres_xlsx)), 'export Excel avec filtres identique à la référence (feuilles Agnelage et Mouvements) : ' + JSON.stringify(got[0].s.map(x => x.rows.length)));
+check(JSON.stringify(sansSanitaire(got)) === JSON.stringify(sansSanitaire(refOu('avec_filtres_xlsx', got))), 'export Excel avec filtres identique à la référence (feuilles Agnelage et Mouvements) : ' + JSON.stringify(got[0].s.map(x => x.rows.length)));
 for (const o of ['agnelage', 'mouvements', 'sanitaire']) {
   await ouvrirOnglet(o);
   got = await capturer(() => page.click('#btn-export-registre-pdf'));
-  check(o === 'sanitaire' ? JSON.stringify(pdfSanitaire(got)) === JSON.stringify(pdfSanitaire(REF.exports['avec_filtres_pdf_' + o])) : JSON.stringify(got) === JSON.stringify(REF.exports['avec_filtres_pdf_' + o]), 'export PDF « ' + o + ' » avec filtres identique à la référence (octets, nom de fichier ; Sanitaire : nom de fichier)');
+  check(o === 'sanitaire' ? JSON.stringify(pdfSanitaire(got)) === JSON.stringify(pdfSanitaire(refOu('avec_filtres_pdf_' + o, got))) : JSON.stringify(got) === JSON.stringify(refOu('avec_filtres_pdf_' + o, got)), 'export PDF « ' + o + ' » avec filtres identique à la référence (octets, nom de fichier ; Sanitaire : nom de fichier)');
 }
+if (MAJ_REF) { (await import('fs')).writeFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'ref', 'cl_registre_mobile.json'), JSON.stringify(REF)); console.log('Référence des exports réécrite (à relire)'); }
 console.log('OK 4 exports identiques avant / après : Excel (3 onglets) et PDF (chaque onglet), sans filtre et avec filtres posés depuis la page PC — feuilles et octets comparés à la référence prise avant ce chantier.');
 
 // ================================================================ 5. lecture seule
