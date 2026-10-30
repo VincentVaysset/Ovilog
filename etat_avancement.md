@@ -37,6 +37,8 @@
 - **À faire par le propriétaire** : publier `firestore.rules` (exigence `email_verified`) dans la console Firebase QUAND l'ami aura vérifié son adresse (le propriétaire a vérifié la sienne). Pas avant : un compte non vérifié ne pourrait plus rien enregistrer.
 - **Séléphérol** : plus aucun soin d'office à la naissance, pour aucun compte. Le propriétaire doit recréer « Séléphérol » comme produit (Paramètres › Listes › Produits sanitaires + délais dans Carnet sanitaire › Produits et délais) et le saisir en soin collectif sur les agneaux. Ses anciens soins sont gardés.
 
+- **Paternité des IA (branche, non fusionné, 30/10/2026)** : orientation lait / viande, père connu ou inconnu, index ISOL (lait) et index viande (texte libre), saisie sur les fiches, import PC en deux listes (béliers du centre puis brebis avec le code du père), père reporté sur les agneaux, les agnelles gardées et les brebis après bascule. Détail dans `CLAUDE.md`. À tester sur de vrais fichiers du centre (titres de colonnes à ajuster dans `IA_IMPORT_ALIAS` / `IA_BELIER_ALIAS`) ; index viande à structurer plus tard (prolificité, amélioration bouchère).
+
 ## 4. En attente d'une décision du propriétaire
 
 - **Début de campagne réglable : FAIT sur la branche (non fusionné)** — les mois de la production laitière suivent le début réglé (`moisCampagne`, test `test_campagne_debut_mois`). L'ami trait de décembre à fin juillet : non concerné en pratique.

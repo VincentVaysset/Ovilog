@@ -316,5 +316,48 @@ for (const desktop of [false, true]) {
   await page.close();
 }
 
+// ================================================================ 5. deux listes reliées par le code du père : béliers (code, nom, index) puis brebis (code du père)
+{
+  const page = await ouvrir(true);
+  await page.evaluate(() => {
+    const fiche = (n, o) => Object.assign({ id: 'k' + n, eid: '2500000121' + String(n).padStart(5, '0'), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
+    const evt = () => ({ date: '2026-10-01', mode: 'IA', campagne: 2027, codeSieol: 1, lotId: 'lot1' });
+    DB.brebis = [301, 302, 303, 304, 305].map(n => fiche(n, { modesRepro: [evt()] }));
+    DB.agnelles = []; DB.beliers = [];
+    render('import-inseminations');
+  });
+  await page.waitForSelector('#import-beliers-file');
+  const csvBeliers = ['Code IA;Nom;N° officiel;Index ISOL;Index viande', '12345;Rex;00099900001;112,5;', '67890;Tom;;;bouch. 2', '01234;Zed;00099900003;98;', ';;;;'].join('\n');
+  const csvBrebis = ['N° brebis;Date IA;Orientation;Code IA du père',
+    '00012100301;01/10/2026;Lait;12345',          // Rex : nom, n° officiel et ISOL repris de la liste
+    '00012100302;01/10/2026;Viande;67890',        // Tom : index viande
+    '00012100303;01/10/2026;Lait;99999',          // code absent de la liste
+    '00012100304;01/10/2026;Lait;1234',           // zéro de tête perdu par Excel : Zed
+    '00012100305;01/10/2026;Lait;'].join('\n');   // pas de père : paternité inconnue
+  // sans liste des béliers : le code seul est gardé
+  await page.setInputFiles('#import-ia-file', { name: 'brebis.csv', mimeType: 'text/csv', buffer: Buffer.from(csvBrebis, 'utf-8') });
+  await page.waitForSelector('#import-ia-preview .pc-kpis');
+  eq(await page.evaluate(() => [...document.querySelectorAll('#import-ia-preview .pc-kpis .brd-kpi-v')].map(k => k.textContent)), ['5', '0', '0', '0'], 'sans liste des béliers : toutes les lignes lues, père = code seul');
+  // avec la liste (chargée APRÈS : l'aperçu se recalcule)
+  await page.setInputFiles('#import-beliers-file', { name: 'beliers.csv', mimeType: 'text/csv', buffer: Buffer.from(csvBeliers, 'utf-8') });
+  await page.waitForFunction(() => /3 béliers lus/.test(document.getElementById('import-beliers-etat').textContent));
+  eq(await page.evaluate(() => [...document.querySelectorAll('#import-ia-preview .pc-kpis .brd-kpi-v')].map(k => k.textContent)), ['4', '0', '0', '1'], 'avec la liste : 4 lignes reliées, 1 code absent de la liste');
+  check(/Père absent de la liste des béliers \(1\)/.test(await page.locator('#import-ia-preview').innerText()) && /code 99999/.test(await page.locator('#import-ia-preview').innerText()), 'le code absent est listé');
+  await page.click('#btn-confirm-import-ia');
+  await page.waitForTimeout(200);
+  const ia = await page.evaluate(() => DB.brebis.map(b => b.modesRepro[0].ia));
+  eq(ia[0], { orientation: 'lait', paternite: 'connue', source: 'import', pereCourt: '12345', pereNumero: '00099900001', pereNom: 'Rex', indexIsol: 112.5 }, '301 : père relié (nom, n° officiel, ISOL) par le code');
+  eq(ia[1], { orientation: 'viande', paternite: 'connue', source: 'import', pereCourt: '67890', pereNom: 'Tom', indexViande: 'bouch. 2' }, '302 : index viande relié');
+  eq(ia[2], undefined, '303 : code absent de la liste, rien écrit');
+  eq(ia[3], { orientation: 'lait', paternite: 'connue', source: 'import', pereCourt: '01234', pereNumero: '00099900003', pereNom: 'Zed', indexIsol: 98 }, '304 : zéro de tête perdu par Excel, père retrouvé (code de la liste gardé)');
+  eq(ia[4], { orientation: 'lait', paternite: 'inconnue', source: 'import' }, '305 : sans code = paternité inconnue');
+  // liste illisible
+  await page.setInputFiles('#import-beliers-file', { name: 'mauvais.csv', mimeType: 'text/csv', buffer: Buffer.from('Truc;Machin\n1;2', 'utf-8') });
+  await page.waitForFunction(() => !document.getElementById('import-beliers-err').classList.contains('hidden'));
+  check(/Aucune colonne « Code » reconnue/.test(await page.locator('#import-beliers-err').innerText()), 'liste des béliers illisible : message clair');
+  console.log('OK 5 deux listes reliées par le code du père (béliers puis brebis).');
+  await page.close();
+}
+
 await browser.close();
 console.log('OK test_ia_paternite');
