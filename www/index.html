@@ -4755,6 +4755,78 @@ const REPRO_CODE_SIEOL = { IA: 1, EP: 2, RE: 3, MN: 7 };
 // jamais la date de pose elle-même -- non conservée). Voir renderLotsPc.
 const EPONGE_DELAI_LUTTE_JOURS = 16;
 
+/* Paternité d'une IA (centre d'insémination) : rangée sur l'évènement modesRepro de la brebis / de l'agnelle, dans `entry.ia` (aucun catalogue de pères : le centre
+   propose des centaines de béliers, chaque IA porte donc sa propre copie du père et de ses index).
+   { orientation: 'lait' | 'viande', paternite: 'connue' | 'inconnue',
+     pereNumero (n° officiel, 11 chiffres), pereCourt (code court du centre, 5 chiffres mais jamais limité à 5), pereNom (facultatif),
+     indexIsol (lait : index ISOL, nombre), indexViande (viande : texte libre, les index prolificité / amélioration bouchère viendront plus tard), centre, source: 'saisie' | 'import' }.
+   Paternité inconnue : ni père ni index. Les champs inutiles ne sont pas écrits. Affichage et reprise sur l'agneau : voir paterniteIaPereTexte. */
+const IA_ORIENTATIONS = { lait: 'Lait', viande: 'Viande' };
+const IA_PATERNITES = { connue: 'Paternité connue', inconnue: 'Paternité inconnue' };
+const chiffresSeuls = v => String(v === null || v === undefined ? '' : v).replace(/[\s.\-]/g, '');
+function normaliserPaterniteIa(c) {
+  const orientation = c && c.orientation, paternite = c && c.paternite;
+  if (!IA_ORIENTATIONS[orientation]) return { erreur: 'Choisis l\'orientation de l\'IA : Lait ou Viande.' };
+  if (!IA_PATERNITES[paternite]) return { erreur: 'Choisis la paternité : connue ou inconnue.' };
+  const ia = { orientation, paternite };
+  const centre = String(c.centre || '').trim().slice(0, 60);
+  if (centre) ia.centre = centre;
+  if (c.source === 'import' || c.source === 'saisie') ia.source = c.source;
+  if (paternite === 'connue') {
+    const officiel = chiffresSeuls(c.pereNumero), court = chiffresSeuls(c.pereCourt);
+    if (!officiel && !court) return { erreur: 'Paternité connue : renseigne le n° officiel du père ou son code court.' };
+    if ((officiel && !/^\d{1,15}$/.test(officiel)) || (court && !/^\d{1,15}$/.test(court))) return { erreur: 'Le n° du père ne contient que des chiffres.' };
+    if (officiel) ia.pereNumero = officiel;
+    if (court) ia.pereCourt = court;
+    const nom = String(c.pereNom || '').trim().slice(0, 60);
+    if (nom) ia.pereNom = nom;
+    if (orientation === 'lait') {
+      const brut = String(c.indexIsol === null || c.indexIsol === undefined ? '' : c.indexIsol).trim().replace(',', '.');
+      if (brut !== '') {
+        if (!/^-?\d+(\.\d+)?$/.test(brut)) return { erreur: 'L\'index ISOL est un nombre (ex. 112 ou 0,84).' };
+        ia.indexIsol = parseFloat(brut);
+      }
+    } else {
+      const iv = String(c.indexViande || '').trim().slice(0, 120);
+      if (iv) ia.indexViande = iv;
+    }
+  }
+  return { ia };
+}
+// Père de l'IA en une ligne (texte brut, à échapper avant tout HTML) : « Nom · 000123 45678 » ; null si paternité inconnue ou absente.
+function paterniteIaPereTexte(ia) {
+  if (!ia || ia.paternite !== 'connue') return null;
+  const num = ia.pereNumero ? (/^\d{11}$/.test(ia.pereNumero) ? ia.pereNumero.slice(0, 6) + ' ' + ia.pereNumero.slice(6) : ia.pereNumero) : (ia.pereCourt || '');
+  const t = [ia.pereNom, num].filter(Boolean).join(' · ');
+  return t || null;
+}
+function paterniteIaIndexTexte(ia) {
+  if (!ia || ia.paternite !== 'connue') return null;
+  if (ia.orientation === 'lait' && ia.indexIsol !== undefined && ia.indexIsol !== null) return 'ISOL ' + String(ia.indexIsol).replace('.', ',');
+  if (ia.orientation === 'viande' && ia.indexViande) return ia.indexViande;
+  return null;
+}
+// IA / éponge sur laquelle porte la carte « Paternité de l'IA » d'une fiche : l'évènement Repro de la campagne (en cours ou à venir), à défaut le plus récent.
+function evenementIaDeFiche(animal) {
+  const e = dernierModeReproValide(animal);
+  if (e) return e;
+  const tous = (animal.modesRepro || []).filter(m => m && (m.mode === 'IA' || m.mode === 'EP') && m.date).sort((a, b) => a.date.localeCompare(b.date));
+  return tous.length ? tous[tous.length - 1] : null;
+}
+// Carte de la fiche (brebis ou agnelle) : seulement s'il y a une IA / éponge. Textes saisis ou importés : échappés.
+function paterniteIaCarteHtml(animal) {
+  const e = evenementIaDeFiche(animal);
+  if (!e) return '';
+  const ia = e.ia, pere = paterniteIaPereTexte(ia), idx = paterniteIaIndexTexte(ia);
+  const ligne = (lib, val) => `<div style="font-size:13px;margin-bottom:4px;">${lib} : <strong>${echapperHtml(val)}</strong></div>`;
+  const corps = ia
+    ? ligne('IA du ' + formatDateFr(e.date.slice(0, 10)), (e.mode === 'EP' ? 'après éponge · ' : '') + IA_ORIENTATIONS[ia.orientation] + ' · ' + (ia.paternite === 'connue' ? 'paternité connue' : 'paternité inconnue'))
+      + (pere ? ligne('Père', pere) : '') + (idx ? ligne('Index', idx) : '') + (ia.centre ? ligne('Centre', ia.centre) : '')
+    : `<div style="font-size:13px;color:var(--text-muted);margin-bottom:4px;">${e.mode === 'EP' ? 'Éponge' : 'IA'} du ${formatDateFr(e.date.slice(0, 10))} : père et index pas encore renseignés.</div>`;
+  return `<div class="card" id="carte-paternite-ia">${sectionHeaderHtml(ICON_SHEEP, 'green', 'Paternité de l\'IA')}${corps}
+    <button type="button" class="btn btn-secondary" id="btn-edit-paternite-ia" style="width:auto;padding:6px 14px;font-size:13px;margin-top:6px;">${ia ? 'Modifier' : 'Renseigner'}</button></div>`;
+}
+
 /* Code Repro actuellement pertinent pour un animal (brebis ou agnelle) sur
    la campagne en cours, et son style d'affichage (voir reproTagHtml) :
    - une mise bas déjà enregistrée cette campagne -> le code choisi/déduit à
@@ -6150,6 +6222,7 @@ let activeScanTarget = null;
 let editingAgnelleId = null;
 let addAgnelleOrigin = 'agnelles'; // écran vers lequel revenir après le formulaire add-agnelle : 'agnelles' (chantier de tri, historique) ou 'agnelle-detail' (nouvelle fiche, voir renderAgnelleDetail)
 let currentAgnelleId = null;
+let editPaterniteTarget = null; // { kind: 'brebis'|'agnelle', id } -- voir renderEditPaterniteIa
 let editReproTarget = null; // { kind: 'brebis'|'agnelle', id } -- voir renderEditRepro
 let agnelleDetailOrigin = 'agnelles-inventaire';
 let currentBelierId = null;
@@ -6336,6 +6409,10 @@ btnBack.onclick = () => {
   else if (currentView === 'edit-repro') {
     if (editReproTarget && editReproTarget.kind === 'agnelle') { currentAgnelleId = editReproTarget.id; render('agnelle-detail'); }
     else render('detail', editReproTarget ? editReproTarget.id : currentSheepId);
+  }
+  else if (currentView === 'edit-paternite-ia') {
+    if (editPaterniteTarget && editPaterniteTarget.kind === 'agnelle') { currentAgnelleId = editPaterniteTarget.id; render('agnelle-detail'); }
+    else render('detail', editPaterniteTarget ? editPaterniteTarget.id : currentSheepId);
   }
   else if (currentView === 'lot-search') render('lots');
   else if (currentView === 'mouvement-groupe') render('inventaire');
@@ -6631,6 +6708,7 @@ function render(view, sheepId) {
     else if (view === 'lot-repro-detail') renderLotReproDetail(currentLotId);
     else if (view === 'edit-lot') renderEditLot(currentLotId);
     else if (view === 'edit-repro') renderEditRepro();
+    else if (view === 'edit-paternite-ia') renderEditPaterniteIa();
     else if (view === 'lot-search') renderLotSearch(currentLotId);
     else if (view === 'mouvement-groupe') renderMouvementGroupe();
     else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
@@ -11465,6 +11543,7 @@ function renderDetail(id) {
   const reproTabHtml = `
     ${desktop ? '' : attendueTraiteBadge}
     ${reproStatutHtml}
+    ${paterniteIaCarteHtml(sheep)}
     <div class="row" style="margin-bottom:16px;">
       ${desktop ? '' : '<button class="btn btn-primary" id="btn-add-echo" style="flex:1;">+ Échographie</button>'}
       ${dejaMiseBasCampagne
@@ -11660,6 +11739,8 @@ function renderDetail(id) {
     saveData(DB);
     render('detail', sheep.id);
   };
+  const btnEditPaterniteIa = document.getElementById('btn-edit-paternite-ia');
+  if (btnEditPaterniteIa) btnEditPaterniteIa.onclick = () => { editPaterniteTarget = { kind: 'brebis', id: sheep.id }; render('edit-paternite-ia'); };
   const btnEditReproTag = document.getElementById('btn-edit-repro-tag');
   if (btnEditReproTag) btnEditReproTag.onclick = () => { editReproTarget = { kind: 'brebis', id: sheep.id }; render('edit-repro'); };
   const btnAddSanitaire = document.getElementById('btn-add-sanitaire');
@@ -15374,6 +15455,7 @@ function renderAgnelleDetail(id) {
       ${incoherenceSieolTravail(ag.numeroLongTravailSieol, ag.numeroCourtTravailSieol) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le numéro long et le numéro court ne correspondent pas entre eux.</div>` : ''}
       ${incoherenceAnneeSieolCourt(ag.numeroCourtTravailSieol, anneeNaissance(ag.eid)) ? `<div style="margin-top:8px;font-size:11.5px;color:var(--coral-fg);">⚠ Le chiffre d'année du numéro court ne correspond pas à l'année de naissance de cette agnelle (${anneeNaissance(ag.eid)}).</div>` : ''}
     </div>
+    ${paterniteIaCarteHtml(ag)}
     <div class="row" style="margin-bottom:16px;">
       <button class="btn btn-secondary" id="btn-edit-agnelle-fiche">Modifier</button>
       <button class="btn btn-secondary" id="btn-vendre-agnelle-fiche">Vendre</button>
@@ -15437,6 +15519,8 @@ function renderAgnelleDetail(id) {
   const btnAddMouvementAgnelle = document.getElementById('btn-add-mouvement-agnelle');
   if (btnAddMouvementAgnelle) btnAddMouvementAgnelle.onclick = () => { editAgnelleContext = null; render('add-mouvement-agnelle'); };
 
+  const btnEditPaterniteIaAg = document.getElementById('btn-edit-paternite-ia');
+  if (btnEditPaterniteIaAg) btnEditPaterniteIaAg.onclick = () => { editPaterniteTarget = { kind: 'agnelle', id: ag.id }; render('edit-paternite-ia'); };
   const btnEditReproTagAg = document.getElementById('btn-edit-repro-tag-ag');
   if (btnEditReproTagAg) btnEditReproTagAg.onclick = () => { editReproTarget = { kind: 'agnelle', id: ag.id }; render('edit-repro'); };
   const btnModifierNumSieolAg = document.getElementById('btn-modifier-numeros-travail-sieol-ag');
@@ -18578,6 +18662,69 @@ function renderEditRepro() {
       if (lotJournalise(lotOrigine)) ajouterEvenementLot(lotOrigine, 'retrait', [animal.eid], { motif: 'Évènement Repro supprimé depuis la fiche' });
       else lotOrigine.membres = lotOrigine.membres.filter(eid => cleanEid(eid) !== cleanEid(animal.eid));
     }
+    saveData(DB);
+    retour();
+  };
+}
+
+/* Paternité de l'IA d'une brebis / agnelle (saisie à la main ; l'import du fichier de l'inséminateur écrit le même bloc `ia`, voir normaliserPaterniteIa).
+   Un seul écran, mobile et PC, sans confirm() : « Enregistrer » ou retour. Marche aussi après la mise bas (le père reste à renseigner). */
+function renderEditPaterniteIa() {
+  const target = editPaterniteTarget;
+  const animal = target && target.kind === 'agnelle' ? (DB.agnelles || []).find(a => a.id === target.id) : (target ? findSheep(target.id) : null);
+  const entry = animal ? evenementIaDeFiche(animal) : null;
+  const retour = () => {
+    if (target && target.kind === 'agnelle') { currentAgnelleId = target.id; render('agnelle-detail'); }
+    else render('detail', target ? target.id : currentSheepId);
+  };
+  if (!entry) { retour(); return; }
+  pageTitle.textContent = 'Paternité de l\'IA';
+  const ia = entry.ia || {};
+  const etat = { orientation: ia.orientation || '', paternite: ia.paternite || '' };
+  const seg = (id, opts, val) => `<div class="pc-seg2" id="${id}" style="margin-bottom:12px;">${opts.map(([v, l]) => `<button type="button" class="opt-btn${val === v ? ' selected' : ''}" data-val="${v}">${l}</button>`).join('')}</div>`;
+  const val = v => v === undefined || v === null ? '' : echapperHtml(String(v));
+  app.innerHTML = `<div class="card">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">${entry.mode === 'EP' ? 'Éponge' : 'IA'} du ${formatDateFr(entry.date.slice(0, 10))} · n°${numeroVisuel(animal.eid)}</div>
+      <label>Orientation de l'IA</label>
+      ${seg('pia-orientation', [['lait', 'Lait'], ['viande', 'Viande']], etat.orientation)}
+      <label>Paternité</label>
+      ${seg('pia-paternite', [['connue', 'Connue'], ['inconnue', 'Inconnue']], etat.paternite)}
+      <div id="pia-pere">
+        <label for="pia-numero">N° officiel du père (11 chiffres)</label>
+        <input type="text" id="pia-numero" inputmode="numeric" autocomplete="off" value="${val(ia.pereNumero)}">
+        <label for="pia-court">Code court du centre <span class="pc-opt">(5 chiffres)</span></label>
+        <input type="text" id="pia-court" inputmode="numeric" autocomplete="off" value="${val(ia.pereCourt)}">
+        <label for="pia-nom">Nom du père <span class="pc-opt">(facultatif)</span></label>
+        <input type="text" id="pia-nom" autocomplete="off" value="${val(ia.pereNom)}">
+        <div id="pia-bloc-isol"><label for="pia-isol">Index ISOL</label><input type="text" id="pia-isol" inputmode="decimal" autocomplete="off" value="${val(ia.indexIsol)}"></div>
+        <div id="pia-bloc-viande"><label for="pia-viande">Index viande <span class="pc-opt">(texte libre)</span></label><input type="text" id="pia-viande" autocomplete="off" value="${val(ia.indexViande)}"></div>
+      </div>
+      <div id="err" class="error-box hidden"></div>
+      <div class="row" style="margin-top:12px;">
+        <button type="button" class="btn btn-secondary" id="btn-annuler-paternite-ia" style="flex:1;">Annuler</button>
+        <button type="button" class="btn btn-primary" id="btn-save-paternite-ia" style="flex:1;">Enregistrer</button>
+      </div>
+    </div>`;
+  const majVisibilite = () => {
+    document.getElementById('pia-pere').classList.toggle('hidden', etat.paternite !== 'connue');
+    document.getElementById('pia-bloc-isol').classList.toggle('hidden', etat.orientation !== 'lait');
+    document.getElementById('pia-bloc-viande').classList.toggle('hidden', etat.orientation === 'lait');
+  };
+  majVisibilite();
+  [['pia-orientation', 'orientation'], ['pia-paternite', 'paternite']].forEach(([id, cle]) => {
+    document.querySelectorAll('#' + id + ' .opt-btn').forEach(b => { b.onclick = () => {
+      etat[cle] = b.dataset.val;
+      document.querySelectorAll('#' + id + ' .opt-btn').forEach(x => x.classList.toggle('selected', x === b));
+      majVisibilite();
+    }; });
+  });
+  document.getElementById('btn-annuler-paternite-ia').onclick = retour;
+  document.getElementById('btn-save-paternite-ia').onclick = () => {
+    const err = document.getElementById('err');
+    const r = normaliserPaterniteIa({ orientation: etat.orientation, paternite: etat.paternite, pereNumero: document.getElementById('pia-numero').value, pereCourt: document.getElementById('pia-court').value,
+      pereNom: document.getElementById('pia-nom').value, indexIsol: document.getElementById('pia-isol').value, indexViande: document.getElementById('pia-viande').value, centre: ia.centre, source: 'saisie' });
+    if (r.erreur) { err.textContent = r.erreur; err.classList.remove('hidden'); return; }
+    entry.ia = r.ia;
     saveData(DB);
     retour();
   };
