@@ -263,11 +263,17 @@ await page2.evaluate(() => {
 });
 await page2.waitForTimeout(500);
 async function ouvrirCampagne() { await page2.evaluate(() => { parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; prmMaintenanceOuvert = true; render('parametres'); }); await page2.waitForSelector('#btn-nettoyer-registre', { timeout: 5000 }); }
+// Ouvre l'écran puis clique « Nettoyer le registre » ; si l'écran est redessiné entre les deux (synchro du compte de test, vu sur GitHub), on rouvre et on réessaie
+async function ouvrirEtNettoyer() {
+  for (let essai = 1; ; essai++) {
+    await ouvrirCampagne();
+    try { await page2.click('#btn-nettoyer-registre', { timeout: 5000 }); return; } catch (e) { if (essai >= 3) throw e; }
+  }
+}
 async function statutNettoyage() { return await page2.evaluate(() => (document.getElementById('nettoyage-registre-status') || {}).textContent || ''); }
 // J1. annulation : rien n'est modifié, bouton non bloqué, verrou libéré
 await page2.evaluate(() => { window.__mode = 'cancel'; });
-await ouvrirCampagne();
-await page2.click('#btn-nettoyer-registre');
+await ouvrirEtNettoyer();
 await page2.waitForFunction(() => /annulé/.test((document.getElementById('nettoyage-registre-status') || {}).textContent || ''), null, { timeout: 10000 });
 let etat = await page2.evaluate(() => ({ restantes: DB.brebis.map(s => s.id), registre: Object.keys(DB.registre.brebis), verrou: nettoyageRegistreEnCours, desactive: document.getElementById('btn-nettoyer-registre').disabled }));
 check(etat.restantes.length === 1 && etat.registre.length === 0, 'nettoyage annulé : aucune fiche ne doit être archivée/retirée, obtenu ' + JSON.stringify(etat));
@@ -276,16 +282,14 @@ check(/Rien n'a été modifié/.test(await statutNettoyage()), 'message clair at
 console.log('OK J1: nettoyage annulé -> fiches intactes, registre intact, verrou libéré, bouton réactivé, message "' + (await statutNettoyage()) + '".');
 // J2. échec de relecture : idem
 await page2.evaluate(() => { window.__mode = 'sizeMismatch'; });
-await ouvrirCampagne();
-await page2.click('#btn-nettoyer-registre');
+await ouvrirEtNettoyer();
 await page2.waitForFunction(() => /annulé/.test((document.getElementById('nettoyage-registre-status') || {}).textContent || '') && /taille relue/.test(document.getElementById('nettoyage-registre-status').textContent), null, { timeout: 10000 });
 etat = await page2.evaluate(() => ({ restantes: DB.brebis.length, verrou: nettoyageRegistreEnCours }));
 check(etat.restantes === 1 && etat.verrou === false, 'nettoyage : relecture incorrecte doit bloquer sans rien modifier');
 console.log('OK J2: relecture incorrecte -> nettoyage bloqué, rien modifié, verrou libéré.');
 // J3. succès : va au bout
 await page2.evaluate(() => { window.__mode = 'ok'; window.__saveAsCalls = []; });
-await ouvrirCampagne();
-await page2.click('#btn-nettoyer-registre');
+await ouvrirEtNettoyer();
 await page2.waitForFunction(() => /archivée/.test((document.getElementById('nettoyage-registre-status') || {}).textContent || ''), null, { timeout: 15000 });
 etat = await page2.evaluate(() => ({ restantes: DB.brebis.length, registre: Object.keys(DB.registre.brebis).length, appels: window.__saveAsCalls.length, verrou: nettoyageRegistreEnCours }));
 check(etat.restantes === 0 && etat.registre === 1 && etat.appels === 1 && etat.verrou === false, 'nettoyage réussi attendu, obtenu ' + JSON.stringify(etat));
