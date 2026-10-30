@@ -57,7 +57,7 @@ for (const bureau of [false, true]) {
   await page.selectOption('select.registre-col-filter[data-col="type"]', 'Naissance');
   check(/Naissance · femelle/.test(await page.evaluate(() => document.getElementById('app').innerText)), nom + ' : écran : « Naissance · femelle » affiché');
   // ================================================================ 4. compteurs ; données jamais converties
-  eq(await page.evaluate(() => { const m = registreIndicateursPc().mouvements; return [m.total, m.entrees, m.ventes, m.morts]; }), [13, 7, 1, 3], nom + ' : compteurs inchangés (types d\'origine)');
+  eq(await page.evaluate(() => { const m = registreIndicateursPc().mouvements; return [m.total, m.entrees, m.ventes, m.morts]; }), [13, 8, 2, 3], nom + ' : compteurs = regroupements du menu Type (naissance d\'agnelle en entrée, vente d\'agneau en vente)');
   check(await page.evaluate(() => JSON.stringify(DB) === window.__avant), nom + ' : rien n\'est écrit (affichage seul)');
   console.log('OK ' + nom + ' : registre Mouvements unifié (types, catégories, sexe, compteurs, lecture seule).');
   await page.context().close();
