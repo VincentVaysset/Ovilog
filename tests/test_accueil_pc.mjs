@@ -63,7 +63,7 @@ eq(toutes.filter(m => m.type === 'Entrée').map(m => [m.date, m.categorie, m.det
 eq(D.lait.points.map(p => [p.libelle, p.actuel, p.precedent, p.nbBrebis]), [['1er contrôle', 2.28, 2.21, 396], ['2e contrôle', 2.19, 2.16, 388], ['3e contrôle', 1.8, 1.71, 371]], 'contrôle laitier : campagne en cours et précédente');
 eq([D.attendues.total, D.attendues.liste.map(a => [a.motif, a.date])], [3, [['Agneau vendu', '2026-11-27'], ['Agneau vendu', '2026-11-25'], ['Agneau mort', '2026-11-24']]], 'attendues à la traite : motif et date de la dernière sortie');
 eq(D.mortalite.brebis, { pertes: 3, presentes: 9, base: 12, causes: [['Mammite', 2], ['Non renseignée', 1]] }, 'mortalité brebis : base = présentes + pertes ; cause vide = « Non renseignée »');
-eq(D.mortalite.agneaux, { pertes: 3, nes: 7, mortNes: 1, causes: [['Mort-nés', 1], ['Non renseignée', 1], ['Pneumonie', 1]] }, 'mortalité agneaux : base = agneaux nés ; « Mort-nés » sur sa ligne ; cause par défaut « Mort » = « Non renseignée »');
+eq(D.mortalite.agneaux, { pertes: 3, nes: 7, mortNes: 1, avortons: 0, causes: [['Mort-nés', 1], ['Non renseignée', 1], ['Pneumonie', 1]] }, 'mortalité agneaux : base = agneaux nés ; « Mort-nés » sur sa ligne ; cause par défaut « Mort » = « Non renseignée »');
 console.log('OK données de l\'accueil PC : tuiles, mises bas, reproduction, mouvements, contrôle laitier, attendues, mortalité.');
 
 // ================================================================ 2. affichage

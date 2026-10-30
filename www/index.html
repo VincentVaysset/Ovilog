@@ -1237,6 +1237,9 @@
   .mn-page #zone-alerte-vente-delai .brd-alert { margin-top: 0; }
   .mn-barre { position: sticky; bottom: 0; z-index: 5; display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; margin: 0 -16px -16px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--ch-fond); border-top: 1px solid var(--ch-bord); }
   .mn-barre .btn { margin: 0; height: 48px; }
+  .mb-partie-mb[hidden] { display: none !important; }
+  .avo-traite-choix { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 360px; }
+  .avo-traite-choix .btn { margin: 0; }
   .mn-barre.une { grid-template-columns: 1fr; }
   /* Saisie des mises bas (mobile) : confirmation verte, blocage rouge, alerte ambre, agneaux, dernières saisies */
   .mb-msg, .msg-charte { border-left: 5px solid var(--mb-trait); background: var(--mb-fond); color: var(--mb-texte); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; margin-bottom: 12px; }
@@ -5766,7 +5769,8 @@ function bilanReproductionCampagne(N) {
     if (dansCohorte) g.misesBasCohorte++;
     else { misesBasHorsCohorte++; horsCohorteBrebis.add(s.eid); signaler('mise-bas-hors-cohorte', 'Mise bas d\'une brebis absente de la population de départ (entrée après le démarrage de la campagne) : comptée dans les totaux, pas dans la fertilité', s); }
     const lambs = Array.isArray(ag.lambs) ? ag.lambs : [];
-    if (lambs.length === 0) { g.sansAgneau++; signaler('mise-bas-sans-agneau', 'Mise bas sans aucun agneau enregistré', s); }
+    if (ag.avortement) { /* avortement : ses avortons comptent dans les nés et les mort-nés, jamais dans les portées */ }
+    else if (lambs.length === 0) { g.sansAgneau++; signaler('mise-bas-sans-agneau', 'Mise bas sans aucun agneau enregistré', s); }
     else if (lambs.length === 1) g.portees.simples++;
     else if (lambs.length === 2) g.portees.doubles++;
     else if (lambs.length === 3) g.portees.triples++;
@@ -7258,13 +7262,14 @@ function mortaliteSanitaireData() {
   // ou mort après naissance (cause de la sortie « Mort », l.statutFinal).
   // Chaque perte compte une seule fois : un mort-né avec cause va sous sa
   // cause, un mort-né sans cause reste dans « Mort-nés » (agneauxMortNesSansCause).
-  let agneauxMortNes = 0, agneauxMortNesSansCause = 0, agneauxMortsApresNaissance = 0;
+  let agneauxMortNes = 0, agneauxMortNesSansCause = 0, agneauxMortsApresNaissance = 0, agneauxAvortons = 0;   // avortons : mort-nés d'un avortement, comptés à part (« Avortons »)
   const causesAgneaux = {};   // cause du mort-né, ou de la sortie « Mort » de l'agneau (la cause par défaut « Mort » est affichée « Non renseignée » par l'accueil PC)
   DB.brebis.forEach(s => {
     (s.agnelages || []).forEach(a => {
       if (DB.campagneDebut != null && a.campagne !== DB.campagneDebut) return;
       a.lambs.forEach(l => {
-        if (l.sexe === 'Mort-né') {
+        if (estAvorton(l)) { agneauxMortNes++; agneauxAvortons++; }
+        else if (l.sexe === 'Mort-né') {
           agneauxMortNes++;
           const cause = String(l.cause || '').trim();
           if (cause) causesAgneaux[cause] = (causesAgneaux[cause] || 0) + 1;
@@ -7283,7 +7288,7 @@ function mortaliteSanitaireData() {
 
   return {
     brebisMortesCount, causesCount, beliersMortsCount,
-    agneauxMorts, agneauxMortNes, agneauxMortNesSansCause, agneauxMortsApresNaissance, causesAgneaux
+    agneauxMorts, agneauxMortNes, agneauxMortNesSansCause, agneauxMortsApresNaissance, agneauxAvortons, causesAgneaux
   };
 }
 
@@ -7401,7 +7406,7 @@ function accueilDesktopHtml() {
     <div class="info">Base : ${mBr.presentes} brebis présentes + ${mBr.pertes} perte${mBr.pertes > 1 ? 's' : ''} = ${mBr.base}.</div>
     <div class="sec">Causes</div>${barresCauses(mBr.causes, 'c-vert')}</div>`;
   const cardMortAgneaux = `<div class="card apc-carte cliquable" id="bloc-mortalite-agneaux"><div class="ch"><h3>Mortalité agneaux</h3><span class="pill p-a">${mAg.pertes} perte${mAg.pertes > 1 ? 's' : ''} · ${pct1(mAg.pertes, mAg.nes)} %</span></div>
-    <div class="info">Base : ${mAg.nes} agneaux nés (dont ${mAg.mortNes} mort-né${mAg.mortNes > 1 ? 's' : ''}).</div>
+    <div class="info">Base : ${mAg.nes} agneaux nés (dont ${mAg.mortNes} mort-né${mAg.mortNes > 1 ? 's' : ''}${mAg.avortons ? ', dont ' + mAg.avortons + ' avorton' + (mAg.avortons > 1 ? 's' : '') : ''}).</div>
     <div class="sec">Causes</div>${barresCauses(mAg.causes, 'c-ambre')}</div>`;
 
   return `<div class="apc">
@@ -7432,7 +7437,7 @@ function accueilPcData() {
     attendues: { total: attendues.length, liste: motifs },
     mortalite: {
       brebis: { pertes: mort.brebisMortesCount, presentes: s.total, base: s.total + mort.brebisMortesCount, causes: causesTriees(mort.causesCount) },
-      agneaux: { pertes: mort.agneauxMorts, nes: s.totalAgneaux, mortNes: mort.agneauxMortNes, causes: (mort.agneauxMortNesSansCause > 0 ? [['Mort-nés', mort.agneauxMortNesSansCause]] : []).concat(causesTriees(mort.causesAgneaux)) }
+      agneaux: { pertes: mort.agneauxMorts, nes: s.totalAgneaux, mortNes: mort.agneauxMortNes, avortons: mort.agneauxAvortons, causes: (mort.agneauxMortNesSansCause > 0 ? [['Mort-nés', mort.agneauxMortNesSansCause]] : []).concat(mort.agneauxAvortons > 0 ? [['Avortons', mort.agneauxAvortons]] : []).concat(causesTriees(mort.causesAgneaux)) }
     }
   };
 }
@@ -11411,7 +11416,7 @@ function carriereCampagnesHtml(sources) {
     const agnelagesCampagne = agnelages.filter(a => a.campagne === campagne).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     const reproRows = agnelagesCampagne.map(a => `
       <div class="row-item">
-        <span>${formatDateFr(a.date)} · ${a.lambs.length} agneau(x)</span>
+        <span>${formatDateFr(a.date)} · ${a.avortement ? resumeAgnelage(a) : a.lambs.length + ' agneau(x)'}</span>
         <span class="badge badge-muted">${libelleModeRepro(a.codeRepro || 'MN')}</span>
       </div>
     `);
@@ -11580,8 +11585,8 @@ function renderDetail(id) {
   // lecture seule (voir historiqueCampagnesHtml plus bas).
   const agnelageItemHtml = (a, avecNumero = true) => `
     <div class="content">
-      <div style="font-weight:600;margin-bottom:4px;">${a.lambs.length} agneau(x)</div>
-      ${a.lambs.map(l => `
+      <div style="font-weight:600;margin-bottom:4px;">${a.avortement ? resumeAgnelage(a) : a.lambs.length + ' agneau(x)'}</div>
+      ${a.avortement ? '' : a.lambs.map(l => `
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 0;">
           ${avecNumero && l.sexe !== 'Mort-né' ? `<span style="font-weight:600;font-size:13px;min-width:58px;">n°${l.eid ? numeroVisuel(l.eid) : '?'}</span>` : ''}
           <span class="badge ${l.sexe === 'Mâle' ? 'badge-blue' : l.sexe === 'Femelle' ? 'badge-amber' : 'badge-muted'}">${l.sexe}</span>
@@ -12648,12 +12653,18 @@ function renderAddAgnelage(sheepId) {
   let codeRepro = (existing && existing.codeRepro) ? existing.codeRepro : deduireCodeRepro(sheep, today);
   // Date hors des fenêtres d'un lot IA / éponge : code à CHOISIR (question, aucun choix par défaut) ; en édition, le code déjà fixé n'est pas reposé
   let situationRepro = (existing && existing.codeRepro) ? null : situationReproMiseBas(sheep, today);
+  // Avortement (voir construireAvortement) : choisi à la saisie ; en modification, seuls la date et le nombre d'avortons changent (pas de bascule mise bas ↔ avortement)
+  let avortement = !!(existing && existing.avortement), traiteAvo = null;
+  let nbAvortons = avortement ? existing.lambs.filter(estAvorton).length : '';
 
   app.innerHTML = `
     <div class="card">
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Mère — Brebis n°${numeroVisuel(sheep.eid)}</div>
-      <label>Date de naissance</label>
+      ${editing ? '' : modeMiseBasHtml(false)}
+      <label for="f-date">${avortement ? 'Date de l\'avortement' : 'Date de naissance'}</label>
       <input type="date" id="f-date" value="${today}" style="margin-bottom:16px;">
+      <div id="avo-zone" style="margin-bottom:14px;"></div>
+      <div class="mb-partie-mb"${avortement ? ' hidden' : ''}>
       <label>Repro</label>
       <div class="grid4" id="repro-code-list" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">
         <button type="button" class="opt-btn repro-code-opt" data-val="IA">IA</button>
@@ -12665,6 +12676,7 @@ function renderAddAgnelage(sheepId) {
       <div id="lamb-list"></div>
       <button type="button" class="btn btn-secondary" id="add-lamb" style="margin-bottom:14px;">+ Ajouter un agneau</button>
       ${ligneSoinsBouclageHtml()}
+      </div>
       <div id="err" class="error-box hidden"></div>
       <div id="agnelage-pertes"></div>
       <button class="btn btn-primary" id="btn-save-agnelage">${editing ? 'Enregistrer les modifications' : "Enregistrer l'agnelage"}</button>
@@ -12682,7 +12694,28 @@ function renderAddAgnelage(sheepId) {
   document.querySelectorAll('.repro-code-opt').forEach(b => {
     b.onclick = () => { codeRepro = b.dataset.val; updateReproCodeButtons(); };
   });
+  const majAvortement = () => {
+    const zoneAvo = document.getElementById('avo-zone');
+    document.querySelectorAll('.mb-partie-mb').forEach(el => { el.hidden = avortement; });
+    zoneAvo.innerHTML = avortement ? blocAvortementHtml(nbAvortons, traiteAvo, codeReproAvortement(sheep, document.getElementById('f-date').value), editing) : '';
+    zoneAvo.style.display = avortement ? '' : 'none';
+    if (!avortement) return;
+    document.getElementById('avo-nb').addEventListener('input', (e) => { nbAvortons = e.target.value; });
+    zoneAvo.querySelectorAll('.avo-traite-btn').forEach(b => { b.onclick = () => { traiteAvo = b.dataset.val === 'oui'; majAvortement(); document.getElementById('err').classList.add('hidden'); }; });
+  };
+  majAvortement();
+  document.querySelectorAll('.mb-mode-btn').forEach(b => {
+    b.onclick = () => {
+      avortement = b.dataset.val === 'avo';
+      document.querySelectorAll('.mb-mode-btn').forEach(x => x.classList.toggle('active', x === b));
+      document.querySelector('label[for="f-date"]').textContent = avortement ? 'Date de l\'avortement' : 'Date de naissance';
+      document.getElementById('err').classList.add('hidden');
+      majAvortement();
+    };
+  });
   document.getElementById('f-date').addEventListener('change', (e) => {
+    const lignRepro = document.getElementById('avo-repro');
+    if (lignRepro) lignRepro.textContent = 'Repro : ' + LIBELLE_CHOIX_REPRO[codeReproAvortement(sheep, e.target.value)] + ', posé d\'office.';
     situationRepro = situationReproMiseBas(sheep, e.target.value);
     codeRepro = situationRepro.question ? null : situationRepro.code;
     updateReproCodeButtons();
@@ -12784,7 +12817,7 @@ function renderAddAgnelage(sheepId) {
   }
   document.getElementById('add-lamb').onclick = addLamb;
 
-  if (existing) {
+  if (existing && !existing.avortement) {
     existing.lambs.forEach(l => {
       addLamb();
       const id = lambCount;
@@ -12823,12 +12856,30 @@ function renderAddAgnelage(sheepId) {
         }
       }
     });
-  } else {
+  } else if (!existing) {
     addLamb();
   }
 
   document.getElementById('btn-save-agnelage').onclick = () => {
     const err = document.getElementById('err');
+    if (avortement) {
+      const date = document.getElementById('f-date').value;
+      const r = construireAvortement(sheep, { date, nbAvortons, traite: editing ? existing.avortementTraite !== false : traiteAvo });
+      if (r.erreur) { err.textContent = r.erreur; err.classList.remove('hidden'); return; }
+      sheep.agnelages = sheep.agnelages || [];
+      if (editing) {
+        // modification : la mise bas garde ses autres champs (campagne, réponse de traite) ; la traite se règle ensuite par « Pas traite » / « Mise à la traite »
+        const a = r.agnelage;
+        sheep.agnelages[editContext.idx] = Object.assign(JSON.parse(JSON.stringify(existing)), { date: a.date, lambs: a.lambs, codeRepro: a.codeRepro, codeSieolRepro: a.codeSieolRepro });
+      } else {
+        appliquerTraiteAvortement(sheep, r.agnelage);
+        sheep.agnelages.push(r.agnelage);
+      }
+      editContext = null;
+      saveData(DB);
+      render('detail', sheep.id);
+      return;
+    }
     if (!codeRepro) {
       err.textContent = 'Choisissez le code Repro de cette mise bas (question ci-dessus).';
       err.classList.remove('hidden');
@@ -13802,6 +13853,8 @@ function misebasCampagneRows() {
       male: ag.lambs.filter(l => l.sexe === 'Mâle').length,
       femelle: ag.lambs.filter(l => l.sexe === 'Femelle').length,
       mortNe: ag.lambs.filter(l => l.sexe === 'Mort-né').length,
+      avortons: ag.lambs.filter(estAvorton).length,
+      avortement: !!ag.avortement,
       total: ag.lambs.length
     });
   });
@@ -13897,7 +13950,49 @@ function construireAgnelageMiseBas(sheep, saisie) {
   agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
   return { agnelage };
 }
+/* Avortement noté à la mise bas (saisie rapide mobile et PC, fiche brebis) : c'est LA mise bas de la campagne (une seule par campagne),
+   agnelage.avortement = true, ses avortons (nombre obligatoire) sont des mort-nés marqués avorton : ils comptent dans les agneaux nés,
+   les mort-nés (« dont avortons ») et la prolificité. Code Repro posé d'office, jamais demandé : avortement au plus tard G max jours
+   après l'IA / l'éponge du lot = IA (EP) réussie ; au-delà, retour ; hors lot, MN. Traite (question obligatoire, avortementTraite) :
+   oui = rien d'écrit (sans agneau à élever, elle est attendue à la traite) ; non = « Pas traite cette campagne », motif « Avortement ». */
+const MOTIF_AVORTEMENT = 'Avortement';
+const estAvorton = l => !!l && l.sexe === 'Mort-né' && l.avorton === true;
+function codeReproAvortement(sheep, dateISO) {
+  const s = situationReproMiseBas(sheep, dateISO);
+  if (!s.m) return 'MN';
+  return s.diff <= bornesRepro().gMax ? s.m.mode : 'RE';
+}
+function construireAvortement(sheep, saisie) {
+  const nb = Number(saisie.nbAvortons);
+  if (!Number.isInteger(nb) || nb < 1 || nb > 9) return { erreur: 'Indiquez le nombre d\'avortons (au moins 1).' };
+  if (saisie.traite !== true && saisie.traite !== false) return { erreur: 'Répondez à la question : sera-t-elle traite ?' };
+  const codeRepro = codeReproAvortement(sheep, saisie.date);
+  const lambs = Array.from({ length: nb }, () => ({ sexe: 'Mort-né', adopte: false, avorton: true }));
+  return { agnelage: { date: saisie.date, lambs, campagne: DB.campagneDebut, codeRepro, codeSieolRepro: REPRO_CODE_SIEOL[codeRepro], avortement: true, avortementTraite: saisie.traite } };
+}
+// Réponse « non » à la traite : marque « Pas traite cette campagne » au motif Avortement (motif ajouté à la liste s'il n'y est pas)
+function appliquerTraiteAvortement(sheep, agnelage) {
+  if (!agnelage || !agnelage.avortement || agnelage.avortementTraite !== false || agnelage.campagne !== DB.campagneDebut) return;
+  if (!Array.isArray(DB.motifsNonTraite)) DB.motifsNonTraite = [];
+  if (!DB.motifsNonTraite.includes(MOTIF_AVORTEMENT)) DB.motifsNonTraite.push(MOTIF_AVORTEMENT);
+  marquerNonTraite(sheep, MOTIF_AVORTEMENT);
+}
+// Bloc commun « Avortement » des trois saisies : nombre d'avortons, question de traite (pas posée en modification), code Repro posé d'office
+function blocAvortementHtml(nb, traite, codeRepro, edition) {
+  return `<div class="avo-bloc" id="avo-bloc">
+    <label for="avo-nb">Nombre d'avortons</label>
+    <input type="number" id="avo-nb" min="1" max="9" step="1" inputmode="numeric" value="${nb || ''}" placeholder="ex. 2" style="max-width:140px;">
+    ${edition ? '' : `<label style="margin-top:10px;">Sera-t-elle traite ?</label>
+    <div class="avo-traite-choix" role="group" aria-label="Sera-t-elle traite ?">${[['oui', 'Oui', true], ['non', 'Non', false]].map(([v, l, b]) => `<button type="button" class="btn ${traite === b ? 'btn-primary' : 'btn-secondary'} avo-traite-btn" data-val="${v}">${l}</button>`).join('')}</div>
+    <div class="info" id="avo-traite-info">${traite === true ? 'Elle passe dans les attendues à la traite.' : traite === false ? 'Marquée « Pas traite cette campagne », motif Avortement.' : ''}</div>`}
+    <div class="info" id="avo-repro">Repro : ${LIBELLE_CHOIX_REPRO[codeRepro] || codeRepro}, posé d'office.</div>
+  </div>`;
+}
+function modeMiseBasHtml(avortement) {
+  return `<div class="tab-bar" id="mb-mode" role="group" aria-label="Mise bas ou avortement" style="margin-bottom:12px;">${[['mb', 'Mise bas'], ['avo', 'Avortement']].map(([v, l]) => `<button type="button" class="tab-btn mb-mode-btn${(v === 'avo') === !!avortement ? ' active' : ''}" data-val="${v}">${l}</button>`).join('')}</div>`;
+}
 function enregistrerMiseBas(sheep, agnelage) {
+  appliquerTraiteAvortement(sheep, agnelage);
   reporterPereIaSurAgneaux(sheep, agnelage);
   sheep.agnelages = sheep.agnelages || [];
   appliquerSoinsBouclage(agnelage.lambs, agnelage.date);   // agneaux bouclés à la saisie : soins réglés par l'éleveur
@@ -13909,6 +14004,9 @@ function enregistrerMiseBas(sheep, agnelage) {
 function annulerMiseBas(sheepId, agnelageIdx) {
   const sheep = findSheep(sheepId);
   if (!sheep || !sheep.agnelages || !sheep.agnelages[agnelageIdx]) return false;
+  const ag = sheep.agnelages[agnelageIdx];
+  // avortement « pas traite » annulé : la marque Avortement qu'il a posée part avec lui (une marque à un autre motif reste)
+  if (ag.avortement && ag.avortementTraite === false && ag.campagne === DB.campagneDebut) { const m = marqueNonTraite(sheep); if (m && m.motif === MOTIF_AVORTEMENT) retirerNonTraite(sheep); }
   sheep.agnelages.splice(agnelageIdx, 1);
   saveData(DB);
   return true;
@@ -13916,6 +14014,7 @@ function annulerMiseBas(sheepId, agnelageIdx) {
 // « 1 mâle, 1 femelle mort-née » : résumé d'une mise bas (les morts-nés avec leur sexe quand il est connu)
 function resumeAgnelage(agnelage) {
   const l = agnelage.lambs || [], n = (f) => l.filter(f).length;
+  if (agnelage.avortement) { const a = n(estAvorton); return 'Avortement · ' + a + ' avorton' + (a > 1 ? 's' : ''); }
   const parts = [];
   const m = n(x => x.sexe === 'Mâle'), f = n(x => x.sexe === 'Femelle');
   if (m) parts.push(m + ' mâle' + (m > 1 ? 's' : ''));
@@ -13931,8 +14030,9 @@ function miseBasRapideStats(campagneRows) {
   const cb = campagneBilanChiffres(actives);
   const somme = cle => campagneRows.reduce((a, r) => a + r[cle], 0);
   const nes = somme('total');
-  const portees = { simples: campagneRows.filter(r => r.total === 1).length, doubles: campagneRows.filter(r => r.total === 2).length, triplesEtPlus: campagneRows.filter(r => r.total >= 3).length };
-  return { cb, misesBas: campagneRows.length, nes, males: somme('male'), femelles: somme('femelle'), mortNes: somme('mortNe'), prolificite: campagneRows.length > 0 ? nes / campagneRows.length : null, portees };
+  const nees = campagneRows.filter(r => !r.avortement);   // un avortement n'est pas une portée (simple, double…)
+  const portees = { simples: nees.filter(r => r.total === 1).length, doubles: nees.filter(r => r.total === 2).length, triplesEtPlus: nees.filter(r => r.total >= 3).length };
+  return { cb, misesBas: campagneRows.length, nes, males: somme('male'), femelles: somme('femelle'), mortNes: somme('mortNe'), avortons: somme('avortons'), prolificite: campagneRows.length > 0 ? nes / campagneRows.length : null, portees };
 }
 /* ---------- Saisie de mises bas (MOBILE) : maquette « Mise bas rapide » ----------
    Scan de la brebis, date, une carte par agneau (EID bippé, Mâle / Femelle en segmenté ; mort-né : pas d'EID, sexe facultatif ; adoption vers une brebis ACTIVE seulement ; soins au bouclage
@@ -13954,7 +14054,7 @@ function renderMiseBasRapide() {
   const ouvrirFormulaire = (sheep) => {
     currentSheep = sheep;
     const situation = situationReproMiseBas(sheep, jourAujourdhuiISO());   // hors des fenêtres d'un lot IA / éponge : code à choisir (question)
-    form = { date: jourAujourdhuiISO(), situation, codeRepro: situation.question ? null : situation.code, lambs: [nouvelAgneau()] };
+    form = { date: jourAujourdhuiISO(), situation, codeRepro: situation.question ? null : situation.code, lambs: [nouvelAgneau()], avortement: false, nbAvortons: '', traite: null };
   };
   function resetForm() { currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null; form = null; }
   const sexeLibelle = (l) => l.mortNe ? 'Mort-né' : (l.sexe || '');
@@ -14047,7 +14147,7 @@ function renderMiseBasRapide() {
     const unknownHtml = conflitEid ? `<div class="mb-msg bloc" id="mb-conflit"><b>EID déjà utilisé</b><span>${messageEidDejaUtilise(conflitEid)} Impossible de créer une brebis avec cet EID.</span><button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">OK</button></div>`
       : unknownEid ? `<div class="mb-msg bloc" id="mb-inconnue"><b>Brebis inconnue</b><span>Aucune fiche pour cet EID (n°${numeroVisuel(unknownEid)}).</span><button type="button" class="btn btn-primary" id="btn-create-unknown-mb">Créer cette brebis et continuer</button><button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">Annuler ce scan</button></div>` : '';
     const ambiguHtml = candidatsAmbigus ? `<div class="card"><div style="font-weight:600;margin-bottom:8px;">Plusieurs brebis correspondent à ce numéro</div><div id="mb-ambigu-candidats" style="font-size:13px;"></div></div>` : '';
-    const confirmation = derniere ? `<div class="mb-msg ok" id="mb-confirmation"><b>Mise bas enregistrée</b><span>n°${derniere.numero} · ${derniere.resume}</span><button type="button" class="lien" id="btn-annuler-derniere">Annuler cette saisie</button></div>`
+    const confirmation = derniere ? `<div class="mb-msg ok" id="mb-confirmation"><b>${derniere.avortement ? 'Avortement enregistré' : 'Mise bas enregistrée'}</b><span>n°${derniere.numero} · ${derniere.resume}</span><button type="button" class="lien" id="btn-annuler-derniere">Annuler cette saisie</button></div>`
       : annulee ? `<div class="mb-msg neutre" id="mb-annulee"><b>${annulee}</b></div>` : '';
     const blocage = (currentSheep && bloc) ? `
       <div class="mb-msg bloc" id="mb-blocage"><span class="mb-pastille" style="align-self:flex-start;background:var(--ch-carte);color:var(--ch-rouge);">Blocage</span><b>n°${numeroVisuel(currentSheep.eid)} a déjà mis bas cette campagne</b><span>Le ${formatDateFr(bloc.date)} · ${bloc.nbAgneaux} agneau${bloc.nbAgneaux > 1 ? 'x' : ''}. Une seule mise bas par campagne.</span></div>
@@ -14057,21 +14157,27 @@ function renderMiseBasRapide() {
       <div class="card" id="mb-formulaire" data-brebis-trouvee>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><span style="font-size:20px;font-weight:700;color:var(--ch-vert-fonce);">n°${numeroVisuel(currentSheep.eid)}</span>${(() => { const sr = statutReproductionCampagne(currentSheep); return sr && sr !== 'Aucune info repro' ? `<span class="mb-pastille ${/^Gestante|^Mise bas/.test(sr) ? 'vert' : 'ambre'}">${sr}</span>` : ''; })()}</div>
         <div class="info" style="margin-bottom:10px;">${age(currentSheep.eid)} an(s)${(() => { const pe = echoPrecedenteBrebis(currentSheep); return pe ? ' · écho du ' + formatDateFr(pe.echo.date) : ''; })()}</div>
-        <label for="f-date-rapide">Date de mise bas</label>
+        ${modeMiseBasHtml(form.avortement)}
+        <label for="f-date-rapide">Date de ${form.avortement ? 'l\'avortement' : 'mise bas'}</label>
         <input type="date" id="f-date-rapide" value="${form.date}" style="margin-bottom:10px;">
         <div id="mb-alertes">${controles.alertes.map(a => `<div class="mb-msg alerte" data-alerte="${a.code}">${a.message}</div>`).join('')}</div>
+        <div class="mb-partie-mb"${form.avortement ? ' hidden' : ''}>
         <label>Repro</label>
         <div class="tab-bar" id="repro-code-list-rapide" style="margin-bottom:0;">${[['IA', 'IA'], ['EP', 'Éponge'], ['RE', 'Retour'], ['MN', 'Monte nat.']].map(([v, l]) => `<button type="button" class="tab-btn repro-code-opt-rapide${form.codeRepro === v ? ' active' : ''}" data-val="${v}">${l}</button>`).join('')}</div>
         <div id="repro-question-rapide" style="margin-top:10px;"></div>
+        </div>
+        <div id="avo-zone"></div>
       </div>
+      <div class="mb-partie-mb"${form.avortement ? ' hidden' : ''}>
       <div class="sec" id="mb-nb-agneaux" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Agneaux · ${form.lambs.length}</div>
       <div id="lamb-list-rapide"></div>
       <button type="button" class="btn btn-secondary" id="add-lamb-rapide" style="border-style:dashed;margin-bottom:8px;">+ Ajouter un agneau</button>
       ${ligneSoinsBouclageHtml()}
+      </div>
       <div id="err" class="error-box hidden"></div>` : '';
     const derniers = (!form && !currentSheep && rows.length) ? `
       <div class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Dernières saisies</div>
-      <div class="card" id="mb-dernieres" style="padding:0 14px;">${rows.slice(0, 5).map(r => { const sh = findSheep(r.sheepId), ag = sh.agnelages[r.agnelageIdx], [lib, ton] = miseBasPortee(r.total); return `<div class="mb-der" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}"><div class="c"><div class="a">n°${r.courtSieol || r.numero}</div><div class="b">${formatDateFr(r.date)} · ${resumeAgnelage(ag)}</div></div><span class="mb-pastille ${ton}">${lib}</span></div>`; }).join('')}</div>
+      <div class="card" id="mb-dernieres" style="padding:0 14px;">${rows.slice(0, 5).map(r => { const sh = findSheep(r.sheepId), ag = sh.agnelages[r.agnelageIdx], [lib, ton] = r.avortement ? ['Avortement', ''] : miseBasPortee(r.total); return `<div class="mb-der" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}"><div class="c"><div class="a">n°${r.courtSieol || r.numero}</div><div class="b">${formatDateFr(r.date)} · ${resumeAgnelage(ag)}</div></div><span class="mb-pastille ${ton}">${lib}</span></div>`; }).join('')}</div>
       <div class="info" style="margin:6px 2px 12px;">Toucher une ligne pour la modifier.</div>` : '';
     const aujourdhui = jourAujourdhuiISO();
     const nbf = (n) => n > 0 ? String(n) : '<span style="color:var(--text-muted);">–</span>';
@@ -14081,25 +14187,29 @@ function renderMiseBasRapide() {
       const kpis = `<div class="pc-kpis" id="mb-tuiles">
         ${pcKpi('Mises bas', st.misesBas, 'sur ' + st.cb.troupeauAMettreBas + ' attendues', 'vert')}
         ${pcKpi('Agneaux nés', st.nes, st.prolificite !== null ? 'prolificité ' + fmtDecimal(st.prolificite, 2) : 'prolificité —', 'vert')}
-        ${pcKpi('Mâles', st.males, '', 'bleu')}${pcKpi('Femelles', st.femelles, '', 'ambre')}${pcKpi('Morts-nés', st.mortNes, '', 'ambre')}
+        ${pcKpi('Mâles', st.males, '', 'bleu')}${pcKpi('Femelles', st.femelles, '', 'ambre')}${pcKpi('Morts-nés', st.mortNes, st.avortons ? 'dont ' + st.avortons + ' avorton' + (st.avortons > 1 ? 's' : '') : '', 'ambre')}
         ${pcKpi('Restantes', st.cb.misesBasRestantes, fmtDecimal(pctReal, 1) + ' % réalisé', 'ambre')}
       </div>`;
       const trouvee = (currentSheep && form && !bloc) ? `<div id="pc-brebis-trouvee" data-brebis-trouvee style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;"><b style="color:var(--ch-vert-fonce);font-size:18px;">n°${numeroVisuel(currentSheep.eid)}</b>${(() => { const sr = statutReproductionCampagne(currentSheep); return sr && sr !== 'Aucune info repro' ? pcPill(/^Gestante|^Mise bas/.test(sr) ? 'ok' : 'warn', sr) : ''; })()}<span class="brd-note" style="margin:0;">${age(currentSheep.eid)} an(s)${(() => { const pe = echoPrecedenteBrebis(currentSheep); return pe ? ' · écho du ' + formatDateFr(pe.echo.date) : ''; })()}</span></div>` : '';
       const saisie = (currentSheep && form && !bloc) ? `
+        <div style="max-width:360px;">${modeMiseBasHtml(form.avortement)}</div>
         <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start;margin-bottom:12px;">
-          <div><div class="brd-note" style="margin:0 0 4px;">Date de mise bas</div><input type="date" id="f-date-rapide" value="${form.date}" style="margin:0;"></div>
-          <div><div class="brd-note" style="margin:0 0 4px;">Repro <span id="pc-repro-chip" class="pc-pill info">déduit, modifiable</span></div>
+          <div><div class="brd-note" style="margin:0 0 4px;">Date de ${form.avortement ? 'l\'avortement' : 'mise bas'}</div><input type="date" id="f-date-rapide" value="${form.date}" style="margin:0;"></div>
+          <div id="avo-zone"></div>
+          <div class="mb-partie-mb"${form.avortement ? ' hidden' : ''}><div class="brd-note" style="margin:0 0 4px;">Repro <span id="pc-repro-chip" class="pc-pill info">déduit, modifiable</span></div>
             <div id="repro-code-list-rapide" style="display:flex;gap:6px;flex-wrap:wrap;">${[['IA', 'IA'], ['EP', 'EP'], ['RE', 'RE'], ['MN', 'MN']].map(([v, l]) => `<button type="button" class="opt-btn repro-code-opt-rapide${form.codeRepro === v ? ' selected' : ''}" data-val="${v}" style="width:auto;padding:6px 14px;">${l}</button>`).join('')}</div>
             <div id="repro-question-rapide" style="margin-top:10px;"></div></div>
         </div>
         <div id="mb-alertes">${controles.alertes.map(a => `<div class="mb-msg alerte" data-alerte="${a.code}">${a.message}</div>`).join('')}</div>
+        <div class="mb-partie-mb"${form.avortement ? ' hidden' : ''}>
         <table class="brd-t" id="mb-table-agneaux"><colgroup><col style="width:8%"><col style="width:25%"><col style="width:19%"><col style="width:10%"><col style="width:24%"><col style="width:14%"></colgroup>
           <thead><tr><th>Agneau</th><th>EID</th><th>Sexe</th><th>Mort-né</th><th>Adoption / cause</th><th></th></tr></thead><tbody id="lamb-list-rapide"></tbody></table>
-        <div id="err" class="error-box hidden" style="margin-top:10px;"></div>
         ${ligneSoinsBouclageHtml()}
+        </div>
+        <div id="err" class="error-box hidden" style="margin-top:10px;"></div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;">
-          <button type="button" class="btn btn-secondary" id="add-lamb-rapide" style="width:auto;">+ Ajouter un agneau</button>
-          <span class="pc-pill ok" id="pc-portee">Aucun agneau</span>
+          <span class="mb-partie-mb"${form.avortement ? ' hidden' : ''} style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;"><button type="button" class="btn btn-secondary" id="add-lamb-rapide" style="width:auto;">+ Ajouter un agneau</button>
+          <span class="pc-pill ok" id="pc-portee">Aucun agneau</span></span>
           <span style="flex:1;"></span>
           <button type="button" class="btn btn-secondary" id="btn-annuler-saisie-pc" style="width:auto;">Annuler</button>
           <button type="button" class="btn btn-primary" id="btn-valider-misebas" style="width:auto;">Enregistrer</button>
@@ -14107,7 +14217,7 @@ function renderMiseBasRapide() {
       const tableau = rows.length ? `
         <table class="brd-t" id="mb-table-campagne"><colgroup><col style="width:13%"><col style="width:27%"><col style="width:10%"><col style="width:12%"><col style="width:12%"><col style="width:9%"><col style="width:17%"></colgroup>
           <tr><th>N° court</th><th>Date</th><th>Mâles</th><th>Femelles</th><th>Mort-nés</th><th>Total</th><th></th></tr>
-          ${visibles.map(r => `<tr><td>${r.courtSieol || r.numero}</td><td>${formatDateFr(r.date)}${r.date > aujourdhui ? ' ' + pcPill('warn', 'date à vérifier') : ''}</td><td>${nbf(r.male)}</td><td>${nbf(r.femelle)}</td><td>${nbf(r.mortNe)}</td><td>${r.total}</td><td><button type="button" class="btn btn-secondary btn-annuler-mb-campagne" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}" style="width:auto;">Annuler</button></td></tr>`).join('')}
+          ${visibles.map(r => `<tr><td>${r.courtSieol || r.numero}</td><td>${formatDateFr(r.date)}${r.date > aujourdhui ? ' ' + pcPill('warn', 'date à vérifier') : ''}</td><td>${nbf(r.male)}</td><td>${nbf(r.femelle)}</td><td>${nbf(r.mortNe)}${r.avortement ? ' ' + pcPill('neutral', 'avortement') : ''}</td><td>${r.total}</td><td><button type="button" class="btn btn-secondary btn-annuler-mb-campagne" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}" style="width:auto;">Annuler</button></td></tr>`).join('')}
           <tr id="mb-totaux" class="b"><td colspan="2" style="background:var(--ch-ligne-alt);">Total (${rows.length} mise${rows.length > 1 ? 's' : ''} bas)</td><td style="background:var(--ch-ligne-alt);">${st.males}</td><td style="background:var(--ch-ligne-alt);">${st.femelles}</td><td style="background:var(--ch-ligne-alt);">${st.mortNes}</td><td style="background:var(--ch-ligne-alt);">${st.nes}</td><td style="background:var(--ch-ligne-alt);"></td></tr>
         </table>
         ${rows.length > 10 ? `<div style="margin-top:8px;"><button type="button" class="btn-lien" id="btn-voir-toutes-mb">${toutesVisibles ? 'Réduire aux 10 dernières' : 'Voir toutes (' + rows.length + ')'}</button></div>` : ''}
@@ -14231,6 +14341,26 @@ function renderMiseBasRapide() {
         q.querySelectorAll('.repro-question-btn').forEach(b => { b.onclick = () => { form.codeRepro = b.dataset.code; majRepro('choisi'); document.getElementById('err').classList.add('hidden'); }; });
       };
       majRepro(form.situation && form.situation.question ? 'à choisir' : null);
+      // Avortement : la liste des agneaux et le code Repro disparaissent ; nombre d'avortons et question de traite (rien n'est écrit avant « Enregistrer »)
+      const majAvortement = () => {
+        const zoneAvo = document.getElementById('avo-zone');
+        document.querySelectorAll('.mb-partie-mb').forEach(el => { el.hidden = form.avortement; });
+        zoneAvo.innerHTML = form.avortement ? blocAvortementHtml(form.nbAvortons, form.traite, codeReproAvortement(currentSheep, form.date), false) : '';
+        if (!form.avortement) return;
+        document.getElementById('avo-nb').addEventListener('input', (e) => { form.nbAvortons = e.target.value; });
+        zoneAvo.querySelectorAll('.avo-traite-btn').forEach(b => { b.onclick = () => { form.traite = b.dataset.val === 'oui'; majAvortement(); document.getElementById('err').classList.add('hidden'); }; });
+      };
+      majAvortement();
+      document.querySelectorAll('.mb-mode-btn').forEach(b => {
+        b.onclick = () => {
+          form.avortement = b.dataset.val === 'avo';
+          document.querySelectorAll('.mb-mode-btn').forEach(x => x.classList.toggle('active', x === b));
+          const lib = document.querySelector('label[for="f-date-rapide"]') || (document.getElementById('f-date-rapide').previousElementSibling);
+          if (lib) lib.textContent = 'Date de ' + (form.avortement ? 'l\'avortement' : 'mise bas');
+          document.getElementById('err').classList.add('hidden');
+          majAvortement();
+        };
+      });
       document.querySelectorAll('.repro-code-opt-rapide').forEach(b => {
         b.onclick = () => { form.codeRepro = b.dataset.val; majRepro('choisi à la main'); };
       });
@@ -14239,6 +14369,8 @@ function renderMiseBasRapide() {
         form.situation = situationReproMiseBas(currentSheep, form.date);
         form.codeRepro = form.situation.question ? null : form.situation.code;
         majRepro(form.situation.question ? 'à choisir' : 'déduit, modifiable');
+        const lignRepro = document.getElementById('avo-repro');
+        if (lignRepro) lignRepro.textContent = 'Repro : ' + LIBELLE_CHOIX_REPRO[codeReproAvortement(currentSheep, form.date)] + ', posé d\'office.';
         majAlertes();
         document.querySelectorAll('.eid-input-rapide').forEach(i => i.dispatchEvent(new Event('input')));   // l'alerte « chiffre d'année » suit la date
       });
@@ -14249,12 +14381,12 @@ function renderMiseBasRapide() {
         const alerteDate = controlesMiseBas(currentSheep, form.date).alertes.find(x => x.code === 'date-future');
         if (alerteDate && !confirm(alerteDate.message + ' Enregistrer la mise bas avec cette date ?')) return;
         const saisie = { date: form.date, codeRepro: form.codeRepro, lambs: form.lambs.map(l => ({ sexe: l.mortNe ? 'Mort-né' : l.sexe, sexeMortNe: l.mortNe ? (l.sexe || undefined) : undefined, cause: l.mortNe ? l.cause : undefined, eid: l.eid, adopte: l.adopte, adoptNum: l.adoptNum })) };
-        const r = construireAgnelageMiseBas(currentSheep, saisie);
+        const r = form.avortement ? construireAvortement(currentSheep, { date: form.date, nbAvortons: form.nbAvortons, traite: form.traite }) : construireAgnelageMiseBas(currentSheep, saisie);
         if (r.erreur) { err.textContent = r.erreur; err.classList.remove('hidden'); err.scrollIntoView && err.scrollIntoView({ block: 'center' }); return; }
         btnValider.disabled = true; // évite un double-tap qui rejouerait la validation
         enregistrerMiseBas(currentSheep, r.agnelage);
         misebasRapideCount++;
-        derniere = { sheepId: currentSheep.id, ref: r.agnelage, numero: numeroVisuel(currentSheep.eid), resume: resumeAgnelage(r.agnelage) };
+        derniere = { sheepId: currentSheep.id, ref: r.agnelage, numero: numeroVisuel(currentSheep.eid), resume: resumeAgnelage(r.agnelage), avortement: !!r.agnelage.avortement };
         annulee = null;
         resetForm();
         draw();
