@@ -63,13 +63,13 @@ console.log('OK 1 structure : tuiles 2×2 (chiffres de la page PC), recherche et
 
 // ================================================================ 2. Mouvements : cartes = lignes du tableau d'avant, mêmes tris
 await ouvrir('mouvements');
-const lignesMvt = await page.evaluate(() => registreMouvementsFilteredRows('', registreColFiltres.mouvements).map(r => ['n°' + numeroVisuel(r.eid), r.categorie, r.type, formatDateFr(r.date), r.detail, registreCampagneLabelTexte(r)]));
+const lignesMvt = await page.evaluate(() => registreMouvementsFilteredRows('', registreColFiltres.mouvements).map(r => ['n°' + numeroVisuel(r.eid), r.categorie, typeAfficheRegistre(r), formatDateFr(r.date), r.detail, registreCampagneLabelTexte(r)]));
 const cm = await cartes();
 eq(cm.map(c => [c.num, c.cat, c.past, c.date, c.l2, c.l3]), lignesMvt.map(l => [l[0], l[1], l[2], l[3], l[4], l[5]]), 'Mouvements : mêmes lignes, même tri, même contenu que la page PC');
 eq(await page.evaluate(() => document.querySelector('.reg-liste-n').textContent), lignesMvt.length + ' mouvements', 'Mouvements : compte');
 check(await page.evaluate(() => document.querySelector('.reg-liste-tri').textContent === 'Du plus récent au plus ancien'), 'Mouvements : mention du tri');
 const teintes = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.reg-pastille')].map(p => [p.textContent, p.classList[1]])));
-eq([teintes['Entrée'], teintes['Vente'], teintes['Mort']], ['vert', 'bleu', 'rouge'], 'Mouvements : pastilles Entrée verte, Vente bleue, Mort rouge');
+eq([teintes['Achat'], teintes['Vente'], teintes['Mort']], ['vert', 'bleu', 'rouge'], 'Mouvements : pastilles entrée (Achat) verte, Vente bleue, Mort rouge');
 console.log('OK 2 Mouvements : ' + cm.length + ' cartes = lignes de la page PC, pastilles colorées.');
 
 // ================================================================ 3. Sanitaire : 20 cartes puis « Voir tout »

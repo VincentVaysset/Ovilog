@@ -15,7 +15,7 @@ const MOTS_PIED_DISPARUS = ['export', 'généré', 'automatiquement'];   // anci
 const COMMUNS = ['OVILOG', 'Ovilog', 'Édité', 'le', '·', '—', /^\d\d-\d\d-\d{4}$/, /^[\d.,]+$/, /^\d+\/\d+$/, 'Page', 'Campagne', 'Année']   // + pied de page unique « Ovilog — [export] · Campagne X »;
 const MIGRES = {
   registre_agnelage: { paysage: true, ajouts: ['Registre', "d'élevage", 'Agnelage', 'Agneaux', 'enregistrés', 'Mâles', 'Femelles', 'Morts-nés'] },
-  registre_mouvements: { paysage: true, ajouts: ['Registre', "d'élevage", 'Mouvements', 'Animaux', 'au', 'registre', 'Actifs', 'Entrées', 'Sorties'] },
+  registre_mouvements: { paysage: true, ajouts: ['Registre', "d'élevage", 'Mouvements', 'Animaux', 'au', 'registre', 'Actifs', 'Entrées', 'Sorties', 'Achat', 'Autre', 'entrée', 'Naissance', '·', 'mâle', 'femelle'], ignorer: ['Entrée', 'Morte', 'Vendu', 'Naissance', 'Achat'] },   // un seul nom par événement (Achat, Naissance · mâle…) : affichage voulu
   registre_sanitaire: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] },
   traitements12: { paysage: true, ajouts: ['Animaux', 'actifs', 'brebis,', 'antenaises,', 'béliers', 'Aucun', 'traitement', 'compté', 'et', 'plus', 'seuil', 'dépassé', '%', 'Traitements', 'sur', '12', 'mois', 'suivi', 'bio', 'Ovilog'] },
   // regroupement voulu (une ligne par BREBIS avec tous ses produits, compteur en brebis) : « 3 traitement(s) » devient « 2 brebis sous délai », la 2e ligne de

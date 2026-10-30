@@ -89,7 +89,7 @@ for (const bureau of [false, true]) {
   // ================================================================ 4. registre et Mouvements : pastille neutre ; annulation du lot
   eq(await p.evaluate(() => [registreTeinteMouvement('Mise à jour inventaire'), PILL_TYPE_MV('Mise à jour inventaire'), TYPES_SORTIE.includes('Mise à jour inventaire'), TYPES_SORTIE_MV.includes('Mise à jour inventaire')]), ['gris', 'neutral', true, true], nom + ' : pastilles neutres ; reconnu comme sortie partout');
   await p.evaluate(() => { registreView = 'mouvements'; render('registre'); });
-  const reg = await p.evaluate(() => ({ pastilles: [...document.querySelectorAll('.reg-pastille')].filter(x => x.textContent === 'Mise à jour inventaire').map(x => x.className), texte: document.getElementById('app').innerText }));
+  const reg = await p.evaluate(() => ({ pastilles: [...document.querySelectorAll('.reg-pastille')].filter(x => x.textContent === 'Perte / inventaire').map(x => x.className), texte: document.getElementById('app').innerText }));
   check(/Mise à jour inventaire/.test(reg.texte), nom + ' : registre : mouvement listé');
   check(reg.pastilles.every(c => /gris/.test(c)) && (bureau || reg.pastilles.length >= 1), nom + ' : registre : pastille neutre : ' + JSON.stringify(reg.pastilles));
   if (bureau) check(/Autres sorties\s*0\b/.test(reg.texte) && /Morts et pertes\s*[1-9]/.test(reg.texte), nom + ' : registre PC : comptée dans « Morts et pertes », pas dans « Autres sorties »');

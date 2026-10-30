@@ -21995,7 +21995,7 @@ function lambMouvementsRows() {
         if (!l.eid) return; // pas bouclé : pas de traçabilité individuelle possible
         if (l.sexe === 'Femelle' && l.triStatut === 'gardée') return;
         (l.mouvements || []).forEach(m => {
-          rows.push({ eid: l.eid, categorie: 'Agneau', type: m.type || '', detail: m.cause || m.acheteur || '', date: m.date || '', campagne: campagneDeDateRegistre(m.date) });
+          rows.push(ligneMouvementRegistre(l.eid, 'Agneau', m, l.sexe === 'Mâle' || l.sexe === 'Femelle' ? l.sexe : ''));
         });
       });
     });
@@ -22003,12 +22003,42 @@ function lambMouvementsRows() {
   return rows;
 }
 
+/* Registre › Mouvements : UN nom par événement, à l'affichage seulement (écran, Excel, PDF) — la donnée enregistrée n'est
+   jamais convertie (typeBrut garde le type d'origine). Agneaux : « Entrée / Naissance » → Naissance, « Vendu » → Vente,
+   « Mort » ; adultes : « Morte » → Mort, « Vente reproduction » → Vente (« reproduction » dans le détail). */
+function typeMouvementRegistre(m) {
+  const t = String(m.type || ''), cause = String(m.cause || '');
+  if (t === 'Naissance' || (t === 'Entrée' && /^naissance/i.test(cause))) return 'Naissance';
+  if (t === 'Entrée') return /achat/i.test(cause) ? 'Achat' : /renouvellement/i.test(cause) ? 'Passage agnelle → brebis' : 'Autre entrée';
+  if (/^Vent/.test(t) || t === 'Vendu') return 'Vente';
+  if (t === 'Mort' || t === 'Morte') return 'Mort';
+  if (t === 'Perte' || t === SORTIE_INVENTAIRE) return 'Perte / inventaire';
+  return t;
+}
+function ligneMouvementRegistre(eid, categorie, m, sexe) {
+  const t = String(m.type || ''), type = typeMouvementRegistre(m);
+  let detail = m.cause || m.acheteur || '';
+  if (detail.trim().toLowerCase() === type.toLowerCase()) detail = '';   // « Naissance », « Achat » : le type le dit déjà
+  if (t === 'Vente reproduction') detail = 'reproduction' + (detail ? ' · ' + detail : '');
+  if (t === SORTIE_INVENTAIRE) detail = SORTIE_INVENTAIRE + (detail && detail !== SORTIE_INVENTAIRE ? ' · ' + detail : '');
+  return { eid, categorie, type, typeBrut: t, sexe: sexe || '', detail, date: m.date || '', campagne: campagneDeDateRegistre(m.date) };
+}
+// « Naissance · femelle » : type affiché avec le sexe de l'agneau (filtres et regroupements sur le type seul)
+const typeAfficheRegistre = r => r.type + (r.sexe ? ' · ' + r.sexe.toLowerCase() : '');
+// Catégorie : quatre choix ; « Agneaux nés » = agneaux ET agnelles de renouvellement (mâles et femelles)
+const CATEGORIES_FILTRE_MOUVEMENTS = [['Brebis', 'Brebis'], ['Bélier', 'Béliers'], ['Agneaux nés', 'Agneaux nés'], ['Agnelle', 'Agnelles de renouvellement']];
+const categorieMouvementCorrespond = (r, f) => !f || (f === 'Agneaux nés' ? (r.categorie === 'Agneau' || r.categorie === 'Agnelle') : r.categorie === f);
+function registreCategorieMouvementSelectHtml(valeurCourante, pc) {
+  const options = `<option value="">${pc ? 'Toutes' : 'Catégorie'}</option>${CATEGORIES_FILTRE_MOUVEMENTS.map(([v, l]) => `<option value="${v}"${v === valeurCourante ? ' selected' : ''}>${l}</option>`).join('')}`;
+  return pc ? `<div><label>Catégorie</label><select class="registre-col-filter" data-col="categorie">${options}</select></div>`
+    : `<select class="registre-col-filter" data-col="categorie" aria-label="Catégorie">${options}</select>`;
+}
 function registreMouvementsRows() {
   const rows = [];
   REGISTRE_CATEGORIES.forEach(c => {
     registreEntriesFor(c.key).forEach(entry => {
       entry.mouvements.forEach(m => {
-        rows.push({ eid: entry.eid, categorie: c.label, type: m.type || '', detail: m.cause || m.acheteur || '', date: m.date || '', campagne: campagneDeDateRegistre(m.date) });
+        rows.push(ligneMouvementRegistre(entry.eid, c.label, m, ''));
       });
     });
   });
@@ -22154,7 +22184,7 @@ function registreMouvementsFilteredRows(filtreNumero, colFiltres) {
     const f = filtreNumero.trim().toLowerCase();
     rows = rows.filter(r => numeroVisuel(r.eid).toLowerCase().includes(f));
   }
-  if (colFiltres.categorie) rows = rows.filter(r => r.categorie === colFiltres.categorie);
+  if (colFiltres.categorie) rows = rows.filter(r => categorieMouvementCorrespond(r, colFiltres.categorie));
   if (colFiltres.type) rows = rows.filter(r => r.type === colFiltres.type);
   rows = registreFiltrerParCampagne(rows, colFiltres.campagne);
   return rows;
@@ -22188,7 +22218,7 @@ function registrePastille(texte, teinte) { return `<span class="reg-pastille ${t
 function registreCarteHtml(num, cat, pastille, date, ligne2, campagneHtml) {
   return `<div class="reg-ligne"><div class="reg-l1"><span class="reg-num">${num}</span>${cat ? `<span class="reg-cat">${cat}</span>` : ''}${pastille}<span class="reg-date">${date}</span></div>${ligne2 ? `<div class="reg-l2">${ligne2}</div>` : ''}<div class="reg-l3">${campagneHtml}</div></div>`;
 }
-function registreTeinteMouvement(type) { return type === SORTIE_INVENTAIRE ? 'gris' : type === 'Entrée' ? 'vert' : /^Vent/.test(type) ? 'bleu' : ['Mort', 'Morte', 'Perte'].includes(type) ? 'rouge' : 'ambre'; }
+function registreTeinteMouvement(type) { return type === SORTIE_INVENTAIRE ? 'gris' : ['Entrée', 'Naissance', 'Achat', 'Passage agnelle → brebis', 'Autre entrée'].includes(type) ? 'vert' : /^Vent/.test(type) ? 'bleu' : ['Mort', 'Morte', 'Perte'].includes(type) ? 'rouge' : 'ambre'; }
 function registreTeinteSoin(type) { const t0 = String(type || '').split(' · ')[0]; return t0 === 'Vaccin' ? 'vert' : t0 === 'Traitement' ? 'bleu' : 'ambre'; }
 function registreMobileVue(view, filtreNumero, colFiltres) {
   if (view === 'agnelage') {
@@ -22201,8 +22231,8 @@ function registreMobileVue(view, filtreNumero, colFiltres) {
   if (view === 'mouvements') {
     const allRows = registreMouvementsRows(), rows = registreMouvementsFilteredRows(filtreNumero, colFiltres);
     return { rows, nbSelects: 3, nom: ['mouvement', 'mouvements'], vide: 'Aucun mouvement ne correspond aux filtres.',
-      controlsHtml: registreColSelectHtml('categorie', 'Catégorie', allRows.map(r => r.categorie), colFiltres.categorie) + registreColSelectHtml('type', 'Type', allRows.map(r => r.type), colFiltres.type) + registreCampagneSelectHtml(allRows.map(r => r.campagne), colFiltres.campagne),
-      carte: r => registreCarteHtml('n°' + numeroVisuel(r.eid), r.categorie, registrePastille(r.type, registreTeinteMouvement(r.type)), formatDateFr(r.date), echapperHtml(r.detail), registreCampagneLabel(r)) };
+      controlsHtml: registreCategorieMouvementSelectHtml(colFiltres.categorie, false) + registreColSelectHtml('type', 'Type', allRows.map(r => r.type), colFiltres.type) + registreCampagneSelectHtml(allRows.map(r => r.campagne), colFiltres.campagne),
+      carte: r => registreCarteHtml('n°' + numeroVisuel(r.eid), r.categorie, registrePastille(typeAfficheRegistre(r), registreTeinteMouvement(r.typeBrut === SORTIE_INVENTAIRE ? SORTIE_INVENTAIRE : r.type)), formatDateFr(r.date), echapperHtml(r.detail), registreCampagneLabel(r)) };
   }
   const allRows = registreSanitaireRows(), rows = registreSanitaireFilteredRows(filtreNumero, colFiltres);
   return { rows, nbSelects: 3, nom: ['soin', 'soins'], vide: 'Aucun soin ne correspond aux filtres.',
@@ -24043,7 +24073,7 @@ async function exportRegistreXlsx() {
     { name: 'Mouvements', colWidths: [16, 14, 14, 24, 12, 14], rows: [
       ['N°', 'Catégorie', 'Type', 'Cause / détail', 'Date', 'Campagne'],
       ...registreMouvementsFilteredRows(registreFiltre, registreColFiltres.mouvements).map(r =>
-        ['n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.detail, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
+        ['n°' + eidAffichageCourt(r.eid), r.categorie, typeAfficheRegistre(r), r.detail, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]},
     feuilleSanitaireXlsx(registreSanitaireFilteredRows(registreFiltre, registreColFiltres.sanitaire))
   ];
@@ -24138,7 +24168,7 @@ async function exportRegistrePdf() {
       { label: 'Cause / détail', x: 270 }, { label: 'Date', x: 480 }, { label: 'Campagne', x: 540 }
     ];
     rows = registreMouvementsFilteredRows(filtreNumero, colFiltres).map(r => [
-      'n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.detail, formatDateFr(r.date), registreCampagneLabelTexte(r)
+      'n°' + eidAffichageCourt(r.eid), r.categorie, typeAfficheRegistre(r), r.detail, formatDateFr(r.date), registreCampagneLabelTexte(r)
     ]);
   } else {
     title = "Registre d'élevage — Sanitaire";
@@ -24208,7 +24238,7 @@ function registreIndicateursPc() {
   return {
     animaux,
     sanitaire: { soins: san.length, traitements: san.filter(r => typeSoin(r) === 'Traitement').length, vaccins: san.filter(r => typeSoin(r) === 'Vaccin').length, autres: san.filter(r => !['Traitement', 'Vaccin'].includes(typeSoin(r))).length },
-    mouvements: { total: mvt.length, entrees: mvt.filter(r => r.type === 'Entrée').length, ventes: mvt.filter(r => /^Vent/.test(r.type)).length, morts: mvt.filter(r => ['Mort', 'Morte', 'Perte', SORTIE_INVENTAIRE].includes(r.type)).length, autres: mvt.filter(r => r.type !== 'Entrée' && !/^Vent/.test(r.type) && !['Mort', 'Morte', 'Perte', SORTIE_INVENTAIRE].includes(r.type)).length },   // mise à jour inventaire : avec les pertes
+    mouvements: { total: mvt.length, entrees: mvt.filter(r => r.typeBrut === 'Entrée').length, ventes: mvt.filter(r => /^Vent/.test(r.typeBrut)).length, morts: mvt.filter(r => ['Mort', 'Morte', 'Perte', SORTIE_INVENTAIRE].includes(r.typeBrut)).length, autres: mvt.filter(r => r.typeBrut !== 'Entrée' && !/^Vent/.test(r.typeBrut) && !['Mort', 'Morte', 'Perte', SORTIE_INVENTAIRE].includes(r.typeBrut)).length },   // types d'origine : comptes inchangés   // mise à jour inventaire : avec les pertes
     agnelage: { agneaux: agn.length, males: agn.filter(r => r.sexe === 'Mâle').length, femelles: agn.filter(r => r.sexe === 'Femelle').length, mortNes: agn.filter(r => r.sexe === 'Mort-né').length }
   };
 }
@@ -24238,7 +24268,8 @@ function registrePcFiltresHtml(view) {
     return `<div><label>Campagne</label><select class="registre-col-filter" data-col="campagne"><option value="">Toutes</option>${distinct.map(v => `<option value="${v}"${String(v) === colF.campagne ? ' selected' : ''}>Campagne ${v + 1}</option>`).join('')}${hasInconnue ? `<option value="?"${colF.campagne === '?' ? ' selected' : ''}>Date inconnue</option>` : ''}</select></div>`;
   };
   if (view === 'agnelage') { const all = registreAgnelageRows(); return sel('sexe', 'Sexe', all.map(r => r.sexe), 'Tous') + camp(all.map(r => r.campagne)); }
-  const all = view === 'mouvements' ? registreMouvementsRows() : registreSanitaireRows();
+  if (view === 'mouvements') { const all = registreMouvementsRows(); return registreCategorieMouvementSelectHtml(colF.categorie, true) + sel('type', 'Type', all.map(r => r.type), 'Tous') + camp(all.map(r => r.campagne)); }
+  const all = registreSanitaireRows();
   return sel('categorie', 'Catégorie', all.map(r => r.categorie), 'Tous') + sel('type', view === 'mouvements' ? 'Type' : 'Type de soin', all.map(r => r.type), 'Tous') + camp(all.map(r => r.campagne));
 }
 function registrePcTableHtml(view) {
@@ -24254,7 +24285,7 @@ function registrePcTableHtml(view) {
   if (view === 'mouvements') {
     const rows = registreMouvementsFilteredRows(f, cf);
     return { n: rows.length, unite: 'mouvement', unites: 'mouvements', html: rows.length === 0 ? vide('Aucun mouvement ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type</th><th class="l">Cause / détail</th><th class="l">Date</th><th class="l">Campagne</th></tr>
-      ${rows.map(r => `<tr>${td(eidTxt(r.eid))}${td(r.categorie)}${td(r.type)}${td(echapperHtml(r.detail))}${td(formatDateFr(r.date))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
+      ${rows.map(r => `<tr>${td(eidTxt(r.eid))}${td(r.categorie)}${td(typeAfficheRegistre(r))}${td(echapperHtml(r.detail))}${td(formatDateFr(r.date))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
   }
   const rows = registreSanitaireFilteredRows(f, cf);
   return { n: rows.length, unite: 'soin', unites: 'soins', html: rows.length === 0 ? vide('Aucun soin ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">N° ordonnance</th><th class="l">Campagne</th></tr>
