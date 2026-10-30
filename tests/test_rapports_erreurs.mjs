@@ -77,7 +77,7 @@ try {
   console.log('OK 2 erreur réelle : un rapport nettoyé (champs fermés, pile sans adresse, écran = nom de vue), une seule fois par jour.');
 
   // ================================================================ 3. interrupteur coupé sur l'appareil : rien ne part
-  await A.page.evaluate(() => { parametresRubrique = 'exploitation'; render('parametres'); });
+  await A.page.evaluate(() => { parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres'); });
   check(await A.page.evaluate(() => document.getElementById('f-erreurs-auto').checked), 'interrupteur activé par défaut');
   await A.page.click('#f-erreurs-auto');
   eq(await A.page.evaluate(() => localStorage.getItem('ovilog_erreurs_coupees')), '1', 'réglage propre à l\'appareil (localStorage)');

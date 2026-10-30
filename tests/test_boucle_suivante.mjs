@@ -68,7 +68,7 @@ for (const bureau of [false, true]) {
   eq(await p.evaluate(() => [...document.querySelectorAll('.eid-input')].map(i => i.value)), ['250000045671012', ''], nom + ' : modification : n° enregistrés inchangés, rien proposé au mort-né');
 
   // ================================================================ 4. réglage de compte : désactivé = rien proposé
-  await p.evaluate(() => { editContext = null; parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
+  await p.evaluate(() => { editContext = null; parametresTab = 'regles'; parametresRubrique = 'regles'; render('parametres'); });
   check(await p.isChecked('#f-exp-boucle-suivante'), nom + ' : réglage actif par défaut');
   await p.uncheck('#f-exp-boucle-suivante');
   eq(await p.evaluate(() => DB.boucleSuivanteAuto), false, nom + ' : réglage de compte enregistré');

@@ -80,13 +80,13 @@ try {
     eq(await sousBulle(B), [], 'PC ' + v + ' : rien de cliquable sous la bulle en bas de page');
   }
   // masquable sur l'appareil seulement
-  await A.page.evaluate(() => { parametresRubrique = 'exploitation'; render('parametres'); });
+  await A.page.evaluate(() => { parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres'); });
   await A.page.click('#f-bulle-contact');
   check(!(await bulleVisible(A)) && await A.page.evaluate(() => localStorage.getItem('ovilog_bulle_contact_masquee') === '1'), 'Paramètres : bulle masquée sur cet appareil');
   await A.page.evaluate(() => render('home'));
   check(!(await bulleVisible(A)), 'masquée : absente aussi à l\'Accueil');
   check(await B.page.evaluate(() => { render('home'); return !document.getElementById('bulle-contact').classList.contains('hidden'); }), 'masquage propre à l\'appareil : toujours visible sur le PC de B');
-  await A.page.evaluate(() => { parametresRubrique = 'exploitation'; render('parametres'); });
+  await A.page.evaluate(() => { parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres'); });
   await A.page.click('#f-bulle-contact');
   await A.page.evaluate(() => render('home'));
   check(await bulleVisible(A), 'réaffichée');

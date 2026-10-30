@@ -244,7 +244,7 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
   check((await pastille(page)).visible, 'la pastille est de retour sur l\'écran de scan');
   // depuis Paramètres (menu) : cinq rubriques dont Lecteur
   await page.evaluate(() => { parametresRubrique = null; render('parametres'); });
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Lecteur', 'Sauvegarde'], 'mobile : la rubrique Lecteur existe dans Paramètres');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', "Règles d'élevage", 'Listes', 'Lecteur', 'Synchro et sauvegarde'], 'mobile : la rubrique Lecteur existe dans Paramètres');
   eq(await page.evaluate(() => document.querySelector('.prm-rub[data-rub="lecteur"] .prm-rub-resume').textContent), 'Aucun lecteur choisi', 'résumé de la rubrique');
   await page.click('.prm-rub[data-rub="lecteur"]'); await page.click('#btn-back');
   eq(await page.evaluate(() => [currentView, !!document.querySelector('.prm-rub')]), ['parametres', true], 'Retour depuis la rubrique : écran d\'arrivée de Paramètres');
@@ -316,7 +316,7 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
     await page.evaluate((k) => { parametresTab = k; render('parametres'); }, t);
     eq(await page.evaluate(() => document.getElementById('prm-lecteur-pc').textContent), 'Lecteur : mobile uniquement', 'PC Paramètres › ' + t + ' : une ligne « Lecteur : mobile uniquement »');
   }
-  eq(await page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].map(b => b.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Imports', 'Sauvegarde'], 'PC : toujours 5 onglets, pas d\'onglet Lecteur');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].map(b => b.textContent)), ['Exploitation', 'Campagne', "Règles d'élevage", 'Listes', 'Imports', 'Synchro et sauvegarde'], 'PC : toujours 5 onglets, pas d\'onglet Lecteur');
   check(await page.evaluate(() => !/Scanner|bip/i.test(document.getElementById('app').innerText)), 'PC : aucun libellé de scan ni de bip');
   await page.close();
 }
