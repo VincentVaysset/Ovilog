@@ -2620,6 +2620,30 @@ function resoudreEidAgneau(saisie, dateISO) {
   }
   return res;
 }
+/* N° de boucle suivant proposé à la mise bas (saisies rapides mobile et PC, fiche brebis) : réglage de COMPTE `boucleSuivanteAuto` (absent = actif,
+   Paramètres › Exploitation, synchronisé). Plus grand n° individuel (5 derniers chiffres) des agneaux de la CAMPAGNE en cours qui portent l'indicatif de
+   l'élevage et de ceux déjà saisis dans le formulaire (`dejaSaisis`), + 1, en sautant tout n° déjà pris sous une forme quelconque (conflitEidToutesFormes).
+   Rien sans indicatif ni avant le premier agneau bouclé à la main (il sert de départ) ; une boucle sautée se corrige à la main et la suite repart de là.
+   Simple proposition : modifiable, remplacée par un bip, jamais pour un mort-né. */
+const boucleSuivanteActive = () => DB.boucleSuivanteAuto !== false;
+function numeroBoucleSuivant(dejaSaisis) {
+  if (!boucleSuivanteActive()) return '';
+  const ind = indicatifMarquageElevage();
+  if (!ind) return '';
+  const individuel = e => { const c = cleanEid(e || ''); return c.length === 15 && c.slice(4, 10) === ind ? parseInt(c.slice(10), 10) : null; };
+  const saisis = (dejaSaisis || []).map(v => individuel(resoudreEidAgneau(v).eid)).filter(n => n !== null);
+  let max = saisis.length ? Math.max(...saisis) : -1;
+  DB.brebis.forEach(sh => (sh.agnelages || []).forEach(a => {
+    if (!a || a.campagne !== DB.campagneDebut) return;
+    (a.lambs || []).forEach(l => { const n = l ? individuel(l.eid) : null; if (n !== null && n > max) max = n; });
+  }));
+  if (max < 0) return '';
+  for (let n = max + 1; n <= 99999; n++) {
+    const num = String(n).padStart(5, '0');
+    if (!saisis.includes(n) && !conflitEidToutesFormes('2500' + ind + num)) return num;
+  }
+  return '';
+}
 /* Un numéro déjà enregistré l'est peut-être sous une AUTRE forme (anciennes fiches : EID sur 11 chiffres, avec ou sans espaces). Aucun numéro enregistré n'est jamais modifié ni converti ;
    pour savoir si un nouveau numéro est libre, on compare donc aussi par le numéro national (11 derniers chiffres, `eidAffichageCourt`) toutes les catégories. Retourne le même conflit que
    verifierEidUnique (de l'animal déjà enregistré), ou null si le numéro est libre sous toutes ses formes. */
@@ -12802,7 +12826,16 @@ function renderAddAgnelage(sheepId) {
     document.getElementById('lamb-list').appendChild(lambCard(id));
     bindLamb(id);
   }
-  document.getElementById('add-lamb').onclick = addLamb;
+  // n° de boucle suivant proposé dans la case d'un NOUVEL agneau (jamais sur un agneau déjà enregistré) : voir numeroBoucleSuivant
+  const proposerBoucle = (id) => {
+    const champ = document.querySelector(`.eid-input[data-id="${id}"]`);
+    if (!champ || champ.value) return;
+    const autres = [...document.querySelectorAll('.eid-input')].filter(x => x !== champ && x.value && !(lambs[x.dataset.id] && lambs[x.dataset.id].sexe === 'Mort-né')).map(x => x.value);
+    const num = numeroBoucleSuivant(autres);
+    if (!num) return;
+    champ.value = num; majPrefixeEidAgneau(champ); champ.dispatchEvent(new Event('input'));
+  };
+  document.getElementById('add-lamb').onclick = () => { addLamb(); proposerBoucle(lambCount); };
 
   if (existing && !existing.avortement) {
     existing.lambs.forEach(l => {
@@ -12844,7 +12877,7 @@ function renderAddAgnelage(sheepId) {
       }
     });
   } else if (!existing) {
-    addLamb();
+    addLamb(); proposerBoucle(lambCount);
   }
 
   document.getElementById('btn-save-agnelage').onclick = () => {
@@ -14038,10 +14071,13 @@ function renderMiseBasRapide() {
   let derniere = null;         // confirmation verte : { sheepId, ref, numero, resume }
   let annulee = null;          // message d'annulation : « Saisie annulée » (mobile) / « Mise bas annulée » (PC)
   const nouvelAgneau = () => ({ mortNe: false, sexe: null, cause: '', eid: '', adopte: false, adoptNum: '' });
+  // n° de boucle suivant proposé (numeroBoucleSuivant) : après le plus grand de la campagne et ceux déjà saisis dans cette mise bas
+  const nosSaisis = () => (form ? form.lambs : []).filter(x => !x.mortNe && x.eid).map(x => x.eid);
+  const agneauPropose = (saisis) => Object.assign(nouvelAgneau(), { eid: numeroBoucleSuivant(saisis) });
   const ouvrirFormulaire = (sheep) => {
     currentSheep = sheep;
     const situation = situationReproMiseBas(sheep, jourAujourdhuiISO());   // hors des fenêtres d'un lot IA / éponge : code à choisir (question)
-    form = { date: jourAujourdhuiISO(), situation, codeRepro: situation.question ? null : situation.code, lambs: [nouvelAgneau()], avortement: false, nbAvortons: '', traite: null };
+    form = { date: jourAujourdhuiISO(), situation, codeRepro: situation.question ? null : situation.code, lambs: [agneauPropose([])], avortement: false, nbAvortons: '', traite: null };
   };
   function resetForm() { currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null; form = null; }
   const sexeLibelle = (l) => l.mortNe ? 'Mort-né' : (l.sexe || '');
@@ -14080,7 +14116,7 @@ function renderMiseBasRapide() {
     if (chipPortee) { const n = form.lambs.length; chipPortee.textContent = n === 0 ? 'Aucun agneau' : n === 1 ? 'Portée simple · 1 agneau' : n === 2 ? 'Portée double · 2 agneaux' : 'Portée de ' + n + ' agneaux'; }
     form.lambs.forEach((l, i) => {
       const q = (sel) => zone.querySelector(`${sel}[data-id="${i}"]`);
-      q('.mortne-check-rapide').onchange = (e) => { l.mortNe = e.target.checked; if (l.mortNe) { l.eid = ''; l.adopte = false; l.adoptNum = ''; } else l.cause = ''; renderLambs(); };
+      q('.mortne-check-rapide').onchange = (e) => { l.mortNe = e.target.checked; if (l.mortNe) { l.eid = ''; l.adopte = false; l.adoptNum = ''; } else { l.cause = ''; if (!l.eid) l.eid = numeroBoucleSuivant(nosSaisis()); } renderLambs(); };
       brancherCauseMortNe(q('.cause-mortne-rapide'), () => l.cause, v => { l.cause = v; });
       zone.querySelectorAll(`.sexe-opt-rapide[data-id="${i}"]`).forEach(b => {
         b.onclick = () => {
@@ -14316,7 +14352,7 @@ function renderMiseBasRapide() {
       document.getElementById('btn-edit-existing-agnelage-rapide').onclick = () => { currentSheepId = currentSheep.id; editItem('agnelages', bloc.agnelageIdx); };
     }
     if (currentSheep && form && !bloc) {
-      document.getElementById('add-lamb-rapide').onclick = () => { form.lambs.push(nouvelAgneau()); renderLambs(); };
+      document.getElementById('add-lamb-rapide').onclick = () => { form.lambs.push(agneauPropose(nosSaisis())); renderLambs(); };
       document.getElementById(pc ? 'btn-annuler-saisie-pc' : 'btn-annuler-saisie-mb').onclick = () => { resetForm(); draw(); };   // abandonne la saisie en cours : rien n'est enregistré
       // Code Repro : sélecteur + question (date hors des fenêtres d'un lot IA / éponge), les deux restent d'accord
       const majRepro = (chip) => {
@@ -28516,6 +28552,13 @@ function renderParametresExploitation(content) {
       <label class="prm-case"><input type="checkbox" id="f-exp-bilan-eco"${bilanEconomiqueActif() ? ' checked' : ''}><span>Afficher le Bilan économique</span></label>
       <div class="prm-note">Prix du lait, bonus et pénalités en euros, dans Bilan de campagne et dans le rapport PDF. Désactivé, ils sont masqués ; rien n'est supprimé et tout revient à la réactivation.</div>
     </div>`;
+  // N° de boucle suivant proposé à la mise bas : réglage de COMPTE (boucleSuivanteAuto, META_FIELDS), activé par défaut
+  const carteBoucles = `
+    <div class="card" id="card-boucle-suivante">
+      <div class="prm-titre">Mises bas</div>
+      <label class="prm-case"><input type="checkbox" id="f-exp-boucle-suivante"${boucleSuivanteActive() ? ' checked' : ''}><span>Proposer le n° de boucle suivant</span></label>
+      <div class="prm-note">À la saisie d'une mise bas, chaque agneau reçoit le n° qui suit le dernier bouclé de la campagne. On peut toujours le changer, ou le remplacer d'un bip.</div>
+    </div>`;
   // Bulle de contact : réglage propre à CET appareil (jamais synchronisé) ; masquée, le bouton « Écrire au concepteur » reste ici
   const carteContact = `
     <div class="card" id="card-bulle-contact">
@@ -28526,7 +28569,7 @@ function renderParametresExploitation(content) {
       <label class="prm-case" style="margin-top:14px;"><input type="checkbox" id="f-erreurs-auto"${rapportsErreursCoupes() ? '' : ' checked'}><span>Envoyer les erreurs techniques (sans donnée d'animal)</span></label>
       <div class="prm-note">En cas de plantage, un rapport technique part au concepteur : type d'erreur, écran, version. Aucun n°, aucun nom, aucune note. Réglage propre à cet appareil.</div>
     </div>`;
-  content.innerHTML = prmColonnesHtml(carteIdentite, carteSynchro + carteBio + carteEco + carteContact);
+  content.innerHTML = prmColonnesHtml(carteIdentite, carteSynchro + carteBio + carteEco + carteBoucles + carteContact);
   document.getElementById('f-bulle-contact').onchange = (ev) => {
     try { if (ev.target.checked) localStorage.removeItem(CLE_BULLE_MASQUEE); else localStorage.setItem(CLE_BULLE_MASQUEE, '1'); } catch (e) {}
     majBulleContact();
@@ -28536,6 +28579,7 @@ function renderParametresExploitation(content) {
     try { if (ev.target.checked) localStorage.removeItem(CLE_ERREURS_COUPEES); else { localStorage.setItem(CLE_ERREURS_COUPEES, '1'); localStorage.removeItem(CLE_ERREURS_ATTENTE); } } catch (e) {}
   };
   const caseEco = document.getElementById('f-exp-bilan-eco');   // absente sur un compte neuf (voir bilanEconomiqueDisponible)
+  document.getElementById('f-exp-boucle-suivante').onchange = (ev) => { DB.boucleSuivanteAuto = ev.target.checked; saveData(DB); };
   if (caseEco) caseEco.onchange = (ev) => { DB.bilanEconomiqueActif = ev.target.checked; DB.bilanEconomiqueDisponible = true; saveData(DB); };   // réversible, enregistré tout de suite ; l'interrupteur reste disponible
 
   document.getElementById('btn-sync-action').onclick = () => {
@@ -31197,7 +31241,7 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', '
   // Réglage de compte « Bilan économique » (voir bilanEconomiqueActif) : absent = déduit des données de lait ; un compte neuf reçoit « faux »
   'bilanEconomiqueActif',
   // Interrupteur du Bilan économique disponible sur ce compte (voir bilanEconomiqueDisponible) : faux pour un compte neuf
-  'bilanEconomiqueDisponible',
+  'bilanEconomiqueDisponible', 'boucleSuivanteAuto',
   // Drapeau de migration CÔTÉ CLOUD (jamais localStorage seul) -- voir
   // migrerRegistreVersCollection : doit être visible de tous les appareils
   // du compte, sinon un appareil qui vient de se réinstaller relancerait la
