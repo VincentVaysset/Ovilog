@@ -59,7 +59,6 @@ nfig`, `stades_config` et les 14 `lgs_*`) et l'ancien site d'hébergement `logis
 
 ## 4. En attente d'une décision du propriétaire
 
-- **Soin sur un agneau sans n° (plan, non codé)** : choisir dans le Carnet sanitaire un agneau pas encore bouclé (« Agneau mâle · mère n°… · sans n° »), le soin reste sur l'agneau et le suit au bouclage (référence interne invisible, jamais un n°) ; sous délai et registre « Agneau de n°… (sans n°) ». En attente du feu vert.
 - **Clavier Ovilog (validé, à faire après « Identifier les agneaux »)** : clavier chiffres de l'appli sur mobile pour tous les n° d'animaux (n° de travail compris) et les nombres entiers (litrage du tank, cellules, germes, coliformes, butyriques, jours) ; avec virgule pour TB, TP, quantités du contrôle laitier, doses en cc, prix ; textes, dosages écrits et dates inchangés ; PC inchangé. Ne gêne jamais : ne s'ouvre qu'au toucher d'un champ (jamais seul, jamais après un bip ni après Enregistrer), compact, champ toujours visible, se range d'un geste (Fermer, toucher ailleurs, retour), « Terminé » au dernier champ. Maquette validée.
 - **Début de campagne réglable : FAIT sur la branche (non fusionné)** — les mois de la production laitière suivent le début réglé (`moisCampagne`, test `test_campagne_debut_mois`). L'ami trait de décembre à fin juillet : non concerné en pratique.
 - **Anonymisation (fait sur la branche)** : tests et documentation n'ont plus que des indicatifs, noms, adresses et numéros fictifs ; `index-7.html` (ancienne copie) supprimé. Restent identifiants, à traiter PLUS TARD et 

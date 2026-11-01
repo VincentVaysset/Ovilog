@@ -14087,6 +14087,26 @@ function agneauxSansNumero() {
   })));
   return out;
 }
+/* Soin sur un agneau pas encore bouclé (Carnet sanitaire, mobile et PC) : l'agneau est présenté par sa mère (« Mâle de n°69002 (sans n°) ») ; son soin va sur SA fiche
+   (lamb.sanitaire) et le suit au bouclage (Identifier les agneaux, Modifier l'agnelage : même objet). Clé de travail : lamb.ref, référence INTERNE posée au premier
+   soin seulement (« AG-… », jamais affichée, jamais un n°, le champ eid reste vide) ; avant ce soin, clé de position « sansn:<brebis>:<mise bas>:<agneau> »
+   (affichage seul, rien n'est écrit). Sous délai d'attente (onglet Agneaux, délai viande) et registre sanitaire : « Mâle de n°69002 (sans n°) » jusqu'au bouclage. */
+function cleAgneauSansNumero(it) { return it.lamb.ref || ('sansn:' + it.sheep.id + ':' + it.agIdx + ':' + it.li); }
+function libelleAgneauSansNumero(lamb, mereEid) { return (lamb && lamb.sexe === 'Femelle' ? 'Femelle' : 'Mâle') + ' de n°' + numeroVisuel(mereEid) + ' (sans n°)'; }
+function agneauParCleSansNumero(cle) {
+  if (!cle || typeof cle !== 'string') return null;
+  const m = /^sansn:(.+):(\d+):(\d+)$/.exec(cle);
+  if (!m && !/^AG-/.test(cle)) return null;
+  for (const sh of DB.brebis) {
+    if (m && String(sh.id) !== m[1]) continue;
+    const ags = sh.agnelages || [];
+    for (let ai = 0; ai < ags.length; ai++) {
+      const ls = (ags[ai] && ags[ai].lambs) || [];
+      for (let li = 0; li < ls.length; li++) if (ls[li] && (m ? (ai === +m[2] && li === +m[3]) : ls[li].ref === cle)) return ls[li];
+    }
+  }
+  return null;
+}
 // Portées à identifier (une par mise bas), les plus vieilles en haut puis n° de la mère croissant ; q = n° de la mère tapé (filtre)
 function porteesAIdentifier(q) {
   const par = new Map();
@@ -20342,6 +20362,13 @@ function animauxEligiblesCarnet() {
     if (agneauSorti(l)) return;
     out.push(item(l, 'agneaux', 'Agneau', '—'));
   });
+  // agneaux pas encore bouclés : présentés par leur mère (court = libellé affiché partout où le carnet montre « court || n° ») ; rien n'est écrit à l'affichage
+  agneauxSansNumero().forEach(it => {
+    const l = it.lamb, cle = cleAgneauSansNumero(it);
+    const soins = (l.sanitaire || []).filter(x => x && x.date).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
+    out.push({ id: cle, eid: cle, cle: 'agneaux', categorie: 'Agneau', obj: l, numero: numeroVisuel(it.sheep.eid), court: libelleAgneauSansNumero(l, it.sheep.eid), age: null,
+      annee: /^\d{4}/.test(it.date) ? parseInt(it.date.slice(0, 4), 10) : null, statutRepro: '—', dernierSoin: soins[0] || null, lots: [], delai: delaiEnCoursAnimal(l), sansNumero: true });
+  });
   return out.sort(comparerAnimauxAgeNumero);   // règle habituelle des tableaux d'animaux : âge décroissant, puis n° croissant à âge égal
 }
 function animalFiltresCarnet(liste, f) {
@@ -20365,7 +20392,7 @@ function animalActuelParEid(eid) {
   a = (DB.agnelles || []).find(x => x.eid === eid);
   if (a) return a;
   const it = getAgneauxInventaire().find(it => it.lamb.eid === eid);
-  return it ? it.lamb : null;
+  return it ? it.lamb : agneauParCleSansNumero(eid);   // agneau sans n° : référence interne (ou position avant son premier soin)
 }
 // Retire un lot de soins (confirmation demandée par l'appelant) : supprime ces soins précis, et l'entrée de
 // l'historique collectif. lot = { eids, soinId, collectifId }.
@@ -20708,7 +20735,7 @@ function ecranCarnetAnimaux() {
     const scanInput = $('cs-q'), feedback = $('cs-scan-feedback');
     setActiveScanTarget(scanInput);
     wireEidLookupField(scanInput, {
-      pool: tous,
+      pool: tous.filter(a => !a.sansNumero),   // un agneau sans n° ne se bipe pas : il se touche
       feedbackEl: feedback,
       notFoundMessage: (val) => 'n°' + numeroVisuel(val) + ' introuvable parmi les animaux éligibles.',
       estDejaTrouve: (item) => E.selection.has(item.eid),
@@ -20749,6 +20776,8 @@ function ecranCarnetAnimaux() {
     // fantôme et « Annuler ce lot » ne touchait plus les vraies données. carnetDernierLot ne garde donc que des EID
     // et cet id : à l'annulation, on relit les animaux actuels par EID plutôt que de muter une référence ancienne.
     const soinId = 'S-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    // agneau sans n° : référence interne posée à son premier soin (jamais un n°, le champ eid reste vide) ; c'est elle qui sert au lot et à l'annulation
+    animaux.forEach(a => { if (a.sansNumero) { if (!a.obj.ref) a.obj.ref = 'AG-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); a.eid = a.obj.ref; } });
     const collectifId = animaux.length >= 2 ? 'TC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7) : null;
     animaux.forEach(a => {
       const soin = Object.assign({}, modele);                // une copie distincte par animal
@@ -21550,7 +21579,8 @@ function animauxSousDelaiPool(cat) {
   if (cat === 'brebis') return DB.brebis.filter(s => (s.statut || 'active') === 'active').map(a => ({ id: a.id, eid: a.eid, sanitaire: a.sanitaire }));
   if (cat === 'agnelles') return (DB.agnelles || []).filter(a => (a.statut || 'active') === 'active').map(a => ({ id: a.id, eid: a.eid, sanitaire: a.sanitaire }));
   if (cat === 'beliers') return (DB.beliers || []).filter(b => (b.statut || 'actif') === 'actif').map(b => ({ id: b.id, eid: b.eid, sanitaire: b.sanitaire }));
-  return getAgneauxInventaire().filter(it => !agneauSorti(it.lamb)).map(it => ({ id: it.lamb.eid, eid: it.lamb.eid, sanitaire: it.lamb.sanitaire }));
+  return getAgneauxInventaire().filter(it => !agneauSorti(it.lamb)).map(it => ({ id: it.lamb.eid, eid: it.lamb.eid, sanitaire: it.lamb.sanitaire }))
+    .concat(agneauxSansNumero().map(it => ({ id: cleAgneauSansNumero(it), eid: '', libelle: libelleAgneauSansNumero(it.lamb, it.sheep.eid), sanitaire: it.lamb.sanitaire })));   // pas encore bouclés : par leur mère
 }
 function sousDelaiParAnimal(cat) {
   const t = jourAujourdhuiISO(), out = [];
@@ -21563,7 +21593,7 @@ function sousDelaiParAnimal(cat) {
     });
     if (!soins.length) return;
     soins.sort((x, y) => x.finDelai.localeCompare(y.finDelai) || (x.type === 'lait' ? -1 : 1));
-    out.push({ id: a.id, eid: a.eid, soins, finDelai: soins[soins.length - 1].finDelai });
+    out.push(Object.assign({ id: a.id, eid: a.eid, soins, finDelai: soins[soins.length - 1].finDelai }, a.libelle ? { libelle: a.libelle } : {}));
   });
   return out.sort((a, b) => a.finDelai.localeCompare(b.finDelai) || a.eid.localeCompare(b.eid));
 }
@@ -21635,7 +21665,7 @@ function renderSousDelai() {
   const onglets = `<div class="tab-bar bc-onglets sd-onglets">${SOUS_DELAI_CATEGORIES.map(([k, l]) => `<button type="button" class="tab-btn${k === sousDelaiOnglet ? ' active' : ''}" data-tab="${k}">${l} (${parCat[k].length})</button>`).join('')}</div>`;
   const desktopSousDelai = isDesktopMode();
   const cols = [
-    { header: 'N°', value: r => 'n°' + numeroVisuel(r.eid) },
+    { header: 'N°', value: r => r.libelle || ('n°' + numeroVisuel(r.eid)) },
     { header: 'Produits (soin, fin du délai)', value: r => r.soins.map(libelleSoinSousDelai).join(' ; ') },
     { header: 'Fin du délai', value: r => formatDateFr(r.finDelai) },
     { header: 'Jours restants', value: r => String(joursRestantsAvant(r.finDelai)) }
@@ -21668,7 +21698,7 @@ function renderSousDelai() {
   app.querySelectorAll('.sd-onglets .tab-btn').forEach(b => { b.onclick = () => { sousDelaiOnglet = b.dataset.tab; render('sous-delai'); }; });
   if (document.getElementById('btn-controle-lot-delai')) document.getElementById('btn-controle-lot-delai').onclick = () => render('controle-lot-delai');
   document.getElementById('btn-sous-delai-creer-lot').onclick = () => {
-    const membres = rows.map(r => r.eid);
+    const membres = rows.filter(r => r.eid).map(r => r.eid);   // un agneau sans n° n'entre pas dans un lot
     ouvrirModalNouveauLot({ membres, onCreated: () => render('sous-delai') });
   };
   document.getElementById('btn-export-sous-delai-pdf').onclick = () => {
@@ -22202,7 +22232,8 @@ function renderTraitementsCollectifsHistorique() {
         const t = DB.traitementsCollectifs.find(x => x.id === id);
         if (!t) return;
         if (!confirm('Supprimer ce traitement collectif de ' + t.membres.length + ' ' + catLabel(t.categorie).toLowerCase() + ' ? Cette action est irréversible.')) return;
-        const pool = t.categorie === 'multi' ? [].concat(DB.brebis, DB.beliers || [], DB.agnelles || [], getAgneauxInventaire().map(it => it.lamb)) : CATEGORIE_ANIMAL_CONFIG[t.categorie || 'brebis'].pool();
+        const pool = (t.categorie === 'multi' ? [].concat(DB.brebis, DB.beliers || [], DB.agnelles || [], getAgneauxInventaire().map(it => it.lamb)) : CATEGORIE_ANIMAL_CONFIG[t.categorie || 'brebis'].pool())
+          .concat(t.categorie === 'multi' || t.categorie === 'agneaux' ? agneauxSansNumero().map(it => it.lamb) : []);   // agneaux pas encore bouclés compris
         pool.forEach(a => {
           if (!a.sanitaire) return;
           a.sanitaire = a.sanitaire.filter(soin => soin.collectifId !== id);
@@ -22550,11 +22581,13 @@ function lambSanitaireRows() {
   registreEntriesFor('brebis').forEach(entry => {
     entry.agnelages.forEach(ag => {
       (ag.lambs || []).forEach(l => {
-        if (!l.eid) return; // pas bouclé : pas de traçabilité individuelle possible
+        if (!l || l.sexe === 'Mort-né') return;
         if (l.sexe === 'Femelle' && l.triStatut === 'gardée') return;
+        // pas encore bouclé : son soin est inscrit sous « Mâle de n°<mère> (sans n°) » ; il prend le n° de l'agneau dès son bouclage
+        const sansNumero = !l.eid;
         (l.sanitaire || []).forEach(s => {
           rows.push({
-            eid: l.eid, categorie: 'Agneau',
+            eid: l.eid || '', categorie: 'Agneau', ...(sansNumero ? { numeroAffiche: libelleAgneauSansNumero(l, entry.eid) } : {}),
             type: (s.type || '') + (s.sousType ? ' · ' + s.sousType : ''),
             produit: s.produit || '', date: s.date || '', dose: s.quantiteCc != null ? (s.quantiteCc + ' cc') : (s.dose || ''),
             numeroOrdonnance: s.numeroOrdonnance || '',
@@ -22677,11 +22710,13 @@ function registreMouvementsFilteredRows(filtreNumero, colFiltres) {
   rows = registreFiltrerParCampagne(rows, colFiltres.campagne);
   return rows;
 }
+// N° d'une ligne du registre sanitaire (écran, Excel, PDF) : « Mâle de n°… (sans n°) » pour un agneau pas encore bouclé
+const numeroLigneSanitaire = (r, court) => r.numeroAffiche || ('n°' + (court ? eidAffichageCourt(r.eid) : numeroVisuel(r.eid)));
 function registreSanitaireFilteredRows(filtreNumero, colFiltres) {
   let rows = registreSanitaireRows();
   if (filtreNumero.trim()) {
     const f = filtreNumero.trim().toLowerCase();
-    rows = rows.filter(r => numeroVisuel(r.eid).toLowerCase().includes(f));
+    rows = rows.filter(r => (r.numeroAffiche || numeroVisuel(r.eid)).toLowerCase().includes(f));
   }
   if (colFiltres.categorie) rows = rows.filter(r => r.categorie === colFiltres.categorie);
   if (colFiltres.type) rows = rows.filter(r => r.type === colFiltres.type);
@@ -22726,7 +22761,7 @@ function registreMobileVue(view, filtreNumero, colFiltres) {
   const allRows = registreSanitaireRows(), rows = registreSanitaireFilteredRows(filtreNumero, colFiltres);
   return { rows, nbSelects: 3, nom: ['soin', 'soins'], vide: 'Aucun soin ne correspond aux filtres.',
     controlsHtml: registreColSelectHtml('categorie', 'Catégorie', allRows.map(r => r.categorie), colFiltres.categorie) + registreColSelectHtml('type', 'Type', allRows.map(r => r.type), colFiltres.type) + registreCampagneSelectHtml(allRows.map(r => r.campagne), colFiltres.campagne),
-    carte: r => registreCarteHtml('n°' + numeroVisuel(r.eid), r.categorie, registrePastille(String(r.type).split(' · ')[0], registreTeinteSoin(r.type)), formatDateFr(r.date),
+    carte: r => registreCarteHtml(numeroLigneSanitaire(r), r.categorie, registrePastille(String(r.type).split(' · ')[0], registreTeinteSoin(r.type)), formatDateFr(r.date),
       echapperHtml([String(r.type).includes(' · ') ? String(r.type).split(' · ').slice(1).join(' · ') : '', r.produit, r.dose, r.numeroOrdonnance ? 'ordonnance ' + r.numeroOrdonnance : ''].filter(Boolean).join(' · ')), registreCampagneLabel(r)) };
 }
 
@@ -24544,7 +24579,7 @@ async function exportControleLaitierXlsx(filtered) {
 function feuilleSanitaireXlsx(rows) {
   return { name: 'Sanitaire', colWidths: [16, 14, 16, 20, 12, 12, 16, 14, 16, 12, 14, 16, 16, 20], rows: [
     ['N°', 'Catégorie', 'Type de soin', 'Produit', 'Date', 'Dose', 'N° ordonnance', 'Campagne', ...EXPORT_SANITAIRE_AJOUTS.map(c => c.label)],
-    ...rows.map(r => ['n°' + eidAffichageCourt(r.eid), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, r.numeroOrdonnance, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1), ...EXPORT_SANITAIRE_AJOUTS.map(c => c.valeur(r))])
+    ...rows.map(r => [numeroLigneSanitaire(r, true), r.categorie, r.type, r.produit, formatDateFr(r.date), r.dose, r.numeroOrdonnance, r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1), ...EXPORT_SANITAIRE_AJOUTS.map(c => c.valeur(r))])
   ] };
 }
 // Page PC « Carnet sanitaire » : le carnet complet (sans filtre) en un fichier Excel
@@ -24604,7 +24639,7 @@ function registreResumeFiltresFichier(filtreNumero, colFiltres) {
    d'après la largeur réelle du texte ; la police passe de 9,5 à 8 puis 7 pt si nécessaire, jamais de chevauchement. */
 function miseEnPageSanitairePdf(lignes) {
   const base = [
-    { label: 'N°', val: r => 'n°' + eidAffichageCourt(r.eid) }, { label: 'Catégorie', val: r => r.categorie }, { label: 'Type de soin', val: r => r.type },
+    { label: 'N°', val: r => numeroLigneSanitaire(r, true) }, { label: 'Catégorie', val: r => r.categorie }, { label: 'Type de soin', val: r => r.type },
     { label: 'Produit', val: r => r.produit }, { label: 'Date', val: r => formatDateFr(r.date) }, { label: 'Dose', val: r => r.dose },
     { label: 'N° ordonnance', val: r => r.numeroOrdonnance }, { label: 'Campagne', val: r => registreCampagneLabelTexte(r) }
   ];
@@ -24779,7 +24814,7 @@ function registrePcTableHtml(view) {
   }
   const rows = registreSanitaireFilteredRows(f, cf);
   return { n: rows.length, unite: 'soin', unites: 'soins', html: rows.length === 0 ? vide('Aucun soin ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">N° ordonnance</th><th class="l">Campagne</th></tr>
-      ${rows.map(r => `<tr>${td(eidTxt(r.eid))}${td(r.categorie)}${td(r.type)}${td(echapperHtml(r.produit))}${td(formatDateFr(r.date))}${td(echapperHtml(r.dose))}${td(echapperHtml(r.numeroOrdonnance || '—'))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
+      ${rows.map(r => `<tr>${td(echapperHtml(numeroLigneSanitaire(r)))}${td(r.categorie)}${td(r.type)}${td(echapperHtml(r.produit))}${td(formatDateFr(r.date))}${td(echapperHtml(r.dose))}${td(echapperHtml(r.numeroOrdonnance || '—'))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
 }
 function renderRegistrePc() {
   pageTitle.textContent = "Registre d'élevage";
