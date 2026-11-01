@@ -1289,6 +1289,14 @@
   .tri-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
   .tri-nav .btn { margin: 0; height: 44px; }
   .tri-snack { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); max-width: 520px; margin: 0 auto; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 8px 4px 14px; min-height: 52px; border-radius: 14px; background: var(--ch-texte); color: var(--ch-carte); font-size: 14px; }
+  /* Identifier les agneaux (mobile) : agneau à choisir (bouton pleine largeur, sélectionné = vert pastel), bandeau au-dessus de la barre fixe */
+  .id-agneau { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; min-height: 56px; margin: 0 0 8px; padding: 10px 12px; border: 1px solid var(--ch-bord-champ); border-radius: 14px; background: var(--ch-carte); color: var(--ch-texte); font: inherit; text-align: left; }
+  .id-agneau.sel { border: 2px solid var(--ch-vert); background: var(--ch-vert-pastel); }
+  .id-agneau.fait { background: var(--ch-ligne-alt); border-color: var(--ch-bord); }
+  .id-radio { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--ch-bord-champ); background: var(--ch-carte); }
+  .id-agneau.sel .id-radio { border-color: var(--ch-vert); background: var(--ch-vert); box-shadow: inset 0 0 0 4px var(--ch-carte); }
+  #id-liste .carte-liste { margin-bottom: 8px; }
+  .tri-snack.id-snack-haut { position: static; margin: 0 0 12px; }   /* dans la page, juste au-dessus de la barre : ne cache jamais « Enregistrer et suivant » */
   .tri-snack button { min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--ch-vert-pastel); font: inherit; font-weight: 700; cursor: pointer; }
   /* « Pas traite cette campagne » : bandeau (motif + Annuler), bloc de la fiche, bouton de ligne */
   .tri-snack.pt-snack { flex-wrap: wrap; row-gap: 4px; padding-top: 6px; padding-bottom: 6px; }
@@ -6545,6 +6553,7 @@ btnBack.onclick = () => {
   else if (currentView === 'add-mouvement-belier' || currentView === 'add-note-belier') { editBelierContext = null; render('belier-detail', currentBelierId); }
   else if (currentView === 'add-echo' || currentView === 'add-agnelage' || currentView === 'add-mouvement' || currentView === 'add-controle' || currentView === 'add-note') render('detail', currentSheepId);
   else if (currentView === 'echo-rapide' || currentView === 'misebas-rapide') render('home');
+  else if (currentView === 'identifier-agneaux') { identEtat = null; resetMisebasRapideSession(); render('misebas-rapide'); }
   else if (currentView === 'bilan-campagne') render('home');
   else if (currentView === 'saisie-resume-campagne') { saisieResumeEtat = null; bilanCampagneTab = 'reproduction'; render('bilan-campagne'); }
   else if (currentView === 'historique-echo') render('echo-rapide');
@@ -6790,6 +6799,7 @@ function render(view, sheepId) {
     else if (view === 'add-agnelage') renderAddAgnelage(currentSheepId);
     else if (view === 'echo-rapide') { if (isDesktopMode()) renderEchosPc(); else renderEchoRapide(); }
     else if (view === 'misebas-rapide') renderMiseBasRapide();
+    else if (view === 'identifier-agneaux') renderIdentifierAgneaux();
     else if (view === 'add-mouvement') renderAddMouvement(currentSheepId);
     else if (view === 'add-controle') renderAddControle(currentSheepId);
     else if (view === 'agneaux') renderAgneaux();
@@ -14062,6 +14072,174 @@ function miseBasRapideStats(campagneRows) {
   const portees = { simples: nees.filter(r => r.total === 1).length, doubles: nees.filter(r => r.total === 2).length, triplesEtPlus: nees.filter(r => r.total >= 3).length };
   return { cb, misesBas: campagneRows.length, nes, males: somme('male'), femelles: somme('femelle'), mortNes: somme('mortNe'), avortons: somme('avortons'), prolificite: campagneRows.length > 0 ? nes / campagneRows.length : null, portees };
 }
+/* ---------- Identifier les agneaux (MOBILE seulement) ----------
+   Agneaux nés sans n° (ni mort-nés, ni sortis) : on retrouve la portée par le n° de la MÈRE (5 derniers chiffres, n° de travail ou EID ; bip possible, jamais obligatoire),
+   on touche le bon agneau (choisi d'office seulement s'il est seul), on tape ou bipe la boucle (n° suivant proposé : numeroBoucleSuivant), « Enregistrer et suivant ».
+   Mêmes règles qu'à la mise bas : resoudreEidAgneau (5 chiffres ou n° national ; chiffre d'année = alerte ambre, jamais un blocage ; EID bippé tel quel),
+   conflitEidToutesFormes (n° déjà porté par un animal, sous toute forme = blocage). Le soin déjà fait suit l'agneau (même fiche) ; soins au bouclage posés à ce moment-là
+   (appliquerSoinsBouclage), mouvement d'entrée « Naissance » (ensureLambEntreeMouvement) ; le père de l'IA est déjà sur l'agneau. Rien n'est écrit avant « Enregistrer ».
+   Bandeau 6 s « n°… identifié · Annuler » : remet la fiche exacte d'avant (un geste, sans confirm()). Accès : tuile « Agneaux sans n° » de l'écran Mises-bas (seulement s'il y en a). */
+function agneauxSansNumero() {
+  const out = [];
+  DB.brebis.forEach(s => (s.agnelages || []).forEach((ag, agIdx) => (ag.lambs || []).forEach((l, li) => {
+    if (!l || !l.sexe || l.sexe === 'Mort-né' || cleanEid(l.eid || '') || agneauSorti(l)) return;
+    out.push({ sheep: s, agIdx, li, lamb: l, date: ag.date || '' });
+  })));
+  return out;
+}
+// Portées à identifier (une par mise bas), les plus vieilles en haut puis n° de la mère croissant ; q = n° de la mère tapé (filtre)
+function porteesAIdentifier(q) {
+  const par = new Map();
+  agneauxSansNumero().forEach(it => {
+    const cle = it.sheep.id + '|' + it.agIdx;
+    if (!par.has(cle)) par.set(cle, { cle, sheep: it.sheep, agIdx: it.agIdx, date: it.date, agneaux: [] });
+    par.get(cle).agneaux.push(it);
+  });
+  const v = cleanEid(String(q || ''));
+  const correspond = p => !v || numeroVisuel(p.sheep.eid).replace(/\s/g, '').includes(v) || cleanEid(p.sheep.eid).endsWith(v)
+    || String(p.sheep.numeroCourtTravailSieol || '') === v;
+  return [...par.values()].filter(correspond)
+    .sort((a, b) => a.date.localeCompare(b.date) || numeroVisuel(a.sheep.eid).localeCompare(numeroVisuel(b.sheep.eid)));
+}
+// Écriture : { erreur } (rien d'écrit) ou { ok, eid, avant (copie de la fiche d'avant, pour Annuler), alerte }
+function identifierAgneau(sheep, agIdx, li, saisie) {
+  const ag = sheep && (sheep.agnelages || [])[agIdx], l = ag && (ag.lambs || [])[li];
+  if (!l || !l.sexe || l.sexe === 'Mort-né' || cleanEid(l.eid || '') || agneauSorti(l)) return { erreur: "Cet agneau n'est plus à identifier." };
+  const r = resoudreEidAgneau(saisie, ag.date);
+  if (!r.eid) return { erreur: 'Saisir le n° de la boucle.' };
+  if (r.erreur) return { erreur: r.erreur };
+  const conflit = conflitEidToutesFormes(r.eid);
+  if (conflit) return { erreur: messageEidDejaUtilise(conflit) };
+  const avant = JSON.parse(JSON.stringify(l));
+  l.eid = r.eid;
+  ensureLambEntreeMouvement(l, ag.date);
+  appliquerSoinsBouclage([l], ag.date);
+  saveData(DB);
+  return { ok: true, eid: r.eid, avant, alerte: r.alerte || '' };
+}
+function annulerIdentificationAgneau(sheep, agIdx, li, avant) {
+  const ag = sheep && (sheep.agnelages || [])[agIdx], l = ag && (ag.lambs || [])[li];
+  if (!l || !avant) return false;
+  Object.keys(l).forEach(k => { delete l[k]; });
+  Object.assign(l, JSON.parse(JSON.stringify(avant)));
+  saveData(DB);
+  return true;
+}
+let identEtat = null;   // { q, cle (portée ouverte), li (agneau choisi), saisie, erreur, snack: { sheepId, agIdx, li, avant, eid, texte }, nbFaits }
+function renderIdentifierAgneaux() {
+  if (isDesktopMode()) { render('misebas-rapide'); return; }   // mobile seulement (le bouclage se fait en bergerie)
+  if (!identEtat) identEtat = { q: '', cle: null, li: null, saisie: '', erreur: '', alerte: '', snack: null, nbFaits: 0 };
+  const E = identEtat;
+  pageTitle.textContent = 'Identifier les agneaux';
+  let snackTimer = null;
+  const app = document.getElementById('app');
+  const portee = () => {
+    if (!E.cle) return null;
+    const p = porteesAIdentifier('').find(x => x.cle === E.cle);
+    return p || null;
+  };
+  const agneauLibelle = l => l.sexe === 'Femelle' ? 'Femelle' : 'Mâle';
+  function draw() {
+    const p = portee();
+    if (E.cle && !p) { E.cle = null; E.li = null; }
+    const restants = agneauxSansNumero().length;
+    const tuiles = `<div class="tuiles-charte" id="id-tuiles">
+        <div class="tuile-charte ${restants ? 'ambre' : ''}"><div class="l">Sans n°</div><div class="n" id="id-restants">${restants}</div></div>
+        <div class="tuile-charte vert"><div class="l">Identifiés</div><div class="n" id="id-faits">${E.nbFaits}</div></div>
+      </div>`;
+    const snack = E.snack ? `<div class="tri-snack${E.cle ? ' id-snack-haut' : ''}" id="id-snack" role="status"><span>${echapperHtml(E.snack.texte)}</span><button type="button" id="id-snack-annuler">Annuler</button></div>` : '';
+    if (!p) {
+      const TITRE = 'class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;"';
+      const listeHtml = () => {
+        if (!restants) return `<div class="card info" id="id-fini">Tous les agneaux ont leur n°.</div>`;
+        const liste = porteesAIdentifier(E.q);
+        if (!liste.length) return `<div class="msg-charte alerte" id="id-aucune">Aucune mère avec des agneaux sans n° ne correspond à « ${echapperHtml(E.q)} ».</div>`;
+        return `<div ${TITRE}>${E.q ? 'Correspondent' : 'À identifier'} · ${liste.length}</div>` + liste.map(x => carteListeHtml({
+          nm: 'n°' + echapperHtml(numeroVisuel(x.sheep.eid)),
+          l2: echapperHtml(formatDateFr(x.date) + ' · ' + x.agneaux.map(it => agneauLibelle(it.lamb)).join(', ')),
+          pastille: cartePastille(x.agneaux.length + ' sans n°'),
+          ouvre: true, attrs: `data-cle="${echapperHtml(x.cle)}"`, cls: 'id-portee'
+        })).join('');
+      };
+      app.innerHTML = `${tuiles}
+        <div class="card"><label for="id-q">N° de la mère</label><input type="text" id="id-q" inputmode="numeric" placeholder="5 derniers chiffres ou n° de travail" autocomplete="off" value="${echapperHtml(E.q)}" style="margin-bottom:0;">
+        <div class="info" style="margin-top:6px;">Les agneaux nés sans n°, les plus vieux en haut.</div></div>
+        <div id="id-liste">${listeHtml()}</div>
+        ${snack}`;
+      const zoneListe = document.getElementById('id-liste');
+      const majListe = () => { zoneListe.innerHTML = listeHtml(); brancherCartesListe(zoneListe, c => { const x = porteesAIdentifier('').find(y => y.cle === c.dataset.cle); if (x) ouvrir(x); }); };
+      const q = document.getElementById('id-q');
+      setActiveScanTarget(q);
+      q.oninput = () => { E.q = q.value; majListe(); };   // seule la liste change : le champ garde le curseur (et un bip enchaîne sur Entrée)
+      q.onkeydown = (e) => {
+        if (e.key !== 'Enter' && e.keyCode !== 13) return;
+        e.preventDefault();
+        const l2 = porteesAIdentifier(E.q);
+        if (l2.length === 1) ouvrir(l2[0]);
+      };
+      majListe();
+    } else {
+      if (E.li === null && p.agneaux.length === 1) { E.li = p.agneaux[0].li; E.saisie = numeroBoucleSuivant([]); }   // un seul agneau : choisi d'office (jamais quand il y en a plusieurs)
+      const lambsTous = p.sheep.agnelages[p.agIdx].lambs;
+      const faits = lambsTous.map((l, li) => ({ l, li })).filter(x => x.l && x.l.sexe && x.l.sexe !== 'Mort-né' && cleanEid(x.l.eid || '') && !p.agneaux.some(a => a.li === x.li));
+      const nbSoins = l => (l.sanitaire || []).length;
+      app.innerHTML = `${tuiles}
+        <div class="card" id="id-mere"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><b style="font-size:20px;color:var(--ch-vert-fonce);">Mère n°${echapperHtml(numeroVisuel(p.sheep.eid))}</b><span class="mb-pastille">${lambsTous.filter(l => l && l.sexe && l.sexe !== 'Mort-né').length > 1 ? 'Portée de ' + lambsTous.filter(l => l && l.sexe && l.sexe !== 'Mort-né').length : 'Simple'}</span></div>
+        <div class="info">Mise bas du ${formatDateFr(p.date)}</div></div>
+        <div class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Quel agneau ?</div>
+        ${faits.map(x => `<div class="id-agneau fait"><div><b>${agneauLibelle(x.l)}</b><div class="info">n°${echapperHtml(numeroVisuel(x.l.eid))}</div></div><span class="mb-pastille vert">Identifié</span></div>`).join('')}
+        ${p.agneaux.map(it => `<button type="button" class="id-agneau${E.li === it.li ? ' sel' : ''}" data-li="${it.li}" aria-pressed="${E.li === it.li}"><div><b>${agneauLibelle(it.lamb)}</b><div class="info">sans n°${nbSoins(it.lamb) ? ' · ' + nbSoins(it.lamb) + ' soin' + (nbSoins(it.lamb) > 1 ? 's' : '') + ' déjà fait' + (nbSoins(it.lamb) > 1 ? 's' : '') : ''}</div></div><span class="id-radio" aria-hidden="true"></span></button>`).join('')}
+        ${E.li !== null ? `<label for="id-eid" style="margin-top:6px;">N° de boucle</label>${champEidAgneauHtml('eid-input-ident', 'id-eid', E.saisie, 'Saisir le n° (ex. 71001)')}
+        <div class="eid-preview-ident" id="id-apercu" style="font-size:12px;"></div>${ligneSoinsBouclageHtml()}` : '<div class="info">Toucher l\'agneau à identifier.</div>'}
+        <div id="id-erreur">${E.erreur && E.erreur !== apercuEidAgneau(E.saisie, p.date).texte ? `<div class="msg-charte alerte">${echapperHtml(E.erreur)}</div>` : ''}</div>
+        ${snack}
+        <div class="mn-barre"><button type="button" class="btn btn-secondary" id="btn-id-annuler">Annuler</button><button type="button" class="btn btn-primary" id="btn-id-enregistrer"${E.li === null ? ' disabled' : ''}>Enregistrer et suivant</button></div>`;
+      app.querySelectorAll('.id-agneau[data-li]').forEach(b => { b.onclick = () => { const li = parseInt(b.dataset.li, 10); if (E.li !== li) { E.li = li; E.saisie = numeroBoucleSuivant([]); E.erreur = ''; } draw(); }; });
+      const champ = app.querySelector('input.eid-input-ident');
+      if (champ) {
+        champ.id = 'id-eid';   // champ commun de la mise bas (champEidAgneauHtml) : relié à son libellé
+                attachEidBeep(champ);
+        setActiveScanTarget(champ);
+        const maj = () => {
+          E.saisie = champ.value;
+          majPrefixeEidAgneau(champ);
+          const a = apercuEidAgneau(champ.value, p.date);
+          const z = document.getElementById('id-apercu');
+          z.textContent = a.texte;
+          z.style.color = a.ton === 'danger' ? 'var(--ch-rouge)' : a.ton === 'alerte' ? 'var(--ch-ambre-texte)' : 'var(--ch-texte2)';
+        };
+        champ.addEventListener('input', maj);
+        champ.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); enregistrer(); } });
+        maj();
+      }
+      document.getElementById('btn-id-annuler').onclick = () => { E.cle = null; E.li = null; E.saisie = ''; E.erreur = ''; draw(); };
+      document.getElementById('btn-id-enregistrer').onclick = enregistrer;
+      function enregistrer() {
+        if (E.li === null) return;
+        const r = identifierAgneau(p.sheep, p.agIdx, E.li, champ ? champ.value : '');
+        if (r.erreur) { E.erreur = r.erreur; playBeepRate(); draw(); return; }
+        const lamb = p.sheep.agnelages[p.agIdx].lambs[E.li];
+        E.nbFaits++;
+        E.snack = { sheepId: p.sheep.id, agIdx: p.agIdx, li: E.li, avant: r.avant, texte: 'n°' + numeroVisuel(r.eid) + ' identifié · ' + agneauLibelle(lamb).toLowerCase() + ' de ' + numeroVisuel(p.sheep.eid) };
+        E.li = null; E.erreur = ''; E.saisie = '';
+        if (!porteesAIdentifier('').some(x => x.cle === E.cle)) { E.cle = null; E.q = ''; }   // portée finie : retour au départ
+        armerSnack();
+        draw();
+      }
+    }
+    const btnSnack = document.getElementById('id-snack-annuler');
+    if (btnSnack) btnSnack.onclick = () => {
+      const s = E.snack; E.snack = null; clearTimeout(snackTimer);
+      const sheep = findSheep(s.sheepId);
+      if (sheep && annulerIdentificationAgneau(sheep, s.agIdx, s.li, s.avant)) { E.nbFaits = Math.max(0, E.nbFaits - 1); E.cle = sheep.id + '|' + s.agIdx; E.li = s.li; E.saisie = ''; }
+      draw();
+    };
+  }
+  function armerSnack() { clearTimeout(snackTimer); snackTimer = setTimeout(() => { if (currentView !== 'identifier-agneaux') return; identEtat && (identEtat.snack = null); const z = document.getElementById('id-snack'); if (z) z.remove(); }, 6000); }
+  function ouvrir(x) { E.cle = x.cle; E.li = null; E.saisie = ''; E.erreur = ''; draw(); }
+  draw();
+}
+
 /* ---------- Saisie de mises bas (MOBILE) : maquette « Mise bas rapide » ----------
    Scan de la brebis, date, une carte par agneau (EID bippé, Mâle / Femelle en segmenté ; mort-né : pas d'EID, sexe facultatif ; adoption vers une brebis ACTIVE seulement ; soins au bouclage
    seulement s'ils sont réglés par l'éleveur sur la fiche produit), barre fixe « Annuler | Enregistrer et suivante ». Après l'enregistrement : confirmation verte avec « Annuler cette saisie » (un geste, sans confirmation),
@@ -14274,12 +14452,14 @@ function renderMiseBasRapide() {
         </div>
       </div>`;
     };
+    const nbSansNumero = pc ? 0 : agneauxSansNumero().length;   // mobile : tuile « Agneaux sans n° » (Identifier les agneaux), seulement s'il y en a
     app.innerHTML = pc ? pcHtml() : `
       <div class="tuiles-charte" id="mb-tuiles">
         <div class="tuile-charte vert"><div class="l">Mises bas</div><div class="n">${st.misesBas}</div></div>
         <div class="tuile-charte vert"><div class="l">Agneaux nés</div><div class="n">${st.nes}</div></div>
         <div class="tuile-charte ambre"><div class="l">Restantes</div><div class="n">${st.cb.misesBasRestantes}</div></div>
       </div>
+      ${nbSansNumero ? `<button type="button" class="tuile-charte ambre" id="mb-tuile-ident" style="width:100%;flex-direction:row;align-items:center;justify-content:space-between;border-top:0;border-right:0;border-bottom:0;font:inherit;text-align:left;margin-bottom:12px;"><span><span class="l" style="display:block;">Agneaux sans n°</span><span class="n" style="display:block;">${nbSansNumero}</span></span><b style="color:var(--ch-vert-fonce);">Identifier ›</b></button>` : ''}
       ${confirmation}
       <div class="card"><label>${currentSheep ? 'Autre brebis' : 'Brebis qui vient de mettre bas'}</label><input type="text" id="scan-misebas" placeholder="Scanner ou saisir l'EID" autofocus style="margin-bottom:0;"></div>
       ${unknownHtml}${ambiguHtml}${blocage}${formulaire}${derniers}
@@ -14287,6 +14467,8 @@ function renderMiseBasRapide() {
       <button type="button" class="btn btn-secondary" id="btn-fin-session-mb" style="margin-top:14px;">Terminer la session</button>
     `;
     if (form && !bloc && currentSheep) renderLambs();
+    const tuileIdent = document.getElementById('mb-tuile-ident');
+    if (tuileIdent) tuileIdent.onclick = () => { identEtat = null; render('identifier-agneaux'); };
 
     const scanInput = document.getElementById('scan-misebas');
     setActiveScanTarget(scanInput);
@@ -29764,8 +29946,8 @@ function onEidScanned(eid) {
   // Mise bas (saisie rapide et fiche « Ajouter un agnelage ») : le bip de l'agneau — ou de sa mère adoptive — arrive dans la case qui a
   // le curseur (rapport du 28/10/2026 : il relançait une recherche de brebis). Même chemin qu'une frappe clavier (événement
   // input seul : aperçu, pastille, préfixe), jamais d'Entrée simulée.
-  const caseBip = (currentView === 'misebas-rapide' || currentView === 'add-agnelage') ? document.activeElement : null;
-  if (caseBip && caseBip.isConnected && caseBip.matches && caseBip.matches('input.eid-input, input.eid-input-rapide, input.adopt-eid, input.adopt-eid-rapide')) {
+  const caseBip = (currentView === 'misebas-rapide' || currentView === 'add-agnelage' || currentView === 'identifier-agneaux') ? document.activeElement : null;
+  if (caseBip && caseBip.isConnected && caseBip.matches && caseBip.matches('input.eid-input, input.eid-input-rapide, input.adopt-eid, input.adopt-eid-rapide, input.eid-input-ident')) {
     caseBip.value = eid;
     caseBip.dispatchEvent(new Event('input', { bubbles: true }));
     return;
@@ -30880,7 +31062,7 @@ const TYPES_CONTACT = [{ k: 'bug', l: 'Bug', ton: 'rouge' }, { k: 'question', l:
 const VUES_SANS_BULLE = new Set(['boot', 'auth', 'attente-compte', 'verifier-email', 'premiere-configuration', 'diag-bluetooth']);
 const ECRANS_CONTACT = { home: 'Accueil', list: 'Brebis', detail: 'Fiche brebis', beliers: 'Béliers', 'belier-detail': 'Fiche bélier', agneaux: 'Agneaux', 'agneau-detail': 'Fiche agneau',
   agnelles: 'Agnelles', 'agnelles-inventaire': 'Agnelles', 'agnelle-detail': 'Fiche agnelle', lots: 'Chantier de tri', 'lot-repro-detail': 'Lot de reproduction',
-  'echo-rapide': 'Échographies', 'historique-echo': 'Historique des échographies', 'misebas-rapide': 'Mises bas', 'controle-laitier': 'Contrôle laitier',
+  'echo-rapide': 'Échographies', 'historique-echo': 'Historique des échographies', 'misebas-rapide': 'Mises bas', 'identifier-agneaux': 'Identifier les agneaux', 'controle-laitier': 'Contrôle laitier',
   inventaire: 'Mouvements d\'animaux', 'inventaire-actifs': 'Inventaire', sanitaire: 'Carnet sanitaire', qualite: 'Production laitière', journal: 'Calendrier',
   'bilan-campagne': 'Bilan de campagne', registre: 'Registre d\'élevage', 'declaration-annuelle': 'Déclaration annuelle', parametres: 'Paramètres', 'liste-serie': 'Liste série' };
 // var (et non let/const) : render() et onEidScanned peuvent être appelés avant que ce bloc ne s'exécute (démarrage)
@@ -30895,7 +31077,7 @@ function contactEtatCourant() { try { return window.OvilogSync && window.OvilogS
 function reponsesNonLuesContact(etat) { return !!etat && etat.mes.some(m => m.reponse && m.reponseLue === false); }
 // Écran de saisie (formulaire qui ne vit qu'à l'écran) ou à barre fixe en bas : la bulle n'y apparaît jamais, pour ne masquer aucun bouton d'action
 function ecranSaisieSansBulle(vue) {
-  if (/^(add|edit)-/.test(vue || '') || vue === 'misebas-rapide' || vue === 'maj-inventaire' || vue === 'maj-inventaire-validation') return true;
+  if (/^(add|edit)-/.test(vue || '') || vue === 'misebas-rapide' || vue === 'identifier-agneaux' || vue === 'maj-inventaire' || vue === 'maj-inventaire-validation') return true;
   if (vue === 'echo-rapide' && !isDesktopMode()) return true;   // PC : page de consultation
   return !!(app && app.querySelector('.mn-barre'));
 }
@@ -31831,7 +32013,7 @@ let redessinSynchroDiffere = false;
    (DB et stockage local : contrôles de doublons et d'agnelage déjà enregistré toujours à jour), mais l'écran n'est pas reconstruit ; il se rafraîchit
    à l'enregistrement ou au changement d'écran. */
 function vueDeSaisieEnCours(vue) {
-  return /^(add|edit)-/.test(vue || '') || vue === 'misebas-rapide' || vue === 'echo-rapide';
+  return /^(add|edit)-/.test(vue || '') || vue === 'misebas-rapide' || vue === 'identifier-agneaux' || vue === 'echo-rapide';
 }
 function applyRemoteUpdate(mutatorFn) {
   if (vueDeSaisieEnCours(currentView)) {
