@@ -12897,6 +12897,7 @@ function renderAddAgnelage(sheepId) {
         sheep.agnelages[editContext.idx] = Object.assign(JSON.parse(JSON.stringify(existing)), { date: a.date, lambs: a.lambs, codeRepro: a.codeRepro, codeSieolRepro: a.codeSieolRepro });
       } else {
         appliquerTraiteAvortement(sheep, r.agnelage);
+        r.agnelage.saisieA = Date.now();
         sheep.agnelages.push(r.agnelage);
       }
       editContext = null;
@@ -13002,7 +13003,7 @@ function renderAddAgnelage(sheepId) {
     zonePertes.innerHTML = '';
     const champs = { date: document.getElementById('f-date').value, lambs: ids.map(id => fusionAgneauModifie(lambs[id], origines[id])), codeRepro, codeSieolRepro: REPRO_CODE_SIEOL[codeRepro] };
     // modification : la mise bas garde ses autres champs, dont sa campagne (une mise bas d'une campagne passée n'est jamais déplacée dans la campagne en cours)
-    const agnelage = editing ? Object.assign(JSON.parse(JSON.stringify(existing)), champs) : { date: champs.date, lambs: champs.lambs, campagne: DB.campagneDebut, codeRepro, codeSieolRepro: champs.codeSieolRepro };
+    const agnelage = editing ? Object.assign(JSON.parse(JSON.stringify(existing)), champs) : { date: champs.date, lambs: champs.lambs, campagne: DB.campagneDebut, codeRepro, codeSieolRepro: champs.codeSieolRepro, saisieA: Date.now() };
     agnelage.lambs.forEach(l => ensureLambEntreeMouvement(l, agnelage.date));
     // soins au bouclage : seulement les agneaux qui reçoivent leur n° MAINTENANT (nouveaux, ou sans n° jusqu'ici) ; jamais un agneau déjà bouclé
     appliquerSoinsBouclage(agnelage.lambs.filter((l, i) => { const o = origines[ids[i]]; return !(o && o.eid); }), agnelage.date);
@@ -13879,11 +13880,13 @@ function misebasCampagneRows() {
       mortNe: ag.lambs.filter(l => l.sexe === 'Mort-né').length,
       avortons: ag.lambs.filter(estAvorton).length,
       avortement: !!ag.avortement,
+      saisieA: typeof ag.saisieA === 'number' ? ag.saisieA : null,
       total: ag.lambs.length
     });
   });
-  // Plus récente en premier ; n° croissant en tie-break (même jour).
-  out.sort((a, b) => (b.date || '').localeCompare(a.date || '') || a.numero.localeCompare(b.numero));
+  // Ordre d'ENREGISTREMENT, la dernière saisie en haut (saisieA : instant de la saisie, à la milliseconde). Les mises bas d'avant
+  // cet horodatage n'en ont pas : elles viennent après, plus récente date en premier puis n° croissant (rien n'est inventé).
+  out.sort((a, b) => (b.saisieA || 0) - (a.saisieA || 0) || (b.date || '').localeCompare(a.date || '') || a.numero.localeCompare(b.numero));
   return out;
 }
 
@@ -14016,6 +14019,7 @@ function modeMiseBasHtml(avortement) {
   return `<div class="tab-bar" id="mb-mode" role="group" aria-label="Mise bas ou avortement" style="margin-bottom:12px;">${[['mb', 'Mise bas'], ['avo', 'Avortement']].map(([v, l]) => `<button type="button" class="tab-btn mb-mode-btn${(v === 'avo') === !!avortement ? ' active' : ''}" data-val="${v}">${l}</button>`).join('')}</div>`;
 }
 function enregistrerMiseBas(sheep, agnelage) {
+  if (typeof agnelage.saisieA !== 'number') agnelage.saisieA = Date.now();   // instant de l'enregistrement : ordre des listes de mises bas
   appliquerTraiteAvortement(sheep, agnelage);
   reporterPereIaSurAgneaux(sheep, agnelage);
   sheep.agnelages = sheep.agnelages || [];
@@ -14061,7 +14065,7 @@ function miseBasRapideStats(campagneRows) {
 /* ---------- Saisie de mises bas (MOBILE) : maquette « Mise bas rapide » ----------
    Scan de la brebis, date, une carte par agneau (EID bippé, Mâle / Femelle en segmenté ; mort-né : pas d'EID, sexe facultatif ; adoption vers une brebis ACTIVE seulement ; soins au bouclage
    seulement s'ils sont réglés par l'éleveur sur la fiche produit), barre fixe « Annuler | Enregistrer et suivante ». Après l'enregistrement : confirmation verte avec « Annuler cette saisie » (un geste, sans confirmation),
-   puis « Dernières saisies » modifiables d'un toucher. Contrôles discrets : un message n'apparaît que si une règle se déclenche (blocage rouge : déjà mis bas ; alertes : date future, vide définitive).
+   puis toutes les mises bas de la campagne, dans l'ordre d'enregistrement (dernière saisie en haut), modifiables d'un toucher. Contrôles discrets : un message n'apparaît que si une règle se déclenche (blocage rouge : déjà mis bas ; alertes : date future, vide définitive).
    Toute la logique métier est dans les fonctions communes (controlesMiseBas, construireAgnelageMiseBas, enregistrerMiseBas, annulerMiseBas, miseBasRapideStats). */
 function miseBasPortee(n) { return n >= 3 ? ['Triple et +', 'ambre'] : n === 2 ? ['Double', 'bleu'] : ['Simple', 'vert']; }
 function renderMiseBasRapide() {
@@ -14203,9 +14207,9 @@ function renderMiseBasRapide() {
       </div>
       <div id="err" class="error-box hidden"></div>` : '';
     const derniers = (!form && !currentSheep && rows.length) ? `
-      <div class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Dernières saisies</div>
-      <div class="card" id="mb-dernieres" style="padding:0 14px;">${rows.slice(0, 5).map(r => { const sh = findSheep(r.sheepId), ag = sh.agnelages[r.agnelageIdx], [lib, ton] = r.avortement ? ['Avortement', ''] : miseBasPortee(r.total); return `<div class="mb-der" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}"><div class="c"><div class="a">n°${r.courtSieol || r.numero}</div><div class="b">${formatDateFr(r.date)} · ${resumeAgnelage(ag)}</div></div><span class="mb-pastille ${ton}">${lib}</span></div>`; }).join('')}</div>
-      <div class="info" style="margin:6px 2px 12px;">Toucher une ligne pour la modifier.</div>` : '';
+      <div class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Mises bas de la campagne · ${rows.length}</div>
+      <div class="card" id="mb-dernieres" style="padding:0 14px;">${rows.map(r => { const sh = findSheep(r.sheepId), ag = sh.agnelages[r.agnelageIdx], [lib, ton] = r.avortement ? ['Avortement', ''] : miseBasPortee(r.total); return `<div class="mb-der" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}"><div class="c"><div class="a">n°${r.courtSieol || r.numero}</div><div class="b">${formatDateFr(r.date)} · ${resumeAgnelage(ag)}</div></div><span class="mb-pastille ${ton}">${lib}</span></div>`; }).join('')}</div>
+      <div class="info" style="margin:6px 2px 12px;">La dernière saisie en haut. Toucher une ligne pour la modifier.</div>` : '';
     const aujourdhui = jourAujourdhuiISO();
     const nbf = (n) => n > 0 ? String(n) : '<span style="color:var(--text-muted);">–</span>';
     const pctReal = st.cb.troupeauAMettreBas > 0 ? Math.round(st.cb.misesBasActives / st.cb.troupeauAMettreBas * 1000) / 10 : 0;
