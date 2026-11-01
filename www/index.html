@@ -1297,6 +1297,17 @@
   .id-agneau.sel .id-radio { border-color: var(--ch-vert); background: var(--ch-vert); box-shadow: inset 0 0 0 4px var(--ch-carte); }
   #id-liste .carte-liste { margin-bottom: 8px; }
   .tri-snack.id-snack-haut { position: static; margin: 0 0 12px; }   /* dans la page, juste au-dessus de la barre : ne cache jamais « Enregistrer et suivant » */
+  /* Clavier Ovilog (mobile) : chiffres, compact (4 rangées), en bas de l'écran ; la barre fixe remonte au-dessus de lui, la bulle s'efface */
+  #clavier-ovilog { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: none; padding: 8px 8px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--ch-onglets); border-top: 1px solid var(--ch-bord); }
+  #clavier-ovilog.ouvert { display: block; }
+  .clavier-touches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; max-width: 520px; margin: 0 auto; }
+  .clavier-touches .k { height: 50px; border: 0; border-radius: 12px; background: var(--ch-carte); color: var(--ch-texte); font: inherit; font-size: 22px; font-weight: 500; box-shadow: 0 1px 0 var(--ch-bord); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  .clavier-touches .k.f { background: var(--ch-ligne-alt); color: var(--ch-texte2); font-size: 14px; font-weight: 700; }
+  .clavier-touches .k.ok { grid-row: span 2; height: auto; background: var(--ch-vert); color: var(--ch-carte); font-size: 15px; font-weight: 700; }
+  .clavier-touches .k:active { filter: brightness(.94); }
+  body.clavier-ovilog-ouvert #app { padding-bottom: calc(var(--clavier-h, 240px) + 24px); }
+  body.clavier-ovilog-ouvert .mn-barre { bottom: var(--clavier-h, 240px); }
+  body.clavier-ovilog-ouvert .tri-snack { bottom: calc(var(--clavier-h, 240px) + 12px); }
   .tri-snack button { min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--ch-vert-pastel); font: inherit; font-weight: 700; cursor: pointer; }
   /* « Pas traite cette campagne » : bandeau (motif + Annuler), bloc de la fiche, bouton de ligne */
   .tri-snack.pt-snack { flex-wrap: wrap; row-gap: 4px; padding-top: 6px; padding-bottom: 6px; }
@@ -29973,6 +29984,173 @@ if (!window.__focusApresSexe) {
     }, 0);
   });
 }
+/* ---------- Clavier Ovilog (MOBILE seulement) ----------
+   Remplace le clavier du téléphone dans les champs de chiffres : n° d'animaux (recherches, scans, n° des agneaux, mère, mère adoptive, n° de travail) et nombres
+   entiers (litrage du tank, quantités du contrôle laitier en mL, cellules, germes, coliformes, butyriques, jours, nombres) → touches 0-9 ; avec virgule (TB, TP, doses en cc,
+   prix) → 0-9 et « , ». Textes, dosages écrits librement, dates : clavier habituel, rien ne change. PC : jamais (clavier de l'ordinateur).
+   Ne gêne jamais : il ne s'ouvre QUE quand on touche le champ (jamais à l'arrivée sur un écran, jamais après un bip du lecteur ni après « Enregistrer » :
+   un focus posé par l'appli ne l'ouvre pas) ; compact (4 rangées) ; le champ reste visible au-dessus ; se range par « Fermer », en touchant ailleurs ou par le
+   bouton retour du téléphone (qui ne quitte pas l'écran) ; pendant qu'il est ouvert, la barre fixe du bas (Enregistrer) remonte au-dessus de lui et la bulle d'aide s'efface. Recherche (champ
+   de scan, filtre de n°) : « OK » = touche Entrée. Saisie : « Suivant » passe au champ chiffré suivant, « Terminé » au dernier (range le clavier). Chaque touche
+   passe par le même chemin qu'une frappe (événement input) : aperçus, contrôles et préfixe d'indicatif inchangés. */
+const CLAVIER_DECIMAUX = new Set(['qs-tb', 'qs-tp', 'cs-dose', 'fp-bouclage-dose', 'prix-ref-input', 'prix-coef-input', 'msu-ref-input']);
+const CLAVIER_ENTIERS = new Set(['f-lait-qte', 'rs-litres', 'pc-rel-qte']);   // litrage du tank : entier (le champ accepte aussi une décimale tapée au PC)
+const CLAVIER_RECHERCHES = new Set(['scan-misebas', 'scan-echo', 'scan-lot', 'scan-controle-lot', 'scan-liste-serie', 'scan-maj-inventaire', 'scan-open-agneau', 'scan-open-agnelle',
+  'scan-open-belier', 'lr-scan', 'mn-scan', 'mn-q', 'mm-q', 'm12-q', 's12-q', 'mv-q', 'mvp-q', 'ta-q', 'lt-q', 'ep-q', 'inventaire-recherche', 'registre-filtre', 'id-q', 'cs-q', 'f-lecteur-test']);
+const CLAVIER_CLASSES_NUMEROS = ['eid-input', 'eid-input-rapide', 'eid-input-ident', 'adopt-eid', 'adopt-eid-rapide', 'sp-filtre'];
+function typeClavierChamp(el) {
+  if (!el || el.tagName !== 'INPUT' || el.disabled || el.readOnly) return null;
+  const t = (el.getAttribute('type') || 'text').toLowerCase();
+  if (t !== 'text' && t !== 'number' && t !== 'search' && t !== 'tel') return null;
+  if (el.dataset.clavier) return el.dataset.clavier === 'non' ? null : el.dataset.clavier;
+  if (CLAVIER_DECIMAUX.has(el.id)) return 'decimal';
+  if (CLAVIER_ENTIERS.has(el.id)) return 'entier';
+  const im = el.dataset.imOrig !== undefined ? el.dataset.imOrig : (el.getAttribute('inputmode') || '');
+  if (im === 'decimal') return 'decimal';
+  if (im === 'numeric' || t === 'number' || el.dataset.typeOrig === 'number' || CLAVIER_RECHERCHES.has(el.id) || CLAVIER_CLASSES_NUMEROS.some(c => el.classList.contains(c))) return 'entier';
+  return null;
+}
+const clavierRecherche = el => CLAVIER_RECHERCHES.has(el.id) || el.classList.contains('sp-filtre') || /^scan-/.test(el.id || '');
+let clavierOvilog = null;   // { el, type, retour }
+let clavierToucher = null;  // champ que le doigt vient de toucher (seul un toucher ouvre le clavier)
+function clavierActif() { return !isDesktopMode(); }
+function clavierHtml(type, labelOk) {
+  const k = (v, cls, lib) => `<button type="button" class="k${cls ? ' ' + cls : ''}" data-k="${v}" tabindex="-1">${lib || v}</button>`;
+  return `<div class="clavier-touches">
+    ${k('1')}${k('2')}${k('3')}${k('del', 'f', '⌫')}
+    ${k('4')}${k('5')}${k('6')}${k('ok', 'ok', labelOk)}
+    ${k('7')}${k('8')}${k('9')}
+    ${type === 'decimal' ? k(',', '', ',') : k('vider', 'f', 'Effacer')}${k('0')}${k('fermer', 'f', 'Fermer')}
+  </div>`;
+}
+function champsClavierVisibles() {
+  return [...document.querySelectorAll('#app input')].filter(x => typeClavierChamp(x) && x.offsetParent !== null);
+}
+function champSuivantClavier(el) {
+  const l = champsClavierVisibles(), i = l.indexOf(el);
+  return i >= 0 && i < l.length - 1 ? l[i + 1] : null;
+}
+function ouvrirClavierOvilog(el) {
+  const type = typeClavierChamp(el);
+  if (!type) return;
+  let zone = document.getElementById('clavier-ovilog');
+  if (!zone) { zone = document.createElement('div'); zone.id = 'clavier-ovilog'; zone.setAttribute('role', 'group'); zone.setAttribute('aria-label', 'Clavier chiffres'); document.body.appendChild(zone); brancherClavierOvilog(zone); }
+  const recherche = clavierRecherche(el);
+  const labelOk = recherche ? 'OK' : (champSuivantClavier(el) ? 'Suivant' : 'Terminé');
+  zone.innerHTML = clavierHtml(type, labelOk);
+  zone.classList.add('ouvert');
+  const dejaOuvert = !!clavierOvilog;
+  clavierOvilog = Object.assign(clavierOvilog || {}, { el, type, recherche });
+  document.body.classList.add('clavier-ovilog-ouvert');
+  document.documentElement.style.setProperty('--clavier-h', zone.offsetHeight + 'px');
+  if (!dejaOuvert) {
+    const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if (AppPlugin && AppPlugin.addListener) { try { clavierOvilog.retour = Promise.resolve(AppPlugin.addListener('backButton', () => fermerClavierOvilog())); } catch (e) {} }
+  }
+  if (typeof majBulleContact === 'function') majBulleContact();
+  requestAnimationFrame(() => { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {} });
+}
+function fermerClavierOvilog(garderFocus) {
+  if (!clavierOvilog) return;
+  const c = clavierOvilog; clavierOvilog = null;
+  const zone = document.getElementById('clavier-ovilog');
+  if (zone) { zone.classList.remove('ouvert'); zone.innerHTML = ''; }
+  document.body.classList.remove('clavier-ovilog-ouvert');
+  try { if (c.retour) c.retour.then(h => h && h.remove && h.remove()); } catch (e) {}
+  if (!garderFocus && c.el && document.activeElement === c.el) c.el.blur();
+  if (typeof majBulleContact === 'function') majBulleContact();
+}
+// Champ visé, retrouvé s'il a été redessiné entre-temps (même id, ou même classe + data-id)
+function cibleClavier() {
+  const c = clavierOvilog;
+  if (!c) return null;
+  if (c.el && c.el.isConnected) return c.el;
+  let el = c.el && c.el.id ? document.getElementById(c.el.id) : null;
+  if (!el && c.el && c.el.dataset && c.el.dataset.id !== undefined && c.el.classList.length) el = document.querySelector('input.' + c.el.classList[0] + '[data-id="' + c.el.dataset.id + '"]');
+  if (el) { c.el = el; return el; }
+  fermerClavierOvilog(); return null;
+}
+function frapperClavier(el, action) {
+  const nombre = (el.getAttribute('type') || '').toLowerCase() === 'number' || el.dataset.typeOrig === 'number';   // séparateur décimal : point (valeur lue par parseFloat)
+  let v = el.value, debut = v.length, fin = v.length;
+  try { if (typeof el.selectionStart === 'number' && el.selectionStart !== null) { debut = el.selectionStart; fin = el.selectionEnd; } } catch (e) {}
+  if (action === 'vider') { v = ''; debut = fin = 0; }
+  else if (action === 'del') { if (debut === fin && debut > 0) debut--; v = v.slice(0, debut) + v.slice(fin); fin = debut; }
+  else {
+    let ch = action;
+    if (ch === ',') { if (/[.,]/.test(v)) return; ch = nombre ? '.' : ','; if (!v) ch = (nombre ? '0.' : '0,'); }
+    v = v.slice(0, debut) + ch + v.slice(fin); debut = fin = debut + ch.length;
+  }
+  el.value = v;
+  try { el.setSelectionRange(debut, debut); } catch (e) {}
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function brancherClavierOvilog(zone) {
+  // le doigt sur le clavier ne doit jamais retirer le curseur du champ
+  zone.addEventListener('pointerdown', e => { e.preventDefault(); });
+  zone.addEventListener('mousedown', e => { e.preventDefault(); });
+  zone.addEventListener('click', e => {
+    const b = e.target.closest('button[data-k]');
+    if (!b) return;
+    const el = cibleClavier();
+    if (!el) return;
+    const k = b.dataset.k;
+    if (k === 'fermer') { fermerClavierOvilog(); return; }
+    if (k === 'ok') {
+      if (clavierOvilog.recherche) {
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        fermerClavierOvilog(true);
+        return;
+      }
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      const suivant = champSuivantClavier(el);
+      if (suivant) { suivant.focus({ preventScroll: true }); ouvrirClavierOvilog(suivant); }
+      else fermerClavierOvilog();
+      return;
+    }
+    frapperClavier(el, k);
+  });
+}
+if (!window.__clavierOvilog) {
+  window.__clavierOvilog = true;
+  // Seul un TOUCHER du doigt ouvre le clavier : au pointerdown tactile, le clavier du téléphone est coupé pour ce champ (inputmode « none ») et le champ noté ;
+  // le clavier Ovilog s'ouvre au focus qui suit (ou au clic si le champ avait déjà le curseur). Souris, focus posé par l'appli, bip du lecteur : jamais.
+  document.addEventListener('pointerdown', e => {
+    if (!clavierActif()) return;
+    if (e.target && e.target.closest && e.target.closest('#clavier-ovilog')) return;
+    const el = e.target && e.target.closest ? e.target.closest('input') : null;
+    const tactile = e.pointerType === 'touch' || e.pointerType === 'pen';
+    if (el && tactile && typeClavierChamp(el)) {
+      if (el.getAttribute('inputmode') !== 'none') { el.dataset.imOrig = el.getAttribute('inputmode') || ''; el.setAttribute('inputmode', 'none'); }
+      // champ « nombre » : passé en texte pour accepter une saisie en cours (« 71. ») et le curseur ; la valeur reste un nombre écrit avec un point, lu comme avant
+      if ((el.getAttribute('type') || '').toLowerCase() === 'number') { el.dataset.typeOrig = 'number'; el.setAttribute('type', 'text'); }
+      clavierToucher = el;
+      return;
+    }
+    clavierToucher = null;
+    if (clavierOvilog) fermerClavierOvilog(!!el);   // toucher ailleurs : le clavier se range
+  }, true);
+  document.addEventListener('focusin', e => {
+    if (!clavierActif()) return;
+    if (e.target === clavierToucher) ouvrirClavierOvilog(e.target);
+    else if (clavierOvilog && typeClavierChamp(e.target)) ouvrirClavierOvilog(e.target);   // l'appli passe au champ chiffré suivant : le clavier le suit
+  });
+  document.addEventListener('click', e => {
+    if (!clavierActif() || !clavierToucher) return;
+    const el = e.target && e.target.closest ? e.target.closest('input') : null;
+    if (el && el === clavierToucher && document.activeElement === el && (!clavierOvilog || clavierOvilog.el !== el)) ouvrirClavierOvilog(el);
+  });
+  // le champ perd le curseur autrement que par le clavier (changement d'écran, autre champ) : le clavier se range
+  document.addEventListener('focusout', () => setTimeout(() => {
+    if (!clavierOvilog) return;
+    const a = document.activeElement;
+    if (a && a.tagName === 'INPUT' && typeClavierChamp(a)) return;
+    if (clavierOvilog.el && !clavierOvilog.el.isConnected) return;   // champ redessiné : retrouvé à la prochaine touche (cibleClavier)
+    fermerClavierOvilog(true);
+  }, 0));
+}
+
 function onEidScanned(eid) {
   // Pas d'écran en attente d'un scan actuellement (ex. on est sur l'accueil,
   // ou sur un écran qui n'a pas de champ EID) : on ignore silencieusement,
@@ -31120,7 +31298,7 @@ function majBulleContact() {
   if (!bulleContactPrete || !bulleContact) return;
   const etat = contactEtatCourant();
   const visible = !!(etat && etat.connecte) && !bulleContactMasquee() && !VUES_SANS_BULLE.has(currentView) && !ecranSaisieSansBulle(currentView)
-    && !clavierMobileOuvert && !panneauContact && !document.body.classList.contains('porte-auth');
+    && !clavierMobileOuvert && !clavierOvilog && !panneauContact && !document.body.classList.contains('porte-auth');
   bulleContact.classList.toggle('hidden', !visible);
   document.body.classList.toggle('avec-bulle-contact', visible);
   bulleContact.classList.toggle('au-dessus-fab', !fabAdd.classList.contains('hidden'));
