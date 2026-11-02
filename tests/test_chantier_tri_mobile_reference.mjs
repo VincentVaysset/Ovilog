@@ -6,7 +6,8 @@
    Régénérer volontairement : OVILOG_MAJ_REF=1 node test_chantier_tri_mobile_reference.mjs (sur le code d'origine, jamais sur le code modifié).
    EXCEPTION VOULUE du chantier « Lots échographies » : les deux écrans « Nouveau lot » (recherche : add_lot ; réforme : add_lot_reforme) ont de nouveaux critères d'échographie ;
    ils ne sont donc plus comparés à la référence d'origine mais à tests/ref/lots_echos_mobile.json (écrite volontairement avec OVILOG_MAJ_REF_ECHOS=1). Tous les autres écrans restent
-   comparés à la référence d'origine. Les identifiants d'infobulle (data-info-id, compteur global) sont neutralisés : ils décalent d'un écran à l'autre sans rien changer d'affiché. */
+   comparés à la référence d'origine. Les identifiants d'infobulle (data-info-id, compteur global) sont neutralisés : ils décalent d'un écran à l'autre sans rien changer d'affiché.
+   Le marquage du clavier Ovilog (inputmode « none » + data-im-orig sur les champs de chiffres) est retiré avant comparaison : technique, rien d'affiché. */
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
@@ -37,7 +38,9 @@ const res = await page.evaluate(() => {
   DB.agnelles = [{ id: 'ag2', eid: eid(6, 2), origine: 'née', motherEid: eid(8, 133), dateEntree: '2026-09-01', mouvements: [{ type: 'Naissance', date: '2026-01-14' }, { type: 'Entrée', date: '2026-09-01' }], sanitaire: [] },
     { id: 'ag3', eid: eid(5, 42), origine: 'achetée', dateEntree: '2026-09-10', mouvements: [{ type: 'Entrée', date: '2026-09-10' }], sanitaire: [] }];
   DB.lots = [{ id: '1700000000001', nom: 'Brebis doubles', dateCreation: '2026-10-01', membres: [eid(9, 59), eid(9, 69)] }, { id: '1700000000002', nom: 'Réforme du 28-09-2026', type: 'reforme', dateCreation: '2026-09-28', membres: [eid(0, 33)] }];
-  const app = () => document.getElementById('app').innerHTML;
+  // marquage technique du clavier Ovilog (inputmode « none » posé sur les champs de chiffres, valeur d'origine gardée dans data-im-orig) : retiré avant comparaison,
+  // rien d'affiché ne change
+  const app = () => { const c = document.getElementById('app').cloneNode(true); c.querySelectorAll('[data-im-orig]').forEach(i => { const o = i.getAttribute('data-im-orig'); if (o) i.setAttribute('inputmode', o); else i.removeAttribute('inputmode'); i.removeAttribute('data-im-orig'); }); return c.innerHTML; };
   const R = {};
   render('lots'); R.lots = app();
   render('add-lot'); R.add_lot = app();
