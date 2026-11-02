@@ -9,6 +9,10 @@
    Référence régénérée volontairement lors du chantier « Grands écrans de saisie » : seul « saisie_mises_bas » change (maquette Mise bas rapide : tuiles, cartes agneaux, barre fixe, confirmation, dernières saisies) ; les 4 autres écrans sont identiques.
    Référence régénérée volontairement lors du chantier « Pas traite cette campagne » : seuls les deux écrans « Brebis à régulariser » changent (six groupes
    sans doublons : allaitantes, attendues à la traite, traites, pas traites ; avancement = informations complètes).
+   Référence régénérée volontairement lors du chantier « Ordre des mises bas » : seul « saisie_mises_bas » change (titre « Mises bas de la campagne · N »,
+   toutes les mises bas, la dernière saisie en haut) ; les 4 autres écrans sont identiques.
+   Référence régénérée volontairement lors du chantier « Identifier les agneaux » : seul « saisie_mises_bas » change (tuile « Agneaux sans n° · Identifier »,
+   le jeu ayant des agneaux sans n°) ; les 4 autres écrans sont identiques.
    Les écrans ne doivent changer que par ce qui est demandé : la règle elle-même est testée dans
    test_controle_laitier_manquant. Régénérer volontairement : OVILOG_MAJ_REF=1 node test_mobile_ecrans_reference.mjs */
 import { chromium } from 'playwright';

@@ -91,7 +91,7 @@ for (const pc of [false, true]) {
   const nom = pc ? 'PC' : 'MOBILE';
   const page = await ouvrir(pc);
   // compte qui a le Bilan économique (interrupteur disponible, voir test_bilan_eco_interrupteur) et qui l'a désactivé
-  await page.evaluate(() => { DB.bilanEconomiqueActif = false; DB.bilanEconomiqueDisponible = true; parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
+  await page.evaluate(() => { DB.bilanEconomiqueActif = false; DB.bilanEconomiqueDisponible = true; parametresTab = 'regles'; parametresRubrique = 'regles'; render('parametres'); });
   await page.waitForSelector('#f-exp-bilan-eco');
   check(!(await page.isChecked('#f-exp-bilan-eco')), nom + ' : interrupteur « Afficher le Bilan économique » décoché');
   const sauvegardesAvant = await page.evaluate(() => window.__saves);
@@ -106,7 +106,7 @@ for (const pc of [false, true]) {
   const pdf = await rapport(page);
   check(/Bilan économique/.test(pdf.mots.join(' ')) && pdf.pages >= 2, nom + ' : le rapport PDF retrouve sa page économique');
   eq(await page.evaluate(() => window.__donneesPrix() === window.__avantReglage), true, nom + ' : données identiques avant désactivation et après réactivation');
-  await page.evaluate(() => { parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
+  await page.evaluate(() => { parametresTab = 'regles'; parametresRubrique = 'regles'; render('parametres'); });
   await page.uncheck('#f-exp-bilan-eco');
   eq(await page.evaluate(() => [DB.bilanEconomiqueActif, DB.bilanEconomiqueDisponible, !!document.getElementById('f-exp-bilan-eco')]), [false, true, true], nom + ' : désactivable de nouveau, l\'interrupteur reste là');
   console.log('OK 3 ' + nom + ' : réactivation dans Paramètres sans rien perdre, et nouvelle désactivation.');

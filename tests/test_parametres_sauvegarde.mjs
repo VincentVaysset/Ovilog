@@ -31,8 +31,9 @@ for (const bureau of [true, false]) {
   // ---- structure
   eq(await page.evaluate(() => [...document.querySelectorAll('#card-mes-donnees .prm-titre, #card-application .prm-titre')].map(e => e.textContent)), ['Mes données', 'Application'], nom + ' : cartes Mes données et Application');
   const bd = await box(page, '#card-mes-donnees'), ba = await box(page, '#card-application');
-  if (bureau) check(bd.x < ba.x && Math.abs(bd.y - ba.y) < 4, 'PC : Mes données à gauche, Application à droite');
+  if (bureau) check(bd.x < ba.x, 'PC : Mes données à gauche (sous la Synchronisation), Application à droite');
   else check(bd.x === ba.x && bd.y < ba.y, 'mobile : une colonne');
+  eq(await page.evaluate(() => ['#sync-card', '#card-bulle-contact'].map(sel => !!document.querySelector(sel))), [true, true], nom + ' : Synchronisation et « Aide et contact » dans Synchro et sauvegarde');
   check(await page.evaluate(() => !document.getElementById('btn-test-sauvegarde') && !document.getElementById('btn-partager-test') && !document.getElementById('version-footer') && !document.getElementById('app').textContent.includes('❔')), nom + ' : plus de « Tester la sauvegarde », de « Partager le fichier », de pied de version ni de ❔');
   eq(await page.evaluate(() => document.getElementById('app').textContent.split('1.0.204').length - 1), bureau ? 1 : 0, nom + ' : version affichée UNE seule fois' + (bureau ? '' : ' (mobile de test : version de développement)'));
   if (!bureau) check(await page.evaluate(() => (document.getElementById('app').textContent.match(/Version installée/g) || []).length === 1), 'mobile : « Version installée » une seule fois');

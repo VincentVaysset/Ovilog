@@ -13,7 +13,7 @@ import { demarrerHarnais } from './lib/harnais_sync.mjs';
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + ' : ' + JSON.stringify(a) + ' attendu ' + JSON.stringify(b));
 
-const parametres = p => p.evaluate(() => { parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres'); });
+const parametres = p => p.evaluate(() => { parametresTab = 'regles'; parametresRubrique = 'regles'; render('parametres'); });
 const carte = p => p.evaluate(() => { const c = document.getElementById('card-bilan-economique'), i = document.getElementById('f-exp-bilan-eco'); return { carte: !!c, coche: i ? i.checked : null }; });
 const ongletEco = p => p.evaluate(() => { bilanCampagneTab = 'incoherences'; render('bilan-campagne'); return /Bilan économique|Économique/.test([...document.querySelectorAll('#app button')].map(b => b.textContent).join('|')); });
 

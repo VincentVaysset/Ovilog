@@ -1,5 +1,5 @@
 /* Refonte Paramètres, partie 2 : onglet / rubrique Campagne. « Campagne en cours » (nom, dates, bouton de changement -> écran de vérification, point de restauration conditionnel) ;
-   « Date de démarrage de la campagne » en lecture + « Modifier » (avertissement et case de confirmation seulement à la modification) ; « Réglages de reproduction » (gestation, 1er retour,
+   « Date de démarrage de la campagne » en lecture + « Modifier » (avertissement et case de confirmation seulement à la modification) ; carte « Reproduction », désormais dans Règles d'élevage (gestation, 1er retour,
    délai mise bas -> IA, UN seul Enregistrer, validation avant toute écriture, plus de case de confirmation) ; « Campagne actuelle » (année + OK) seulement sur une installation non
    initialisée ; plus de nettoyage ni de doublons ici (déplacés dans Sauvegarde > Maintenance, replié). Saisie au clavier. saveData REMPLACÉ. */
 import { chromium } from 'playwright';
@@ -27,10 +27,10 @@ for (const bureau of [true, false]) {
   }, init);
   await jeu(true);
   // ---- structure
-  const cEnCours = await box(page, '#card-campagne-en-cours'), cDate = await box(page, '#card-date-campagne'), cRepro = await box(page, '#card-repro');
-  if (bureau) check(cEnCours.x === cDate.x && cEnCours.y < cDate.y && cRepro.x > cEnCours.x, 'PC : Campagne en cours et Date à gauche, Réglages de reproduction à droite');
-  else check(cEnCours.x === cDate.x && cDate.x === cRepro.x && cEnCours.y < cDate.y && cDate.y < cRepro.y, 'mobile : une colonne Campagne en cours, Date, Réglages');
-  eq(await page.evaluate(() => [...document.querySelectorAll('#parametres-tab-content .prm-titre')].map(e => e.textContent)), ['Campagne en cours', 'Date de démarrage de la campagne', 'Réglages de reproduction'], nom + ' : cartes de l\'onglet (installation initialisée)');
+  const cEnCours = await box(page, '#card-campagne-en-cours'), cDate = await box(page, '#card-date-campagne');
+  if (bureau) check(cEnCours.x < cDate.x, 'PC : Campagne en cours à gauche, Date à droite');
+  else check(cEnCours.x === cDate.x && cEnCours.y < cDate.y, 'mobile : une colonne Campagne en cours, Date');
+  eq(await page.evaluate(() => [...document.querySelectorAll('#parametres-tab-content .prm-titre')].map(e => e.textContent)), ['Campagne en cours', 'Date de démarrage de la campagne'], nom + ' : cartes de l\'onglet (installation initialisée), plus de réglages de reproduction');
   check(await page.evaluate(() => !document.getElementById('app').textContent.includes('❔') && !document.getElementById('btn-nettoyer-registre') && !document.getElementById('btn-dd-analyser') && !document.getElementById('card-campagne-initiale')), nom + ' : ni ❔, ni nettoyage/doublons, ni carte « Campagne actuelle »');
   eq(await page.evaluate(() => document.querySelector('.prm-campagne-nom').textContent), 'Campagne 2027', nom + ' : nom de la campagne');
   check((await page.evaluate(() => document.getElementById('card-campagne-en-cours').textContent)).includes('du 1er octobre 2026 au 30 septembre 2027'), nom + ' : dates de la campagne');
@@ -61,7 +61,9 @@ for (const bureau of [true, false]) {
   await page.evaluate(() => { DB.exploitation.campagneMoisDebut = 10; DB.exploitation.campagneJourDebut = 1; window.__saves = 0; render('parametres'); });
   console.log('OK ' + nom + ' : structure, Campagne en cours, point de restauration conditionnel, bouton -> vérification, date en lecture + Modifier (avertissement et case à la modification).');
 
-  // ---- réglages de reproduction : un seul Enregistrer, saisie au clavier, validation avant écriture
+  // ---- réglages de reproduction (Règles d'élevage › Reproduction) : un seul Enregistrer, saisie au clavier, validation avant écriture
+  await page.evaluate(() => { parametresTab = 'regles'; parametresRubrique = 'regles'; render('parametres'); });
+  eq(await page.evaluate(() => document.querySelector('#card-repro .prm-titre').textContent), 'Reproduction', nom + ' : carte Reproduction dans Règles d\'élevage');
   check(await page.evaluate(() => document.querySelectorAll('#card-repro .btn-primary').length === 1 && !document.getElementById('f-repro-confirm') && /Rien de déjà enregistré n'est recalculé/.test(document.getElementById('card-repro').textContent)), nom + ' : un seul Enregistrer, plus de case de confirmation, mention « rien n\'est recalculé »');
   eq(await page.evaluate(() => ['f-repro-gestation-min', 'f-repro-gestation-max', 'f-repro-retour-min', 'f-repro-retour-max', 'f-repro-seuil-mb'].map(i => document.getElementById(i).value)), ['142', '152', '160', '171', '3'], nom + ' : valeurs actuelles affichées');
   await page.fill('#f-repro-gestation-min', ''); await page.click('#f-repro-gestation-min'); await page.keyboard.type('145', { delay: 30 });

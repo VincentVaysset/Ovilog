@@ -1,4 +1,4 @@
-/* Refonte Paramètres, partie 0 : structure. PC : 5 onglets dans l'ordre Exploitation, Campagne, Listes, Imports, Sauvegarde, chacun avec un titre et une ligne d'explication.
+/* Refonte Paramètres, partie 0 : structure. PC : 6 onglets dans l'ordre Exploitation, Campagne, Règles d'élevage, Listes, Imports, Synchro et sauvegarde, chacun avec un titre et une ligne d'explication.
    Mobile : plus d'onglets, un écran d'arrivée à 5 rubriques (Exploitation, Campagne, Listes, Lecteur, Sauvegarde ; pas d'Imports) avec un résumé chacune, qui ouvrent chacune leur écran avec retour
    (flèche de l'en-tête) ; état de synchro et version en pied ; retour d'un sous-écran (Produits et délais) sur la bonne rubrique ; le menu rouvre toujours l'écran d'arrivée. saveData REMPLACÉ. */
 import { chromium } from 'playwright';
@@ -22,8 +22,8 @@ const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? docume
   await page.goto(URL_APP, { waitUntil: 'load' }); await page.waitForTimeout(300);
   await jeu(page);
   await page.evaluate(() => render('parametres'));
-  eq(await page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].map(b => b.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Imports', 'Sauvegarde'], 'PC : 5 onglets dans l\'ordre demandé');
-  const aides = { Exploitation: "L'identité de l'élevage et la synchronisation entre appareils", Campagne: 'La campagne en cours et les réglages qui servent aux calculs de reproduction', Listes: 'Les choix proposés dans les menus déroulants', Imports: 'Fichiers Excel au modèle Ovilog · disponible sur PC uniquement', Sauvegarde: "Tes données et la version de l'application" };
+  eq(await page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].map(b => b.textContent)), ['Exploitation', 'Campagne', "Règles d'élevage", 'Listes', 'Imports', 'Synchro et sauvegarde'], 'PC : 5 onglets dans l\'ordre demandé');
+  const aides = { Exploitation: "L'identité de l'élevage : suivi laitier, laiterie, bio", Campagne: 'La campagne en cours et ses dates', "Règles d'élevage": "Les règles que l'appli applique, pour tous les appareils du compte", Listes: 'Les choix proposés dans les menus déroulants', Imports: 'Fichiers Excel au modèle Ovilog · disponible sur PC uniquement', 'Synchro et sauvegarde': "Ton compte, tes données, la version de l'application, l'aide et le contact" };
   for (const [nom, aide] of Object.entries(aides)) {
     await page.click(`.tab-bar .tab-btn:text-is("${nom}")`);
     eq(await txt(page, '.brd-title'), nom, 'titre de l\'onglet ' + nom);
@@ -44,12 +44,12 @@ const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? docume
   await jeu(page);
   await page.evaluate(() => render('parametres'));
   check(await page.evaluate(() => !document.querySelector('.tab-bar')), 'mobile : plus d\'onglets');
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', 'Listes', 'Lecteur', 'Sauvegarde'], 'mobile : 5 rubriques (dont Lecteur), pas d\'Imports');
-  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-resume')].map(e => e.textContent)), ['Exploitation B · cheptel 00000001', 'Campagne 2027 · réglages de reproduction', '8 listes · acheteurs, causes de mortalité…', 'À régler dans l\'appli du téléphone', 'Aucune sauvegarde vérifiée sur cet appareil'], 'résumés des rubriques');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-titre')].map(e => e.textContent)), ['Exploitation', 'Campagne', "Règles d'élevage", 'Listes', 'Lecteur', 'Synchro et sauvegarde'], 'mobile : 5 rubriques (dont Lecteur), pas d\'Imports');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.prm-rub .prm-rub-resume')].map(e => e.textContent)), ['Exploitation B · cheptel 00000001', 'Campagne 2027 et ses dates', 'Reproduction, mises bas, lait', '8 listes · acheteurs, causes de mortalité…', 'À régler dans l\'appli du téléphone', 'Aucune sauvegarde vérifiée sur cet appareil'], 'résumés des rubriques');
   check(/Synchronisation|Connexion|Hors ligne/.test(await txt(page, '#prm-accueil-sync')) && /Version .* · les imports de fichiers se font sur PC/.test(await txt(page, '.prm-pied')), 'pied : état de synchro + version : ' + await txt(page, '.prm-pied'));
   check(await page.evaluate(() => !document.getElementById('btn-back').classList.contains('hidden') === false && !document.getElementById('btn-menu').classList.contains('hidden')), 'écran d\'arrivée : menu visible, pas de flèche de retour');
   // une rubrique + retour
-  for (const [cle, titre] of [['exploitation', 'Paramètres · Exploitation'], ['campagne', 'Paramètres · Campagne'], ['listes', 'Paramètres · Listes'], ['sauvegarde', 'Paramètres · Sauvegarde']]) {
+  for (const [cle, titre] of [['exploitation', 'Paramètres · Exploitation'], ['campagne', 'Paramètres · Campagne'], ['listes', 'Paramètres · Listes'], ['regles', "Paramètres · Règles d'élevage"], ['sauvegarde', 'Paramètres · Synchro et sauvegarde']]) {
     await page.click(`.prm-rub[data-rub="${cle}"]`);
     eq(await txt(page, '#page-title'), titre, 'titre de la rubrique ' + cle);
     check(await page.evaluate(() => !document.getElementById('btn-back').classList.contains('hidden') && document.getElementById('btn-menu').classList.contains('hidden')), 'rubrique ' + cle + ' : flèche de retour visible');
