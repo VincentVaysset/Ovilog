@@ -84,9 +84,18 @@ check(await m.evaluate(() => document.querySelectorAll('.ac-rw').length === 3 &&
 console.log('OK 3 À surveiller : lignes, pastilles bleue / rouge au-dessus de 0.');
 check(await m.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'l\'affichage de l\'accueil n\'écrit rien');
 await m.click('#kpi-sous-delai'); eq(await m.evaluate(() => currentView), 'sous-delai', 'lien Sous délai d\'attente');
+await m.click('#btn-back'); eq(await m.evaluate(() => currentView), 'home', 'Sous délai ouvert depuis l\'Accueil : retour à l\'Accueil');
+await m.evaluate(() => { carnetSanitaireEtat = null; render('sanitaire'); }); await m.click('#cs-sous-delai'); await m.click('#btn-back');
+eq(await m.evaluate(() => currentView), 'sanitaire', 'Sous délai ouvert depuis le Carnet : retour au Carnet');
+await m.evaluate(() => { carnetSanitaireEtat = null; render('home'); });
 await m.evaluate(() => render('home')); await m.click('#kpi-bilan-campagne'); eq(await m.evaluate(() => currentView), 'bilan-campagne', 'lien Bilan de campagne');
 await m.evaluate(() => render('home')); await m.click('#kpi-attendues-traite');
-eq(await m.evaluate(() => [currentView, currentLotId, DB.lots.length && DB.lots[0].membres.length]), ['lot-search', 'auto-attendues-traite', 1], 'lien Attendues à la traite : ouvre le lot automatique comme avant (écriture existante, inchangée)');
+eq(await m.evaluate(() => [currentView, (DB.lots || []).length, window.__saves, document.querySelectorAll('#att-cartes .carte-liste').length]), ['attendues-traite', 0, 0, 1], 'lien Attendues à la traite : liste à consulter, aucun lot créé, rien écrit');
+await m.click('#btn-back'); eq(await m.evaluate(() => currentView), 'home', 'liste des attendues : retour à l\'Accueil');
+await m.click('#kpi-attendues-traite'); await m.click('#btn-att-creer-lot');
+eq(await m.evaluate(() => [currentView, currentLotId, DB.lots.length && DB.lots[0].membres.length]), ['lot-search', 'auto-attendues-traite', 1], '« Créer un lot avec ces animaux » : crée et ouvre le lot automatique (écriture existante, inchangée)');
+await m.click('#btn-back'); eq(await m.evaluate(() => currentView), 'attendues-traite', 'lot créé depuis la liste : retour sur la liste');
+await m.click('#btn-back'); eq(await m.evaluate(() => currentView), 'home', 'puis l\'Accueil');
 console.log('OK 3bis liens des trois lignes.');
 
 // ================================================================ 4. tout à 0 : pastilles grises ; prolificité « — »
