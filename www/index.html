@@ -156,7 +156,7 @@
   body:has(.mn-barre) .bulle-contact, body:has(.tri-snack) .bulle-contact { display: none; }
   .bulle-contact svg { width: 26px; height: 26px; }
   .bulle-contact.au-dessus-fab { bottom: calc(16px + 56px + 14px + env(safe-area-inset-bottom, 0px)); }
-  .bulle-contact-pastille { position: absolute; top: 2px; right: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--ch-rouge); border: 2px solid var(--ch-carte); }
+  .bulle-contact-pastille { position: absolute; top: -2px; right: -2px; min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box; border-radius: 11px; background: var(--ch-rouge); border: 2px solid var(--ch-carte); color: var(--ch-carte); font-size: 12px; font-weight: 700; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
   body.desktop-shell .bulle-contact { right: 24px; bottom: 24px; }
   body.desktop-shell .bulle-contact.au-dessus-fab { right: 20px; bottom: calc(20px + 56px + 14px); }
   /* Bulle visible : le bas de page laisse la place de la bulle, rien ne reste dessous une fois défilé jusqu'en bas */
@@ -31401,6 +31401,9 @@ const echapperContact = echapperHtml;
 function bulleContactMasquee() { try { return localStorage.getItem(CLE_BULLE_MASQUEE) === '1'; } catch (e) { return false; } }
 function contactEtatCourant() { try { return window.OvilogSync && window.OvilogSync.contactEtat ? window.OvilogSync.contactEtat() : null; } catch (e) { return null; } }
 function reponsesNonLuesContact(etat) { return !!etat && etat.mes.some(m => m.reponse && m.reponseLue === false); }
+// Pastille de la bulle : réponses non lues (éleveur) + messages reçus encore « Nouveaux » (administrateur seulement), en chiffre dans un rond rouge
+function nbReponsesNonLuesContact(etat) { return etat ? etat.mes.filter(m => m.reponse && m.reponseLue === false).length : 0; }
+function nbMessagesNouveauxAdmin(etat) { return etat && etat.estAdmin ? (etat.tous || []).filter(m => m && m.statut === 'nouveau').length : 0; }
 // Écran de saisie (formulaire qui ne vit qu'à l'écran) ou à barre fixe en bas : la bulle n'y apparaît jamais, pour ne masquer aucun bouton d'action
 function ecranSaisieSansBulle(vue) {
   if (/^(add|edit)-/.test(vue || '') || vue === 'misebas-rapide' || vue === 'identifier-agneaux' || vue === 'maj-inventaire' || vue === 'maj-inventaire-validation') return true;
@@ -31415,9 +31418,11 @@ function majBulleContact() {
   bulleContact.classList.toggle('hidden', !visible);
   document.body.classList.toggle('avec-bulle-contact', visible);
   bulleContact.classList.toggle('au-dessus-fab', !fabAdd.classList.contains('hidden'));
-  const nonLu = reponsesNonLuesContact(etat);
-  bulleContact.querySelector('.bulle-contact-pastille').hidden = !nonLu;
-  bulleContact.setAttribute('aria-label', nonLu ? 'Contacter le concepteur d\'Ovilog (réponse non lue)' : 'Contacter le concepteur d\'Ovilog');
+  const nonLues = nbReponsesNonLuesContact(etat), nouveaux = nbMessagesNouveauxAdmin(etat), n = nonLues + nouveaux;
+  const pastille = bulleContact.querySelector('.bulle-contact-pastille');
+  pastille.hidden = n === 0;
+  pastille.textContent = n === 0 ? '' : n > 9 ? '9+' : String(n);
+  bulleContact.setAttribute('aria-label', 'Contacter le concepteur d\'Ovilog' + (nouveaux ? ' (' + nouveaux + ' message' + (nouveaux > 1 ? 's' : '') + ' reçu' + (nouveaux > 1 ? 's' : '') + ')' : '') + (nonLues ? ' (réponse non lue)' : ''));
 }
 // Appelée par le module de synchro à chaque changement des messages (voir signalerContact)
 window.rafraichirContact = function () {
@@ -31558,7 +31563,9 @@ function dessinerPanneauContact() {
   if (!corps || !panneauContact) return;
   const P = panneauContact, etat = contactEtatCourant() || { mes: [], echecs: [] };
   const nonLues = etat.mes.filter(m => m.reponse && m.reponseLue === false).length;
-  const onglets = `<div class="tab-bar" role="tablist"><button type="button" class="tab-btn${P.onglet === 'nouveau' ? ' active' : ''}" data-onglet="nouveau">Nouveau message</button><button type="button" class="tab-btn${P.onglet === 'mes' ? ' active' : ''}" data-onglet="mes">Mes messages${nonLues ? ' (' + nonLues + ')' : ''}</button></div>`;
+  const nbNouveaux = nbMessagesNouveauxAdmin(etat);
+  const lienAdmin = etat.estAdmin ? `<button type="button" class="btn btn-secondary" id="contact-messages-recus" style="margin-bottom:10px;">Messages reçus${nbNouveaux ? ' (' + nbNouveaux + ' nouveau' + (nbNouveaux > 1 ? 'x' : '') + ')' : ''}</button>` : '';   // administrateur : accès direct
+  const onglets = lienAdmin + `<div class="tab-bar" role="tablist"><button type="button" class="tab-btn${P.onglet === 'nouveau' ? ' active' : ''}" data-onglet="nouveau">Nouveau message</button><button type="button" class="tab-btn${P.onglet === 'mes' ? ' active' : ''}" data-onglet="mes">Mes messages${nonLues ? ' (' + nonLues + ')' : ''}</button></div>`;
   const horsReseau = navigator.onLine === false;
   if (P.onglet === 'nouveau') {
     const msg = P.message ? `<div class="msg-charte ${P.message.ton}" role="status"><b>${P.message.titre}</b>${P.message.texte ? '<span>' + P.message.texte + '</span>' : ''}</div>` : '';
@@ -31701,6 +31708,12 @@ function renderMessagesRecus(content) {
     window.OvilogSync.adminContact('supprimer', b.dataset.supprimer); showToast('Message supprimé');
   }; });
 }
+// panneau de la bulle (administrateur) : « Messages reçus » ouvre directement la liste
+document.addEventListener('click', e => {
+  if (!(e.target && e.target.closest && e.target.closest('#contact-messages-recus'))) return;
+  fermerPanneauContact();
+  parametresTab = 'messages'; parametresRubrique = 'messages'; render('parametres');
+});
 bulleContactPrete = true;
 </script>
 
