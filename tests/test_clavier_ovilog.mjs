@@ -89,7 +89,18 @@ for (const k of ['7', '1', ',', '4', ',']) await touche(p, k);
 eq(await p.inputValue('#qs-tb'), '71.4', 'TB : 71,4 (une seule virgule ; champ nombre)');
 await touche(p, 'fermer');
 
+// 6 bis. liste des brebis : le champ de recherche (scan-open) a le clavier, OK = Entrée ; champs reconnus à leur libellé
+await p.evaluate(() => render('list')); await p.waitForTimeout(150);
+await p.tap('#scan-open');
+check(await ouvert(p), 'liste des brebis : clavier Ovilog sur le champ de recherche');
+eq(await p.evaluate(() => document.querySelector('#clavier-ovilog .k[data-k="ok"]').textContent), 'OK', 'liste des brebis : « OK »');
+await touche(p, 'fermer');
+eq(await p.evaluate(() => { const mk = ph => { const i = document.createElement('input'); i.type = 'text'; i.placeholder = ph; document.getElementById('app').appendChild(i); return typeClavierChamp(i); };
+  return [mk('Scanner ou saisir un n°'), mk('Rechercher un numéro…'), mk('N° ou EID de la mère adoptive'), mk("Nom du lot ou n° d'animal"), mk('Note')]; }),
+  ['entier', 'entier', 'entier', null, null], 'champs de n° reconnus à leur libellé ; nom de lot et note : clavier habituel');
+
 // 7. souris (mobile) : jamais de clavier
+await p.evaluate(() => { resetMisebasRapideSession(); render('misebas-rapide'); });
 await p.click('#scan-misebas');
 check(!(await ouvert(p)), 'clic souris : pas de clavier');
 await ctx.close();
