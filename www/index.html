@@ -11635,6 +11635,16 @@ function renderDetail(id) {
     </div>
   `;
   const agnelageCourantIdx = agnelageCampagneActuelleIdx(sheep);
+  // Agneaux de la campagne qu'elle ÉLÈVE par adoption : notés à part sous son agnelage, jamais comptés dans sa portée (ils restent dans la mise bas de leur vraie mère)
+  const adoptesCampagne = getLambsAdoptesPar(sheep, DB.brebis, a => a.campagne === DB.campagneDebut).filter(x => x.lamb.sexe !== 'Mort-né' && x.mereBiologique !== sheep);
+  const dateMiseBasDe = (mere, lamb) => { const a = (mere.agnelages || []).find(ag => (ag.lambs || []).includes(lamb)); return a ? a.date : ''; };
+  const adoptesCampagneHtml = adoptesCampagne.map(({ lamb, mereBiologique }) => `
+    <div class="adopte-ligne" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0 2px;border-top:1px solid var(--border);margin-top:6px;">
+      <span style="font-size:13px;color:var(--text-muted);">Adopté :</span>
+      <button type="button" class="btn-lien btn-voir-agneau-adopte" data-eid="${lamb.eid || ''}" data-target="${(lamb.sexe === 'Femelle' && lamb.triStatut === 'gardée') ? 'agnelles' : 'agneaux'}" style="min-height:0;padding:0;font-size:13px;">n°${lamb.eid ? numeroVisuel(lamb.eid) : '?'}</button>
+      <span class="badge ${lamb.sexe === 'Mâle' ? 'badge-blue' : 'badge-amber'}">${lamb.sexe}</span>
+      <span style="font-size:12px;color:var(--text-muted);">né de <button type="button" class="btn-lien btn-voir-mere-bio-adopte" data-eid="${mereBiologique.eid}" style="min-height:0;padding:0;font-size:12px;">n°${numeroVisuel(mereBiologique.eid)}</button>${dateMiseBasDe(mereBiologique, lamb) ? ' le ' + formatDateFr(dateMiseBasDe(mereBiologique, lamb)) : ''} · ne compte pas dans sa portée</span>
+    </div>`).join('');
   const agnelageHtml = agnelageCourantIdx === -1 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun agnelage enregistré cette campagne.</div>' : `
     <div class="swipe-wrap" data-kind="agnelages" data-idx="${agnelageCourantIdx}">
       <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
@@ -11642,7 +11652,7 @@ function renderDetail(id) {
         ${iconCircle(ICON_SHEEP, 'amber', 'sm')}
         ${agnelageItemHtml(sheep.agnelages[agnelageCourantIdx])}
       </div>
-    </div>
+    </div>${adoptesCampagneHtml}
   `;
 
   const sanitaire = sheep.sanitaire || [];
@@ -11792,11 +11802,18 @@ function renderDetail(id) {
     ? `<div style="display:flex;align-items:center;gap:10px;background:var(--blue-bg);color:var(--blue-fg);padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">${iconCircle(ICON_LAIT, 'blue', 'sm')}<span style="flex:1;">Attendue à la traite — tous ses agneaux sont partis</span><span id="pt-badge-attendue">${boutonsTraiteHtml(sheep)}</span></div>`
     : '';
 
-  const allLiveLambs = [];
+  // Devenir des agneaux : réglé chez la mère qui ÉLÈVE l'agneau. Un agneau adopté par une brebis active quitte la liste de sa vraie mère et rejoint
+  // celle de la mère adoptive (pastille « Adopté », « né de n°… ») ; rien n'est déplacé dans les données (l'agneau reste dans la mise bas de sa vraie mère).
+  const elevePar = l => l.adopte && l.adoptiveEid && DB.brebis.some(b => (b.statut || 'active') === 'active' && cleanEid(b.eid) === cleanEid(l.adoptiveEid) && cleanEid(b.eid) !== cleanEid(sheep.eid));
+  const allLiveLambs = [], mereBioDe = new Map();
   (sheep.agnelages || []).forEach(a => {
     a.lambs.forEach(l => {
-      if (l.sexe !== 'Mort-né') allLiveLambs.push(l);
+      if (l.sexe !== 'Mort-né' && !elevePar(l)) allLiveLambs.push(l);
     });
+  });
+  getLambsAdoptesPar(sheep, DB.brebis).forEach(({ lamb, mereBiologique }) => {
+    if (lamb.sexe === 'Mort-né' || mereBiologique === sheep) return;
+    allLiveLambs.push(lamb); mereBioDe.set(lamb, mereBiologique);
   });
   const devenirHtml = allLiveLambs.map((l, i) => {
     const resolved = isLambResolved(l);
@@ -11812,7 +11829,9 @@ function renderDetail(id) {
             <div style="display:flex;align-items:center;gap:8px;">
               <span style="font-size:14px;font-weight:600;">n°${l.eid ? numeroVisuel(l.eid) : '?'}</span>
               <span class="badge ${l.sexe === 'Mâle' ? 'badge-blue' : 'badge-amber'}">${l.sexe}</span>
+              ${mereBioDe.has(l) ? '<span class="badge badge-muted">Adopté</span>' : ''}
             </div>
+            ${mereBioDe.has(l) ? `<div style="font-size:12px;color:var(--text-muted);">né de <button type="button" class="btn-lien btn-voir-mere-bio-adopte" data-eid="${mereBioDe.get(l).eid}" style="min-height:0;padding:0;font-size:12px;">n°${numeroVisuel(mereBioDe.get(l).eid)}</button></div>` : ''}
           </div>
         </div>
         ${sortieDecidee
@@ -11842,31 +11861,7 @@ function renderDetail(id) {
     ? `<div class="card" id="carte-genealogie">${sectionHeaderHtml(ICON_SHEEP, 'gray', 'Généalogie')}${genealogieNaissanceHtml(sheep, sheep.mereEid, campagneNaissanceDepuisMere(sheep.mereEid, sheep.eid), null)}</div>`
     : '';
 
-  // Agneaux dont cette brebis est la mère ADOPTIVE (sens inverse du lien
-  // "Mère adoptive" affiché sur la fiche/carte de l'agneau lui-même — voir
-  // htmlLienMereAdoptive). Rien n'est affiché si elle n'en a aucun. Un
-  // agneau/agnelle n'a pas de fiche dédiée (voir renderAgneaux/
-  // renderAgnelles) : "Voir sa fiche" y navigue et surligne sa carte via
-  // pendingHighlightLambEid, comme le scan manuel sur ces écrans.
-  const lambsAdoptes = getLambsAdoptesPar(sheep, DB.brebis);
-  const agneauxAdoptesBlock = lambsAdoptes.length === 0 ? '' : `
-    <div class="card">
-      ${sectionHeaderHtml(ICON_SHEEP, 'amber', 'Agneaux adoptés')}
-      ${lambsAdoptes.map(({ lamb, mereBiologique }, i) => `
-        <div style="${i > 0 ? 'border-top:1px solid var(--border);padding-top:10px;margin-top:10px;' : ''}">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-            <span style="font-weight:600;">n°${numeroVisuel(lamb.eid)}</span>
-            <span class="badge ${lamb.sexe === 'Mâle' ? 'badge-blue' : 'badge-amber'}">${lamb.sexe}</span>
-          </div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Mère biologique : n°${numeroVisuel(mereBiologique.eid)}</div>
-          <div class="row">
-            <button type="button" class="btn btn-secondary btn-voir-mere-bio-adopte" data-eid="${mereBiologique.eid}" style="font-size:12px;">Voir la fiche de la mère biologique</button>
-            <button type="button" class="btn btn-secondary btn-voir-agneau-adopte" data-eid="${lamb.eid}" data-target="${(lamb.sexe === 'Femelle' && lamb.triStatut === 'gardée') ? 'agnelles' : 'agneaux'}" style="font-size:12px;">Voir la fiche de l'agneau</button>
-          </div>
-        </div>
-      `).join('')}
-    </div>
-  `;
+  // Agneaux qu'elle élève par adoption : plus dans Identification, mais dans Repro & Écho (Devenir des agneaux, ligne « Adopté » sous son agnelage).
 
   // Statut reproduction de la campagne + action "vide définitive" — secours
   // manuel en dehors du flux "dernière écho de la campagne" (voir Écho
@@ -11935,7 +11930,7 @@ function renderDetail(id) {
     ${desktop ? '' : statutBadge}
     ${mereBlock}
     ${genealogieBlock}
-    ${agneauxAdoptesBlock}
+    ${''/* ancienne carte « Agneaux adoptés » : désormais dans Repro & Écho (ligne gardée pour un rendu identique) */}
     <button class="btn btn-secondary" id="btn-delete-sheep" style="color:var(--danger);border-color:var(--danger);">Supprimer cette brebis</button>
   `;
 
@@ -11964,6 +11959,7 @@ function renderDetail(id) {
       <div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>
       ${agnelageHtml}
     </div>
+    ${agnelageCourantIdx === -1 && adoptesCampagne.length ? `<div class="card" id="carte-agneau-adopte">${sectionHeaderHtml(ICON_SHEEP, 'amber', adoptesCampagne.length > 1 ? 'Agneaux adoptés · campagne en cours' : 'Agneau adopté · campagne en cours')}${adoptesCampagneHtml}</div>` : ''}
   `;
 
   const sanitTabHtml = `
