@@ -91,11 +91,22 @@ await m.evaluate(() => { carnetSanitaireEtat = null; render('home'); });
 await m.evaluate(() => render('home')); await m.click('#kpi-bilan-campagne'); eq(await m.evaluate(() => currentView), 'bilan-campagne', 'lien Bilan de campagne');
 await m.evaluate(() => render('home')); await m.click('#kpi-attendues-traite');
 eq(await m.evaluate(() => [currentView, (DB.lots || []).length, window.__saves, document.querySelectorAll('#att-cartes .carte-liste').length]), ['attendues-traite', 0, 0, 1], 'lien Attendues à la traite : liste à consulter, aucun lot créé, rien écrit');
+check(await m.evaluate(() => !!document.querySelector('#att-cartes .btn-mise-traite') && !!document.querySelector('#att-cartes .btn-pas-traite')), 'carte : « Mise à la traite » et « Pas traite cette campagne »');
 await m.click('#btn-back'); eq(await m.evaluate(() => currentView), 'home', 'liste des attendues : retour à l\'Accueil');
 await m.click('#kpi-attendues-traite'); await m.click('#btn-att-creer-lot');
 eq(await m.evaluate(() => [currentView, currentLotId, DB.lots.length && DB.lots[0].membres.length]), ['lot-search', 'auto-attendues-traite', 1], '« Créer un lot avec ces animaux » : crée et ouvre le lot automatique (écriture existante, inchangée)');
 await m.click('#btn-back'); eq(await m.evaluate(() => currentView), 'attendues-traite', 'lot créé depuis la liste : retour sur la liste');
 await m.click('#btn-back'); eq(await m.evaluate(() => currentView), 'home', 'puis l\'Accueil');
+// mise à la traite depuis la liste : un geste, la brebis quitte la liste, « Annuler » la remet
+await m.click('#kpi-attendues-traite');
+await m.click('#att-cartes .btn-mise-traite');
+eq(await m.evaluate(() => [document.querySelectorAll('#att-cartes .carte-liste').length, DB.brebis.filter(b => (b.miseTraite || []).length).length, !!document.querySelector('.mt-snack')]), [0, 1, true], 'Mise à la traite : un geste, la brebis quitte la liste, bandeau Annuler');
+await m.click('#mt-snack-annuler');
+eq(await m.evaluate(() => [document.querySelectorAll('#att-cartes .carte-liste').length, DB.brebis.filter(b => (b.miseTraite || []).length).length]), [1, 0], 'Annuler : la brebis revient dans la liste');
+await m.click('#att-cartes .btn-pas-traite');
+eq(await m.evaluate(() => [document.querySelectorAll('#att-cartes .carte-liste').length, DB.brebis.filter(b => (b.nonTraite || []).length).length, !!document.querySelector('.pt-snack')]), [0, 1, true], 'Pas traite : un geste, bandeau avec motif et Annuler');
+await m.click('#pt-snack-annuler');
+await m.evaluate(() => render('home'));
 console.log('OK 3bis liens des trois lignes.');
 
 // ================================================================ 4. tout à 0 : pastilles grises ; prolificité « — »
