@@ -6546,11 +6546,12 @@ btnBack.onclick = () => {
     if (editReproTarget && editReproTarget.kind === 'agnelle') { currentAgnelleId = editReproTarget.id; render('agnelle-detail'); }
     else render('detail', editReproTarget ? editReproTarget.id : currentSheepId);
   }
-  else if (currentView === 'lot-search') render('lots');
+  else if (currentView === 'lot-search') { const o = currentLotId === 'auto-attendues-traite' ? lotSearchOrigine : null; lotSearchOrigine = null; render(o || 'lots'); }
+  else if (currentView === 'attendues-traite') render('home');
   else if (currentView === 'mouvement-groupe') render('inventaire');
   else if (currentView === 'mouvements-collectifs') render('inventaire');
   else if (currentView === 'traitements-collectifs') render('sanitaire');
-  else if (currentView === 'sous-delai') render('sanitaire');
+  else if (currentView === 'sous-delai') { const o = sousDelaiOrigine; sousDelaiOrigine = null; render(o || 'sanitaire'); }
   else if (currentView === 'produits-delais') { const o = produitsDelaisOrigine; produitsDelaisOrigine = null; render(o || 'sanitaire'); }
   else if (currentView === 'soins-sans-bio') render('sanitaire');
   else if (currentView === 'traitements-12-mois') render('sanitaire');
@@ -6810,6 +6811,7 @@ function render(view, sheepId) {
     else if (view === 'add-agnelage') renderAddAgnelage(currentSheepId);
     else if (view === 'echo-rapide') { if (isDesktopMode()) renderEchosPc(); else renderEchoRapide(); }
     else if (view === 'misebas-rapide') renderMiseBasRapide();
+    else if (view === 'attendues-traite') renderAttenduesTraite();
     else if (view === 'identifier-agneaux') renderIdentifierAgneaux();
     else if (view === 'add-mouvement') renderAddMouvement(currentSheepId);
     else if (view === 'add-controle') renderAddControle(currentSheepId);
@@ -7554,7 +7556,7 @@ function renderHome() {
     lier('compteur-agneaux-actifs', () => render('agneaux'));
     lier('compteur-beliers-actifs', () => render('beliers'));
     lier('compteur-agnelles-actives', () => render('agnelles-inventaire'));
-    lier('compteur-sous-delai', () => { sousDelaiOnglet = 'brebis'; render('sous-delai'); });
+    lier('compteur-sous-delai', () => { sousDelaiOnglet = 'brebis'; sousDelaiOrigine = 'home'; render('sous-delai'); });
     lier('apc-mises-bas', () => render('bilan-campagne'));
     lier('apc-reproduction', () => render('echo-rapide'));
     lier('bloc-controle-laitier', () => render('controle-laitier'));
@@ -7562,7 +7564,7 @@ function renderHome() {
     lier('bloc-mortalite-agneaux', () => render('mouvement-groupe'));
     const tous = dashboard.querySelector('#apc-tous-mouvements'); if (tous) tous.onclick = () => render('mouvement-groupe');
     const att = dashboard.querySelector('#apc-voir-attendues');
-    if (att) att.onclick = () => openAutoLot('auto-attendues-traite', 'Attendues à la traite', attendueTraiteListe().map(b => b.eid));
+    if (att) att.onclick = () => render('attendues-traite');   // consultation : le lot n'est créé que par « Créer un lot avec ces animaux »
     return;
   }
 
@@ -7576,11 +7578,9 @@ function renderHome() {
   lier('ac-tuile-agnelles', () => render('agnelles-inventaire'));
   lier('ac-tuile-beliers', () => render('beliers'));
   brancherCarteEchoAccueil();
-  lier('kpi-attendues-traite', () => {
-    openAutoLot('auto-attendues-traite', 'Attendues à la traite', actives.filter(estAttendueTraiteAffichee).map(s => s.eid));
-  });
+  lier('kpi-attendues-traite', () => render('attendues-traite'));   // consultation : le lot n'est créé que par « Créer un lot avec ces animaux »
   lier('kpi-bilan-campagne', () => render('bilan-campagne'));
-  lier('kpi-sous-delai', () => { sousDelaiOnglet = 'brebis'; render('sous-delai'); });
+  lier('kpi-sous-delai', () => { sousDelaiOnglet = 'brebis'; sousDelaiOrigine = 'home'; render('sous-delai'); });
 }
 
 /* ---------- Onglet "Brebis" du menu ----------
@@ -20463,7 +20463,7 @@ function renderCarnetSanitaire() {
   const nav = (id, vue) => { document.getElementById(id).onclick = () => render(vue); };
   document.getElementById('cs-export').onclick = () => exportCarnetSanitaireXlsx();
   if (document.getElementById('cs-12-mois')) document.getElementById('cs-12-mois').onclick = () => render('traitements-12-mois');
-  nav('cs-produits', 'produits-delais'); nav('cs-ordonnances', 'ordonnances'); nav('cs-sous-delai', 'sous-delai');
+  nav('cs-produits', 'produits-delais'); nav('cs-ordonnances', 'ordonnances'); nav('cs-sous-delai', 'sous-delai'); { const b = document.getElementById('cs-sous-delai'); if (b) b.addEventListener('click', () => { sousDelaiOrigine = 'sanitaire'; }, true); }
   const btnLot = document.getElementById('cs-annuler-lot');
   if (btnLot) btnLot.onclick = () => {
     if (!confirm('Annuler ce lot : retirer le soin « ' + carnetDernierLot.produit + ' » des ' + carnetDernierLot.n + ' animaux ? Cette action est irréversible.')) return;
@@ -21666,6 +21666,29 @@ function ouvrirModalNouveauLot(options) {
   };
 }
 
+/* ---------- Attendues à la traite (consultation, mobile et PC) ----------
+   Ouvert depuis l'Accueil : la liste seule, RIEN n'est créé. Même présentation que Sous délai d'attente : une ligne d'info, le compte, puis
+   « Créer un lot avec ces animaux », qui seul crée (ou rafraîchit) le lot de recherche « Attendues à la traite » (openAutoLot : cocher les trouvées,
+   « Mettre les trouvées à la traite »). Sur chaque carte, « Mise à la traite » et « Pas traite cette campagne » (boutonsTraiteHtml, un geste, bandeau Annuler),
+   comme dans Brebis à régulariser. Pas de « Tout mettre à la traite ». Retour : Accueil ; depuis le lot ainsi créé, retour sur cette liste. */
+let lotSearchOrigine = null;   // 'attendues-traite' quand le lot de recherche a été créé depuis la liste des attendues (retour sur la liste)
+function renderAttenduesTraite() {
+  pageTitle.textContent = 'Attendues à la traite';
+  const liste = attendueTraiteListe().map(b => Object.assign({ numero: numeroVisuel(b.eid), eid: b.eid, court: b.numeroCourtTravailSieol || '', sheep: b }, attendueTraiteMotif(b)));
+  liste.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || a.numero.localeCompare(b.numero));
+  const cartes = liste.length === 0 ? '<div class="empty">Aucune brebis attendue à la traite pour l\'instant.</div>'
+    : `<div class="cartes-liste" id="att-cartes">${liste.map(a => carteListeHtml({ nm: echapperHtml(a.court || 'n°' + a.numero), pastille: a.motif ? cartePastille(echapperHtml(a.motif)) : '',   // motif : simple information (pastille neutre)
+        l2: a.date ? 'Depuis le ' + formatDateFr(a.date) : '', acts: boutonsTraiteHtml(a.sheep) })).join('')}</div>`;   // mêmes boutons et même écriture que Brebis à régulariser
+  app.innerHTML = `
+    ${infoLigneHtml('Brebis dont les agneaux sont tous partis : à mettre à la traite. Consultation seule, rien n\'est créé.')}
+    <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;" id="att-compte">${liste.length} brebis attendue${liste.length > 1 ? 's' : ''} à la traite.</div>
+    <div class="row" style="margin-bottom:14px;"><button type="button" class="btn btn-secondary" id="btn-att-creer-lot"${liste.length === 0 ? ' disabled' : ''}>Créer un lot avec ces animaux</button></div>
+    ${cartes}`;
+  document.getElementById('btn-att-creer-lot').onclick = () => { lotSearchOrigine = 'attendues-traite'; openAutoLot('auto-attendues-traite', 'Attendues à la traite', liste.map(a => a.eid)); };
+  // une brebis isolée : « Mise à la traite » / « Pas traite cette campagne » en un geste (bandeau 6 s avec Annuler) ; elle quitte aussitôt la liste
+  brancherBoutonsPasTraite(app, () => { if (currentView === 'attendues-traite') render('attendues-traite'); });
+}
+let sousDelaiOrigine = null;   // écran d'où l'on vient (Accueil ou Carnet sanitaire) : le bouton retour y ramène
 function renderSousDelai() {
   pageTitle.textContent = "Sous délai d'attente";
   // Onglets Brebis | Agnelles | Agneaux | Béliers (effectifs) ; une ligne / une carte par animal, avec tous ses produits encore en délai
@@ -30118,6 +30141,23 @@ function brancherClavierOvilog(zone) {
 }
 if (!window.__clavierOvilog) {
   window.__clavierOvilog = true;
+  // Le clavier du TÉLÉPHONE ne doit jamais s'ouvrir dans un champ de chiffres : l'appli y pose souvent le curseur d'office (champ de scan à l'arrivée
+  // sur un écran) et Android ouvrait alors son clavier avant même qu'on touche le champ. Chaque champ de chiffres affiché sur mobile est donc marqué
+  // « sans clavier du téléphone » (inputmode « none », valeur d'origine gardée) dès qu'il apparaît ; le clavier Ovilog, lui, attend toujours un toucher.
+  const couperClavierTelephone = racine => {
+    if (!clavierActif() || !racine) return;
+    const champs = racine.tagName === 'INPUT' ? [racine] : (racine.querySelectorAll ? racine.querySelectorAll('input') : []);
+    for (const el of champs) {
+      if (el.getAttribute('inputmode') === 'none' || !typeClavierChamp(el)) continue;
+      el.dataset.imOrig = el.getAttribute('inputmode') || '';
+      el.setAttribute('inputmode', 'none');
+    }
+  };
+  window.couperClavierTelephone = couperClavierTelephone;
+  new MutationObserver(muts => { if (!clavierActif()) return; for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) couperClavierTelephone(n); })
+    .observe(document.documentElement, { childList: true, subtree: true });
+  couperClavierTelephone(document.body);
+  document.addEventListener('focusin', e => { if (clavierActif()) couperClavierTelephone(e.target); }, true);   // filet : un champ dont le libellé a changé après coup
   // Seul un TOUCHER du doigt ouvre le clavier : au pointerdown tactile, le clavier du téléphone est coupé pour ce champ (inputmode « none ») et le champ noté ;
   // le clavier Ovilog s'ouvre au focus qui suit (ou au clic si le champ avait déjà le curseur). Souris, focus posé par l'appli, bip du lecteur : jamais.
   document.addEventListener('pointerdown', e => {
@@ -31279,7 +31319,7 @@ const TYPES_CONTACT = [{ k: 'bug', l: 'Bug', ton: 'rouge' }, { k: 'question', l:
 const VUES_SANS_BULLE = new Set(['boot', 'auth', 'attente-compte', 'verifier-email', 'premiere-configuration', 'diag-bluetooth']);
 const ECRANS_CONTACT = { home: 'Accueil', list: 'Brebis', detail: 'Fiche brebis', beliers: 'Béliers', 'belier-detail': 'Fiche bélier', agneaux: 'Agneaux', 'agneau-detail': 'Fiche agneau',
   agnelles: 'Agnelles', 'agnelles-inventaire': 'Agnelles', 'agnelle-detail': 'Fiche agnelle', lots: 'Chantier de tri', 'lot-repro-detail': 'Lot de reproduction',
-  'echo-rapide': 'Échographies', 'historique-echo': 'Historique des échographies', 'misebas-rapide': 'Mises bas', 'identifier-agneaux': 'Identifier les agneaux', 'controle-laitier': 'Contrôle laitier',
+  'echo-rapide': 'Échographies', 'historique-echo': 'Historique des échographies', 'misebas-rapide': 'Mises bas', 'attendues-traite': 'Attendues à la traite', 'identifier-agneaux': 'Identifier les agneaux', 'controle-laitier': 'Contrôle laitier',
   inventaire: 'Mouvements d\'animaux', 'inventaire-actifs': 'Inventaire', sanitaire: 'Carnet sanitaire', qualite: 'Production laitière', journal: 'Calendrier',
   'bilan-campagne': 'Bilan de campagne', registre: 'Registre d\'élevage', 'declaration-annuelle': 'Déclaration annuelle', parametres: 'Paramètres', 'liste-serie': 'Liste série' };
 // var (et non let/const) : render() et onEidScanned peuvent être appelés avant que ce bloc ne s'exécute (démarrage)

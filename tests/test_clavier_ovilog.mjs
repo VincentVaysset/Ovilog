@@ -31,6 +31,10 @@ await p.waitForTimeout(150);
 
 // 1. arrivée sur l'écran (champ de scan qui a le curseur) : pas de clavier
 check(!(await ouvert(p)), 'arrivée sur l\'écran : clavier fermé (le focus de l\'appli ne l\'ouvre pas)');
+// le clavier du téléphone est coupé AVANT tout toucher : le curseur posé d'office par l'appli ne peut plus l'ouvrir (Android)
+eq(await p.evaluate(() => document.getElementById('scan-misebas').getAttribute('inputmode')), 'none', 'arrivée sur l\'écran : champ de scan déjà « sans clavier du téléphone »');
+eq(await p.evaluate(async () => { render('list'); await Promise.resolve(); const a = document.getElementById('scan-open').getAttribute('inputmode'); resetMisebasRapideSession(); render('misebas-rapide'); await Promise.resolve(); return a; }), 'none', 'liste des brebis : champ de recherche déjà « sans clavier du téléphone »');
+eq(await p.evaluate(() => { const d = document.createElement('div'); d.innerHTML = '<input type="text" class="note-x" placeholder="Note">'; document.getElementById('app').appendChild(d); return new Promise(r => setTimeout(() => r(d.firstChild.getAttribute('inputmode')), 0)); }), null, 'champ de texte : clavier du téléphone gardé');
 await p.evaluate(() => document.getElementById('scan-misebas').focus());
 check(!(await ouvert(p)), 'focus posé par l\'appli : clavier fermé');
 
