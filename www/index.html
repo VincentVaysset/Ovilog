@@ -156,7 +156,7 @@
   body:has(.mn-barre) .bulle-contact, body:has(.tri-snack) .bulle-contact { display: none; }
   .bulle-contact svg { width: 26px; height: 26px; }
   .bulle-contact.au-dessus-fab { bottom: calc(16px + 56px + 14px + env(safe-area-inset-bottom, 0px)); }
-  .bulle-contact-pastille { position: absolute; top: 2px; right: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--ch-rouge); border: 2px solid var(--ch-carte); }
+  .bulle-contact-pastille { position: absolute; top: -2px; right: -2px; min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box; border-radius: 11px; background: var(--ch-rouge); border: 2px solid var(--ch-carte); color: var(--ch-carte); font-size: 12px; font-weight: 700; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
   body.desktop-shell .bulle-contact { right: 24px; bottom: 24px; }
   body.desktop-shell .bulle-contact.au-dessus-fab { right: 20px; bottom: calc(20px + 56px + 14px); }
   /* Bulle visible : le bas de page laisse la place de la bulle, rien ne reste dessous une fois défilé jusqu'en bas */
@@ -1730,6 +1730,10 @@ document.body.classList.toggle('desktop-shell', isDesktopMode());
 const DB_KEY = 'troupeau_data_v1';
 // Motifs de non-traite proposés au départ (liste modifiable : Paramètres › Listes)
 const MOTIFS_NON_TRAITE_DEPART = ['Agneaux morts', 'Mammite', 'Réforme prévue'];
+// Catégories des soins de type « Autre » (Carnet sanitaire, fiche produit « Autres »), liste de COMPTE modifiable (Paramètres › Listes) ; « Soin de plaie » = valeur
+// historique (anciens soins « Autre » sans catégorie choisie), gardée dans la liste et protégée
+const CATEGORIES_SOINS_AUTRES_DEPART = ['Vitamines et minéraux', 'Soin de plaie', 'Désinfection', 'Digestif et réhydratation', 'Homéopathie et phytothérapie', 'Autre'];
+const CATEGORIE_SOIN_AUTRE_HISTORIQUE = 'Soin de plaie';
 /* Type de sortie « Mise à jour inventaire » : animal qu'on ne retrouve plus à l'inventaire (bipage complet des brebis, agneaux sans devenir au
    changement de campagne). Ce n'est PAS une mort : jamais dans la mortalité ni dans les causes ; compté avec les pertes dans les bilans ; pastille
    neutre ; posé seulement par l'appli (jamais proposé à la saisie), annulable comme tout mouvement. Les anciennes sorties « Morte » portant ce
@@ -1778,6 +1782,7 @@ function migrateData(d) {
   if (!d.intervenants) d.intervenants = [];
   if (!d.casParticuliers) d.casParticuliers = ['Pseudogestation', 'Avortée'];
   if (!Array.isArray(d.motifsNonTraite)) d.motifsNonTraite = MOTIFS_NON_TRAITE_DEPART.slice();
+  if (!Array.isArray(d.categoriesSoinsAutres)) d.categoriesSoinsAutres = CATEGORIES_SOINS_AUTRES_DEPART.slice();
   // soins au bouclage : réglés sur la fiche produit (produitsInfo[nom].bouclage) ; reprise UNE fois de l'ancienne liste de compte (version de test)
   if (Array.isArray(d.soinsBouclage)) {
     d.produitsInfo = d.produitsInfo || {};
@@ -2202,6 +2207,7 @@ function loadData() {
     campagneDateFin: null,
     casParticuliers: ['Pseudogestation', 'Avortée'],
     motifsNonTraite: MOTIFS_NON_TRAITE_DEPART.slice(),
+    categoriesSoinsAutres: CATEGORIES_SOINS_AUTRES_DEPART.slice(),
     categoriesNotes: ['Boiterie', 'Sinus', 'Mammite'],
     notesArchiveesBrebis: {},
     produits: {
@@ -20200,6 +20206,13 @@ function htmlAlerteControlesDelaiLait(items) {
    (le registre est tenu par animal), annulable pour tout le lot en un geste. Les agneaux restent hors de ce parcours (flux
    actuel conservé). Rien n'est écrit avant « Enregistrer le soin ». */
 const CARNET_CATEGORIES_TRAITEMENT = ['Antibiotique', 'Antiparasitaire', 'Anti-inflammatoire'];
+// Options de la catégorie d'un soin « Autre » : la liste du compte (valeur déjà enregistrée gardée même si retirée de la liste), puis « Ajouter… »
+function categoriesSoinAutreOptions(valeur, opt, aChoisir) {
+  const liste = (DB.categoriesSoinsAutres || CATEGORIES_SOINS_AUTRES_DEPART).slice();
+  const v = valeur || (aChoisir ? '' : CATEGORIE_SOIN_AUTRE_HISTORIQUE);   // fiche produit : « À choisir » tant que l'éleveur n'a rien choisi (rien d'écrit d'office)
+  if (v && !liste.includes(v)) liste.push(v);
+  return (aChoisir ? `<option value=""${v ? '' : ' selected'}>À choisir</option>` : '') + liste.map(c => opt(c, c, v)).join('') + `<option value="${OPTION_AJOUTER}">Ajouter…</option>`;
+}
 function carnetCleProduits(type, categorie) {
   if (type === 'Vaccin') return 'vaccins';
   if (type === 'Autre') return 'autres';
@@ -20229,7 +20242,7 @@ function carnetEtatPourEdition(eid, idx, retour) {
   const s = (animal && animal.sanitaire || [])[idx] || {};
   const jours = v => (v === null || v === undefined) ? '' : String(v);
   return {
-    ecran: 1, editing: { eid, idx, retour }, type: s.type || 'Traitement', categorie: s.sousType || 'Antibiotique', produit: s.produit || '',
+    ecran: 1, editing: { eid, idx, retour }, type: s.type || 'Traitement', categorie: s.type === 'Autre' ? (s.sousType || (s.produit && ficheProduit(s.produit).categorieSoin) || CATEGORIE_SOIN_AUTRE_HISTORIQUE) : (s.sousType || 'Antibiotique'), produit: s.produit || '',
     dateDebut: s.date || jourAujourdhuiISO(), dureeJours: jours(s.dureeJours) || '1',
     dose: s.quantiteCc !== undefined && s.quantiteCc !== null ? String(s.quantiteCc) : (s.dose || ''), voie: s.voie || '',
     motif: s.motif || '', lot: s.lot || '', peremption: s.peremption || '', ordonnance: s.numeroOrdonnance || '',
@@ -20269,8 +20282,8 @@ function erreursSoinCarnet(e) {
 function construireSoinCarnet(e) {
   const autre = e.type === 'Autre', fiche = e.produit ? ficheProduit(e.produit) : null;
   const soin = {
-    type: e.type, sousType: e.type === 'Traitement' ? e.categorie : (autre ? 'Soin de plaie' : null),
-    produit: autre && !e.produit ? 'Soin de plaie' : e.produit, date: e.dateDebut,
+    type: e.type, sousType: e.type === 'Traitement' ? e.categorie : (autre ? (e.categorie || CATEGORIE_SOIN_AUTRE_HISTORIQUE) : null),
+    produit: autre && !e.produit ? (e.categorie || CATEGORIE_SOIN_AUTRE_HISTORIQUE) : e.produit, date: e.dateDebut,
     dureeJours: entierTexteOuNull(e.dureeJours), intervenant: e.faitPar.trim(), commentaire: (e.commentaire || '').trim()
   };
   const dose = parseFloat(String(e.dose).replace(',', '.'));
@@ -20324,7 +20337,7 @@ function soinBouclage(entree, date) {
   const soin = construireSoinCarnet({ type: t.type, categorie: t.categorie, produit: entree.produit, dateDebut: date, dureeJours: '1',
     dose: entree.doseCc === undefined || entree.doseCc === null ? '' : String(entree.doseCc), voie: entree.voie || '', faitPar: 'Éleveur',
     delaiLait: String(f.delaiLait), delaiViande: String(f.delaiViande), commentaire: '', ordonnance: '', prescripteur: '', motif: '', lot: '', peremption: '', veterinaireResponsable: '' });
-  if (t.type === 'Autre') delete soin.sousType;   // produit de la liste « autres » : pas un « soin de plaie »
+  if (t.type === 'Autre') { if (f.categorieSoin) soin.sousType = f.categorieSoin; else delete soin.sousType; }   // produit « Autres » : la catégorie de sa fiche, sinon aucune (jamais « soin de plaie » d'office)
   soin.id = 'S-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
   soin.bouclage = true;
   return soin;
@@ -20489,7 +20502,7 @@ function ecranCarnetSoin() {
         <div><label>Date de début <span class="pc-req">*</span></label><input type="date" id="cs-date" value="${E.dateDebut}"></div>
         <div><label>Durée (jours) <span class="pc-req">*</span></label><input type="number" id="cs-duree" min="1" step="1" value="${E.dureeJours}"></div>
         <div><label>Type <span class="pc-req">*</span></label><div class="pc-seg2">${['Vaccin', 'Traitement', 'Autre'].map(t => `<button type="button" class="opt-btn cs-type coral${E.type === t ? ' selected' : ''}" data-val="${t}">${t}</button>`).join('')}</div></div>
-        <div><label>Catégorie <span class="pc-req">*</span></label><select id="cs-categorie" ${E.type === 'Traitement' ? '' : 'disabled'}>${E.type === 'Traitement' ? CARNET_CATEGORIES_TRAITEMENT.map(c => opt(c, c, E.categorie)).join('') : `<option>${E.type === 'Vaccin' ? 'Vaccin' : 'Soin de plaie'}</option>`}</select></div>
+        <div><label>Catégorie <span class="pc-req">*</span></label><select id="cs-categorie" ${E.type === 'Vaccin' ? 'disabled' : ''}>${E.type === 'Traitement' ? CARNET_CATEGORIES_TRAITEMENT.map(c => opt(c, c, E.categorie)).join('') : E.type === 'Autre' ? categoriesSoinAutreOptions(E.categorie, opt) : '<option>Vaccin</option>'}</select></div>
       </div>
       <div class="pc-fg">
         <div><label>Produit ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><select id="cs-produit"><option value="">${E.type === 'Autre' ? 'Aucun (soin de plaie)' : 'Choisir…'}</option>${produits.map(n => opt(n, n + (ficheProduit(n).complete ? '' : ' (fiche incomplète)'), E.produit)).join('')}<option value="__nouveau__">+ Nouveau produit…</option></select></div>
@@ -20569,8 +20582,14 @@ function ecranCarnetSoin() {
     if (o && o.veterinaire && !E.prescripteur) { E.prescripteur = o.veterinaire; $('cs-prescripteur').value = o.veterinaire; }
     colonneDroite();
   });
-  document.querySelectorAll('.cs-type').forEach(b => { b.onclick = () => { E.type = b.dataset.val; E.categorie = E.type === 'Traitement' ? 'Antibiotique' : ''; E.produit = ''; E.delaiViande = ''; E.delaiLait = ''; E.erreurs = []; ecranCarnetSoin(); }; });
-  $('cs-categorie').addEventListener('change', e => { E.categorie = e.target.value; E.produit = ''; E.delaiViande = ''; E.delaiLait = ''; ecranCarnetSoin(); });
+  document.querySelectorAll('.cs-type').forEach(b => { b.onclick = () => { E.type = b.dataset.val; E.categorie = E.type === 'Traitement' ? 'Antibiotique' : E.type === 'Autre' ? CATEGORIE_SOIN_AUTRE_HISTORIQUE : ''; E.produit = ''; E.delaiViande = ''; E.delaiLait = ''; E.erreurs = []; ecranCarnetSoin(); }; });
+  $('cs-categorie').addEventListener('change', e => {
+    if (E.type === 'Autre') {   // soin « Autre » : la catégorie se choisit librement (liste du compte, « Ajouter… »), le produit reste
+      if (e.target.value === OPTION_AJOUTER) { ouvrirAjoutValeurListe('categoriesSoinsAutres', v => { E.categorie = v; ecranCarnetSoin(); }, () => { e.target.value = E.categorie || CATEGORIE_SOIN_AUTRE_HISTORIQUE; }); return; }
+      E.categorie = e.target.value; ecranCarnetSoin(); return;
+    }
+    E.categorie = e.target.value; E.produit = ''; E.delaiViande = ''; E.delaiLait = ''; ecranCarnetSoin();
+  });
   $('cs-produit').addEventListener('change', e => {
     if (e.target.value === '__nouveau__') {
       ouvrirFicheProduitModal({ categorieKey: cleProd || 'autres', onSaved: nom => { E.produit = nom; const f = ficheProduit(nom); E.delaiViande = String(f.delaiViande); E.delaiLait = String(f.delaiLait); ecranCarnetSoin(); } });
@@ -20580,6 +20599,7 @@ function ecranCarnetSoin() {
     const f = E.produit ? ficheProduit(E.produit) : null;
     E.delaiViande = f && f.delaiViande !== null ? String(f.delaiViande) : '';
     E.delaiLait = f && f.delaiLait !== null ? String(f.delaiLait) : '';
+    if (E.type === 'Autre' && f && f.categorieSoin) E.categorie = f.categorieSoin;   // catégorie réglée sur la fiche du produit (modifiable ici)
     ecranCarnetSoin();
   });
   $('cs-annuler').onclick = () => {
@@ -21927,6 +21947,7 @@ function ficheProduit(nom) {
     delaiLait, delaiViande,
     surOrdonnance: !!(info && info.surOrdonnance),
     complete: delaiLait !== null && delaiViande !== null,
+    categorieSoin: info && info.categorieSoin ? info.categorieSoin : null,   // produit « Autres » : catégorie du soin (liste categoriesSoinsAutres)
     bouclage: info && info.bouclage && Number(info.bouclage.doseCc) > 0 ? { doseCc: Number(info.bouclage.doseCc), voie: info.bouclage.voie || '' } : null,
     aConfirmer, ancienLait, posologieAncienne, heritageAnmv,
     // options bio : valeur choisie par l'éleveur, sinon défaut de la catégorie (jamais écrit tant que l'éleveur n'a pas validé la fiche)
@@ -21952,6 +21973,8 @@ function ecrireFicheProduit(nom, f) {
   // soin au bouclage des agneaux : celui passé par l'appelant (null = retiré), sinon celui déjà réglé
   const bouclage = f.bouclage !== undefined ? f.bouclage : ancien.bouclage;
   if (bouclage) e.bouclage = bouclage;
+  const categorieSoin = f.categorieSoin !== undefined ? f.categorieSoin : ancien.categorieSoin;   // produit « Autres » : catégorie du soin
+  if (categorieSoin) e.categorieSoin = categorieSoin;
   // options bio : celles passées par l'appelant, sinon celles déjà choisies par l'éleveur (jamais effacées, jamais inventées)
   const compte = f.compte !== undefined ? f.compte : ancien.compteTraitements;
   const min48 = f.min48h !== undefined ? f.min48h : ancien.minimum48hBio;
@@ -21960,6 +21983,21 @@ function ecrireFicheProduit(nom, f) {
   DB.produitsInfo[nom] = e;
 }
 
+/* Correction en un geste des soins déjà enregistrés d'un produit « Autres » : ses soins « Autre » restés sur la catégorie historique « Soin de plaie » (ou sans catégorie)
+   passent dans la catégorie choisie sur sa fiche. Fiches actives seulement (agneaux compris) ; le registre archivé n'est jamais touché. Rien d'autre ne change sur le soin. */
+function soinsProduitACorriger(nom, categorie) {
+  if (!nom || !categorie || categorie === CATEGORIE_SOIN_AUTRE_HISTORIQUE) return [];
+  const out = [];
+  fichesActivesListe().forEach(f => (f.sanitaire || []).forEach(soin => {
+    if (soin && soin.type === 'Autre' && soin.produit === nom && (!soin.sousType || soin.sousType === CATEGORIE_SOIN_AUTRE_HISTORIQUE)) out.push(soin);
+  }));
+  return out;
+}
+function corrigerCategorieSoins(soins, categorie) {
+  const avant = soins.map(soin => ({ soin, sousType: soin.sousType }));
+  soins.forEach(soin => { soin.sousType = categorie; });
+  return () => avant.forEach(({ soin, sousType }) => { if (sousType === undefined) delete soin.sousType; else soin.sousType = sousType; });   // Annuler : valeurs exactes d'avant
+}
 /* Fenêtre de création / modification d'une fiche produit (PC) : délais lait et viande obligatoires (0 autorisé).
    options : { nom (modification) | categorieKey (création), prefill: { delaiLait, delaiViande, posologie }, onSaved(nom) } */
 function ouvrirFicheProduitModal(options) {
@@ -21979,6 +22017,11 @@ function ouvrirFicheProduitModal(options) {
       <select id="fp-cat" ${edition ? 'disabled' : ''} style="margin-bottom:12px;">
         ${!edition && !options.categorieKey ? '<option value="" selected>Choisir la catégorie</option>' : ''}${PRODUIT_CATEGORIES.map(c => `<option value="${c.key}"${(edition ? fiche.categorie : options.categorieKey) === c.key ? ' selected' : ''}>${c.label}</option>`).join('')}
       </select>
+      <div id="fp-cat-soin-zone" style="display:${(edition ? fiche.categorie : options.categorieKey) === 'autres' ? 'block' : 'none'};margin-bottom:12px;">
+        <label for="fp-cat-soin">Catégorie du soin</label>
+        <select id="fp-cat-soin" style="margin-bottom:0;">${categoriesSoinAutreOptions(fiche && fiche.categorieSoin, (v, l, sel) => `<option value="${echapperHtml(v)}"${v === sel ? ' selected' : ''}>${echapperHtml(l)}</option>`, true)}</select>
+        <div id="fp-correction"></div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
         <div><label>Délai viande (jours) *</label><input type="number" id="fp-viande" min="0" step="1" value="${v(pre.delaiViande)}" placeholder="0 = aucune attente"></div>
         <div><label>Délai lait (jours) *</label><input type="number" id="fp-lait" min="0" step="1" value="${v(pre.delaiLait)}" placeholder="0 = aucune attente"></div>
@@ -22002,6 +22045,32 @@ function ouvrirFicheProduitModal(options) {
     </div>`;
   document.body.appendChild(overlay);
   overlay.querySelector('#fp-annuler').onclick = () => document.body.removeChild(overlay);
+  // produit « Autres » : catégorie du soin ; ses anciens soins restés en « Soin de plaie » se corrigent en UN geste (ligne présente seulement s'il y en a, bandeau Annuler)
+  const selCatSoin = overlay.querySelector('#fp-cat-soin'), zoneCorr = overlay.querySelector('#fp-correction');
+  let annulerCorrection = null, minuterieCorr = null;
+  const majCorrection = (message) => {
+    clearTimeout(minuterieCorr);
+    if (message) {
+      zoneCorr.innerHTML = `<div class="fp-corr-fait" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;font-size:13px;color:var(--ch-vert-texte);"><span>${echapperHtml(message)}</span><button type="button" class="btn-lien" id="fp-corr-annuler" style="min-height:36px;">Annuler</button></div>`;
+      zoneCorr.querySelector('#fp-corr-annuler').onclick = () => { if (annulerCorrection) { annulerCorrection(); annulerCorrection = null; saveData(DB); } majCorrection(); };
+      minuterieCorr = setTimeout(() => { annulerCorrection = null; majCorrection(); }, 6000);
+      return;
+    }
+    const cat = selCatSoin.value, a = edition ? soinsProduitACorriger(options.nom, cat) : [];
+    zoneCorr.innerHTML = a.length ? `<div class="msg-charte" id="fp-corr-ligne" style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><span>${a.length} soin${a.length > 1 ? 's' : ''} déjà enregistré${a.length > 1 ? 's' : ''} en ${CATEGORIE_SOIN_AUTRE_HISTORIQUE}</span><button type="button" class="btn btn-secondary" id="fp-corr-ok" style="width:auto;margin:0;">Les passer en ${echapperHtml(cat)}</button></div>` : '';
+    const b = zoneCorr.querySelector('#fp-corr-ok');
+    if (b) b.onclick = () => { annulerCorrection = corrigerCategorieSoins(a, cat); saveData(DB); majCorrection(a.length + ' soin' + (a.length > 1 ? 's passés' : ' passé') + ' en ' + cat); };
+  };
+  selCatSoin.addEventListener('change', e => {
+    if (e.target.value === OPTION_AJOUTER) {
+      const avant = (fiche && fiche.categorieSoin) || '';
+      ouvrirAjoutValeurListe('categoriesSoinsAutres', v => { const o = document.createElement('option'); o.value = v; o.textContent = v; selCatSoin.insertBefore(o, selCatSoin.lastElementChild); selCatSoin.value = v; majCorrection(); }, () => { selCatSoin.value = avant; });
+      return;
+    }
+    majCorrection();
+  });
+  overlay.querySelector('#fp-cat').addEventListener('change', e => { overlay.querySelector('#fp-cat-soin-zone').style.display = e.target.value === 'autres' ? 'block' : 'none'; });
+  majCorrection();
   // dose et voie du bouclage : affichées seulement quand la case est cochée (fiche légère)
   overlay.querySelector('#fp-bouclage').onchange = e => { overlay.querySelector('#fp-bouclage-detail').style.display = e.target.checked ? 'grid' : 'none'; };
   // création : le choix de la catégorie propose les défauts bio de cette catégorie (modifiables)
@@ -22030,6 +22099,7 @@ function ouvrirFicheProduitModal(options) {
       if (!voie && cat !== 'autres') return montrer('Choisis la voie d\'administration du soin au bouclage.');
       fiche2.bouclage = Object.assign({ doseCc: parseFloat(doseTxt) }, voie ? { voie } : {});
     } else fiche2.bouclage = null;
+    if (cat === 'autres' && selCatSoin.value && selCatSoin.value !== OPTION_AJOUTER) fiche2.categorieSoin = selCatSoin.value;
     const sel48 = overlay.querySelector('#fp-min48'), selCompte = overlay.querySelector('#fp-compte');
     if (sel48) fiche2.min48h = sel48.value;
     if (selCompte) fiche2.compte = selCompte.value;
@@ -28927,6 +28997,7 @@ function compterUsageMouvement(champ, valeur) {
 function compterUsageAcheteur(nom) { return compterUsageMouvement('acheteur', nom); }
 function compterUsageCauseMortalite(nom) { return porteursCauses(false, false).concat(porteursCauses(false, true)).filter(o => o.cause === nom).length; }
 // Motif de non-traite : porté par les marques « pas traite » des brebis (sheep.nonTraite[].motif), toutes campagnes
+function compterUsageCategorieSoinAutre(nom) { return porteursListe('categoriesSoinsAutres', false).objets.filter(o => o.sousType === nom).length; }
 function compterUsageMotifNonTraite(nom) { return porteursListe('motifsNonTraite', false).objets.filter(o => o.motif === nom).length; }
 function compterUsageCauseMortaliteAgneaux(nom) { return porteursCauses(true, false).concat(porteursCauses(true, true)).filter(o => o.cause === nom).length; }
 /* Enregistrements qui portent une cause de mortalité (champ `cause`), par liste : agneaux = mouvements des agneaux, mort-nés, agnelles et
@@ -28995,6 +29066,7 @@ const LISTES_GENERALES_CONFIG = [
   { key: 'causesMortalite', label: 'Causes de mortalité – adultes', module: 'Brebis et béliers · morts', ajout: 'une cause de mortalité (adultes)', usage: compterUsageCauseMortalite, protegees: [MOTIF_MAJ_INVENTAIRE] },
   { key: 'causesMortaliteAgneaux', label: 'Causes de mortalité – agneaux', module: 'Agneaux, mort-nés et agnelles · morts', ajout: 'une cause de mortalité (agneaux)', usage: compterUsageCauseMortaliteAgneaux, protegees: [] },
   { key: 'motifsNonTraite', label: 'Motifs de non-traite', module: 'Pas traite cette campagne', ajout: 'un motif de non-traite', usage: compterUsageMotifNonTraite, protegees: [] },
+  { key: 'categoriesSoinsAutres', label: 'Catégories des soins « Autre »', module: 'Carnet sanitaire · fiches produit « Autres »', ajout: 'une catégorie de soin', usage: compterUsageCategorieSoinAutre, protegees: [CATEGORIE_SOIN_AUTRE_HISTORIQUE] },
   { key: 'intervenants', label: 'Intervenants', module: 'Carnet sanitaire', ajout: 'un intervenant', usage: compterUsageIntervenant, protegees: [] },
   { key: 'casParticuliers', label: "Cas particuliers d'échographie", module: 'Échographies', ajout: "un cas particulier d'échographie", usage: compterUsageCasParticulier, protegees: [] },
   { key: 'categoriesNotes', label: 'Catégories de notes', module: 'Fiche animal · notes', ajout: 'une catégorie de notes', usage: compterUsageCategorieNote, protegees: [] },
@@ -29029,6 +29101,7 @@ function porteursListe(key, archives) {
   if (key === 'causesMortalite') return { champ: 'cause', objets: porteursCauses(false, archives) };
   if (key === 'causesMortaliteAgneaux') return { champ: 'cause', objets: porteursCauses(true, archives) };
   if (key === 'motifsNonTraite') return { champ: 'motif', objets: archives ? [] : (DB.brebis || []).flatMap(b => (Array.isArray(b.nonTraite) ? b.nonTraite : []).filter(Boolean)) };
+  if (key === 'categoriesSoinsAutres') return { champ: 'sousType', objets: sous('sanitaire').filter(x => x && x.type === 'Autre') };
   if (key === 'intervenants') return { champ: 'intervenant', objets: sous('sanitaire').concat(archives ? [] : (DB.traitementsCollectifs || [])) };
   if (key === 'casParticuliers') return { champ: 'special', objets: sous('echographies') };
   if (key === 'categoriesNotes') return { champ: 'categorie', objets: sous('notes') };
@@ -31328,6 +31401,9 @@ const echapperContact = echapperHtml;
 function bulleContactMasquee() { try { return localStorage.getItem(CLE_BULLE_MASQUEE) === '1'; } catch (e) { return false; } }
 function contactEtatCourant() { try { return window.OvilogSync && window.OvilogSync.contactEtat ? window.OvilogSync.contactEtat() : null; } catch (e) { return null; } }
 function reponsesNonLuesContact(etat) { return !!etat && etat.mes.some(m => m.reponse && m.reponseLue === false); }
+// Pastille de la bulle : réponses non lues (éleveur) + messages reçus encore « Nouveaux » (administrateur seulement), en chiffre dans un rond rouge
+function nbReponsesNonLuesContact(etat) { return etat ? etat.mes.filter(m => m.reponse && m.reponseLue === false).length : 0; }
+function nbMessagesNouveauxAdmin(etat) { return etat && etat.estAdmin ? (etat.tous || []).filter(m => m && m.statut === 'nouveau').length : 0; }
 // Écran de saisie (formulaire qui ne vit qu'à l'écran) ou à barre fixe en bas : la bulle n'y apparaît jamais, pour ne masquer aucun bouton d'action
 function ecranSaisieSansBulle(vue) {
   if (/^(add|edit)-/.test(vue || '') || vue === 'misebas-rapide' || vue === 'identifier-agneaux' || vue === 'maj-inventaire' || vue === 'maj-inventaire-validation') return true;
@@ -31342,9 +31418,11 @@ function majBulleContact() {
   bulleContact.classList.toggle('hidden', !visible);
   document.body.classList.toggle('avec-bulle-contact', visible);
   bulleContact.classList.toggle('au-dessus-fab', !fabAdd.classList.contains('hidden'));
-  const nonLu = reponsesNonLuesContact(etat);
-  bulleContact.querySelector('.bulle-contact-pastille').hidden = !nonLu;
-  bulleContact.setAttribute('aria-label', nonLu ? 'Contacter le concepteur d\'Ovilog (réponse non lue)' : 'Contacter le concepteur d\'Ovilog');
+  const nonLues = nbReponsesNonLuesContact(etat), nouveaux = nbMessagesNouveauxAdmin(etat), n = nonLues + nouveaux;
+  const pastille = bulleContact.querySelector('.bulle-contact-pastille');
+  pastille.hidden = n === 0;
+  pastille.textContent = n === 0 ? '' : n > 9 ? '9+' : String(n);
+  bulleContact.setAttribute('aria-label', 'Contacter le concepteur d\'Ovilog' + (nouveaux ? ' (' + nouveaux + ' message' + (nouveaux > 1 ? 's' : '') + ' reçu' + (nouveaux > 1 ? 's' : '') + ')' : '') + (nonLues ? ' (réponse non lue)' : ''));
 }
 // Appelée par le module de synchro à chaque changement des messages (voir signalerContact)
 window.rafraichirContact = function () {
@@ -31485,7 +31563,9 @@ function dessinerPanneauContact() {
   if (!corps || !panneauContact) return;
   const P = panneauContact, etat = contactEtatCourant() || { mes: [], echecs: [] };
   const nonLues = etat.mes.filter(m => m.reponse && m.reponseLue === false).length;
-  const onglets = `<div class="tab-bar" role="tablist"><button type="button" class="tab-btn${P.onglet === 'nouveau' ? ' active' : ''}" data-onglet="nouveau">Nouveau message</button><button type="button" class="tab-btn${P.onglet === 'mes' ? ' active' : ''}" data-onglet="mes">Mes messages${nonLues ? ' (' + nonLues + ')' : ''}</button></div>`;
+  const nbNouveaux = nbMessagesNouveauxAdmin(etat);
+  const lienAdmin = etat.estAdmin ? `<button type="button" class="btn btn-secondary" id="contact-messages-recus" style="margin-bottom:10px;">Messages reçus${nbNouveaux ? ' (' + nbNouveaux + ' nouveau' + (nbNouveaux > 1 ? 'x' : '') + ')' : ''}</button>` : '';   // administrateur : accès direct
+  const onglets = lienAdmin + `<div class="tab-bar" role="tablist"><button type="button" class="tab-btn${P.onglet === 'nouveau' ? ' active' : ''}" data-onglet="nouveau">Nouveau message</button><button type="button" class="tab-btn${P.onglet === 'mes' ? ' active' : ''}" data-onglet="mes">Mes messages${nonLues ? ' (' + nonLues + ')' : ''}</button></div>`;
   const horsReseau = navigator.onLine === false;
   if (P.onglet === 'nouveau') {
     const msg = P.message ? `<div class="msg-charte ${P.message.ton}" role="status"><b>${P.message.titre}</b>${P.message.texte ? '<span>' + P.message.texte + '</span>' : ''}</div>` : '';
@@ -31628,6 +31708,12 @@ function renderMessagesRecus(content) {
     window.OvilogSync.adminContact('supprimer', b.dataset.supprimer); showToast('Message supprimé');
   }; });
 }
+// panneau de la bulle (administrateur) : « Messages reçus » ouvre directement la liste
+document.addEventListener('click', e => {
+  if (!(e.target && e.target.closest && e.target.closest('#contact-messages-recus'))) return;
+  fermerPanneauContact();
+  parametresTab = 'messages'; parametresRubrique = 'messages'; render('parametres');
+});
 bulleContactPrete = true;
 </script>
 
@@ -31677,7 +31763,7 @@ const fbDb = initializeFirestore(fbApp, {
 // volontairement exclu : propre à l'appareil (appairage physique), il n'a
 // pas de sens partagé entre deux téléphones.
 const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
-  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'intervenants',
+  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'categoriesSoinsAutres', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   // 'registre' reste ICI (champ meta.registre) volontairement, même après

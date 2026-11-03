@@ -167,6 +167,17 @@ try {
   await A.page.click('#contact-fermer');
   console.log('OK 5 règles non publiées : « Non envoyé » gardé sur l\'appareil, « Renvoyer » une fois les règles en place.');
 
+  // ================================================================ 5 bis. administrateur : rond rouge chiffré sur la bulle, accès direct à « Messages reçus »
+  await B.page.evaluate(() => render('home'));
+  await h.attendre(B, () => { const p = document.querySelector('#bulle-contact .bulle-contact-pastille'); return !p.hidden && p.textContent === '3'; }, { label: 'B (administrateur) : « 3 » dans le rond rouge de la bulle' });
+  check(await A.page.evaluate(() => { render('home'); return document.querySelector('#bulle-contact .bulle-contact-pastille').hidden; }), 'A (éleveur) : pas de rond pour les messages des autres');
+  await B.page.click('#bulle-contact');
+  eq(await B.page.textContent('#contact-messages-recus'), 'Messages reçus (3 nouveaux)', 'panneau de l\'administrateur : accès direct « Messages reçus (3 nouveaux) »');
+  check(await A.page.evaluate(() => { document.getElementById('bulle-contact').click(); const r = !document.getElementById('contact-messages-recus'); document.getElementById('contact-fermer').click(); return r; }), 'éleveur : pas d\'accès « Messages reçus » dans le panneau');
+  await B.page.click('#contact-messages-recus');
+  await h.attendre(B, () => !!document.getElementById('messages-recus'), { label: 'B : « Messages reçus » ouvert depuis la bulle' });
+  console.log('OK 5 bis administrateur : rond rouge chiffré sur la bulle, accès direct à « Messages reçus ».');
+
   // ================================================================ 6. administrateur : Messages reçus
   check(!(await A.page.evaluate(() => { parametresRubrique = null; render('parametres'); return document.getElementById('app').textContent.includes('Messages reçus'); })), 'A (éleveur) : pas de « Messages reçus »');
   await B.page.evaluate(() => { parametresTab = 'messages'; render('parametres'); });
@@ -190,7 +201,7 @@ try {
   await h.attendre(B, a => { const c = document.querySelector(a); return c && /Votre réponse/.test(c.textContent); }, { label: 'réponse en encart chez B', arg: carteQ });
   // chez A : pastille rouge, panneau ouvert sur « Mes messages », réponse en encart vert, pastille éteinte
   await A.page.evaluate(() => render('home'));
-  await h.attendre(A, () => !document.querySelector('#bulle-contact .bulle-contact-pastille').hidden, { label: 'A : pastille rouge (réponse non lue)' });
+  await h.attendre(A, () => { const p = document.querySelector('#bulle-contact .bulle-contact-pastille'); return !p.hidden && p.textContent === '1'; }, { label: 'A : « 1 » dans le rond rouge (réponse non lue)' });
   eq(await A.page.evaluate(() => getComputedStyle(document.querySelector('#bulle-contact .bulle-contact-pastille')).backgroundColor), 'rgb(163, 58, 49)', 'pastille rouge charte');
   await A.page.click('#bulle-contact');
   check(await A.page.evaluate(() => document.querySelector('.contact-panneau .tab-btn.active').dataset.onglet === 'mes'), 'réponse non lue : le panneau s\'ouvre sur « Mes messages »');
