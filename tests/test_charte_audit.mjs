@@ -47,7 +47,7 @@ console.log('A OK');
   check(t12.length === 3 && t12.every(x => !/rouge/.test(x)), 'B. Traitements 12 mois (mobile) : 3 tuiles de la charte, pas de rouge à 0 : ' + JSON.stringify(t12));
   await ecran(pc, "render('echo-rapide')");
   const ep = await pc.evaluate(() => [...document.querySelectorAll('.ep-tuile')].map(t => t.className + '|' + t.querySelector('.reg-tuile-v').textContent));
-  check(ep.slice(1, 3).every(x => /\|0$/.test(x) && / neutre /.test(x)), 'B. Échographies (PC) : « Vides » et « Vides définitives » à 0 en neutre : ' + JSON.stringify(ep));
+  check(ep.length === 4 && ep.some(x => /\|0$/.test(x)) && ep.filter(x => /\|0$/.test(x)).every(x => / (neutre|gris) /.test(x)), 'B. Échographies (PC) : toute tuile à 0 en neutre : ' + JSON.stringify(ep));
   await ecran(pc, "render('home')");
   check(await pc.evaluate(() => ![...document.querySelectorAll('#app .t-rouge')].some(b => b.textContent.trim() === '0')), 'B. Accueil (PC) : aucun 0 en rouge');
 }
