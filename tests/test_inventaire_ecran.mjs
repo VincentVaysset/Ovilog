@@ -1,6 +1,6 @@
 /* Inventaire (onglets Brebis, Agnelles, Béliers, Agneaux actifs), PC et mobile : champ « Rechercher un numéro » (frappe réelle au clavier) qui porte sur TOUS les numéros de l'onglet
    (court, long, officiel, travail, EID complet) sans tenir compte des espaces ; le champ garde le focus pendant la frappe ; changer d'onglet vide la recherche ; « Export PDF » en vert plein et
-   « Export Excel » en contour ; PC : tableau pleine largeur, 3 tuiles d'effectifs, recherche à gauche et exports à droite ; clic sur une ligne -> fiche (brebis, agnelle, bélier ; agneau -> fiche de la mère), y compris dans une liste filtrée ;
+   « Export Excel » en contour ; PC : tableau pleine largeur, 3 tuiles d'effectifs, recherche à gauche et exports à droite ; clic sur une ligne -> fiche (brebis, agnelle, bélier ; agneau -> fiche de l'agneau, retour à l'Inventaire), y compris dans une liste filtrée ;
    les exports PDF et Excel portent sur la liste AFFICHÉE ; aucune écriture de données. saveData et saveOrShareBinaryFile REMPLACÉS. */
 import { chromium } from 'playwright';
 import { LAUNCH, URL_APP } from './lib/config.mjs';
@@ -126,7 +126,9 @@ for (const bureau of [true, false]) {
   await frappe('99002');
   eq((await lignes()).length, 1, nom + ' : agneau trouvé par son n°');
   await page.click('.inventaire-actifs-row');
-  eq(await page.evaluate(() => [currentView, pageTitle.textContent]), ['detail', 'Brebis n°10001'], nom + ' : clic sur un agneau -> fiche de la mère');
+  eq(await page.evaluate(() => [currentView, /^Agneau n°.*99002$/.test(pageTitle.textContent)]), ['agneau-detail', true], nom + ' : clic sur un agneau -> fiche de l\'agneau');
+  await page.evaluate(() => btnBack.onclick());
+  eq(await page.evaluate(() => currentView), 'inventaire-actifs', nom + ' : retour de la fiche agneau -> Inventaire');
 
   // ---- exports = liste affichée
   await page.evaluate(() => { inventaireActifsTab = 'brebis'; inventaireActifsRecherche = ''; render('inventaire-actifs'); });
