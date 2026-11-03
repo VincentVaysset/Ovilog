@@ -5440,34 +5440,66 @@ function classementMiseBasLot(lot, ag) {
   if (lot.mode === 'EP') return 'directe';
   return fenetreReproMatch(lot.dateEvenement || lot.dateCreation, ag.date);
 }
+/* Brebis du lot SORTIE avant sa mise bas (vente, mort, inventaire… : la raison ne compte pas) : jugée sur sa DERNIÈRE écho de la campagne des mises bas
+   du lot, faite au plus tôt le jour du lot. 'vide' (Vide ou Pseudogestation) = échec, dans le taux ; 'directe' (pleine stade IA) = réussite du lot,
+   comptée dans la fertilité mais jamais dans la prolificité (aucun agneau) ; 'retour' (Retour 1 / 2) = réussite du retour ; 'autre' (Tardive) = dans
+   l'effectif, sans réussite ; null (aucune écho, avortée, stade non précisé) = hors taux, comptée à part. Lecture seule. */
+function issueSortieAvantMiseBasLot(lot, animal) {
+  const camp = campagneMisesBasDuLot(lot), dLot = lot.dateEvenement || lot.dateCreation || '';
+  const e = dernierEchoParDate((Array.isArray(animal && animal.echographies) ? animal.echographies : []).filter(x => x && x.date && x.campagne !== undefined && x.campagne !== null && Number(x.campagne) === Number(camp) && x.date >= dLot));
+  if (!e) return null;
+  if (e.special === 'Pseudogestation' || e.stade === 'Vide') return 'vide';
+  if (e.special) return null;
+  if (e.stade === 'IA') return 'directe';
+  if (e.stade === 'Retour 1' || e.stade === 'Retour 2') return 'retour';
+  if (e.stade === 'Tardive') return 'autre';
+  return null;
+}
+// Ligne grise du détail des sorties avant mise bas d'un lot (statsLotIA / statsLotEponge : sortiesDetail) ; '' s'il n'y en a pas.
+function libelleSortiesAvantMiseBasLot(d) {
+  if (!d) return '';
+  const pl = (n, mot) => n + ' ' + mot + (n > 1 ? 's' : '');
+  const parts = [d.vides ? pl(d.vides, 'vide') + ' (échec)' : '', d.pleines ? pl(d.pleines, 'pleine') : '', d.sansResultat ? d.sansResultat + ' sans écho (hors taux)' : ''].filter(Boolean);
+  return parts.length ? 'Sorties avant mise bas : ' + parts.join(', ') : '';
+}
 function statsLotIA(lot) {
-  let effectif = 0, misesBasIA = 0, misesBasRetour = 0, agneauxIA = 0, agneauxRetour = 0, sorties = 0;
+  let effectif = 0, misesBasIA = 0, misesBasRetour = 0, agneauxIA = 0, agneauxRetour = 0, sorties = 0, pleinesIA = 0, pleinesRetour = 0;
+  const sortiesDetail = { vides: 0, pleines: 0, sansResultat: 0 };
   (lot.membres || []).forEach(eid => {
     const animal = trouverAnimalReproOuArchive(eid);
     if (!animal) return;
     const ag = agnelageCampagneActuelle(animal);
-    if (estSortieDuTroupeau(animal) && !(ag && ag.date)) { sorties++; return; }      // sortie avant mise bas : hors taux, comptée à part
+    if (estSortieDuTroupeau(animal) && !(ag && ag.date)) {      // sortie avant mise bas : jugée sur sa dernière écho (issueSortieAvantMiseBasLot)
+      const issue = issueSortieAvantMiseBasLot(lot, animal);
+      if (issue === null) { sorties++; sortiesDetail.sansResultat++; return; }
+      effectif++;
+      if (issue === 'vide') sortiesDetail.vides++;
+      else { sortiesDetail.pleines++; if (issue === 'directe') pleinesIA++; else if (issue === 'retour') pleinesRetour++; }
+      return;
+    }
     effectif++;
     const classe = classementMiseBasLot(lot, ag), nesTotal = ag ? (ag.lambs || []).length : 0;
     if (classe === 'directe') { misesBasIA++; agneauxIA += nesTotal; }
     else if (classe === 'retour') { misesBasRetour++; agneauxRetour += nesTotal; }
   });
-  return Object.assign(statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour), { sorties });
+  return Object.assign(statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour, pleinesIA, pleinesRetour), { sorties, sortiesDetail });
 }
 // Fabrique le triplet {ia, retour, global} à partir des compteurs bruts --
 // partagé par statsLotIA (lot entier) et statsLotIAParAgeExact (par âge)
 // pour ne jamais dupliquer les formules/arrondis entre les deux.
-function statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour) {
-  const resteApresIA = effectif - misesBasIA;
+// pleinesIA / pleinesRetour : brebis pleines à l'écho puis sorties avant mise bas -- comptées dans la FERTILITÉ (réussite), jamais dans la prolificité.
+function statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour, pleinesIA, pleinesRetour) {
+  pleinesIA = pleinesIA || 0; pleinesRetour = pleinesRetour || 0;
+  const resteApresIA = effectif - misesBasIA - pleinesIA;
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
   const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
   return {
     effectif,
-    ia: { misesBas: misesBasIA, fertilite: pct(misesBasIA, effectif), prolificite: rat(agneauxIA, misesBasIA) },
-    retour: { misesBas: misesBasRetour, fertilite: pct(misesBasRetour, resteApresIA), prolificite: rat(agneauxRetour, misesBasRetour) },
+    ia: { misesBas: misesBasIA, pleinesSorties: pleinesIA, fertilite: pct(misesBasIA + pleinesIA, effectif), prolificite: rat(agneauxIA, misesBasIA) },
+    retour: { misesBas: misesBasRetour, pleinesSorties: pleinesRetour, fertilite: pct(misesBasRetour + pleinesRetour, resteApresIA), prolificite: rat(agneauxRetour, misesBasRetour) },
     global: {
       misesBas: misesBasIA + misesBasRetour,
-      fertilite: pct(misesBasIA + misesBasRetour, effectif),
+      fertilite: pct(misesBasIA + misesBasRetour + pleinesIA + pleinesRetour, effectif),
       prolificite: rat(agneauxIA + agneauxRetour, misesBasIA + misesBasRetour)
     }
   };
@@ -5543,10 +5575,12 @@ function statsLotIAParAgeExact(lot) {
     const millesime = anneeNaissance(eid);
     if (millesime === null) return;
     const ag = agnelageCampagneActuelle(animal);
-    if (estSortieDuTroupeau(animal) && !(ag && ag.date)) return;      // sortie avant mise bas : hors taux (voir statsLotIA)
-    if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBasIA: 0, misesBasRetour: 0, agneauxIA: 0, agneauxRetour: 0 };
+    const sortie = estSortieDuTroupeau(animal) && !(ag && ag.date), issue = sortie ? issueSortieAvantMiseBasLot(lot, animal) : undefined;
+    if (sortie && issue === null) return;      // sortie avant mise bas sans écho : hors taux (voir statsLotIA)
+    if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBasIA: 0, misesBasRetour: 0, agneauxIA: 0, agneauxRetour: 0, pleinesIA: 0, pleinesRetour: 0 };
     const g = groupes[millesime];
     g.effectif++;
+    if (sortie) { if (issue === 'directe') g.pleinesIA++; else if (issue === 'retour') g.pleinesRetour++; return; }
     const classe = classementMiseBasLot(lot, ag), nesTotal = ag ? (ag.lambs || []).length : 0;
     if (classe === 'directe') { g.misesBasIA++; g.agneauxIA += nesTotal; }
     else if (classe === 'retour') { g.misesBasRetour++; g.agneauxRetour += nesTotal; }
@@ -5556,7 +5590,7 @@ function statsLotIAParAgeExact(lot) {
     // agneauxTotal (brut, jamais reconstruit depuis une prolificité arrondie)
     // -- sert à resumeLotParGroupeAge pour agréger plusieurs millésimes sans
     // perte de précision.
-    return Object.assign({ millesime, agneauxTotal: g.agneauxIA + g.agneauxRetour }, statsLotIAColonnes(g.effectif, g.misesBasIA, g.misesBasRetour, g.agneauxIA, g.agneauxRetour));
+    return Object.assign({ millesime, agneauxTotal: g.agneauxIA + g.agneauxRetour }, statsLotIAColonnes(g.effectif, g.misesBasIA, g.misesBasRetour, g.agneauxIA, g.agneauxRetour, g.pleinesIA, g.pleinesRetour));
   });
 }
 
@@ -5574,10 +5608,12 @@ function statsLotEpongeParAgeExact(lot) {
     const millesime = anneeNaissance(eid);
     if (millesime === null) return;
     const ag = agnelageCampagneActuelle(animal);
-    if (estSortieDuTroupeau(animal) && !ag) return;      // sortie avant mise bas : hors taux (voir statsLotIA)
-    if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBas: 0, agneaux: 0 };
+    const sortie = estSortieDuTroupeau(animal) && !ag, issue = sortie ? issueSortieAvantMiseBasLot(lot, animal) : undefined;
+    if (sortie && issue === null) return;      // sortie avant mise bas sans écho : hors taux (voir statsLotIA)
+    if (!groupes[millesime]) groupes[millesime] = { effectif: 0, misesBas: 0, agneaux: 0, pleines: 0 };
     const g = groupes[millesime];
     g.effectif++;
+    if (sortie) { if (issue === 'directe') g.pleines++; return; }
     if (classementMiseBasLot(lot, ag) !== 'directe') return;   // code fixé à la saisie : seule une mise bas « Éponge » compte (RE, MN hors lot)
     g.misesBas++;
     g.agneaux += (ag.lambs || []).length;
@@ -5589,7 +5625,7 @@ function statsLotEpongeParAgeExact(lot) {
     // agneaux (brut) exposé au même titre que misesBas, pour permettre à
     // resumeLotParGroupeAge d'agréger plusieurs millésimes sans jamais
     // reconstruire un total depuis une prolificité déjà arrondie.
-    return { millesime, effectif: g.effectif, misesBas: g.misesBas, agneaux: g.agneaux, fertilite: pct(g.misesBas, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
+    return { millesime, effectif: g.effectif, misesBas: g.misesBas, pleinesSorties: g.pleines, agneaux: g.agneaux, fertilite: pct(g.misesBas + g.pleines, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
   });
 }
 
@@ -5598,12 +5634,19 @@ function statsLotEpongeParAgeExact(lot) {
    la fois par la carte à l'écran (bilanReproductionHtml) et l'export PDF
    (buildLotEpongePdfBytes). */
 function statsLotEponge(lot) {
-  let effectif = 0, misesBas = 0, agneaux = 0, sorties = 0;
+  let effectif = 0, misesBas = 0, agneaux = 0, sorties = 0, pleines = 0;
+  const sortiesDetail = { vides: 0, pleines: 0, sansResultat: 0 };
   (lot.membres || []).forEach(eid => {
     const animal = trouverAnimalReproOuArchive(eid);
     if (!animal) return;
     const ag = agnelageCampagneActuelle(animal);
-    if (estSortieDuTroupeau(animal) && !ag) { sorties++; return; }      // sortie avant mise bas : hors taux, comptée à part
+    if (estSortieDuTroupeau(animal) && !ag) {      // sortie avant mise bas : jugée sur sa dernière écho (issueSortieAvantMiseBasLot)
+      const issue = issueSortieAvantMiseBasLot(lot, animal);
+      if (issue === null) { sorties++; sortiesDetail.sansResultat++; return; }
+      effectif++;
+      if (issue === 'vide') sortiesDetail.vides++; else { sortiesDetail.pleines++; if (issue === 'directe') pleines++; }
+      return;
+    }
     effectif++;
     if (classementMiseBasLot(lot, ag) !== 'directe') return;   // code fixé à la saisie : seule une mise bas « Éponge » compte (RE, MN hors lot)
     misesBas++;
@@ -5611,7 +5654,7 @@ function statsLotEponge(lot) {
   });
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
   const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
-  return { effectif, misesBas, fertilite: pct(misesBas, effectif), prolificite: rat(agneaux, misesBas), sorties };
+  return { effectif, misesBas, pleinesSorties: pleines, fertilite: pct(misesBas + pleines, effectif), prolificite: rat(agneaux, misesBas), sorties, sortiesDetail };
 }
 
 /* Résumé PAR GROUPE (antenaises / brebis, même règle que
@@ -5626,7 +5669,7 @@ function statsLotEponge(lot) {
    sélecteur commun aux deux formes. */
 function resumeLotParGroupeAge(lot, parAgeExact, classement) {
   classement = classement || classementAntenaisesCampagne(campagneCohortPresente());
-  const groupes = { 'antenaises': { effectif: 0, misesBas: 0, agneaux: 0 }, 'brebis': { effectif: 0, misesBas: 0, agneaux: 0 } };
+  const groupes = { 'antenaises': { effectif: 0, misesBas: 0, agneaux: 0, pleines: 0 }, 'brebis': { effectif: 0, misesBas: 0, agneaux: 0, pleines: 0 } };
   parAgeExact.forEach(ligne => {
     // Même règle que le tableau du bilan (classementAntenaisesCampagne) ; un
     // lot ciblant des agnelles (lot.cible === 'Agnelles') est par nature un
@@ -5637,12 +5680,13 @@ function resumeLotParGroupeAge(lot, parAgeExact, classement) {
     g.effectif += ligne.effectif;
     g.misesBas += misesBas;
     g.agneaux += agneaux;
+    g.pleines += ligne.global ? (ligne.ia.pleinesSorties || 0) + (ligne.retour.pleinesSorties || 0) : (ligne.pleinesSorties || 0);   // pleines sorties avant mise bas : fertilité seulement
   });
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
   const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
   return Object.keys(groupes).map(key => {
     const g = groupes[key];
-    return { label: key === 'antenaises' ? 'Antenaises' + (classement.millesimeAntenaise !== null ? ' (millésime ' + classement.millesimeAntenaise + ')' : '') : 'Brebis (autres millésimes)', effectif: g.effectif, fertilite: pct(g.misesBas, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
+    return { label: key === 'antenaises' ? 'Antenaises' + (classement.millesimeAntenaise !== null ? ' (millésime ' + classement.millesimeAntenaise + ')' : '') : 'Brebis (autres millésimes)', effectif: g.effectif, fertilite: pct(g.misesBas + g.pleines, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
   });
 }
 
@@ -8954,7 +8998,7 @@ function bilanLotsReproductionHtml(classement) {
       <div class="${headClass}-head" data-lot-id="${lot.id}" style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;">
         <div style="min-width:0;">
           <div style="font-size:14px;font-weight:700;">${echapperHtml(lot.nom || (lot.mode === 'IA' ? 'Lot IA' : 'Éponge') + ' — ' + formatDateFr(lot.dateEvenement || lot.dateCreation))}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.effectif} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}${s.sorties ? ' · ' + s.sorties + ' sortie' + (s.sorties > 1 ? 's' : '') + ' avant mise bas' : ''}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.effectif} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}${libelleSortiesAvantMiseBasLot(s.sortiesDetail) ? ' · ' + libelleSortiesAvantMiseBasLot(s.sortiesDetail) : ''}</div>
         </div>
         <div style="display:flex;gap:14px;flex-shrink:0;text-align:right;">
           <div><div style="font-size:16px;font-weight:700;">${p(s.fertilite)}</div><div style="font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;">Fertilité</div></div>
@@ -8991,8 +9035,8 @@ function bilanLotsReproductionHtml(classement) {
           <tr style="border-top:1px solid var(--border);"><td>Fertilité</td><td style="text-align:right;">${p(s.ia.fertilite)}</td><td style="text-align:right;">${p(s.retour.fertilite)}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${p(s.global.fertilite)}</td></tr>
           <tr style="border-top:1px solid var(--border);"><td>Prolificité</td><td style="text-align:right;">${r(s.ia.prolificite)}</td><td style="text-align:right;">${r(s.retour.prolificite)}</td><td style="text-align:right;font-weight:700;color:var(--green-fg);">${r(s.global.prolificite)}</td></tr>
         `;
-        const note = `IA : mises bas ÷ effectif du lot (${s.effectif}). 1er retour : mises bas ÷ brebis restantes après l'IA directe (${s.effectif} − ${s.ia.misesBas} = ${s.effectif - s.ia.misesBas}). Global : total ÷ effectif du lot — comme le bulletin insémination Unotec. Détail par millésime réservé à l'export PDF.`;
-        const headStats = { effectif: s.effectif, fertilite: s.global.fertilite, prolificite: s.global.prolificite };
+        const note = `IA : mises bas ÷ effectif du lot (${s.effectif}). 1er retour : mises bas ÷ brebis restantes après l'IA directe (${s.effectif} − ${s.ia.misesBas + s.ia.pleinesSorties} = ${s.effectif - s.ia.misesBas - s.ia.pleinesSorties}).${s.ia.pleinesSorties + s.retour.pleinesSorties ? ' Une brebis pleine à l\'écho puis sortie avant mise bas compte dans la fertilité, jamais dans la prolificité.' : ''} Global : total ÷ effectif du lot — comme le bulletin insémination Unotec. Détail par millésime réservé à l'export PDF.`;
+        const headStats = { effectif: s.effectif, sortiesDetail: s.sortiesDetail, fertilite: s.global.fertilite, prolificite: s.global.prolificite };
         return lotCardHtml(lot, 'lot-ia', headStats, tableHeadHtml, tableRowsHtml, note, resume, 'btn-export-lot-ia-pdf');
       }).join('')}
     </div>`,
@@ -9028,7 +9072,7 @@ function bilanLotsReproductionMobileHtml(classement) {
   const carteLot = (lot, classe, s, tableauHtml, resume, exportClasse) => `
     <div class="bc-lot ${classe}-card">
       <div class="bc-lot-tete ${classe}-head" data-lot-id="${lot.id}" role="button" tabindex="0">
-        <div class="bc-lot-id"><div class="bc-lot-nom">${echapperHtml(lot.nom || (lot.mode === 'IA' ? 'Lot IA' : 'Éponge') + ' — ' + formatDateFr(lot.dateEvenement || lot.dateCreation))}</div><div class="bc-lot-eff">${s.effectif} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}${s.sorties ? ' · ' + s.sorties + ' sortie' + (s.sorties > 1 ? 's' : '') + ' avant mise bas' : ''}</div></div>
+        <div class="bc-lot-id"><div class="bc-lot-nom">${echapperHtml(lot.nom || (lot.mode === 'IA' ? 'Lot IA' : 'Éponge') + ' — ' + formatDateFr(lot.dateEvenement || lot.dateCreation))}</div><div class="bc-lot-eff">${s.effectif} ${lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'}${libelleSortiesAvantMiseBasLot(s.sortiesDetail) ? ' · ' + libelleSortiesAvantMiseBasLot(s.sortiesDetail) : ''}</div></div>
         <div class="bc-lot-ch"><div class="bc-lot-v">${p(s.fertilite)}</div><div class="bc-lot-k">Fertilité</div></div>
         <div class="bc-lot-ch"><div class="bc-lot-v">${r(s.prolificite)}</div><div class="bc-lot-k">Prolif.</div></div>
         ${BC_CHEVRON}
@@ -9049,7 +9093,7 @@ function bilanLotsReproductionMobileHtml(classement) {
         const resume = resumeLotParGroupeAge(lot, statsLotIAParAgeExact(lot), classement);
         const tableau = `<div class="bc-grille bc-lh"><div></div><div>IA</div><div>1er retour</div><div class="tot">Global</div></div>
           ${ligneIA('Mises bas', s.ia.misesBas, s.retour.misesBas, s.global.misesBas)}${ligneIA('Fertilité', p(s.ia.fertilite), p(s.retour.fertilite), p(s.global.fertilite))}${ligneIA('Prolificité', r(s.ia.prolificite), r(s.retour.prolificite), r(s.global.prolificite))}`;
-        return carteLot(lot, 'lot-ia', { effectif: s.effectif, sorties: s.sorties, fertilite: s.global.fertilite, prolificite: s.global.prolificite }, tableau, resume, 'btn-export-lot-ia-pdf');
+        return carteLot(lot, 'lot-ia', { effectif: s.effectif, sorties: s.sorties, sortiesDetail: s.sortiesDetail, fertilite: s.global.fertilite, prolificite: s.global.prolificite }, tableau, resume, 'btn-export-lot-ia-pdf');
       }).join('')}
     </div>`)
   + (lotsEponge.length === 0 ? '' : `
