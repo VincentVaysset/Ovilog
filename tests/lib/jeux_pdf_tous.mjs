@@ -17,7 +17,8 @@ export function installerCasPdfTous() {   // à appeler APRÈS page.evaluate(ins
     calendrier: async () => { prod(); return u8(buildCalendrierTankPdfBytes(2025)); },
     rapport: async () => { prod(); return u8(buildRapportCampagnePdfBytes(2025)); },
     inventaire: async () => { window.jeuBilanSynth(); return u8(buildInventairePdfBytes('brebis', DB.brebis.filter(s => (s.statut || 'active') === 'active').slice(0, 30), '')); },
-    echographies: async () => { window.jeuBilanSynth(); DB.brebis.slice(0, 20).forEach((b, i) => { b.echographies = [{ date: '2026-08-01', campagne: 2026, type: 'constat', stade: i % 3 ? 'Pleine' : 'Vide' }]; }); return u8(buildEchosPcPdfBytes(donneesEchosPc())); },
+    echographies: async () => { window.jeuBilanSynth(); DB.brebis.slice(0, 20).forEach((b, i) => { b.echographies = [{ date: '2026-08-01', campagne: 2026, type: 'constat', stade: i % 3 ? 'Pleine' : 'Vide' }]; }); return u8(buildEchosJourPdfBytes(donneesEchoJour(DB.campagneDebut))); },
+    echographiesPassages: async () => { window.jeuBilanSynth(); DB.brebis.slice(0, 20).forEach((b, i) => { b.echographies = [{ date: '2026-08-01', campagne: DB.campagneDebut, type: 'constat', stade: i % 3 ? 'Pleine' : 'Vide' }]; }); const C = DB.campagneDebut, P = passagesEchoCampagne(C); return u8(buildPassagesEchoPdfBytes(C, P, P[0])); },
     declaration: async () => { window.jeuBilanSynth(); return u8(buildDeclarationAnnuellePdfBytes(2026, declarationAnnuelleChiffres(2026))); }
   });
   window.CAS_PDF_TOUS = window.CAS_PDF;

@@ -57,6 +57,8 @@ nfig`, `stades_config` et les 14 `lgs_*`) et l'ancien site d'hébergement `logis
 
 - **Paternité des IA (branche, non fusionné, 30/10/2026)** : orientation lait / viande, père connu ou inconnu, index ISOL (lait) et index viande (texte libre), saisie sur les fiches, import PC en deux listes (béliers du centre puis brebis avec le code du père), père reporté sur les agneaux, les agnelles gardées et les brebis après bascule. Détail dans `CLAUDE.md`. À tester sur de vrais fichiers du centre (titres de colonnes à ajuster dans `IA_IMPORT_ALIAS` / `IA_BELIER_ALIAS`) ; index viande à structurer plus tard (prolificité, amélioration bouchère).
 
+- **Échographies et bilan IA (03/11/2026, branche, à fusionner par PR)** : écran Échographies PC et mobile à onglets « Aujourd'hui » (réel, chaque brebis une fois) | « Passages » (un jour d'écho, résultat figé, par lot, Repassées / 1re écho) | « Historique » ; histogramme par semaine supprimé ; la carte « Dernière échographie » de l'Accueil garde sa règle (à aligner plus tard si le propriétaire le demande). Bilan des lots IA / éponge : une brebis sortie avant mise bas est jugée sur sa dernière écho (vide = échec, pleine = réussite sans prolificité, sans écho = hors taux). Détail dans `CLAUDE.md`.
+
 ## 4. En attente d'une décision du propriétaire
 
 - **Début de campagne réglable : FAIT sur la branche (non fusionné)** — les mois de la production laitière suivent le début réglé (`moisCampagne`, test `test_campagne_debut_mois`). L'ami trait de décembre à fin juillet : non concerné en pratique.
