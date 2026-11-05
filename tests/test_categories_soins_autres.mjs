@@ -36,9 +36,9 @@ const sousTypes = () => p.evaluate(() => { const L = DB.brebis[0].agnelages[0].l
 
 // 1. fiche produit « Autres » : catégorie du soin ; ligne de correction en un geste
 await p.evaluate(() => ouvrirFicheProduitModal({ nom: 'Séléphérol', onSaved: () => {} }));
-check(await p.isVisible('#fp-cat-soin'), 'fiche d\'un produit « Autres » : choix de la catégorie du soin');
-check(await p.evaluate(() => !document.getElementById('fp-corr-ligne') && document.getElementById('fp-cat-soin').value === ''), 'catégorie pas encore choisie (« À choisir ») : aucune ligne de correction, rien d\'écrit d\'office');
-await p.selectOption('#fp-cat-soin', 'Vitamines et minéraux');
+check(await p.isVisible('#fp-categorie'), 'fiche d\'un produit « Autres » : choix de la catégorie du soin');
+check(await p.evaluate(() => !document.getElementById('fp-corr-ligne') && document.getElementById('fp-categorie').value === ''), 'catégorie pas encore choisie (« À choisir ») : aucune ligne de correction, rien d\'écrit d\'office');
+await p.selectOption('#fp-categorie', 'Vitamines et minéraux');
 check(await p.evaluate(() => /3 soins déjà enregistrés en Soin de plaie/.test(document.getElementById('fp-corr-ligne').textContent)), 'ligne « 3 soins déjà enregistrés en Soin de plaie » (agneaux, brebis, bouclage sans catégorie ; autre produit et registre archivé exclus)');
 await p.click('#fp-corr-ok');
 eq(await sousTypes(), ['Vitamines et minéraux', 'Vitamines et minéraux', 'Soin de plaie', 'Vitamines et minéraux', 'Soin de plaie'], 'correction : les 3 soins de Séléphérol, rien d\'autre');
@@ -48,7 +48,7 @@ await p.click('#fp-corr-ok');
 await p.click('#fp-ok');
 eq(await p.evaluate(() => DB.produitsInfo['Séléphérol'].categorieSoin), 'Vitamines et minéraux', 'fiche enregistrée avec sa catégorie');
 await p.evaluate(() => ouvrirFicheProduitModal({ nom: 'Séléphérol', onSaved: () => {} }));
-check(await p.evaluate(() => !document.getElementById('fp-corr-ligne') && document.getElementById('fp-cat-soin').value === 'Vitamines et minéraux'), 'plus rien à corriger : la ligne ne revient pas');
+check(await p.evaluate(() => !document.getElementById('fp-corr-ligne') && document.getElementById('fp-categorie').value === 'Vitamines et minéraux'), 'plus rien à corriger : la ligne ne revient pas');
 await p.evaluate(() => document.querySelector('.modal-overlay').remove());
 
 // 2. soin au bouclage : catégorie de la fiche

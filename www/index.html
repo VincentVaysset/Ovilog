@@ -1745,6 +1745,9 @@ const MOTIFS_NON_TRAITE_DEPART = ['Agneaux morts', 'Mammite', 'Réforme prévue'
 // historique (anciens soins « Autre » sans catégorie choisie), gardée dans la liste et protégée
 const CATEGORIES_SOINS_AUTRES_DEPART = ['Vitamines et minéraux', 'Soin de plaie', 'Désinfection', 'Digestif et réhydratation', 'Homéopathie et phytothérapie', 'Autre'];
 const CATEGORIE_SOIN_AUTRE_HISTORIQUE = 'Soin de plaie';
+// Catégories des TRAITEMENTS (liste de compte, « Ajouter… ») : les trois de départ correspondent aux listes de produits historiques et restent protégées
+const CATEGORIES_TRAITEMENTS_DEPART = ['Antibiotique', 'Antiparasitaire', 'Anti-inflammatoire'];
+const CLE_PRODUITS_TRAITEMENT = { 'Antibiotique': 'antibiotiques', 'Antiparasitaire': 'antiparasitaires', 'Anti-inflammatoire': 'antiinflammatoires' };
 /* Type de sortie « Mise à jour inventaire » : animal qu'on ne retrouve plus à l'inventaire (bipage complet des brebis, agneaux sans devenir au
    changement de campagne). Ce n'est PAS une mort : jamais dans la mortalité ni dans les causes ; compté avec les pertes dans les bilans ; pastille
    neutre ; posé seulement par l'appli (jamais proposé à la saisie), annulable comme tout mouvement. Les anciennes sorties « Morte » portant ce
@@ -1794,6 +1797,7 @@ function migrateData(d) {
   if (!d.casParticuliers) d.casParticuliers = ['Pseudogestation', 'Avortée'];
   if (!Array.isArray(d.motifsNonTraite)) d.motifsNonTraite = MOTIFS_NON_TRAITE_DEPART.slice();
   if (!Array.isArray(d.categoriesSoinsAutres)) d.categoriesSoinsAutres = CATEGORIES_SOINS_AUTRES_DEPART.slice();
+  if (!Array.isArray(d.categoriesTraitements)) d.categoriesTraitements = CATEGORIES_TRAITEMENTS_DEPART.slice();
   // soins au bouclage : réglés sur la fiche produit (produitsInfo[nom].bouclage) ; reprise UNE fois de l'ancienne liste de compte (version de test)
   if (Array.isArray(d.soinsBouclage)) {
     d.produitsInfo = d.produitsInfo || {};
@@ -2219,6 +2223,7 @@ function loadData() {
     casParticuliers: ['Pseudogestation', 'Avortée'],
     motifsNonTraite: MOTIFS_NON_TRAITE_DEPART.slice(),
     categoriesSoinsAutres: CATEGORIES_SOINS_AUTRES_DEPART.slice(),
+    categoriesTraitements: CATEGORIES_TRAITEMENTS_DEPART.slice(),
     categoriesNotes: ['Boiterie', 'Sinus', 'Mammite'],
     notesArchiveesBrebis: {},
     produits: {
@@ -20462,7 +20467,12 @@ function htmlAlerteControlesDelaiLait(items) {
    lignes cochables, « Tout cocher » sur le résultat filtré). L'enregistrement se fait depuis l'écran 2 : UN soin PAR animal
    (le registre est tenu par animal), annulable pour tout le lot en un geste. Les agneaux restent hors de ce parcours (flux
    actuel conservé). Rien n'est écrit avant « Enregistrer le soin ». */
-const CARNET_CATEGORIES_TRAITEMENT = ['Antibiotique', 'Antiparasitaire', 'Anti-inflammatoire'];
+// Catégories proposées pour un traitement : la liste du compte (valeur déjà enregistrée gardée même si retirée), puis « Ajouter… »
+function categoriesTraitementOptions(valeur, opt, aChoisir) {
+  const liste = (DB.categoriesTraitements || CATEGORIES_TRAITEMENTS_DEPART).slice();
+  if (valeur && !liste.includes(valeur)) liste.push(valeur);
+  return (aChoisir ? `<option value=""${valeur ? '' : ' selected'}>À choisir</option>` : '') + liste.map(c => opt(c, c, valeur)).join('') + `<option value="${OPTION_AJOUTER}">Ajouter…</option>`;
+}
 // Options de la catégorie d'un soin « Autre » : la liste du compte (valeur déjà enregistrée gardée même si retirée de la liste), puis « Ajouter… »
 function categoriesSoinAutreOptions(valeur, opt, aChoisir) {
   const liste = (DB.categoriesSoinsAutres || CATEGORIES_SOINS_AUTRES_DEPART).slice();
@@ -20470,10 +20480,19 @@ function categoriesSoinAutreOptions(valeur, opt, aChoisir) {
   if (v && !liste.includes(v)) liste.push(v);
   return (aChoisir ? `<option value=""${v ? '' : ' selected'}>À choisir</option>` : '') + liste.map(c => opt(c, c, v)).join('') + `<option value="${OPTION_AJOUTER}">Ajouter…</option>`;
 }
+// Liste de produits où range un Type + une Catégorie : Vaccin → vaccins ; traitement de départ → sa liste ; autre traitement et « Autre » → autres
+// (le type et la catégorie du produit sont alors sur sa fiche : produitsInfo[nom].typeSoin / categorieSoin)
 function carnetCleProduits(type, categorie) {
   if (type === 'Vaccin') return 'vaccins';
   if (type === 'Autre') return 'autres';
-  return { 'Antibiotique': 'antibiotiques', 'Antiparasitaire': 'antiparasitaires', 'Anti-inflammatoire': 'antiinflammatoires' }[categorie] || null;
+  if (type === 'Traitement') return CLE_PRODUITS_TRAITEMENT[categorie] || (categorie ? 'autres' : null);
+  return null;
+}
+// Produits proposés pour un Type + une Catégorie (Carnet) : ceux dont la fiche donne exactement ce type et cette catégorie (« Autre » : toutes ses catégories)
+function produitsDuTypeCategorie(type, categorie) {
+  const cle = carnetCleProduits(type, categorie);
+  if (!cle) return [];
+  return (DB.produits[cle] || []).filter(nom => { const t = typeSoinProduit(nom); return t && t.type === type && (type !== 'Traitement' || t.categorie === categorie); });
 }
 const libAnimaux = n => n + (n > 1 ? ' animaux' : ' animal');
 let carnetSanitaireEtat = null;
@@ -20576,7 +20595,10 @@ function delaisAppliquesFormulaire(e) {
 function typeSoinProduit(nom) {
   const cle = categorieProduitCle(nom);
   if (cle === 'vaccins') return { type: 'Vaccin', categorie: '' };
-  if (cle === 'autres') return { type: 'Autre', categorie: '' };
+  if (cle === 'autres') {
+    const info = (DB.produitsInfo && DB.produitsInfo[nom]) || {};
+    return info.typeSoin === 'Traitement' && info.categorieSoin ? { type: 'Traitement', categorie: info.categorieSoin } : { type: 'Autre', categorie: info.categorieSoin || '' };
+  }
   const categorie = { antibiotiques: 'Antibiotique', antiparasitaires: 'Antiparasitaire', antiinflammatoires: 'Anti-inflammatoire' }[cle];
   return categorie ? { type: 'Traitement', categorie } : null;
 }
@@ -20746,7 +20768,7 @@ function ecranCarnetSoin() {
   const opt = (v, lib, sel) => `<option value="${echapperHtml(v)}"${sel === v ? ' selected' : ''}>${echapperHtml(lib === undefined ? v : lib)}</option>`;
   const ordonnances = (DB.ordonnances || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const cleProd = carnetCleProduits(E.type, E.categorie);
-  const produits = cleProd ? (DB.produits[cleProd] || []) : [];
+  const produits = produitsDuTypeCategorie(E.type, E.categorie);
   const intervenants = Array.from(new Set(['Éleveur'].concat(DB.intervenants || [])));
   const animalEdite = E.editing ? animauxEligiblesCarnet().find(a => a.eid === E.editing.eid) : null;
   cont.innerHTML = `<div class="pc-wrap">
@@ -20759,7 +20781,7 @@ function ecranCarnetSoin() {
         <div><label>Date de début <span class="pc-req">*</span></label><input type="date" id="cs-date" value="${E.dateDebut}"></div>
         <div><label>Durée (jours) <span class="pc-req">*</span></label><input type="number" id="cs-duree" min="1" step="1" value="${E.dureeJours}"></div>
         <div><label>Type <span class="pc-req">*</span></label><div class="pc-seg2">${['Vaccin', 'Traitement', 'Autre'].map(t => `<button type="button" class="opt-btn cs-type coral${E.type === t ? ' selected' : ''}" data-val="${t}">${t}</button>`).join('')}</div></div>
-        <div><label>Catégorie <span class="pc-req">*</span></label><select id="cs-categorie" ${E.type === 'Vaccin' ? 'disabled' : ''}>${E.type === 'Traitement' ? CARNET_CATEGORIES_TRAITEMENT.map(c => opt(c, c, E.categorie)).join('') : E.type === 'Autre' ? categoriesSoinAutreOptions(E.categorie, opt) : '<option>Vaccin</option>'}</select></div>
+        <div><label>Catégorie <span class="pc-req">*</span></label><select id="cs-categorie" ${E.type === 'Vaccin' ? 'disabled' : ''}>${E.type === 'Traitement' ? categoriesTraitementOptions(E.categorie, opt, false) : E.type === 'Autre' ? categoriesSoinAutreOptions(E.categorie, opt) : '<option>Vaccin</option>'}</select></div>
       </div>
       <div class="pc-fg">
         <div><label>Produit ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><select id="cs-produit"><option value="">${E.type === 'Autre' ? 'Aucun (soin de plaie)' : 'Choisir…'}</option>${produits.map(n => opt(n, n + (ficheProduit(n).complete ? '' : ' (fiche incomplète)'), E.produit)).join('')}<option value="__nouveau__">+ Nouveau produit…</option></select></div>
@@ -20841,6 +20863,7 @@ function ecranCarnetSoin() {
   });
   document.querySelectorAll('.cs-type').forEach(b => { b.onclick = () => { E.type = b.dataset.val; E.categorie = E.type === 'Traitement' ? 'Antibiotique' : E.type === 'Autre' ? CATEGORIE_SOIN_AUTRE_HISTORIQUE : ''; E.produit = ''; E.delaiViande = ''; E.delaiLait = ''; E.erreurs = []; ecranCarnetSoin(); }; });
   $('cs-categorie').addEventListener('change', e => {
+    if (E.type === 'Traitement' && e.target.value === OPTION_AJOUTER) { ouvrirAjoutValeurListe('categoriesTraitements', v => { E.categorie = v; E.produit = ''; E.delaiViande = ''; E.delaiLait = ''; ecranCarnetSoin(); }, () => { e.target.value = E.categorie; }); return; }
     if (E.type === 'Autre') {   // soin « Autre » : la catégorie se choisit librement (liste du compte, « Ajouter… »), le produit reste
       if (e.target.value === OPTION_AJOUTER) { ouvrirAjoutValeurListe('categoriesSoinsAutres', v => { E.categorie = v; ecranCarnetSoin(); }, () => { e.target.value = E.categorie || CATEGORIE_SOIN_AUTRE_HISTORIQUE; }); return; }
       E.categorie = e.target.value; ecranCarnetSoin(); return;
@@ -20849,7 +20872,7 @@ function ecranCarnetSoin() {
   });
   $('cs-produit').addEventListener('change', e => {
     if (e.target.value === '__nouveau__') {
-      ouvrirFicheProduitModal({ categorieKey: cleProd || 'autres', onSaved: nom => { E.produit = nom; const f = ficheProduit(nom); E.delaiViande = String(f.delaiViande); E.delaiLait = String(f.delaiLait); ecranCarnetSoin(); } });
+      ouvrirFicheProduitModal({ typeSoin: E.type, categorieSoin: E.type === 'Traitement' ? E.categorie : '', onSaved: nom => { E.produit = nom; const f = ficheProduit(nom); E.delaiViande = String(f.delaiViande); E.delaiLait = String(f.delaiLait); ecranCarnetSoin(); } });
       e.target.value = E.produit; return;
     }
     E.produit = e.target.value;
@@ -22204,7 +22227,8 @@ function ficheProduit(nom) {
     delaiLait, delaiViande,
     surOrdonnance: !!(info && info.surOrdonnance),
     complete: delaiLait !== null && delaiViande !== null,
-    categorieSoin: info && info.categorieSoin ? info.categorieSoin : null,   // produit « Autres » : catégorie du soin (liste categoriesSoinsAutres)
+    categorieSoin: info && info.categorieSoin ? info.categorieSoin : null,   // produit de la liste « autres » : sa catégorie (soin « Autre », ou traitement ajouté par l'éleveur)
+    typeSoin: info && info.typeSoin === 'Traitement' ? 'Traitement' : null,
     bouclage: info && info.bouclage && Number(info.bouclage.doseCc) > 0 ? { doseCc: Number(info.bouclage.doseCc), voie: info.bouclage.voie || '' } : null,
     aConfirmer, ancienLait, posologieAncienne, heritageAnmv,
     // options bio : valeur choisie par l'éleveur, sinon défaut de la catégorie (jamais écrit tant que l'éleveur n'a pas validé la fiche)
@@ -22232,6 +22256,8 @@ function ecrireFicheProduit(nom, f) {
   if (bouclage) e.bouclage = bouclage;
   const categorieSoin = f.categorieSoin !== undefined ? f.categorieSoin : ancien.categorieSoin;   // produit « Autres » : catégorie du soin
   if (categorieSoin) e.categorieSoin = categorieSoin;
+  const typeSoin = f.typeSoin !== undefined ? f.typeSoin : ancien.typeSoin;   // traitement ajouté par l'éleveur, rangé dans la liste « autres »
+  if (typeSoin === 'Traitement' && e.categorieSoin) e.typeSoin = 'Traitement';
   // options bio : celles passées par l'appelant, sinon celles déjà choisies par l'éleveur (jamais effacées, jamais inventées)
   const compte = f.compte !== undefined ? f.compte : ancien.compteTraitements;
   const min48 = f.min48h !== undefined ? f.min48h : ancien.minimum48hBio;
@@ -22262,6 +22288,11 @@ function ouvrirFicheProduitModal(options) {
   const edition = !!options.nom;
   const fiche = edition ? ficheProduit(options.nom) : null;
   const pre = Object.assign({}, fiche ? { delaiLait: fiche.delaiLait, delaiViande: fiche.delaiViande, posologie: fiche.posologie } : {}, options.prefill || {});
+  // Type + Catégorie de départ : ceux de la fiche (modification), sinon ceux demandés par l'appelant (Carnet, ordonnance), jamais par défaut sinon
+  const init = edition ? (typeSoinProduit(options.nom) || { type: '', categorie: '' })
+    : options.typeSoin ? { type: options.typeSoin, categorie: options.categorieSoin || '' }
+    : options.categorieKey ? (options.categorieKey === 'vaccins' ? { type: 'Vaccin', categorie: '' } : options.categorieKey === 'autres' ? { type: 'Autre', categorie: '' } : { type: 'Traitement', categorie: Object.keys(CLE_PRODUITS_TRAITEMENT).find(k => CLE_PRODUITS_TRAITEMENT[k] === options.categorieKey) || '' })
+    : { type: '', categorie: '' };
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   const v = x => x === null || x === undefined ? '' : x;
@@ -22270,13 +22301,11 @@ function ouvrirFicheProduitModal(options) {
       <div style="font-weight:700;font-size:15px;margin-bottom:12px;">${edition ? 'Fiche produit : ' + echapperHtml(options.nom) : 'Nouveau produit'}</div>
       <label>Nom commercial *</label>
       <input type="text" id="fp-nom" value="${echapperHtml(edition ? options.nom : (options.nomPrefill || ''))}" style="margin-bottom:12px;">
-      <label>Type et catégorie *</label>
-      <select id="fp-cat" ${edition ? 'disabled' : ''} style="margin-bottom:12px;">
-        ${!edition && !options.categorieKey ? '<option value="" selected>Choisir la catégorie</option>' : ''}${PRODUIT_CATEGORIES.map(c => `<option value="${c.key}"${(edition ? fiche.categorie : options.categorieKey) === c.key ? ' selected' : ''}>${c.label}</option>`).join('')}
-      </select>
-      <div id="fp-cat-soin-zone" style="display:${(edition ? fiche.categorie : options.categorieKey) === 'autres' ? 'block' : 'none'};margin-bottom:12px;">
-        <label for="fp-cat-soin">Catégorie du soin</label>
-        <select id="fp-cat-soin" style="margin-bottom:0;">${categoriesSoinAutreOptions(fiche && fiche.categorieSoin, (v, l, sel) => `<option value="${echapperHtml(v)}"${v === sel ? ' selected' : ''}>${echapperHtml(l)}</option>`, true)}</select>
+      <label>Type *</label>
+      <div class="tab-bar" id="fp-type" style="margin-bottom:12px;">${['Vaccin', 'Traitement', 'Autre'].map(t => `<button type="button" class="tab-btn${init.type === t ? ' active' : ''}" data-val="${t}"${edition ? ' disabled' : ''}>${t}</button>`).join('')}</div>
+      <div id="fp-categorie-zone" style="display:${init.type && init.type !== 'Vaccin' ? 'block' : 'none'};margin-bottom:12px;">
+        <label for="fp-categorie" id="fp-categorie-label">Catégorie${init.type === 'Traitement' ? ' *' : ''}</label>
+        <select id="fp-categorie" style="margin-bottom:0;"></select>
         <div id="fp-correction"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
@@ -22302,8 +22331,17 @@ function ouvrirFicheProduitModal(options) {
     </div>`;
   document.body.appendChild(overlay);
   overlay.querySelector('#fp-annuler').onclick = () => document.body.removeChild(overlay);
-  // produit « Autres » : catégorie du soin ; ses anciens soins restés en « Soin de plaie » se corrigent en UN geste (ligne présente seulement s'il y en a, bandeau Annuler)
-  const selCatSoin = overlay.querySelector('#fp-cat-soin'), zoneCorr = overlay.querySelector('#fp-correction');
+  // Type et Catégorie (mêmes listes que le Carnet, « Ajouter… ») ; produit « Autre » : ses anciens soins restés en « Soin de plaie » se corrigent en UN geste
+  let typeChoisi = init.type;
+  const selCatSoin = overlay.querySelector('#fp-categorie'), zoneCorr = overlay.querySelector('#fp-correction');
+  const optCat = (val, lib, sel) => `<option value="${echapperHtml(val)}"${val === sel ? ' selected' : ''}>${echapperHtml(lib)}</option>`;
+  const remplirCategories = (valeur) => {
+    overlay.querySelector('#fp-categorie-zone').style.display = typeChoisi && typeChoisi !== 'Vaccin' ? 'block' : 'none';
+    overlay.querySelector('#fp-categorie-label').textContent = 'Catégorie' + (typeChoisi === 'Traitement' ? ' *' : '');
+    selCatSoin.innerHTML = typeChoisi === 'Traitement' ? categoriesTraitementOptions(valeur, optCat, true) : typeChoisi === 'Autre' ? categoriesSoinAutreOptions(valeur, optCat, true) : '';
+  };
+  const cleChoisie = () => typeChoisi === 'Vaccin' ? 'vaccins' : typeChoisi === 'Autre' ? 'autres' : typeChoisi === 'Traitement' ? (CLE_PRODUITS_TRAITEMENT[selCatSoin.value] || (selCatSoin.value && selCatSoin.value !== OPTION_AJOUTER ? 'autres' : '')) : '';
+  remplirCategories(init.categorie);
   let annulerCorrection = null, minuterieCorr = null;
   const majCorrection = (message) => {
     clearTimeout(minuterieCorr);
@@ -22313,35 +22351,45 @@ function ouvrirFicheProduitModal(options) {
       minuterieCorr = setTimeout(() => { annulerCorrection = null; majCorrection(); }, 6000);
       return;
     }
-    const cat = selCatSoin.value, a = edition ? soinsProduitACorriger(options.nom, cat) : [];
+    const cat = selCatSoin.value, a = edition && typeChoisi === 'Autre' && cat && cat !== OPTION_AJOUTER ? soinsProduitACorriger(options.nom, cat) : [];
     zoneCorr.innerHTML = a.length ? `<div class="msg-charte" id="fp-corr-ligne" style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><span>${a.length} soin${a.length > 1 ? 's' : ''} déjà enregistré${a.length > 1 ? 's' : ''} en ${CATEGORIE_SOIN_AUTRE_HISTORIQUE}</span><button type="button" class="btn btn-secondary" id="fp-corr-ok" style="width:auto;margin:0;">Les passer en ${echapperHtml(cat)}</button></div>` : '';
     const b = zoneCorr.querySelector('#fp-corr-ok');
     if (b) b.onclick = () => { annulerCorrection = corrigerCategorieSoins(a, cat); saveData(DB); majCorrection(a.length + ' soin' + (a.length > 1 ? 's passés' : ' passé') + ' en ' + cat); };
   };
   selCatSoin.addEventListener('change', e => {
     if (e.target.value === OPTION_AJOUTER) {
-      const avant = (fiche && fiche.categorieSoin) || '';
-      ouvrirAjoutValeurListe('categoriesSoinsAutres', v => { const o = document.createElement('option'); o.value = v; o.textContent = v; selCatSoin.insertBefore(o, selCatSoin.lastElementChild); selCatSoin.value = v; majCorrection(); }, () => { selCatSoin.value = avant; });
+      const avant = typeChoisi === init.type ? init.categorie : '';
+      ouvrirAjoutValeurListe(typeChoisi === 'Traitement' ? 'categoriesTraitements' : 'categoriesSoinsAutres', v => { const o = document.createElement('option'); o.value = v; o.textContent = v; selCatSoin.insertBefore(o, selCatSoin.lastElementChild); selCatSoin.value = v; majCorrection(); }, () => { selCatSoin.value = avant; });
       return;
     }
     majCorrection();
   });
-  overlay.querySelector('#fp-cat').addEventListener('change', e => { overlay.querySelector('#fp-cat-soin-zone').style.display = e.target.value === 'autres' ? 'block' : 'none'; });
+  const majDefautsBio = () => {   // création : le choix du type et de la catégorie propose les défauts bio de ce rangement (modifiables)
+    const k = cleChoisie(), s48 = overlay.querySelector('#fp-min48'), sc = overlay.querySelector('#fp-compte');
+    if (edition || !s48 || !k) return;
+    s48.value = DEFAUT_MINIMUM_48H_BIO[k] || 'a_confirmer'; sc.value = DEFAUT_COMPTE_TRAITEMENTS[k] || 'a_confirmer';
+  };
+  overlay.querySelectorAll('#fp-type .tab-btn').forEach(b => { b.onclick = () => {
+    if (edition) return;
+    typeChoisi = b.dataset.val;
+    overlay.querySelectorAll('#fp-type .tab-btn').forEach(x => x.classList.toggle('active', x === b));
+    remplirCategories('');
+    majCorrection(); majDefautsBio();
+  }; });
+  selCatSoin.addEventListener('change', majDefautsBio);
   majCorrection();
   // dose et voie du bouclage : affichées seulement quand la case est cochée (fiche légère)
   overlay.querySelector('#fp-bouclage').onchange = e => { overlay.querySelector('#fp-bouclage-detail').style.display = e.target.checked ? 'grid' : 'none'; };
-  // création : le choix de la catégorie propose les défauts bio de cette catégorie (modifiables)
-  if (!edition && overlay.querySelector('#fp-min48')) overlay.querySelector('#fp-cat').addEventListener('change', e => {
-    overlay.querySelector('#fp-min48').value = DEFAUT_MINIMUM_48H_BIO[e.target.value] || 'a_confirmer';
-    overlay.querySelector('#fp-compte').value = DEFAUT_COMPTE_TRAITEMENTS[e.target.value] || 'a_confirmer';
-  });
   overlay.querySelector('#fp-ok').onclick = () => {
     const err = overlay.querySelector('#fp-err');
     const montrer = m => { err.textContent = m; err.classList.remove('hidden'); };
     const nom = overlay.querySelector('#fp-nom').value.trim();
     if (!nom) return montrer('Le nom commercial est obligatoire.');
-    const cat = overlay.querySelector('#fp-cat').value;
-    if (!cat) return montrer('Choisis la catégorie du produit.');   // création sans catégorie connue (ordonnance) : jamais de catégorie par défaut
+    if (!typeChoisi) return montrer('Choisis le type du produit (Vaccin, Traitement ou Autre).');   // création sans type connu (ordonnance) : jamais de type par défaut
+    const categorie = selCatSoin.value && selCatSoin.value !== OPTION_AJOUTER ? selCatSoin.value : '';
+    if (typeChoisi === 'Traitement' && !categorie) return montrer('Choisis la catégorie du traitement.');
+    const cat = cleChoisie();
+    const catAvant = edition ? fiche.categorie : null;
     const doublon = trouverProduitExistant(nom, edition ? options.nom : undefined);
     if (doublon) return montrer(`Un produit « ${doublon.nom} » existe déjà (${doublon.categorie}).`);
     const lire = id => { const t = overlay.querySelector(id).value.trim(); return /^\d+$/.test(t) ? parseInt(t, 10) : null; };
@@ -22353,19 +22401,27 @@ function ouvrirFicheProduitModal(options) {
       const doseTxt = overlay.querySelector('#fp-bouclage-dose').value.trim().replace(',', '.');
       if (!/^\d+(\.\d+)?$/.test(doseTxt) || !(parseFloat(doseTxt) > 0)) return montrer('Indique la dose par agneau (cc) donnée au bouclage.');
       const voie = overlay.querySelector('#fp-bouclage-voie').value;
-      if (!voie && cat !== 'autres') return montrer('Choisis la voie d\'administration du soin au bouclage.');
+      if (!voie && typeChoisi !== 'Autre') return montrer('Choisis la voie d\'administration du soin au bouclage.');
       fiche2.bouclage = Object.assign({ doseCc: parseFloat(doseTxt) }, voie ? { voie } : {});
     } else fiche2.bouclage = null;
-    if (cat === 'autres' && selCatSoin.value && selCatSoin.value !== OPTION_AJOUTER) fiche2.categorieSoin = selCatSoin.value;
+    // rangement : liste « autres » = catégorie sur la fiche (traitement ajouté : typeSoin « Traitement ») ; listes de départ : la liste dit tout
+    if (cat === 'autres') { if (categorie) fiche2.categorieSoin = categorie; fiche2.typeSoin = typeChoisi === 'Traitement' ? 'Traitement' : null; }
+    else { fiche2.categorieSoin = null; fiche2.typeSoin = null; }
     const sel48 = overlay.querySelector('#fp-min48'), selCompte = overlay.querySelector('#fp-compte');
     if (sel48) fiche2.min48h = sel48.value;
     if (selCompte) fiche2.compte = selCompte.value;
     const appliquer = () => {
       if (!edition) { DB.produits[cat] = DB.produits[cat] || []; DB.produits[cat].push(nom); }
-      else if (nom !== options.nom) {
-        const idx = (DB.produits[cat] || []).indexOf(options.nom);
-        if (idx !== -1) DB.produits[cat][idx] = nom;
-        renameProduitPartout(options.nom, nom);
+      else {
+        if (catAvant && catAvant !== cat) {   // catégorie changée (même type) : le produit change de liste, ses soins déjà enregistrés restent tels quels
+          DB.produits[catAvant] = (DB.produits[catAvant] || []).filter(n => n !== options.nom);
+          DB.produits[cat] = DB.produits[cat] || []; DB.produits[cat].push(options.nom);
+        }
+        if (nom !== options.nom) {
+          const idx = (DB.produits[cat] || []).indexOf(options.nom);
+          if (idx !== -1) DB.produits[cat][idx] = nom;
+          renameProduitPartout(options.nom, nom);
+        }
       }
       ecrireFicheProduit(nom, fiche2);
       saveData(DB);
@@ -22383,7 +22439,9 @@ function ouvrirFicheProduitModal(options) {
 function renderProduitsDelais() {
   pageTitle.textContent = 'Produits et délais';
   const aConfirmer = produitsAConfirmer();
-  const fiches = PRODUIT_CATEGORIES.map(c => ({ cat: c, produits: (DB.produits[c.key] || []).map(nom => ficheProduit(nom)) }));
+  const fiches = PRODUIT_CATEGORIES.map(c => ({ cat: c, produits: (DB.produits[c.key] || []).filter(nom => c.key !== 'autres' || !ficheProduit(nom).typeSoin).map(nom => ficheProduit(nom)) }));
+  const traitementsAjoutes = [...new Set((DB.produits.autres || []).map(nom => ficheProduit(nom)).filter(f => f.typeSoin).map(f => f.categorieSoin))];
+  traitementsAjoutes.forEach(c => fiches.splice(fiches.length - 1, 0, { cat: { key: 'autres', label: 'Traitement · ' + echapperHtml(c) }, produits: (DB.produits.autres || []).map(nom => ficheProduit(nom)).filter(f => f.typeSoin && f.categorieSoin === c) }));
   const tous = fiches.flatMap(f => f.produits);
   const nbCompletes = tous.filter(f => f.complete).length;
   const jours = v => v === null || v === undefined ? '—' : v + ' j';
@@ -29254,6 +29312,7 @@ function compterUsageMouvement(champ, valeur) {
 function compterUsageAcheteur(nom) { return compterUsageMouvement('acheteur', nom); }
 function compterUsageCauseMortalite(nom) { return porteursCauses(false, false).concat(porteursCauses(false, true)).filter(o => o.cause === nom).length; }
 // Motif de non-traite : porté par les marques « pas traite » des brebis (sheep.nonTraite[].motif), toutes campagnes
+function compterUsageCategorieTraitement(nom) { return porteursListe('categoriesTraitements', false).objets.filter(o => o.sousType === nom).length; }
 function compterUsageCategorieSoinAutre(nom) { return porteursListe('categoriesSoinsAutres', false).objets.filter(o => o.sousType === nom).length; }
 function compterUsageMotifNonTraite(nom) { return porteursListe('motifsNonTraite', false).objets.filter(o => o.motif === nom).length; }
 function compterUsageCauseMortaliteAgneaux(nom) { return porteursCauses(true, false).concat(porteursCauses(true, true)).filter(o => o.cause === nom).length; }
@@ -29323,6 +29382,7 @@ const LISTES_GENERALES_CONFIG = [
   { key: 'causesMortalite', label: 'Causes de mortalité – adultes', module: 'Brebis et béliers · morts', ajout: 'une cause de mortalité (adultes)', usage: compterUsageCauseMortalite, protegees: [MOTIF_MAJ_INVENTAIRE] },
   { key: 'causesMortaliteAgneaux', label: 'Causes de mortalité – agneaux', module: 'Agneaux, mort-nés et agnelles · morts', ajout: 'une cause de mortalité (agneaux)', usage: compterUsageCauseMortaliteAgneaux, protegees: [] },
   { key: 'motifsNonTraite', label: 'Motifs de non-traite', module: 'Pas traite cette campagne', ajout: 'un motif de non-traite', usage: compterUsageMotifNonTraite, protegees: [] },
+  { key: 'categoriesTraitements', label: 'Catégories des traitements', module: 'Carnet sanitaire · fiches produit « Traitement »', ajout: 'une catégorie de traitement', usage: compterUsageCategorieTraitement, protegees: CATEGORIES_TRAITEMENTS_DEPART },
   { key: 'categoriesSoinsAutres', label: 'Catégories des soins « Autre »', module: 'Carnet sanitaire · fiches produit « Autres »', ajout: 'une catégorie de soin', usage: compterUsageCategorieSoinAutre, protegees: [CATEGORIE_SOIN_AUTRE_HISTORIQUE] },
   { key: 'intervenants', label: 'Intervenants', module: 'Carnet sanitaire', ajout: 'un intervenant', usage: compterUsageIntervenant, protegees: [] },
   { key: 'casParticuliers', label: "Cas particuliers d'échographie", module: 'Échographies', ajout: "un cas particulier d'échographie", usage: compterUsageCasParticulier, protegees: [] },
@@ -29359,6 +29419,7 @@ function porteursListe(key, archives) {
   if (key === 'causesMortaliteAgneaux') return { champ: 'cause', objets: porteursCauses(true, archives) };
   if (key === 'motifsNonTraite') return { champ: 'motif', objets: archives ? [] : (DB.brebis || []).flatMap(b => (Array.isArray(b.nonTraite) ? b.nonTraite : []).filter(Boolean)) };
   if (key === 'categoriesSoinsAutres') return { champ: 'sousType', objets: sous('sanitaire').filter(x => x && x.type === 'Autre') };
+  if (key === 'categoriesTraitements') return { champ: 'sousType', objets: sous('sanitaire').filter(x => x && x.type === 'Traitement') };
   if (key === 'intervenants') return { champ: 'intervenant', objets: sous('sanitaire').concat(archives ? [] : (DB.traitementsCollectifs || [])) };
   if (key === 'casParticuliers') return { champ: 'special', objets: sous('echographies') };
   if (key === 'categoriesNotes') return { champ: 'categorie', objets: sous('notes') };
@@ -32022,7 +32083,7 @@ const fbDb = initializeFirestore(fbApp, {
 // volontairement exclu : propre à l'appareil (appairage physique), il n'a
 // pas de sens partagé entre deux téléphones.
 const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
-  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'categoriesSoinsAutres', 'intervenants',
+  'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'categoriesSoinsAutres', 'categoriesTraitements', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   // 'registre' reste ICI (champ meta.registre) volontairement, même après
