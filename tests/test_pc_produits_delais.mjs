@@ -67,7 +67,7 @@ console.log('OK 2 écran Produits et délais : 3 anciennes valeurs listées d\'u
 // ================================================================ 3. Corriger (fiche complète)
 await page.click('#pd-anciennes tr[data-nom="Ivomec"] .pd-corriger');
 await page.waitForSelector('#fp-ok');
-check(await page.evaluate(() => document.getElementById('fp-lait').value === '3' && document.getElementById('fp-viande').value === '' && document.getElementById('fp-cat').disabled), 'Corriger : fiche préremplie avec l\'ancien lait (3), viande vide, catégorie verrouillée');
+check(await page.evaluate(() => document.getElementById('fp-lait').value === '3' && document.getElementById('fp-viande').value === '' && document.querySelector('#fp-type .tab-btn').disabled), 'Corriger : fiche préremplie avec l\'ancien lait (3), viande vide, catégorie verrouillée');
 await page.click('#fp-ok');
 check(/délai viande est obligatoire/.test(await page.evaluate(() => document.getElementById('fp-err').textContent)), 'viande vide : refusé');
 await page.fill('#fp-viande', '0'); await page.fill('#fp-lait', '');
@@ -103,7 +103,7 @@ await page.fill('#fp-nom', 'Intramicine');
 await page.fill('#fp-viande', '1'); await page.fill('#fp-lait', '1');
 await page.click('#fp-ok');
 check(/existe déjà/.test(await page.evaluate(() => document.getElementById('fp-err').textContent)), 'doublon de nom : refusé');
-await page.fill('#fp-nom', 'Nouveau produit test'); await page.selectOption('#fp-cat', 'vaccins'); await page.fill('#fp-viande', '0'); await page.fill('#fp-lait', '0');
+await page.fill('#fp-nom', 'Nouveau produit test'); await page.click('#fp-type .tab-btn[data-val="Vaccin"]'); await page.fill('#fp-viande', '0'); await page.fill('#fp-lait', '0');
 await page.click('#fp-ok');
 await page.waitForFunction(() => (DB.produits.vaccins || []).includes('Nouveau produit test'));
 const np = await page.evaluate(() => ficheProduit('Nouveau produit test'));
@@ -113,11 +113,11 @@ console.log('OK 4 nouveau produit : nom unique, catégorie, délais obligatoires
 // ================================================================ 5. une seule fenêtre de création : depuis une ordonnance, la fiche complète
 await page.evaluate(() => { editContext = null; render('add-ordonnance'); });
 await page.click('#btn-ordonnance-nouveau-produit');
-check(await page.evaluate(() => !!document.getElementById('fp-nom') && !!document.getElementById('fp-lait') && document.getElementById('fp-cat').value === ''), 'ordonnance › nouveau produit : fiche complète (délais obligatoires), aucune catégorie choisie d\'office');
+check(await page.evaluate(() => !!document.getElementById('fp-nom') && !!document.getElementById('fp-lait') && !document.querySelector('#fp-type .tab-btn.active')), 'ordonnance › nouveau produit : fiche complète (délais obligatoires), aucune catégorie choisie d\'office');
 await page.fill('#fp-nom', 'Produit ordonnance'); await page.fill('#fp-lait', '2'); await page.fill('#fp-viande', '4');
 await page.click('#fp-ok');
-check(await page.evaluate(() => /Choisis la catégorie/.test(document.getElementById('fp-err').textContent) && !(DB.produits.antibiotiques || []).includes('Produit ordonnance')), 'catégorie obligatoire : rien d\'enregistré sans elle');
-await page.selectOption('#fp-cat', 'antibiotiques'); await page.click('#fp-ok');
+check(await page.evaluate(() => /Choisis le type/.test(document.getElementById('fp-err').textContent) && !(DB.produits.antibiotiques || []).includes('Produit ordonnance')), 'catégorie obligatoire : rien d\'enregistré sans elle');
+await page.click('#fp-type .tab-btn[data-val="Traitement"]'); await page.selectOption('#fp-categorie', 'Antibiotique'); await page.click('#fp-ok');
 check(await page.evaluate(() => (DB.produits.antibiotiques || []).includes('Produit ordonnance') && ficheProduit('Produit ordonnance').complete && /Produit ordonnance/.test(document.getElementById('app').textContent)), 'produit créé avec sa fiche complète et ajouté à l\'ordonnance');
 check(await page.evaluate(() => typeof ouvrirModalNouveauProduitSanitaire === 'undefined' && typeof renderGererProduits === 'undefined'), 'ancienne fenêtre et ancien écran « Gérer les produits » retirés');
 console.log('OK 5 une seule fenêtre de création de produit (ordonnance comprise), catégorie obligatoire.');

@@ -176,7 +176,7 @@ check(await page.evaluate(() => DB.produitsInfo['Bravoxin 10'].minimum48hBio ===
 await page.evaluate(() => { DB.exploitation.elevageBio = true; ouvrirFicheProduitModal({ categorieKey: 'antibiotiques' }); });
 await page.waitForSelector('#fp-min48');
 check(await page.evaluate(() => document.getElementById('fp-min48').value === 'oui' && document.getElementById('fp-compte').value === 'oui'), 'création antibiotique : oui / oui');
-await page.selectOption('#fp-cat', 'vaccins');
+await page.click('#fp-type .tab-btn[data-val="Vaccin"]');
 check(await page.evaluate(() => document.getElementById('fp-min48').value === 'non' && document.getElementById('fp-compte').value === 'non'), 'catégorie vaccins : non / non (exclus du minimum 48 h)');
 await page.click('#fp-annuler');
 console.log('OK 8 Produits et délais : colonnes bio (oui / non / à confirmer, défauts), mention « minimum 48 h bio à confirmer », fenêtre de fiche, options conservées.');

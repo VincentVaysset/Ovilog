@@ -73,5 +73,9 @@ await ok(deleteDoc(doc(db(ADMIN), 'erreurs', A + '_e1')), 'erreurs : l\'administ
 await ok(setDoc(doc(db(A, true), 'users', A, 'brebis', 'b1'), { eid: '250000000000001' }), 'compte vérifié : ses données users/A');
 await ko(setDoc(doc(db(A, false), 'users', A, 'brebis', 'b1'), { eid: '250000000000001' }), 'compte NON vérifié : users/A refusé (inchangé)');
 await ko(getDoc(doc(db(B, true), 'users', A, 'brebis', 'b1')), 'B ne lit pas users/A (inchangé)');
+// anciennes collections Logisol (séparation, étape 5) : plus aucun accès, même pour un compte vérifié administrateur
+await ko(getDoc(doc(db(ADMIN, true), 'parcelles', 'p1')), 'Logisol retiré : parcelles refusée');
+await ko(setDoc(doc(db(ADMIN, true), 'lgs_stocks', 's1'), { x: 1 }), 'Logisol retiré : lgs_* refusée');
+await ko(getDocs(collection(db(A, true), 'assolements')), 'Logisol retiré : assolements refusée');
 console.log('TOUT OK : ' + n + ' contrôles');
 await env.cleanup();
