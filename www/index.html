@@ -14389,8 +14389,9 @@ function porteesAIdentifier(q) {
   return [...par.values()].filter(correspond)
     .sort((a, b) => a.date.localeCompare(b.date) || numeroVisuel(a.sheep.eid).localeCompare(numeroVisuel(b.sheep.eid)));
 }
-// Écriture : { erreur } (rien d'écrit) ou { ok, eid, avant (copie de la fiche d'avant, pour Annuler), alerte }
-function identifierAgneau(sheep, agIdx, li, saisie) {
+// Écriture : { erreur } (rien d'écrit) ou { ok, eid, avant (copie de la fiche d'avant, pour Annuler), alerte }.
+// opts (facultatif) : { sexe: 'Mâle' | 'Femelle' (sexe corrigé), adopte, adoptNum (n° ou EID de la mère adoptive : brebis ACTIVE, jamais sa propre mère) } ; absent = inchangé.
+function identifierAgneau(sheep, agIdx, li, saisie, opts) {
   const ag = sheep && (sheep.agnelages || [])[agIdx], l = ag && (ag.lambs || [])[li];
   if (!l || !l.sexe || l.sexe === 'Mort-né' || cleanEid(l.eid || '') || agneauSorti(l)) return { erreur: "Cet agneau n'est plus à identifier." };
   const r = resoudreEidAgneau(saisie, ag.date);
@@ -14398,12 +14399,39 @@ function identifierAgneau(sheep, agIdx, li, saisie) {
   if (r.erreur) return { erreur: r.erreur };
   const conflit = conflitEidToutesFormes(r.eid);
   if (conflit) return { erreur: messageEidDejaUtilise(conflit) };
+  const o = opts || {};
+  if (o.sexe !== undefined && o.sexe !== 'Mâle' && o.sexe !== 'Femelle') return { erreur: 'Choisis le sexe : Mâle ou Femelle.' };
+  let mereAdoptive = null;
+  if (o.adopte) {
+    const v = String(o.adoptNum || '').trim();
+    if (!v) return { erreur: 'Saisir le n° de la mère adoptive.' };
+    mereAdoptive = trouverBrebisActiveParEidOuNumero(v);
+    if (!mereAdoptive) return { erreur: trouverBrebisActivesParNumero(v).length > 1 ? 'Plusieurs brebis actives correspondent à ce numéro (mère adoptive) : saisis l\'EID complet.' : 'Aucune brebis active ne correspond à ce numéro (mère adoptive).' };
+    if (mereAdoptive.id === sheep.id) return { erreur: 'La mère adoptive ne peut pas être sa propre mère.' };
+  }
   const avant = JSON.parse(JSON.stringify(l));
   l.eid = r.eid;
+  if (o.sexe !== undefined) l.sexe = o.sexe;
+  if (mereAdoptive) { l.adopte = true; l.adoptiveEid = mereAdoptive.eid; }
+  else if (o.adopte === false && (l.adopte || l.adoptiveEid)) { l.adopte = false; delete l.adoptiveEid; }
   ensureLambEntreeMouvement(l, ag.date);
   appliquerSoinsBouclage([l], ag.date);
   saveData(DB);
   return { ok: true, eid: r.eid, avant, alerte: r.alerte || '' };
+}
+// Agneau mort avant d'être bouclé : même mort que « Déclarer mort » (date, cause facultative de la liste des agneaux) ; { erreur } ou { ok, avant } (Annuler : annulerIdentificationAgneau)
+function declarerMortAgneauSansNumero(sheep, agIdx, li, date, cause) {
+  const ag = sheep && (sheep.agnelages || [])[agIdx], l = ag && (ag.lambs || [])[li];
+  if (!l || !l.sexe || l.sexe === 'Mort-né' || cleanEid(l.eid || '') || agneauSorti(l)) return { erreur: "Cet agneau n'est plus à identifier." };
+  if (!date) return { erreur: 'Choisis la date de la mort.' };
+  if (ag.date && date < ag.date) return { erreur: 'La date de la mort ne peut pas être avant la mise bas (' + formatDateFr(ag.date) + ').' };
+  if (date > jourAujourdhuiISO()) return { erreur: 'La date de la mort ne peut pas être dans le futur.' };
+  const avant = JSON.parse(JSON.stringify(l));
+  l.mouvements = l.mouvements || [];   // pas bouclé : pas d'entrée « Naissance » (ensureLambEntreeMouvement ne trace que les agneaux bouclés)
+  l.mouvements.push({ type: 'Mort', cause: String(cause || '').trim() || 'Mort', acheteur: null, date });   // sans cause : « Mort » (affiché « Non renseignée »)
+  l.statutFinal = 'mort';
+  saveData(DB);
+  return { ok: true, avant };
 }
 function annulerIdentificationAgneau(sheep, agIdx, li, avant) {
   const ag = sheep && (sheep.agnelages || [])[agIdx], l = ag && (ag.lambs || [])[li];
@@ -14416,8 +14444,10 @@ function annulerIdentificationAgneau(sheep, agIdx, li, avant) {
 let identEtat = null;   // { q, cle (portée ouverte), li (agneau choisi), saisie, erreur, snack: { sheepId, agIdx, li, avant, eid, texte }, nbFaits }
 function renderIdentifierAgneaux() {
   if (isDesktopMode()) { render('misebas-rapide'); return; }   // mobile seulement (le bouclage se fait en bergerie)
-  if (!identEtat) identEtat = { q: '', cle: null, li: null, saisie: '', erreur: '', alerte: '', snack: null, nbFaits: 0 };
+  if (!identEtat) identEtat = { q: '', cle: null, li: null, saisie: '', erreur: '', alerte: '', snack: null, nbFaits: 0, sexe: null, adopte: false, adoptNum: '' };
   const E = identEtat;
+  // agneau choisi : sexe et adoption repartent de sa fiche (rien n'est écrit avant « Enregistrer et suivant »)
+  const choisir = (lamb, li, saisie) => { E.li = li; E.saisie = saisie; E.erreur = ''; E.sexe = lamb && lamb.sexe === 'Femelle' ? 'Femelle' : 'Mâle'; E.adopte = !!(lamb && lamb.adopte && lamb.adoptiveEid); E.adoptNum = E.adopte ? lamb.adoptiveEid : ''; };
   pageTitle.textContent = 'Identifier les agneaux';
   let snackTimer = null;
   const app = document.getElementById('app');
@@ -14467,7 +14497,7 @@ function renderIdentifierAgneaux() {
       };
       majListe();
     } else {
-      if (E.li === null && p.agneaux.length === 1) { E.li = p.agneaux[0].li; E.saisie = numeroBoucleSuivant([]); }   // un seul agneau : choisi d'office (jamais quand il y en a plusieurs)
+      if (E.li === null && p.agneaux.length === 1) choisir(p.agneaux[0].lamb, p.agneaux[0].li, numeroBoucleSuivant([]));   // un seul agneau : choisi d'office (jamais quand il y en a plusieurs)
       const lambsTous = p.sheep.agnelages[p.agIdx].lambs;
       const faits = lambsTous.map((l, li) => ({ l, li })).filter(x => x.l && x.l.sexe && x.l.sexe !== 'Mort-né' && cleanEid(x.l.eid || '') && !p.agneaux.some(a => a.li === x.li));
       const nbSoins = l => (l.sanitaire || []).length;
@@ -14477,17 +14507,32 @@ function renderIdentifierAgneaux() {
         <div class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Quel agneau ?</div>
         ${faits.map(x => `<div class="id-agneau fait"><div><b>${agneauLibelle(x.l)}</b><div class="info">n°${echapperHtml(numeroVisuel(x.l.eid))}</div></div><span class="mb-pastille vert">Identifié</span></div>`).join('')}
         ${p.agneaux.map(it => `<button type="button" class="id-agneau${E.li === it.li ? ' sel' : ''}" data-li="${it.li}" aria-pressed="${E.li === it.li}"><div><b>${agneauLibelle(it.lamb)}</b><div class="info">sans n°${nbSoins(it.lamb) ? ' · ' + nbSoins(it.lamb) + ' soin' + (nbSoins(it.lamb) > 1 ? 's' : '') + ' déjà fait' + (nbSoins(it.lamb) > 1 ? 's' : '') : ''}</div></div><span class="id-radio" aria-hidden="true"></span></button>`).join('')}
-        ${E.li !== null ? `<label for="id-eid" style="margin-top:6px;">N° de boucle</label>${champEidAgneauHtml('eid-input-ident', 'id-eid', E.saisie, 'Saisir le n° (ex. 71001)')}
-        <div class="eid-preview-ident" id="id-apercu" style="font-size:12px;"></div>${ligneSoinsBouclageHtml()}` : '<div class="info">Toucher l\'agneau à identifier.</div>'}
+        ${E.li !== null ? `<div class="tab-bar sexe-bar" id="id-sexe" aria-label="Sexe de l'agneau">${['Mâle', 'Femelle'].map(v => `<button type="button" class="tab-btn id-sexe-opt${E.sexe === v ? ' active' : ''}" data-val="${v}" aria-pressed="${E.sexe === v}">${v}</button>`).join('')}</div>
+        <label for="id-eid" style="margin-top:6px;">N° de boucle</label>${champEidAgneauHtml('eid-input-ident', 'id-eid', E.saisie, 'Saisir le n° (ex. 71001)')}
+        <div class="eid-preview-ident" id="id-apercu" style="font-size:12px;"></div>${ligneSoinsBouclageHtml()}
+        <label class="ligne-interrupteur" for="id-adopte" style="font-weight:500;margin-top:8px;"><span>Adopté par une autre mère</span><input type="checkbox" id="id-adopte" class="interrupteur"${E.adopte ? ' checked' : ''}></label>
+        <div id="id-adopt-zone" style="display:${E.adopte ? 'block' : 'none'};"><input type="text" id="id-adopt" class="adopt-eid" value="${echapperHtml(E.adoptNum)}" placeholder="N° ou EID de la mère adoptive" aria-label="Mère adoptive" autocomplete="off" style="margin:0;"><div id="id-adopt-apercu" style="font-size:12px;"></div></div>
+        <button type="button" class="btn btn-secondary" id="btn-id-mort" style="width:100%;margin-top:10px;">Mort sans n°</button>` : '<div class="info">Toucher l\'agneau à identifier.</div>'}
         <div id="id-erreur">${E.erreur && E.erreur !== apercuEidAgneau(E.saisie, p.date).texte ? `<div class="msg-charte alerte">${echapperHtml(E.erreur)}</div>` : ''}</div>
         ${snack}
         <div class="mn-barre"><button type="button" class="btn btn-secondary" id="btn-id-annuler">Annuler</button><button type="button" class="btn btn-primary" id="btn-id-enregistrer"${E.li === null ? ' disabled' : ''}>Enregistrer et suivant</button></div>`;
-      app.querySelectorAll('.id-agneau[data-li]').forEach(b => { b.onclick = () => { const li = parseInt(b.dataset.li, 10); if (E.li !== li) { E.li = li; E.saisie = numeroBoucleSuivant([]); E.erreur = ''; } draw(); }; });
+      app.querySelectorAll('.id-agneau[data-li]').forEach(b => { b.onclick = () => { const li = parseInt(b.dataset.li, 10); if (E.li !== li) { const it = p.agneaux.find(x => x.li === li); choisir(it && it.lamb, li, numeroBoucleSuivant([])); } draw(); }; });
+      app.querySelectorAll('.id-sexe-opt').forEach(b => { b.onclick = () => { E.sexe = b.dataset.val; app.querySelectorAll('.id-sexe-opt').forEach(x => { const on = x.dataset.val === E.sexe; x.classList.toggle('active', on); x.setAttribute('aria-pressed', on); }); }; });
+      const caseAdopte = document.getElementById('id-adopte'), champAdopt = document.getElementById('id-adopt');
+      if (caseAdopte) caseAdopte.onchange = () => { E.adopte = caseAdopte.checked; document.getElementById('id-adopt-zone').style.display = E.adopte ? 'block' : 'none'; };
+      if (champAdopt) {
+        wireMereAdoptiveField(champAdopt, document.getElementById('id-adopt-apercu'), () => { E.adoptNum = champAdopt.value; });
+        champAdopt.addEventListener('focus', () => setActiveScanTarget(champAdopt));   // un bip pendant la saisie de la mère adoptive va dans cette case
+        if (E.adoptNum) champAdopt.dispatchEvent(new Event('input'));
+      }
+      const btnMort = document.getElementById('btn-id-mort');
+      if (btnMort) btnMort.onclick = () => ouvrirMortSansNumero(p, E.li);
       const champ = app.querySelector('input.eid-input-ident');
       if (champ) {
         champ.id = 'id-eid';   // champ commun de la mise bas (champEidAgneauHtml) : relié à son libellé
                 attachEidBeep(champ);
         setActiveScanTarget(champ);
+        champ.addEventListener('focus', () => setActiveScanTarget(champ));
         const maj = () => {
           E.saisie = champ.value;
           majPrefixeEidAgneau(champ);
@@ -14504,7 +14549,7 @@ function renderIdentifierAgneaux() {
       document.getElementById('btn-id-enregistrer').onclick = enregistrer;
       function enregistrer() {
         if (E.li === null) return;
-        const r = identifierAgneau(p.sheep, p.agIdx, E.li, champ ? champ.value : '');
+        const r = identifierAgneau(p.sheep, p.agIdx, E.li, champ ? champ.value : '', { sexe: E.sexe || undefined, adopte: E.adopte, adoptNum: E.adoptNum });
         if (r.erreur) { E.erreur = r.erreur; playBeepRate(); draw(); return; }
         const lamb = p.sheep.agnelages[p.agIdx].lambs[E.li];
         E.nbFaits++;
@@ -14519,12 +14564,43 @@ function renderIdentifierAgneaux() {
     if (btnSnack) btnSnack.onclick = () => {
       const s = E.snack; E.snack = null; clearTimeout(snackTimer);
       const sheep = findSheep(s.sheepId);
-      if (sheep && annulerIdentificationAgneau(sheep, s.agIdx, s.li, s.avant)) { E.nbFaits = Math.max(0, E.nbFaits - 1); E.cle = sheep.id + '|' + s.agIdx; E.li = s.li; E.saisie = ''; }
+      if (sheep && annulerIdentificationAgneau(sheep, s.agIdx, s.li, s.avant)) { if (s.type !== 'mort') E.nbFaits = Math.max(0, E.nbFaits - 1); E.cle = sheep.id + '|' + s.agIdx; choisir(sheep.agnelages[s.agIdx].lambs[s.li], s.li, ''); }
       draw();
     };
   }
   function armerSnack() { clearTimeout(snackTimer); snackTimer = setTimeout(() => { if (currentView !== 'identifier-agneaux') return; identEtat && (identEtat.snack = null); const z = document.getElementById('id-snack'); if (z) z.remove(); }, 6000); }
   function ouvrir(x) { E.cle = x.cle; E.li = null; E.saisie = ''; E.erreur = ''; draw(); }
+  // « Mort sans n° » : fenêtre du bas (date du jour, jamais avant la mise bas ; cause facultative de la liste des agneaux, « Ajouter… »), rien d'écrit avant « Enregistrer »
+  function ouvrirMortSansNumero(p, li) {
+    const lamb = p.sheep.agnelages[p.agIdx].lambs[li];
+    if (!lamb) return;
+    const nom = agneauLibelle(lamb) + ' de n°' + numeroVisuel(p.sheep.eid);
+    const auj = jourAujourdhuiISO();
+    const overlay = document.createElement('div');
+    overlay.className = 'sheet-overlay'; overlay.id = 'id-mort-sheet';
+    overlay.innerHTML = `<div class="sheet-card">
+        <div style="font-weight:700;font-size:16px;margin-bottom:10px;">${echapperHtml(nom)} · mort sans n°</div>
+        <label for="id-mort-date">Date de la mort</label><input type="date" id="id-mort-date" value="${auj}" min="${echapperHtml(p.date || '')}" max="${auj}" style="margin-bottom:12px;">
+        <label>Cause (facultative)</label>${selectCauseMortNeHtml('id-mort-cause', 0, '', 'margin-bottom:12px;')}
+        <div id="id-mort-err"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><button type="button" class="btn btn-secondary" id="id-mort-annuler">Annuler</button><button type="button" class="btn btn-primary" id="id-mort-ok">Enregistrer</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    let cause = '';
+    brancherCauseMortNe(overlay.querySelector('.id-mort-cause'), () => cause, v => { cause = v; });
+    const fermer = () => { if (overlay.isConnected) overlay.remove(); };
+    overlay.querySelector('#id-mort-annuler').onclick = fermer;
+    overlay.querySelector('#id-mort-ok').onclick = () => {
+      const r = declarerMortAgneauSansNumero(p.sheep, p.agIdx, li, overlay.querySelector('#id-mort-date').value, cause);
+      if (r.erreur) { overlay.querySelector('#id-mort-err').innerHTML = `<div class="msg-charte alerte" style="margin-bottom:10px;">${echapperHtml(r.erreur)}</div>`; return; }
+      fermer();
+      E.snack = { type: 'mort', sheepId: p.sheep.id, agIdx: p.agIdx, li, avant: r.avant, texte: nom + ' mort' };
+      E.li = null; E.erreur = ''; E.saisie = '';
+      if (!porteesAIdentifier('').some(x => x.cle === E.cle)) { E.cle = null; E.q = ''; }   // portée finie : retour au départ
+      armerSnack();
+      draw();
+    };
+  }
   draw();
 }
 
