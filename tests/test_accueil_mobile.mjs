@@ -65,12 +65,14 @@ console.log('OK 1 tuiles : chiffres, couleurs de la charte, liens vers les liste
 await m.evaluate(() => render('home'));
 const mb = await m.evaluate(() => { const d = dashboardStatsData(); const c = document.getElementById('ac-mises-bas'); return {
   titre: c.querySelector('.ac-titre').textContent, pastille: c.querySelector('.reg-pastille').textContent, gros: c.querySelector('.ac-big').textContent, sur: c.querySelector('.ac-sur').textContent, barre: c.querySelector('.ac-barre i').style.width,
-  stats: [...c.querySelectorAll('.ac-stats div')].map(x => [x.querySelector('b').textContent, x.querySelector('span').textContent]), info: c.querySelector('.reg-info').textContent,
+  stats: [...c.querySelectorAll('.ac-stats div')].map(x => [x.querySelector('b').textContent, x.querySelector('span').textContent]), info: c.querySelector('#ac-agneaux-nes').textContent,
   attendu: { mb: d.misesBasActives, sur: d.troupeauAMettreBas, pct: d.pctMisesBasRealisees, rest: d.misesBasRestantes, prol: d.prolificite, nes: d.totalAgneaux, mn: d.totalMortNes, m: d.totalMales, f: d.totalFemelles, tmb: d.totalMisesBas } }; });
 const a = mb.attendu;
 eq([mb.titre, mb.pastille, mb.gros, mb.sur, mb.barre], ['Mises bas', a.pct + ' %', String(a.mb), 'sur ' + a.sur + ' brebis', a.pct + '%'], 'titre, pastille %, « N sur M brebis », barre : mêmes valeurs que dashboardStatsData');
 eq(mb.stats, [[String(a.rest), 'Restantes'], [a.prol.toFixed(2).replace('.', ','), 'Prolificité'], [String(a.nes), 'Agneaux nés']], 'Restantes / Prolificité (virgule) / Agneaux nés');
-eq(mb.info, a.mn + ' mort-né(s) · ' + a.m + ' mâle(s) / ' + a.f + ' femelle(s)', 'ligne mort-nés · mâles / femelles');
+eq(mb.info, 'Nés : 1 mort-né · 2 mâles / 1 femelle', 'ligne Nés : mort-nés · mâles / femelles nés');
+eq(await m.evaluate(() => [document.getElementById('ac-agneaux-sortis').textContent, document.getElementById('ac-agneaux-restants').textContent]), ['Sortis : 1 vendu', 'Restants : 1 mâle / 1 femelle'], 'lignes Sortis puis Restants (nés − sortis = restants, campagne en cours)');
+check(a.m === 2 && a.f === 1 && a.mn === 1, 'jeu : 2 mâles, 1 femelle, 1 mort-né nés');
 check(a.mb === 2 && a.nes === 4 && a.mn === 1 && a.tmb === 2, 'jeu : 2 mises bas, 4 nés dont 1 mort-né : ' + JSON.stringify(a));
 console.log('OK 2 carte Mises bas : mêmes chiffres, prolificité avec virgule.');
 

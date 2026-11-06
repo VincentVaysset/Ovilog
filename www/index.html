@@ -1027,6 +1027,7 @@
   .ac-carte { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
   .ac-tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .ac-titre { font-size: 15px; font-weight: 700; }
+  .ac-agneaux { line-height: 1.45; }
   .ac-gros { display: flex; align-items: baseline; gap: 8px; }
   .ac-big { font-size: 30px; font-weight: 700; color: var(--ch-vert-fonce); line-height: 1; font-variant-numeric: tabular-nums; }
   .ac-sur { font-size: 15px; color: var(--ch-texte2); }
@@ -7141,7 +7142,7 @@ function dashboardKpiHtml() {
         <div><b class="ac-bleu">${totalMisesBas > 0 ? fmtDecimal(prolificite, 2) : '—'}</b><span>Prolificité</span></div>
         <div><b class="ac-vert">${totalAgneaux}</b><span>Agneaux nés</span></div>
       </div>
-      <div class="reg-info">${totalMortNes} mort-né(s) · ${totalMales} mâle(s) / ${totalFemelles} femelle(s)</div>
+      ${blocAgneauxAccueilHtml('ac', 'reg-info', totalMortNes, totalMales, totalFemelles, agneauxCampagneRestants())}
     </div>
 
     <div class="ac-sec">À surveiller</div>
@@ -7493,16 +7494,42 @@ function controleLaitierCompareData() {
 
 
 
-/* Compteur "Agneaux actifs" (Accueil desktop) avec détail mâles/femelles --
-   même population que getAgneauxActifsInventaire() (onglet Inventaire),
-   simple agrégation par sexe dessus, jamais un second filtre. */
-function agneauxActifsSexeData() {
-  const items = getAgneauxActifsInventaire();
-  let males = 0, femelles = 0;
-  items.forEach(it => { if (it.sexe === 'Mâle') males++; else if (it.sexe === 'Femelle') femelles++; });
-  return { total: items.length, males, femelles };
+/* Agneaux de la CAMPAGNE en cours (mêmes mises bas que la carte « Mises bas » : agnelage.campagne = campagne en cours), lecture seule, une seule règle pour l'Accueil
+   mobile et PC : nés vivants → restants (ni morts, ni vendus, ni sortis en inventaire, ni gardés au tri ; bouclés ou pas, dont sans n°), morts (avant ou après
+   le bouclage), vendus, inventaire, gardées (agnelles de renouvellement, comptées dans « Agnelles »). Un agneau adopté compte chez sa vraie mère. */
+function agneauxCampagneRestants() {
+  const C = DB.campagneDebut;
+  const r = { males: 0, femelles: 0, total: 0, sansNumero: 0, morts: 0, vendus: 0, inventaire: 0, gardees: 0 };
+  DB.brebis.forEach(s => (s.agnelages || []).forEach(a => {
+    if (!a || (C != null && a.campagne !== C)) return;
+    (a.lambs || []).forEach(l => {
+      if (!l || l.sexe === 'Mort-né') return;
+      if (l.statutFinal === 'mort') r.morts++;
+      else if (l.statutFinal === 'vendu') r.vendus++;
+      else if (l.statutFinal === 'inventaire') r.inventaire++;
+      else if (l.sexe === 'Femelle' && l.triStatut === 'gardée') r.gardees++;
+      else { if (l.sexe === 'Mâle') r.males++; else if (l.sexe === 'Femelle') r.femelles++; else return; r.total++; if (!cleanEid(l.eid || '')) r.sansNumero++; }
+    });
+  }));
+  return r;
 }
-
+const plurielAg = (n, un, plus) => n + ' ' + (n > 1 ? plus : un);
+// Trois lignes compactes, nés − sortis = restants : « Nés : … », « Sortis : 2 morts · 1 vendu · 1 gardée au tri » (seulement s'il y en a), « Restants : M mâles / F femelles · dont N sans n° »
+function ligneAgneauxSortis(r) {
+  const t = [r.morts ? plurielAg(r.morts, 'mort', 'morts') : '', r.vendus ? plurielAg(r.vendus, 'vendu', 'vendus') : '', r.inventaire ? r.inventaire + ' en inventaire' : '', r.gardees ? plurielAg(r.gardees, 'gardée', 'gardées') + ' au tri' : ''].filter(Boolean);
+  return t.length ? 'Sortis : ' + t.join(' · ') : '';
+}
+function ligneAgneauxRestants(r) {
+  return 'Restants : ' + plurielAg(r.males, 'mâle', 'mâles') + ' / ' + plurielAg(r.femelles, 'femelle', 'femelles') + (r.sansNumero ? ' · dont ' + r.sansNumero + ' sans n°' : '');
+}
+// Bloc commun (accueil mobile et PC) : une seule zone grise, lignes serrées ; préfixe d'id 'ac' (mobile) ou 'apc' (PC)
+function blocAgneauxAccueilHtml(pfx, cls, nbMortNes, males, femelles, r) {
+  const sortis = ligneAgneauxSortis(r);
+  return `<div class="${cls} ac-agneaux" id="${pfx}-agneaux"><span id="${pfx}-agneaux-nes">${ligneAgneauxNes(nbMortNes, males, femelles)}</span>${sortis ? `<br><span id="${pfx}-agneaux-sortis">${sortis}</span>` : ''}<br><span id="${pfx}-agneaux-restants">${ligneAgneauxRestants(r)}</span></div>`;
+}
+function ligneAgneauxNes(nbMortNes, males, femelles) {
+  return 'Nés : ' + plurielAg(nbMortNes, 'mort-né', 'mort-nés') + ' · ' + plurielAg(males, 'mâle', 'mâles') + ' / ' + plurielAg(femelles, 'femelle', 'femelles');
+}
 /* Liste "Attendues à la traite" (Accueil desktop) : mêmes brebis actives
    que attendueTraiteCount (dashboardStatsData, isAttendueTraite) -- ici on
    a besoin de la liste elle-même, pas seulement du total, donc un second
@@ -7536,7 +7563,7 @@ function accueilDesktopHtml() {
   const tuiles = `<div class="apc-tuiles">
     ${tuile('compteur-brebis-actives', 'Brebis actives', d.brebis, 'vert')}
     ${tuile('compteur-beliers-actifs', 'Béliers actifs', d.beliers, 'bleu')}
-    ${tuile('compteur-agneaux-actifs', 'Agneaux actifs', d.agneaux.total, 'ambre', d.agneaux.males + (d.agneaux.males > 1 ? ' mâles' : ' mâle') + ' · ' + d.agneaux.femelles + (d.agneaux.femelles > 1 ? ' femelles' : ' femelle'))}
+    ${tuile('compteur-agneaux-actifs', 'Agneaux actifs', d.agneaux.total, 'ambre', plurielAg(d.agneaux.males, 'mâle', 'mâles') + ' · ' + plurielAg(d.agneaux.femelles, 'femelle', 'femelles') + (d.agneaux.sansNumero ? ' · dont ' + d.agneaux.sansNumero + ' sans n°' : ''))}
     ${tuile('compteur-agnelles-actives', 'Agnelles actives', d.agnelles, 'ambre')}
     ${tuile('compteur-sous-delai', 'Sous délai d\'attente', d.sousDelai, d.sousDelai > 0 ? 'rouge' : 'neutre')}
   </div>`;
@@ -7547,6 +7574,7 @@ function accueilDesktopHtml() {
     <div class="apc-gros"><span class="big">${mb.faites}</span><span>brebis ont mis bas sur ${mb.attendues} attendues</span></div>
     <div class="bar"><i style="width:${mb.pct}%"></i></div>
     <div class="sub"><div><b class="t-ambre">${mb.restantes}</b><span>Restantes</span></div><div><b class="t-bleu">${fmtDecimal(mb.prolificite, 2)}</b><span>Prolificité</span></div><div><b class="t-vert">${mb.agneauxNes}</b><span>Agneaux nés (${mb.mortNes} mort-né${mb.mortNes > 1 ? 's' : ''})</span></div></div>
+    ${blocAgneauxAccueilHtml('apc', 'info', mb.mortNes, mb.males, mb.femelles, d.agneaux)}
     <div class="info">${mb.attendues} attendues = ${mb.presentes} brebis présentes − ${mb.videsDefinitivesPresentes} vide${mb.videsDefinitivesPresentes > 1 ? 's' : ''} définitive${mb.videsDefinitivesPresentes > 1 ? 's' : ''}.</div>
   </div>`;
 
@@ -7595,7 +7623,7 @@ function accueilDesktopHtml() {
 
 /* Accueil PC : toutes les valeurs affichées, calculées ICI à partir des fonctions déjà partagées avec le mobile (dashboardStatsData, repartitionEchoAccueil, mortaliteSanitaireData, controleLaitierCompareData...), jamais un second calcul. Fonction pure (lecture seule) : testée telle quelle. */
 function accueilPcData() {
-  const s = dashboardStatsData(), R = repartitionEchoAccueil(), mort = mortaliteSanitaireData(), cmp = controleLaitierCompareData(), sexe = agneauxActifsSexeData();
+  const s = dashboardStatsData(), R = repartitionEchoAccueil(), mort = mortaliteSanitaireData(), cmp = controleLaitierCompareData(), sexe = agneauxCampagneRestants();
   const vdPresentes = s.active.filter(x => estVideDefinitiveCampagne(x)).length;
   const attendues = attendueTraiteListe();
   const motifs = attendues.map(b => Object.assign({ numero: numeroVisuel(b.eid), eid: b.eid }, attendueTraiteMotif(b)));
@@ -7605,7 +7633,7 @@ function accueilPcData() {
   return {
     brebis: s.total, beliers: DB.beliers.filter(b => (b.statut || 'actif') === 'actif').length, agnelles: (DB.agnelles || []).length, agneaux: sexe,
     sousDelai: nbBrebisSousDelai(),
-    misesBas: { faites: s.misesBasActives, attendues: s.troupeauAMettreBas, restantes: s.misesBasRestantes, pct: s.pctMisesBasRealisees, prolificite: s.prolificite, agneauxNes: s.totalAgneaux, mortNes: s.totalMortNes, presentes: s.total, videsDefinitivesPresentes: vdPresentes },
+    misesBas: { faites: s.misesBasActives, attendues: s.troupeauAMettreBas, restantes: s.misesBasRestantes, pct: s.pctMisesBasRealisees, prolificite: s.prolificite, agneauxNes: s.totalAgneaux, mortNes: s.totalMortNes, males: s.totalMales, femelles: s.totalFemelles, presentes: s.total, videsDefinitivesPresentes: vdPresentes },
     repro: { date: R.derniereDate, passages: R.passages, pleines: R.pleine, vides: R.vide, videsDefinitives: R.videDefinitive, reussite: echoReussite(R), pasPassees: R.pasPassees },
     mouvements: derniersMouvementsPcData(5),
     lait: { vide: points.every(p => p.actuel === null && p.precedent === null), points },

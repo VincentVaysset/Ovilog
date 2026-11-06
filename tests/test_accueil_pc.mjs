@@ -52,8 +52,8 @@ const pc = await ouvrir(true, true);
 const D = await pc.evaluate(() => accueilPcData());
 
 // ================================================================ 1. données (fonction pure)
-eq([D.brebis, D.beliers, D.agnelles, D.agneaux, D.sousDelai], [9, 1, 1, { total: 2, males: 1, femelles: 1 }, 1], 'tuiles : brebis, béliers, agnelles, agneaux (mâles / femelles), sous délai');
-eq(D.misesBas, { faites: 4, attendues: 8, restantes: 4, pct: 50, prolificite: 1.75, agneauxNes: 7, mortNes: 1, presentes: 9, videsDefinitivesPresentes: 1 }, 'mises bas : attendues = 9 présentes − 1 vide définitive présente ; restantes = 8 − 4');
+eq([D.brebis, D.beliers, D.agnelles, D.agneaux, D.sousDelai], [9, 1, 1, { males: 1, femelles: 1, total: 2, sansNumero: 0, morts: 2, vendus: 2, inventaire: 0, gardees: 0 }, 1], 'tuiles : brebis, béliers, agnelles, agneaux (mâles / femelles), sous délai');
+eq(D.misesBas, { faites: 4, attendues: 8, restantes: 4, pct: 50, prolificite: 1.75, agneauxNes: 7, mortNes: 1, males: 4, femelles: 2, presentes: 9, videsDefinitivesPresentes: 1 }, 'mises bas : attendues = 9 présentes − 1 vide définitive présente ; restantes = 8 − 4');
 eq(D.repro, { date: '2026-08-20', passages: 2, pleines: 3, vides: 2, videsDefinitives: 1, reussite: 60, pasPassees: 4 }, 'reproduction : dernière écho de la campagne, figée (la vide vendue reste comptée), vide définitive à part, réussite 3 / (3 + 2), 2 passages, 4 présentes pas encore passées');
 eq(D.mouvements.map(m => [m.date, m.lot, m.nb, m.categorie, m.type, m.detail]), [
   ['2026-11-28', true, 2, 'Brebis', 'Vente', 'Négociant'], ['2026-11-27', false, 1, 'Agneau', 'Vente', 'Acheteur C'], ['2026-11-26', false, 1, 'Brebis', 'Entrée', 'Achat'], ['2026-11-25', false, 1, 'Agneau', 'Vente', 'Acheteur C'],
@@ -83,6 +83,7 @@ eq(A.tuiles.map(t => t.t), ['Brebis actives9', 'Béliers actifs1', 'Agneaux acti
 eq(A.tuiles.map(t => t.bg), ['rgb(227, 243, 230)', 'rgb(230, 240, 250)', 'rgb(251, 238, 215)', 'rgb(251, 238, 215)', 'rgb(251, 227, 224)'], 'tuiles : pastels vert, bleu, ambre, ambre, rouge (sous délai > 0)');
 check(A.tuiles.every(t => t.bord === '5px' && t.chev === 'rgb(138, 134, 112)'), 'tuiles : liseré gauche de 5 px et chevron gris');
 check(/4\s*brebis ont mis bas sur 8 attendues/.test(A.mb) && /50 %/.test(A.mb) && /4Restantes/.test(A.mb) && /1,75Prolificité/.test(A.mb) && /7Agneaux nés \(1 mort-né\)/.test(A.mb) && /8 attendues = 9 brebis présentes − 1 vide définitive\./.test(A.mb), 'carte Mises bas : ' + A.mb);
+check(/Nés : 1 mort-né · 4 mâles \/ 2 femelles/.test(A.mb) && /Sortis : 2 morts · 2 vendus/.test(A.mb) && /Restants : 1 mâle \/ 1 femelle/.test(A.mb), 'carte Mises bas : lignes Nés, Sortis et Restants (campagne en cours) : ' + A.mb);
 check(/2 passages · dernier le 20-08-2026/.test(A.rp) && /4 brebis présentes pas encore passées/.test(A.rp) && /3Pleines/.test(A.rp) && /2Vides/.test(A.rp) && /1Vides définitives/.test(A.rp) && /60,0 %/.test(A.rp) && /5 brebis échographiées/.test(A.rp), 'carte Reproduction : ' + A.rp);
 check(/28-11-2026/.test(A.mv) && /2 brebis.?lot/.test(A.mv) && /Négociant/.test(A.mv) && /Non renseignée/.test(A.mv) && /26-11-2026/.test(A.mv) && /Entrée/.test(A.mv) && /Achat/.test(A.mv), 'tableau des derniers mouvements : ' + A.mv);
 check(A.nbRect === 6 && /2,28 L/.test(A.lait) && /396 brebis/.test(A.lait) && /Campagne précédente/.test(A.lait), 'contrôle laitier : 6 barres SVG, moyennes et nombre de brebis : ' + A.nbRect);
