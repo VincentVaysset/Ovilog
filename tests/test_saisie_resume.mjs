@@ -36,6 +36,9 @@ await page.waitForTimeout(300);
 async function waitFor(fn, { timeout = 20000, label = 'condition' } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeout) { if (await fn()) return true; await new Promise(r => setTimeout(r, 200)); }
+  // état de l'écran au moment de l'échec (diagnostic d'un échec vu seulement dans la batterie complète)
+  const etat = await page.evaluate(() => ({ message: (document.getElementById('rs-status') || {}).textContent || '', vue: currentView, enCours: !!(saisieResumeEtat && saisieResumeEtat.enCours), resumes: JSON.stringify(DB.resumesCampagne || {}).slice(0, 300) })).catch(e => String(e));
+  console.log('ÉTAT AU TIMEOUT : ' + JSON.stringify(etat) + ' · confirmations : ' + JSON.stringify(confirms));
   throw new Error('TIMEOUT en attendant : ' + label);
 }
 await page.evaluate(() => {
