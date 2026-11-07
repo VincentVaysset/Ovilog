@@ -98,7 +98,7 @@ check(/ISOL père/.test(await p.evaluate(() => document.querySelector('#pc-tri-a
 eq(await p.evaluate(() => [...document.querySelectorAll('#pc-tri-agnelles table tr[data-eid]')].map(tr => [tr.cells[0].textContent, tr.cells[tr.cells.length - 1].textContent])), [['61001', '98'], ['61003', '98']], 'tri PC : ISOL du père par agnelle');
 await p.click('.ta-tri-col[data-cle="isolPere"]');
 check(/ISOL père ▼/.test(await p.evaluate(() => document.querySelector('#pc-tri-agnelles table tr').textContent)), 'tri PC : clic = tri par ISOL');
-eq(await p.evaluate(() => { const t = triExportTableau('aTrier', triAgnellesDonnees().aTrier); return [t.entete[t.entete.length - 1], t.lignes.map(l => l[l.length - 1])]; }), ['ISOL père', ['98', '98']], 'export du tri : colonne ISOL père');
+eq(await p.evaluate(() => { const t = triExportTableau('aTrier', triAgnellesDonnees().aTrier), i = t.entete.indexOf('ISOL père'); return [t.entete[i], t.lignes.map(l => l[i])]; }), ['ISOL père', ['98', '98']], 'export du tri (feuille de tri) : colonne ISOL père');
 
 // ================================================================ 7. panneau du lot IA (PC) : père et ISOL
 await p.evaluate(() => { lotsPcEtat = lotsPcEtatInitial(); lotsPcEtat.lotId = 'LIA'; render('lots'); });

@@ -15973,6 +15973,20 @@ function showVendreAgnelleModal(ag, onDone) {
    Écartées. N = agnelles triées (gardées) NÉES sur l'exploitation ; M = TOUTES les femelles nées sur l'exploitation et ENCORE ACTIVES (à trier + gardées
    + écartées). Les achetées ne comptent ni dans N ni dans M (affichées à part). Une agnelle vendue ou morte sort de M (elle quitte DB.agnelles ou porte
    statutFinal vendu/mort). Même calcul sur PC et mobile. Classe et lactation de la mère : « - » si absentes (jamais inventées). */
+// N° officiel lisible (« FR 000456 71024 ») d'un EID enregistré, sans jamais le modifier : 15 chiffres « 250 0… » ou n° national de 11 chiffres ; autre forme = telle quelle
+function numeroOfficielTexte(eid) {
+  const c = cleanEid(eid || '');
+  const nat = c.length === 15 && c.startsWith('250') ? c.slice(4) : c.length === 11 ? c : null;
+  return nat ? 'FR ' + nat.slice(0, 6) + ' ' + nat.slice(6) : (eid ? String(eid) : null);
+}
+// N° court SIEOL d'une brebis (n° de travail attribué par SIEOL) ; null s'il n'est pas connu (affiché « — », jamais remplacé par autre chose)
+function numeroCourtSieol(a) { return (a && (a.numeroCourtTravailSieol || a.numeroTravailSieol)) || null; }
+// Père d'un agneau ou d'une agnelle : code IA et n° officiel de l'IA importée ; sinon père saisi à la main (texte tel quel) ; rien d'inventé
+function pereAgnelleTri(obj) {
+  const ia = obj && obj.pereIa;
+  if (paterniteIaConnue(ia)) return { pereCode: ia.pereCourt ? String(ia.pereCourt) : null, pereOfficiel: ia.pereNumero ? paterniteIaPereTexte(ia) : null };
+  return { pereCode: null, pereOfficiel: obj && obj.pere ? String(obj.pere) : null };
+}
 function libelleNaissance(n) { return n === 1 ? 'Simple' : n === 2 ? 'Double' : n === 3 ? 'Triple' : n > 3 ? n + ' agneaux' : null; }
 function trierAgnellesAgeNumero(items, cle) {
   return items.slice().sort((a, b) => String(cle(a).date || '').localeCompare(String(cle(b).date || '')) || comparerAnimauxAgeNumero({ age: null, court: cle(a).court, numero: cle(a).numero }, { age: null, court: cle(b).court, numero: cle(b).numero }));
@@ -15996,7 +16010,7 @@ function origineNaissancePastilleHtml(code) {
 }
 // Info « mère » d'une agnelle née sur l'exploitation (lamb = l'agneau dans sheep.agnelages[].lambs ; motherEid = la brebis qui l'a mise bas)
 function infoMereAgnelle(motherEid, lamb, dateNaissance) {
-  if (!motherEid) return { mereEid: null, mereNumero: null, mereAge: null, naissance: null, classeMere: null, lactMere: null, lactCampagne: DB.campagneDebut - 1, origineNaissance: null, rangLactation: null };
+  if (!motherEid) return { mereEid: null, mereNumero: null, mereAge: null, naissance: null, porteeNb: null, mereCourt: null, mereOfficiel: null, classeMere: null, lactMere: null, lactCampagne: DB.campagneDebut - 1, origineNaissance: null, rangLactation: null };
   const mere = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(motherEid)) || null;
   let nb = null;
   if (mere && lamb) { const ag = (mere.agnelages || []).find(a => a && a.lambs && a.lambs.includes(lamb)); if (ag) nb = ag.lambs.length; }
@@ -16005,7 +16019,8 @@ function infoMereAgnelle(motherEid, lamb, dateNaissance) {
   // Rang de lactation : seulement si le cahier SIEOL est importé pour la campagne précédente (jamais déduit ; la moyenne estimée lactMoyen n'est pas affichée)
   const cahier = (DB.cahierControleLaitier || []).find(c => c && cleanEid(c.eid) === cleanEid(motherEid) && c.campagne === cl.campagne);
   const rang = cahier && cahier.numLactation ? String(cahier.numLactation) : null;
-  return { mereEid: motherEid, mereNumero: numeroVisuel(motherEid), mereAge: mere ? age(motherEid) : null, naissance: nb === null ? null : libelleNaissance(nb), classeMere: cl.classe, lactMere: cl.lactation, lactCampagne: cl.campagne, origineNaissance: origineNaissanceAgnelle(motherEid, lamb, dateNaissance), rangLactation: rang };
+  return { mereEid: motherEid, mereNumero: numeroVisuel(motherEid), mereAge: mere ? age(motherEid) : null, naissance: nb === null ? null : libelleNaissance(nb), porteeNb: nb,
+    mereCourt: numeroCourtSieol(mere), mereOfficiel: numeroOfficielTexte(motherEid), classeMere: cl.classe, lactMere: cl.lactation, lactCampagne: cl.campagne, origineNaissance: origineNaissanceAgnelle(motherEid, lamb, dateNaissance), rangLactation: rang };
 }
 function triAgnellesDonnees() {
   const aTrier = getCandidatesATrier().map(c => Object.assign({ eid: c.lamb.eid, numero: numeroVisuel(c.lamb.eid), court: c.lamb.numeroCourtTravailSieol || c.lamb.numeroTravailSieol || '' }, c, infoMereAgnelle(c.motherEid, c.lamb, c.date)));
@@ -16015,8 +16030,13 @@ function triAgnellesDonnees() {
     const naiss = (a.mouvements || []).find(m => m && m.type === 'Naissance');
     return Object.assign({ eid: a.eid, numero: numeroVisuel(a.eid), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', ag: a, origine: a.origine === 'née' ? 'Née' : 'Achetée', date: a.origine === 'née' ? (naiss ? naiss.date : null) : a.dateEntree, dateTri: a.dateEntree, motherEid: a.motherEid || null }, a.origine === 'née' ? infoMereAgnelle(a.motherEid, lamb, naiss ? naiss.date : null) : infoMereAgnelle(null));
   });
-  aTrier.concat(ecartees).forEach(x => { x.isolPere = isolPereIa(x.lamb); });
-  gardees.forEach(x => { x.isolPere = isolPereIa(x.ag); });   // ISOL du père de l'IA (null si pas d'IA ou paternité inconnue)
+  aTrier.concat(ecartees).forEach(x => { x.isolPere = isolPereIa(x.lamb); Object.assign(x, pereAgnelleTri(x.lamb)); x.eidOfficiel = numeroOfficielTexte(x.eid); });
+  gardees.forEach(x => {
+    x.isolPere = isolPereIa(x.ag);   // ISOL du père de l'IA (null si pas d'IA ou paternité inconnue)
+    x.eidOfficiel = numeroOfficielTexte(x.eid);
+    if (x.ag.origine === 'née') Object.assign(x, pereAgnelleTri(x.ag.pereIa || x.ag.pere ? x.ag : findLambByEid(x.ag.eid)));
+    else Object.assign(x, { pereCode: null, pereOfficiel: x.ag.pere ? String(x.ag.pere) : null, mereCourt: null, mereOfficiel: x.ag.mere ? String(x.ag.mere) : null });   // achetée : n° saisis à l'achat, tels quels
+  });
   const nees = gardees.filter(g => g.ag.origine === 'née'), achetees = gardees.filter(g => g.ag.origine !== 'née');
   const N = nees.length, M = aTrier.length + nees.length + ecartees.length;
   return { aTrier: trierAgnellesAgeNumero(aTrier, x => x), gardees: trierAgnellesAgeNumero(gardees, x => x), ecartees: trierAgnellesAgeNumero(ecartees, x => x),
@@ -16100,35 +16120,54 @@ function reconsidererEcarteeTri(c) { delete c.lamb.triStatut; saveData(DB); }
    Export Excel (suit l'onglet affiché) puis Export PDF. Classe de la mère et lactation N-1 en fin de tableau (rang de lactation seulement si le cahier SIEOL est importé). */
 let triPcEtat = null;
 const TRI_ONGLET_NOMS = { aTrier: 'À trier', gardees: 'Gardées', ecartees: 'Écartées' };
-const TRI_EXPORT_NOMS = { aTrier: 'Agnelles à trier', gardees: 'Agnelles gardées', ecartees: 'Agnelles écartées' };
-const TRI_EXPORT_FICHIERS = { aTrier: 'agnelles-a-trier', gardees: 'agnelles-triees', ecartees: 'agnelles-ecartees' };
+/* Exports du Tri des agnelles : chaque onglet a SON impression (PC et mobile, mêmes colonnes en Excel et en PDF, même liste et même ordre que l'écran).
+   À trier = « Feuille de tri » (de quoi décider en bergerie + cases Garder / Écarter et Notes à remplir à la main) ; Gardées = « Liste SIEOL » (exactement les colonnes
+   de SIEOL) ; Écartées = liste simple. Agnelle : « N° boucle » = les 5 derniers chiffres (une agnelle n'a jamais de n° court SIEOL) ; mère : n° court SIEOL s'il est
+   connu, sinon « — » ; numéros repris tels qu'enregistrés. */
+const TRI_EXPORT_NOMS = { aTrier: 'Feuille de tri des agnelles', gardees: 'Agnelles gardées · liste SIEOL', ecartees: 'Chantier de tri · Agnelles écartées' };
+const TRI_EXPORT_FEUILLES = { aTrier: 'Feuille de tri', gardees: 'Liste SIEOL', ecartees: 'Agnelles écartées' };
+const TRI_EXPORT_FICHIERS = { aTrier: 'feuille-de-tri-agnelles', gardees: 'agnelles-gardees-sieol', ecartees: 'agnelles-ecartees' };
 function voirFicheMereTri(eid) {
   const mother = DB.brebis.find(s => cleanEid(s.eid) === cleanEid(eid));
   if (!mother) { alert("Fiche de la mère introuvable (peut-être supprimée)."); return; }
   detailOrigin = 'agnelles'; previousDetailId = null; render('detail', mother.id);
 }
-// Tableau des exports (Excel et PDF) : les mêmes colonnes que l'écran, pour l'onglet affiché ; « Entrée le » en plus pour les gardées (date du tri ou de l'achat)
+const nomFichierTriPdf = b => (b === 'ecartees' ? 'chantier-de-tri_ecartees' : TRI_EXPORT_FICHIERS[b]) + '_' + jourAujourdhuiISO() + '.pdf';
+// { entete, lignes, colonnes: [{ label, case?, minW? }] } pour l'onglet b
 function triExportTableau(b, liste) {
-  const avecRang = liste.some(x => x.rangLactation), gardees = b === 'gardees';
-  const entete = ['N°', 'Naissance', 'Portée', 'Mère', 'Origine', 'État'].concat(gardees ? ['Entrée le'] : [], ['Classe mère', 'Lactation N-1 (L)'], avecRang ? ['Rang de lactation'] : [], ['ISOL père']);
-  const etat = x => b === 'aTrier' ? 'À trier' : b === 'ecartees' ? 'Écartée' : x.origine === 'Née' ? 'Gardée' : 'Achetée';
-  const lignes = liste.map(x => [numTri(x), x.date && !(gardees && x.origine !== 'Née') ? formatDateFr(x.date) : '—', x.naissance || '—', x.mereNumero ? 'n°' + x.mereNumero : '—', x.origineNaissance || '—', etat(x)]
-    .concat(gardees ? [x.dateTri ? formatDateFr(x.dateTri) : '—'] : [], [x.classeMere === null ? '—' : x.classeMere, x.lactMere === null ? '—' : fmtDecimal(x.lactMere, 1)], avecRang ? [x.rangLactation || '—'] : [], [x.isolPere === null || x.isolPere === undefined ? '—' : fmtIsol(x.isolPere)]));
-  return { entete, lignes };
+  const t = v => v === null || v === undefined || v === '' ? '—' : String(v);
+  const naissance = x => x.date && !(b === 'gardees' && x.origine !== 'Née') ? formatDateFr(x.date) : '—';
+  let colonnes, lignes;
+  if (b === 'aTrier') {
+    const avecRang = liste.some(x => x.rangLactation);
+    colonnes = [{ label: 'N° boucle' }, { label: 'Naissance' }, { label: 'Mode repro' }, { label: 'Portée' }, { label: 'Mère n° court' }, { label: 'Mère classe' }, { label: 'Mère lact. N-1 (L)' }]
+      .concat(avecRang ? [{ label: 'Mère rang lact.' }] : [], [{ label: 'Père code IA' }, { label: 'ISOL père' }, { label: 'Garder', case: true }, { label: 'Écarter', case: true }, { label: 'Notes', minW: 90 }]);
+    lignes = liste.map(x => [x.numero, naissance(x), t(x.origineNaissance), t(x.porteeNb), t(x.mereCourt), t(x.classeMere), x.lactMere === null || x.lactMere === undefined ? '—' : fmtDecimal(x.lactMere, 1)]
+      .concat(avecRang ? [t(x.rangLactation)] : [], [t(x.pereCode), x.isolPere === null || x.isolPere === undefined ? '—' : fmtIsol(x.isolPere), '', '', '']));
+  } else if (b === 'gardees') {
+    colonnes = ['N° boucle', 'N° officiel', 'Naissance', 'Mode repro', 'Portée', 'Mère n° court', 'Mère n° officiel', 'Père code IA', 'Père n° officiel'].map(label => ({ label }));
+    lignes = liste.map(x => [x.numero, t(x.eidOfficiel), naissance(x), t(x.origineNaissance), t(x.porteeNb), t(x.mereCourt), t(x.mereOfficiel), t(x.pereCode), t(x.pereOfficiel)]);
+  } else {
+    const avecRang = liste.some(x => x.rangLactation);
+    colonnes = ['N°', 'Naissance', 'Portée', 'Mère', 'Origine', 'État', 'Classe mère', 'Lactation N-1 (L)'].concat(avecRang ? ['Rang de lactation'] : [], ['ISOL père']).map(label => ({ label }));
+    lignes = liste.map(x => [numTri(x), naissance(x), x.naissance || '—', x.mereNumero ? 'n°' + x.mereNumero : '—', x.origineNaissance || '—', 'Écartée', x.classeMere === null ? '—' : x.classeMere, x.lactMere === null ? '—' : fmtDecimal(x.lactMere, 1)]
+      .concat(avecRang ? [x.rangLactation || '—'] : [], [x.isolPere === null || x.isolPere === undefined ? '—' : fmtIsol(x.isolPere)]));
+  }
+  return { entete: colonnes.map(c => c.label), lignes, colonnes };
 }
 async function exporterAgnellesTriXlsx(b, liste) {
   const t = triExportTableau(b, liste);
-  const bytes = await buildXlsxWorkbook([{ name: b === 'gardees' ? 'Agnelles triées' : TRI_EXPORT_NOMS[b], colWidths: t.entete.map((h, i) => i === 5 ? 12 : i === 3 ? 10 : 14), rows: [t.entete, ...t.lignes] }]);
+  const bytes = await buildXlsxWorkbook([{ name: TRI_EXPORT_FEUILLES[b], colWidths: t.colonnes.map(c => c.minW ? 34 : c.case ? 9 : 16), rows: [t.entete, ...t.lignes] }]);
   await saveOrShareBinaryFile(TRI_EXPORT_FICHIERS[b] + '_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
-function buildTriAgnellesPdfBytes(b, D) {
-  const t = triExportTableau(b, D[b]), c = D.compteur, nbG = c.N + c.achetees;
-  return buildPdfTableCharte({
-    title: 'Chantier de tri · ' + TRI_EXPORT_NOMS[b], subtitle: 'Campagne ' + campagneLabel(DB.campagneDebut) + ' · ' + D[b].length + ' agnelle' + (D[b].length > 1 ? 's' : '') + ' · situation au ' + formatDateFr(jourAujourdhuiISO()),
-    columns: t.entete.map(l => ({ label: l, x: 0 })), rows: t.lignes, landscape: true,
-    tuiles: [pdfTuile(c.aTrier ? 'ambre' : 'vert', 'À trier', c.aTrier), pdfTuile(nbG ? 'vert' : 'neutre', 'Gardées', nbG, c.achetees ? 'dont ' + c.achetees + ' achetée' + (c.achetees > 1 ? 's' : '') : undefined), pdfTuile('neutre', 'Écartées', c.ecartees)],
-    pied: pdfPied('Chantier de tri, ' + TRI_EXPORT_NOMS[b].toLowerCase())
-  });
+function buildTriAgnellesPdfBytes(b, D, liste) {
+  const L = liste || D[b], t = triExportTableau(b, L), c = D.compteur, nbG = c.N + c.achetees, pl = (n, m) => n + ' ' + m + (n > 1 ? 's' : '');
+  const au = ' · au ' + formatDateFr(jourAujourdhuiISO()), camp = 'Campagne ' + campagneLabel(DB.campagneDebut);
+  const commun = { title: TRI_EXPORT_NOMS[b], columns: t.colonnes.map(k => ({ label: k.label, x: 0, case: k.case, minW: k.minW })), rows: t.lignes, landscape: true, pied: pdfPied(TRI_EXPORT_NOMS[b]) };
+  if (b === 'aTrier') return buildPdfTableCharte(Object.assign(commun, { subtitle: camp + ' · ' + pl(L.length, 'agnelle') + ' à trier' + au + ' · cocher une case par ligne', hLigne: 22 }));
+  if (b === 'gardees') return buildPdfTableCharte(Object.assign(commun, { subtitle: camp + ' · ' + pl(L.length, 'agnelle') + ' gardée' + (L.length > 1 ? 's' : '') + (c.achetees ? ', dont ' + pl(c.achetees, 'achetée') : '') + au }));
+  return buildPdfTableCharte(Object.assign(commun, { pied: pdfPied('Chantier de tri, agnelles écartées'), subtitle: camp + ' · ' + pl(L.length, 'agnelle') + ' · situation au ' + formatDateFr(jourAujourdhuiISO()),
+    tuiles: [pdfTuile(c.aTrier ? 'ambre' : 'vert', 'À trier', c.aTrier), pdfTuile(nbG ? 'vert' : 'neutre', 'Gardées', nbG, c.achetees ? 'dont ' + c.achetees + ' achetée' + (c.achetees > 1 ? 's' : '') : undefined), pdfTuile('neutre', 'Écartées', c.ecartees)] }));
 }
 function renderTriAgnellesPc() {
   DB.agnelles = DB.agnelles || [];
@@ -16223,7 +16262,7 @@ function renderTriAgnellesPc() {
   document.querySelectorAll('.ta-fiche').forEach(b => { b.onclick = () => { currentAgnelleId = b.dataset.id; agnelleDetailOrigin = 'agnelles'; render('agnelle-detail'); }; });
   if ($('ta-ajout')) $('ta-ajout').onclick = () => { editingAgnelleId = null; addAgnelleOrigin = 'agnelles'; render('add-agnelle'); };
   $('ta-export').onclick = () => exporterAgnellesTriXlsx(onglet, items);
-  $('ta-export-pdf').onclick = () => saveOrShareBinaryFile(TRI_EXPORT_FICHIERS[onglet].replace('agnelles-', 'chantier-de-tri_') + '_' + jourAujourdhuiISO() + '.pdf', buildTriAgnellesPdfBytes(onglet, D), 'application/pdf');
+  $('ta-export-pdf').onclick = () => saveOrShareBinaryFile(nomFichierTriPdf(onglet), buildTriAgnellesPdfBytes(onglet, D, items), 'application/pdf');
 }
 
 /* ---------- Tri des agnelles, version mobile (maquette « Chantier de tri mobile ») ----------
@@ -16297,12 +16336,15 @@ function renderAgnelles() {
     ${S && S.seul ? '<button type="button" class="btn btn-secondary" id="btn-fermer-scan" style="margin-top:12px;">Voir toute la liste</button>' : ''}
     ${onglet === 'aTrier' && !S ? '<div class="cl-aucun" style="text-align:center;padding:12px 0 0;">Une agnelle vendue ou morte sort seule de la liste.</div>' : ''}
     ${onglet === 'gardees' && !(S && S.seul) ? '<button type="button" class="btn btn-secondary" id="btn-add-agnelle" style="margin-top:12px;">Ajouter une agnelle</button>' : ''}
+    <div class="row em-exports" id="tm-exports"><button type="button" class="btn btn-secondary" id="tm-export-xlsx"${liste(onglet).length ? '' : ' disabled'}>Export Excel</button><button type="button" class="btn btn-primary" id="tm-export-pdf"${liste(onglet).length ? '' : ' disabled'}>Export PDF</button></div>
     <div class="tri-nav"><button type="button" class="btn btn-secondary" data-vue="lots">Lots de recherche</button><button type="button" class="btn btn-secondary" data-vue="liste-serie">Créer une liste</button></div>
     ${snack}
   </div>`;
 
   document.querySelectorAll('.tri-onglet').forEach(b => { b.onclick = () => { triMobileOnglet = b.dataset.onglet; triMobileScan = null; render('agnelles'); }; });
   document.querySelectorAll('.tri-nav [data-vue]').forEach(b => { b.onclick = () => render(b.dataset.vue); });
+  document.getElementById('tm-export-xlsx').onclick = () => exporterAgnellesTriXlsx(onglet, liste(onglet)).catch(e => afficherErreurExport(e));
+  document.getElementById('tm-export-pdf').onclick = () => Promise.resolve().then(() => saveOrShareBinaryFile(nomFichierTriPdf(onglet), buildTriAgnellesPdfBytes(onglet, D, liste(onglet)), 'application/pdf')).catch(e => afficherErreurExport(e));
   const scanInput = document.getElementById('scan-tri');
   setActiveScanTarget(scanInput);
   attachEidBeep(scanInput);
@@ -24181,10 +24223,11 @@ function pdfProdDoc(opts) {
         c += dernierePage ? pdfRectArrondiOp(L, yb, wTot, hLigne, 0, rayon, fond) : pdfFillRectOp(L, yb, wTot, hLigne, fond);
         let x = L;
         colonnes.forEach((k, j) => {
+          if (k.case) { const t = 10; c += pdfRectArrondiOp(x + 8, yb + (hLigne - t) / 2, t, t, 1.5, 1.5, X.gris2, 'S', 0.8); x += k.w; return; }   // case vide à cocher à la main (feuille de tri)
           const v = ln[j] === null || ln[j] === undefined || ln[j] === '' ? vide : String(ln[j]);
           const estVide = v === vide;
           const prem = j === 0 && premiere && !estVide;
-          txt(x + 8, yb + 5.2, pdfFit(v, taille, !!prem, k.w - 12), prem ? 'FB' : 'F1', taille, estVide ? X.gris2 : (prem ? premiere.col : X.sombre));
+          txt(x + 8, hLigne > 18 ? yb + (hLigne - taille * 0.7) / 2 : yb + 5.2, pdfFit(v, taille, !!prem, k.w - 12), prem ? 'FB' : 'F1', taille, estVide ? X.gris2 : (prem ? premiere.col : X.sombre));   // ligne haute (feuille à remplir) : texte centré comme les cases
           x += k.w;
         });
         y = yb;
@@ -24250,21 +24293,21 @@ function pdfTuile(teinte, label, valeur, sous, neutreAZero) {
    cellules telles quelles -- une cellule vide reste vide --, « Page n/N »), seule la mise en forme change : logo OVILOG, titre, filet vert, tuiles d'effectifs facultatives (`tuiles`),
    tableau arrondi à en-tête vert, lignes alternées, N° (1re colonne) en vert gras, pied de page. Les largeurs de colonnes sont calculées d'après le texte (la police diminue plutôt que de
    couper un texte) ; les positions x de `columns` ne servent plus qu'à garder l'ordre des colonnes. */
-function buildPdfTableCharte({ title, subtitle, columns, rows, landscape, fontSize, tuiles, pied, premiereCol = true }) {
+function buildPdfTableCharte({ title, subtitle, columns, rows, landscape, fontSize, tuiles, pied, premiereCol = true, hLigne: hLigneImposee }) {
   const doc = pdfProdDoc({ paysage: !!landscape });
   doc.page(title, subtitle || '', pied || pdfPied(title));
   if (tuiles && tuiles.length) doc.tuiles(tuiles);
   const LARG = landscape ? 842 - 72 : 595 - 72;
   let taille = fontSize || 9.5;
   const cellules = (i) => rows.map(r => String(r[i] === null || r[i] === undefined ? '' : r[i]));
-  const naturelles = (tl) => columns.map((c, i) => Math.max(pdfTextWidth(c.label, Math.min(8.5, tl), true), ...cellules(i).map(v => pdfTextWidth(v, tl, false))) + 16);
+  const naturelles = (tl) => columns.map((c, i) => Math.max(pdfTextWidth(c.label, Math.min(8.5, tl), true), c.minW || 0, ...cellules(i).map(v => pdfTextWidth(v, tl, false))) + 16);
   let larg = naturelles(taille);
   while (larg.reduce((s, v) => s + v, 0) > LARG && taille > 6.5) { taille -= 0.5; larg = naturelles(taille); }
   const somme = larg.reduce((s, v) => s + v, 0), facteur = LARG / somme;
   larg = larg.map(v => v * facteur);      // trop large : on répartit le surplus ; trop étroit (cas extrême) : on comprime, pdfFit coupe alors le texte
   if (rows.length) {
     doc.tableauCharte({
-      colonnes: columns.map((c, i) => ({ l: c.label, w: larg[i] })), lignes: rows, vide: '', taille, hLigne: Math.max(13, Math.round(taille * 1.8 * 10) / 10), hEntete: Math.max(17, taille * 2.1),
+      colonnes: columns.map((c, i) => ({ l: c.label, w: larg[i], case: !!c.case })), lignes: rows, vide: '', taille, hLigne: hLigneImposee || Math.max(13, Math.round(taille * 1.8 * 10) / 10), hEntete: Math.max(17, taille * 2.1),
       entete: { fond: pdfHexCouleur(PDF_CHARTE.vert), texte: PDF_COULEURS.blanc }, alterne: [pdfHexCouleur(PDF_CHARTE.ligneAlt), PDF_COULEURS.blanc], premiere: premiereCol ? { col: pdfHexCouleur(PDF_CHARTE.vertFonce) } : null
     });
   }

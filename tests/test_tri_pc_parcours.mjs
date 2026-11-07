@@ -79,15 +79,17 @@ for (const largeur of [1200, 1400]) {
   const labels = await page.evaluate(() => [...document.querySelectorAll('.tri-pc-exports button')].map(b => [b.textContent, b.className]));
   check(JSON.stringify(labels) === JSON.stringify([['Export Excel', 'btn btn-secondary'], ['Export PDF', 'btn btn-primary']]), 'boutons : « Export Excel » (blanc) puis « Export PDF » (vert)');
   await page.evaluate(() => { window.__noms = []; window.__xl = []; buildXlsxWorkbook = async (f) => { window.__xl.push(f); return new Uint8Array([1]); }; saveOrShareBinaryFile = async (nom, bytes) => { window.__noms.push(nom); window.__pdf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes); }; });
-  for (const [onglet, xlsx, pdf] of [['aTrier', 'agnelles-a-trier_2026-10-03.xlsx', 'chantier-de-tri_a-trier_2026-10-03.pdf'], ['gardees', 'agnelles-triees_2026-10-03.xlsx', 'chantier-de-tri_triees_2026-10-03.pdf'], ['ecartees', 'agnelles-ecartees_2026-10-03.xlsx', 'chantier-de-tri_ecartees_2026-10-03.pdf']]) {
+  for (const [onglet, xlsx, pdf] of [['aTrier', 'feuille-de-tri-agnelles_2026-10-03.xlsx', 'feuille-de-tri-agnelles_2026-10-03.pdf'], ['gardees', 'agnelles-gardees-sieol_2026-10-03.xlsx', 'agnelles-gardees-sieol_2026-10-03.pdf'], ['ecartees', 'agnelles-ecartees_2026-10-03.xlsx', 'chantier-de-tri_ecartees_2026-10-03.pdf']]) {
     await page.evaluate((o) => { triPcEtat.onglet = o; render('agnelles'); window.__noms = []; }, onglet);
     await page.click('#ta-export'); await page.waitForTimeout(80); await page.click('#ta-export-pdf'); await page.waitForTimeout(150);
     check(JSON.stringify(await page.evaluate(() => window.__noms)) === JSON.stringify([xlsx, pdf]), largeur + ' px : exports de l\'onglet ' + onglet + ' : ' + JSON.stringify(await page.evaluate(() => window.__noms)));
     const octets = await page.evaluate(() => Array.from(window.__pdf));
     const r = lirePdfMots(octets);
     const txt = r.mots.join(' ');
-    check(r.pages === 1 && r.tailles[0][0] > r.tailles[0][1] && /Chantier de tri/.test(txt) && /À trier/.test(txt) && /Gardées/.test(txt) && /Écartées/.test(txt) && /Page 1\/1/.test(txt) && /Campagne 2027/.test(txt) && /Ovilog/.test(txt) && r.vert > 0, largeur + ' px : PDF « ' + onglet + ' » : paysage, titre, tuiles, pied « Page 1/1 », bandeau vert : ' + txt.slice(0, 200));
-    if (onglet === 'aTrier') { check(['N°', 'Naissance', 'Portée', 'Mère', 'Origine', 'État', 'Classe', 'Lactation'].every(m => r.mots.some(w => w.startsWith(m))) && r.mots.includes('IA') && r.mots.includes('EP') && r.mots.includes('RE'), 'PDF À trier : en-têtes et codes d\'origine IA / EP / RE'); if (largeur === 1200) pdfPc = octets; }
+    const titre = { aTrier: /Feuille de tri des agnelles/, gardees: /Agnelles gardées · liste SIEOL/, ecartees: /Chantier de tri · Agnelles écartées/ }[onglet];
+    const tuiles = /À trier/.test(txt) && /Gardées/.test(txt) && /Écartées/.test(txt);
+    check(r.pages === 1 && r.tailles[0][0] > r.tailles[0][1] && titre.test(txt) && (onglet === 'ecartees' ? tuiles : !/Écartées/.test(txt)) && /Page 1\/1/.test(txt) && /Campagne 2027/.test(txt) && /Ovilog/.test(txt) && r.vert > 0, largeur + ' px : PDF « ' + onglet + ' » : paysage, titre de l\'onglet (feuille de tri, liste SIEOL, écartées), tuiles seulement pour les écartées, pied « Page 1/1 », bandeau vert : ' + txt.slice(0, 200));
+    if (onglet === 'aTrier') { check(['N°', 'Naissance', 'Mode', 'Portée', 'Mère', 'classe', 'lact', 'Père', 'ISOL', 'Garder', 'Écarter', 'Notes'].every(m => r.mots.some(w => w.startsWith(m))) && r.mots.includes('IA') && r.mots.includes('EP') && r.mots.includes('RE'), 'PDF À trier (feuille de tri) : en-têtes, cases Garder / Écarter, Notes, codes d\'origine IA / EP / RE'); if (largeur === 1200) pdfPc = octets; }
   }
   await page.context().close();
   console.log('OK ' + largeur + ' px : saisie clavier (Entrée = sélection), tableau sans coupure, origine en code seul, Garder / Écarter / Reconsidérer + Annuler, fiche restaurée exactement, exports Excel par onglet et PDF charte.');

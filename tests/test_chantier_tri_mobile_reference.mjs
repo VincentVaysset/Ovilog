@@ -16,7 +16,8 @@ import { LAUNCH, URL_APP } from './lib/config.mjs';
 const REF = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ref', 'chantier_tri_mobile.json');
 const REF_ECHOS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ref', 'lots_echos_mobile.json');
 const ECRANS_ECHOS = ['add_lot', 'add_lot_reforme'];
-const norm = h => h.replace(/data-info-id="ib\d+"/g, 'data-info-id="ibN"');
+// EXCEPTION VOULUE (exports du Tri des agnelles sur mobile) : la rangée « Export Excel | Export PDF » (#tm-exports) est retirée avant comparaison ; tout le reste de l'écran reste comparé à la référence d'origine.
+const norm = h => h.replace(/data-info-id="ib\d+"/g, 'data-info-id="ibN"').replace(/<div class="row em-exports" id="tm-exports">[\s\S]*?<\/div>\s*/, '');
 const browser = await chromium.launch(LAUNCH);
 const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
 const page = await ctx.newPage();
