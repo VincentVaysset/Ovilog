@@ -10403,6 +10403,10 @@ function numerosRechercheAnimal(it, valeursColonnes) {
   nums.push(it.eid || '', cleanEid(it.eid || ''), numeroVisuel(it.eid || ''), it.numeroCourtTravailSieol || '', it.numeroLongTravailSieol || '', it.numeroTravailSieol || '');
   return nums.filter(Boolean).map(n => String(n).replace(/\s+/g, '').toLowerCase());
 }
+// N° courts « exacts » d'un animal (Entrée / bip) : 5 derniers chiffres, n° de travail SIEOL court et long, n° de travail du bélier
+function numerosExactsAnimal(it) {
+  return [numeroVisuel(it.eid || ''), it.numeroCourtTravailSieol, it.numeroLongTravailSieol, it.numeroTravailSieol].filter(Boolean).map(n => String(n).replace(/\s+/g, '').toLowerCase());
+}
 /* Numéros d'un animal de l'inventaire (tous ceux de son onglet + EID complet) : la recherche porte sur chacun, sans tenir compte des espaces ni de la casse. */
 function inventaireActifsNumeros(key, it) {
   return numerosRechercheAnimal(it, inventaireActifsColumns(key).map(c => c.value(it)));
@@ -20795,7 +20799,8 @@ function animauxEligiblesCarnet() {
   const lotsDe = eid => (DB.lots || []).filter(l => (l.membres || []).includes(eid)).map(l => l.id);
   const item = (a, cle, categorie, statutRepro) => {
     const soins = (a.sanitaire || []).filter(x => x && x.date).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
-    return { id: a.id || a.eid, eid: a.eid, cle, categorie, obj: a, numero: numeroVisuel(a.eid), court: a.numeroCourtTravailSieol || '', age: age(a.eid), annee: anneeNaissance(a.eid), statutRepro, dernierSoin: soins[0] || null, lots: lotsDe(a.eid), delai: delaiEnCoursAnimal(a) };
+    return { id: a.id || a.eid, eid: a.eid, cle, categorie, obj: a, numero: numeroVisuel(a.eid), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: age(a.eid), annee: anneeNaissance(a.eid), statutRepro, dernierSoin: soins[0] || null, lots: lotsDe(a.eid), delai: delaiEnCoursAnimal(a),
+      nums: numerosRechercheAnimal(a), numsExacts: numerosExactsAnimal(a) };
   };
   const out = [];
   DB.brebis.filter(s => (s.statut || 'active') === 'active').forEach(s => out.push(item(s, 'brebis', classement.groupe(s.eid) === 'antenaises' ? 'Antenaise' : 'Brebis', statutReproductionCampagne(s))));
@@ -20814,18 +20819,41 @@ function animauxEligiblesCarnet() {
     const l = it.lamb, cle = cleAgneauSansNumero(it);
     const soins = (l.sanitaire || []).filter(x => x && x.date).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
     out.push({ id: cle, eid: cle, cle: 'agneaux', categorie: 'Agneau', obj: l, numero: numeroVisuel(it.sheep.eid), court: libelleAgneauSansNumero(l, it.sheep.eid), age: null,
-      annee: /^\d{4}/.test(it.date) ? parseInt(it.date.slice(0, 4), 10) : null, statutRepro: '—', dernierSoin: soins[0] || null, lots: [], delai: delaiEnCoursAnimal(l), sansNumero: true });
+      annee: /^\d{4}/.test(it.date) ? parseInt(it.date.slice(0, 4), 10) : null, statutRepro: '—', dernierSoin: soins[0] || null, lots: [], delai: delaiEnCoursAnimal(l), sansNumero: true,
+      nums: numerosRechercheAnimal(it.sheep), numsExacts: numerosExactsAnimal(it.sheep), mereEid: it.sheep.eid });   // retrouvé par TOUS les n° de sa mère (5 chiffres, n° de travail SIEOL, EID)
   });
   return out.sort(comparerAnimauxAgeNumero);   // règle habituelle des tableaux d'animaux : âge décroissant, puis n° croissant à âge égal
 }
+/* Recherche par n° du Carnet sanitaire (PC et mobile) : MÊME règle que l'Accueil et la liste des brebis (numerosRechercheAnimal : EID, 5 derniers
+   chiffres, n° de travail SIEOL court / long, n° de travail du bélier ; par morceau, sans espaces ni casse) ; un agneau sans n° est retrouvé par
+   tous les n° de sa MÈRE. f.candidats (facultatif) : liste réduite aux animaux d'un n° tapé puis Entrée qui en désigne plusieurs. */
 function animalFiltresCarnet(liste, f) {
-  const q = (f.q || '').replace(/\s+/g, '').toLowerCase();
+  const q = rechercheNumeroNormalisee(f.q);
   const catCle = { 'Brebis': 'brebis', 'Antenaise': 'antenaises', 'Agnelle': 'agnelles', 'Bélier': 'beliers', 'Agneau': 'agneaux' };
+  if (f.candidats && f.candidats.size) return liste.filter(a => f.candidats.has(a.eid));
   return liste.filter(a => f.cats[catCle[a.categorie]]
-    && (!q || a.numero.toLowerCase().includes(q) || a.court.toLowerCase().includes(q) || cleanEid(a.eid).toLowerCase().includes(q))
+    && (!q || (a.nums || []).some(n => n.includes(q)))
     && (!f.millesime || String(a.annee) === f.millesime)
     && (!f.statut || a.statutRepro === f.statut)
     && (!f.lot || a.lots.includes(f.lot)));
+}
+/* N° tapé puis Entrée / OK, ou bippé (Carnet, PC et mobile) : EID complet (15 chiffres) ou n° national (11) = l'animal bippé, jamais ses
+   agneaux ; n° court = correspondance EXACTE (zéros de tête ignorés) sur les 5 derniers chiffres, le n° de travail SIEOL court ou long, le n° de
+   travail du bélier, et pour un agneau sans n° ceux de sa mère. Un seul : { statut: 'trouve', item } ; plusieurs (ex. la brebis et ses agneaux
+   sans n°) : { statut: 'ambigu', candidats }, jamais de choix d'office ; aucun : { statut: 'absent' }. Fonction pure. */
+function resoudreNumeroCarnet(tous, saisie) {
+  const v = cleanEid(saisie || '').toLowerCase();
+  if (!v) return { statut: 'absent' };
+  if (v.length >= 11) {
+    const item = tous.find(a => !a.sansNumero && a.eid && (cleanEid(a.eid).toLowerCase() === v || cleanEid(a.eid).toLowerCase().endsWith(v)));
+    return item ? { statut: 'trouve', item } : { statut: 'absent' };
+  }
+  const sansZeros = x => String(x || '').toLowerCase().replace(/^0+/, '');
+  const cible = sansZeros(v);
+  const candidats = cible ? tous.filter(a => (a.numsExacts || []).some(n => sansZeros(n) === cible)) : [];
+  if (candidats.length === 1) return { statut: 'trouve', item: candidats[0] };
+  if (candidats.length > 1) return { statut: 'ambigu', candidats };
+  return { statut: 'absent' };
 }
 // Retrouve l'objet ACTUEL (brebis/bélier/agnelle/agneau, quel que soit son statut) correspondant à un EID -- relecture
 // fraîche dans DB à chaque appel, jamais une référence capturée plus tôt (voir annulerLotSoinsCarnet : la synchro
@@ -21134,10 +21162,10 @@ function ecranCarnetAnimaux() {
         <div><label for="cs-flot">Lot</label><select id="cs-flot"><option value="">Tous</option>${(DB.lots || []).map(l => `<option value="${l.id}"${F.lot === l.id ? ' selected' : ''}>${echapperHtml(l.nom || ('Lot ' + (l.dateCreation || '')))}</option>`).join('')}</select></div>
         <div><button type="button" class="btn btn-secondary" id="cs-reset" style="width:100%;">Réinitialiser</button></div>
       </div>
-      ${mobile ? '<div id="cs-scan-feedback" class="hidden" style="margin-top:8px;font-size:13px;"></div>' : ''}
+      <div id="cs-scan-feedback" class="hidden" style="margin-top:8px;font-size:13px;"></div>
     </div>
     <div class="card">
-      <div class="pc-cardhead" style="margin-bottom:10px;flex-wrap:wrap;"><div><p class="brd-ttl" style="margin:0;" id="cs-compte"></p><p class="brd-note" style="margin:2px 0 0;">${mobile ? 'Scanne un animal pour le cocher, ou touche une carte.' : 'Clique sur une ligne pour la cocher.'} Seuls les animaux actifs sont proposés. Tri : âge décroissant, puis n° croissant.</p></div>
+      <div class="pc-cardhead" style="margin-bottom:10px;flex-wrap:wrap;"><div><p class="brd-ttl" style="margin:0;" id="cs-compte"></p><p class="brd-note" style="margin:2px 0 0;">${mobile ? 'Scanne un animal ou tape son n° puis OK pour le cocher, ou touche une carte.' : 'Tape un n° puis Entrée, ou clique sur une ligne, pour la cocher.'} Seuls les animaux actifs sont proposés. Tri : âge décroissant, puis n° croissant.</p></div>
         <div style="display:flex;gap:8px;"><button type="button" class="btn btn-secondary" id="cs-tout" style="width:auto;padding:6px 14px;font-size:13px;">Tout cocher</button><button type="button" class="btn btn-secondary" id="cs-rien" style="width:auto;padding:6px 14px;font-size:13px;">Tout décocher</button></div></div>
       ${mobile ? '<div id="cs-cards"></div>' : '<table class="pc-t" id="cs-table"></table>'}
     </div>
@@ -21145,6 +21173,8 @@ function ecranCarnetAnimaux() {
     <div id="cs-msg"></div>`;
   const $ = id => document.getElementById(id);
   const jj = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '';
+  // choix fait parmi les animaux d'un même n° : la liste complète revient, le champ se vide
+  const finChoixCandidat = () => { if (!F.candidats) return; F.candidats = null; F.q = ''; $('cs-q').value = ''; $('cs-scan-feedback').classList.add('hidden'); };
   const dessiner = () => {
     const filtres = animalFiltresCarnet(tous, F);
     $('cs-compte').textContent = libAnimaux(filtres.length) + ' correspondant' + (filtres.length > 1 ? 's' : '') + ' · ' + E.selection.size + ' sélectionné' + (E.selection.size > 1 ? 's' : '');
@@ -21163,7 +21193,7 @@ function ecranCarnetAnimaux() {
         </div>`;
       }).join('') || '<div class="empty">Aucun animal ne correspond aux filtres.</div>';
       document.querySelectorAll('#cs-cards .sheep-item').forEach(card => {
-        card.onclick = () => { const eid = card.dataset.eid; if (E.selection.has(eid)) E.selection.delete(eid); else E.selection.add(eid); dessiner(); };
+        card.onclick = () => { const eid = card.dataset.eid; if (E.selection.has(eid)) E.selection.delete(eid); else E.selection.add(eid); finChoixCandidat(); dessiner(); };
       });
     } else {
       $('cs-table').innerHTML = `<tr><th class="cb"></th><th class="l">N° court</th><th class="l">Catégorie</th><th class="l">Âge</th><th class="l">Statut de reproduction</th><th class="l">Dernier soin</th><th class="l">Délai en cours</th></tr>` +
@@ -21174,39 +21204,43 @@ function ecranCarnetAnimaux() {
           return `<tr class="clic${E.selection.has(a.eid) ? ' sel' : ''}${i % 2 && !E.selection.has(a.eid) ? ' alt' : ''}" data-eid="${a.eid}"><td class="cb"><input type="checkbox" class="cs-chk" ${E.selection.has(a.eid) ? 'checked' : ''} style="width:16px;height:16px;margin:0;"></td><td class="l">${a.court || 'n°' + a.numero}</td><td class="l">${a.categorie}</td><td class="l">${a.age === null ? '—' : a.age + (a.age > 1 ? ' ans' : ' an')}</td><td class="l">${a.statutRepro}</td><td class="l">${a.dernierSoin ? echapperHtml(a.dernierSoin.produit || a.dernierSoin.type) + ' · ' + jj(a.dernierSoin.date) : '—'}</td><td class="l">${pil.length ? pcPill('warn', pil.join(' · ')) : '—'}</td></tr>`;
         }).join('') || '<tr><td colspan="7" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun animal ne correspond aux filtres.</td></tr>');
       document.querySelectorAll('#cs-table tr.clic').forEach(tr => {
-        tr.onclick = ev => { const eid = tr.dataset.eid; if (E.selection.has(eid)) E.selection.delete(eid); else E.selection.add(eid); dessiner(); };
+        tr.onclick = ev => { const eid = tr.dataset.eid; if (E.selection.has(eid)) E.selection.delete(eid); else E.selection.add(eid); finChoixCandidat(); dessiner(); };
       });
     }
     const nSous = tous.filter(a => E.selection.has(a.eid) && (a.delai.lait || a.delai.viande)).length;
     $('cs-nsel').textContent = libAnimaux(E.selection.size) + ' sélectionné' + (E.selection.size > 1 ? 's' : '') + (nSous ? ' · ' + nSous + ' déjà sous délai d\'attente (information, rien n\'est bloqué)' : '');
     $('cs-enregistrer').textContent = 'Enregistrer le soin pour ' + libAnimaux(E.selection.size);
   };
-  document.querySelectorAll('.cs-cat').forEach(b => { b.onclick = () => { F.cats[b.dataset.cat] = !F.cats[b.dataset.cat]; ecranCarnetAnimaux(); }; });
-  $('cs-q').addEventListener('input', e => { F.q = e.target.value; dessiner(); });
-  // Sur mobile, le même champ sert à la fois de filtre texte (au fil de la frappe, ci-dessus) et de scan EID (sur
-  // Entrée/bip) : contre TOUS les animaux éligibles, pas seulement ceux affichés par les filtres de catégorie en
-  // cours -- scanner doit toujours fonctionner, quels que soient les filtres visuellement actifs.
-  if (mobile) {
+  document.querySelectorAll('.cs-cat').forEach(b => { b.onclick = () => { F.cats[b.dataset.cat] = !F.cats[b.dataset.cat]; F.candidats = null; ecranCarnetAnimaux(); }; });
+  $('cs-q').addEventListener('input', e => { F.q = e.target.value; F.candidats = null; dessiner(); });
+  // Entrée / OK (et bip sur mobile) : contre TOUS les animaux éligibles, quels que soient les filtres affichés (resoudreNumeroCarnet) ; un seul =
+  // coché, le champ se vide et garde le curseur ; plusieurs = la liste se réduit à eux, rien n'est coché d'office ; aucun = message ambre.
+  {
     const scanInput = $('cs-q'), feedback = $('cs-scan-feedback');
-    setActiveScanTarget(scanInput);
-    wireEidLookupField(scanInput, {
-      pool: tous.filter(a => !a.sansNumero),   // un agneau sans n° ne se bipe pas : il se touche
-      feedbackEl: feedback,
-      notFoundMessage: (val) => 'n°' + numeroVisuel(val) + ' introuvable parmi les animaux éligibles.',
-      estDejaTrouve: (item) => E.selection.has(item.eid),
-      onFound: (item) => {
-        feedback.classList.remove('hidden');
-        if (E.selection.has(item.eid)) {
-          feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' déjà sélectionné(e).';
-          feedback.style.color = 'var(--warning)';
-        } else {
-          feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' ajouté(e) à la sélection.';
-          feedback.style.color = 'var(--green-fg)';
-          E.selection.add(item.eid);
-        }
-        F.q = '';
-        dessiner();
+    if (mobile) setActiveScanTarget(scanInput);
+    const bip = f => { if (mobile) f(); };
+    const dire = (texte, couleur) => { feedback.textContent = texte; feedback.style.color = couleur; feedback.classList.remove('hidden'); };
+    scanInput.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter' && ev.keyCode !== 13) return;
+      ev.preventDefault();
+      const val = scanInput.value.trim();
+      if (!val) return;
+      const r = resoudreNumeroCarnet(tous, val);
+      if (r.statut === 'trouve') {
+        const a = r.item, nm = a.sansNumero ? a.court : 'n°' + a.numero;
+        if (E.selection.has(a.eid)) { bip(playBeepDejaTrouve); dire(nm + ' déjà sélectionné(e).', 'var(--ch-ambre-texte)'); }
+        else { bip(playBeepTrouve); E.selection.add(a.eid); dire(nm + ' ajouté(e) à la sélection.', 'var(--ch-vert-fonce)'); }
+        scanInput.value = ''; F.q = ''; F.candidats = null;
+      } else if (r.statut === 'ambigu') {
+        bip(playBeepAmbigu);
+        F.candidats = new Set(r.candidats.map(a => a.eid));
+        dire(r.candidats.length + ' animaux portent ce n° : ' + (mobile ? 'touche' : 'clique sur') + ' le bon dans la liste.', 'var(--ch-ambre-texte)');
+      } else {
+        bip(playBeepRate);
+        F.candidats = null;
+        dire('Aucun animal éligible ne porte exactement le n°' + val.replace(/[<>&"]/g, '') + (animalFiltresCarnet(tous, F).length ? ' : choisis-le dans la liste.' : '.'), 'var(--ch-ambre-texte)');
       }
+      dessiner();
     });
   }
   $('cs-millesime').addEventListener('change', e => { F.millesime = e.target.value; dessiner(); });
