@@ -96,14 +96,14 @@ check(trs.length === 2 && /^n°00001 Antenaise \| Intramicine \| 30-09-2026 \| l
 check(/2 animaux · 2 soins/.test(await page.evaluate(() => document.getElementById('cs-en-delai').textContent.replace(/\s+/g, ' '))), 'compte : 2 animaux · 2 soins');
 // derniers soins
 const entetesDer = await page.evaluate(() => [...document.querySelectorAll('#cs-derniers th')].map(x => x.textContent).join('|'));
-check(entetesDer === 'N°|Type de soin|Produit|Date|Dose|Ordonnance|Fait par|Reprise lait|Viande dès le|Voie|Durée|Date de fin', 'colonnes de la maquette puis voie, durée, date de fin : ' + entetesDer);
+check(entetesDer === 'N°|Type de soin|Produit|Date|Dose|Ordonnance|Fait par|Reprise lait|Viande dès le|Voie|Durée|Date de fin|', 'colonnes de la maquette puis voie, durée, date de fin, puis la colonne sans titre des boutons Modifier / Suppr. : ' + entetesDer);
 const dr = (await cellules('#cs-derniers')).map(c => c.join(' | '));
 check(/02-10-2026/.test(dr[0]) && /3 animaux/.test(dr[0]) && /Bravoxin 10/.test(dr[0]) && /aucune attente/.test(dr[0]), 'le lot collectif tient sur UNE ligne « 3 animaux » en tête : ' + dr[0]);
 check(dr.length === 1 + 5 && !dr.some(t => /00006/.test(t)), 'un soin par ligne ensuite (5 : 4 individuels + 1 ancien… hors vendue) : ' + dr.length);
 const ancien = dr.find(t => /Ancien/.test(t));
-check(ancien && /5 cc/.test(ancien) && /29-09-2026/.test(ancien) && !/ 0 j/.test(ancien) && (ancien.match(/—/g) || []).length >= 4 && /^n°00004 \| Traitement · Antibiotique \| Ancien \| 29-09-2026 \| 5 cc \| — \| Éleveur \| — \| — \| — \| — \| —$/.test(ancien), 'soin ancien : affiché sans erreur, durée / fin / reprise / vente en « — » : ' + ancien);
+check(ancien && /5 cc/.test(ancien) && /29-09-2026/.test(ancien) && !/ 0 j/.test(ancien) && (ancien.match(/—/g) || []).length >= 4 && /^n°00004 \| Traitement · Antibiotique \| Ancien \| 29-09-2026 \| 5 cc \| — \| Éleveur \| — \| — \| — \| — \| — \| Modifier Suppr\.$/.test(ancien), 'soin ancien : affiché sans erreur, durée / fin / reprise / vente en « — » : ' + ancien);
 const nouveau = dr.find(t => /Intramicine/.test(t) && /Intramusculaire/.test(t));
-check(nouveau && /^n°00001 \| Traitement · Antibiotique \| Intramicine \| 30-09-2026 \| 8 cc \| — \| Éleveur \| 08-10-2026 \| 29-10-2026 \| Intramusculaire \| 1 j \| 30-09-2026$/.test(nouveau), 'soin récent : type, dose, ordonnance, fait par, reprise, vente, puis voie, durée, date de fin : ' + nouveau);
+check(nouveau && /^n°00001 \| Traitement · Antibiotique \| Intramicine \| 30-09-2026 \| 8 cc \| — \| Éleveur \| 08-10-2026 \| 29-10-2026 \| Intramusculaire \| 1 j \| 30-09-2026 \| Modifier Suppr\.$/.test(nouveau), 'soin récent : type, dose, ordonnance, fait par, reprise, vente, puis voie, durée, date de fin : ' + nouveau);
 check(await page.evaluate(() => window.__saves === 0 && JSON.stringify(DB) === window.__avant), 'affichage seul : rien écrit, aucune date stockée');
 check(await page.evaluate(() => !JSON.stringify(DB.brebis).includes('repriseLait') && !JSON.stringify(DB.brebis).includes('venteDes')), 'les dates calculées ne sont jamais stockées');
 // cohérence du tableau avec les dates affichées à l'écran 1 : modification de la date du jour -> le soin libre disparaît
