@@ -2516,14 +2516,48 @@ function numeroVisuel(eid) {
   const c = cleanEid(eid);
   return c.slice(-5);
 }
+/* Millésime d'après le chiffre d'année de la boucle : la DERNIÈRE année finissant par ce chiffre, au plus tard l'année de la campagne en
+   cours (nommée par son année de fin : né en novembre 2026 = campagne 2027 = boucle en 7 ; en 2036 une boucle en 4 = 2034). Le chiffre de
+   la campagne en cours est ambigu (une brebis de 2017 porte aussi un 7) : il ne vaut la campagne en cours que pour un animal ARRIVÉ dans
+   l'élevage pendant cette campagne (naissance ou entrée, dateArriveeAnimal) ; arrivé avant, c'est dix ans plus tôt. Animal inconnu ou sans
+   date : règle d'avant (jamais au-delà de l'année civile). Aucun numéro n'est lu autrement ni modifié. */
 function anneeNaissance(eid) {
   const c = cleanEid(eid);
   if (c.length < 11) return null;
   const digit = parseInt(c.charAt(10), 10);
+  if (!Number.isFinite(digit)) return null;
   const currentYear = new Date().getFullYear();
-  let year = 2020 + digit;
-  if (year > currentYear) year -= 10;
+  const campagne = (typeof DB !== 'undefined' && DB && Number.isInteger(DB.campagneDebut)) ? DB.campagneDebut : null;
+  const F = campagne !== null ? Math.max(campagne + 1, currentYear) : currentYear;
+  let year = F - (((F - digit) % 10) + 10) % 10;
+  if (year === F) {
+    const arrivee = campagne !== null ? dateArriveeAnimal(c) : null;
+    if (arrivee) { if (arrivee < campagneDatesIso(campagne).debut) year -= 10; }
+    else if (year > currentYear) year -= 10;
+  }
   return year;
+}
+// Date d'arrivée d'un animal dans l'élevage (ISO), d'après son EID : agneau = date de sa mise bas ; brebis, agnelle, bélier = la plus ancienne
+// de ses dates de naissance ou d'entrée (mouvements, dateEntree, createdAt) ; null si inconnu. Index reconstruit à chaque tâche (affichage seul).
+let indexArriveeCache = null;
+function dateArriveeAnimal(eid) {
+  if (!indexArriveeCache) {
+    const m = new Map();
+    const cle = e => cleanEid(e || '').slice(-11);
+    const garder = (e, d) => { const k = cle(e); if (k.length < 11 || !/^\d{4}-\d{2}-\d{2}/.test(String(d || ''))) return; d = String(d).slice(0, 10); if (!m.has(k) || d < m.get(k)) m.set(k, d); };
+    const fiche = a => {
+      if (!a || !a.eid) return;
+      (a.mouvements || []).forEach(mv => { if (mv && (mv.type === 'Naissance' || mv.type === 'Entrée' || mv.cause === 'Naissance')) garder(a.eid, mv.date); });
+      garder(a.eid, a.dateEntree);
+      if (typeof a.createdAt === 'number' && a.createdAt > 0) garder(a.eid, formatISOLocal(new Date(a.createdAt)));
+    };
+    ((DB && DB.brebis) || []).forEach(s => { fiche(s); (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => { if (l && l.eid) garder(l.eid, ag.date); })); });
+    ((DB && DB.agnelles) || []).forEach(fiche);
+    ((DB && DB.beliers) || []).forEach(fiche);
+    indexArriveeCache = m;
+    Promise.resolve().then(() => { indexArriveeCache = null; });
+  }
+  return indexArriveeCache.get(cleanEid(eid || '').slice(-11)) || null;
 }
 // Affichage UI uniquement (badges "X an(s)" sur fiches/listes).
 // Glisse au 1er janvier, jamais recalé sur la campagne agricole.
@@ -2533,7 +2567,7 @@ function anneeNaissance(eid) {
 function age(eid) {
   const y = anneeNaissance(eid);
   if (y === null) return null;
-  return new Date().getFullYear() - y;
+  return Math.max(0, new Date().getFullYear() - y);   // né pendant la campagne en cours (année de fin à venir) : 0 an
 }
 /* Âge affiché d'un agneau, d'après la date de sa mise bas : en jours avant 2 mois (« 12 j »), puis en mois (« 3 mois ») ; null sans date valable */
 function texteAgeAgneau(dateISO) {

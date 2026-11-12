@@ -16,8 +16,10 @@ const prep = () => {
   const fiche = (n, id) => ({ id, eid: E(n), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] });
   DB.brebis = [fiche('20101', 'b1'), fiche('60102', 'b2')];
   DB.brebis[0].agnelages = [{ date: '2026-11-08', campagne: 2026, codeRepro: 'MN', lambs: [{ sexe: 'Mâle', eid: E('71001') }, { sexe: 'Femelle' }] }];
-  DB.brebis[1].agnelages = [{ date: '2026-09-01', campagne: 2026, codeRepro: 'MN', lambs: [{ sexe: 'Mâle', eid: E('71002') }] }];
-  DB.beliers = []; DB.agnelles = [{ id: 'a1', eid: E('71003'), statut: 'active', sanitaire: [], mouvements: [], notes: [] }];
+  DB.brebis[1].agnelages = [{ date: '2026-09-01', campagne: 2026, codeRepro: 'MN', lambs: [{ sexe: 'Mâle', eid: E('61002') }] }];
+  DB.brebis.push(fiche('79001', 'b3'));   // brebis de 2017, là depuis longtemps (createdAt ancien, entrée 2024)
+  DB.beliers = [{ id: 'r1', eid: E('79002'), statut: 'actif', sanitaire: [], notes: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2026-10-15' }] }];
+  DB.agnelles = [{ id: 'a1', eid: E('71003'), statut: 'active', origine: 'née', sanitaire: [], notes: [], mouvements: [{ type: 'Naissance', cause: null, date: '2026-11-08' }, { type: 'Entrée', cause: 'Tri (renouvellement)', date: '2026-11-15' }] }];
   DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
 };
 
@@ -32,25 +34,37 @@ for (const mobile of [true, false]) {
   await p.goto(URL_APP, { waitUntil: 'load' }); await p.waitForTimeout(300);
   await p.evaluate(prep);
 
-  // 1. règle du n° inchangée (une brebis de 2017 a une boucle en 7 comme un agneau de la campagne 2027 : seul l'agneau, par sa mise bas, est daté)
+  // 1. millésime d'après le n° : dernière année finissant par ce chiffre ; le chiffre de la campagne en cours (7 = 2027) seulement pour un animal
+  //    ARRIVÉ pendant la campagne (agneau né, agnelle née, bélier acheté cet automne) ; déjà là avant (brebis de 2017) = dix ans plus tôt
   const E = n => '2500000456' + n;
-  eq(await p.evaluate(es => es.map(e => [anneeNaissance(e), age(e)]), [E('71001'), E('61001'), E('01001')]), [[2017, 9], [2026, 0], [2020, 6]], T + ' : règle du n° inchangée');
+  eq(await p.evaluate(es => es.map(e => [anneeNaissance(e), age(e)]), [E('71001'), E('71003'), E('79001'), E('79002'), E('79999'), E('61001'), E('81001'), E('01001')]),
+    [[2027, 0], [2027, 0], [2017, 9], [2027, 0], [2017, 9], [2026, 0], [2018, 8], [2020, 6]], T + ' : agneau, agnelle de l\'automne, brebis de 2017, bélier acheté cet automne, inconnu, autres chiffres');
+  eq(await p.evaluate(e => { const c = DB.campagneDebut; DB.campagneDebut = null; const r = anneeNaissance(e); DB.campagneDebut = c; return r; }, E('71001')), 2017, T + ' : sans campagne réglée : règle d\'avant');
   // 2. âge des agneaux : jours avant 2 mois, puis mois
   eq(await p.evaluate(() => [texteAgeAgneau('2026-11-08'), texteAgeAgneau('2026-09-22'), texteAgeAgneau('2026-09-21'), texteAgeAgneau('2026-09-01'), texteAgeAgneau('2025-11-20'), texteAgeAgneau('2026-12-01'), texteAgeAgneau('')]),
     ['12 j', '59 j', '2 mois', '2 mois', '12 mois', null, null], T + ' : jours avant 2 mois, puis mois');
   // 3. Carnet sanitaire : agneaux en jours / mois, agnelle de l'année à 0 an, jamais 9 ans
   const lib = await p.evaluate(() => Object.fromEntries(animauxEligiblesCarnet().map(a => [a.court || a.numero, texteAgeListe(a)])));
-  eq([lib['71001'], lib['71002']], ['12 j', '2 mois'], T + ' : Carnet : âge des agneaux d\'après leur mise bas (jamais « 9 ans »)');
+  eq([lib['71001'], lib['61002'], lib['71003'], lib['79001'], lib['79002']], ['12 j', '2 mois', '0 an', '9 ans', '0 an'], T + ' : Carnet : agneaux d\'après leur mise bas, agnelle et bélier de l\'automne 0 an, brebis de 2017 9 ans');
   check(Object.entries(lib).some(([k, v]) => /sans n°/.test(k) && v === '12 j'), T + ' : agneau sans n° : âge d\'après sa mise bas : ' + JSON.stringify(lib));
   await p.evaluate(() => { carnetSanitaireEtat = null; carnetOnglet = 'nouveau'; render('sanitaire'); });
   await p.selectOption('#cs-produit', 'Produit A'); await p.fill('#cs-dose', '2'); await p.selectOption('#cs-voie', { index: 1 });
   await p.click('#cs-suivant'); await p.waitForSelector(mobile ? '#cs-cards' : '#cs-table');
   const texte = await p.evaluate(m => document.querySelector(m ? '#cs-cards' : '#cs-table').textContent, mobile);
-  check(/n°71001 Agneau · 12 j/.test(texte.replace(/\s+/g, ' ')) && /n°71002 Agneau · 2 mois/.test(texte.replace(/\s+/g, ' ')) || /71001.*12 j/.test(texte) && /71002.*2 mois/.test(texte), T + ' : écran du Carnet : ' + texte.replace(/\s+/g, ' ').slice(0, 300));
+  check(/n°71001 Agneau · 12 j/.test(texte.replace(/\s+/g, ' ')) && /n°61002 Agneau · 2 mois/.test(texte.replace(/\s+/g, ' ')) || /71001.*12 j/.test(texte) && /61002.*2 mois/.test(texte), T + ' : écran du Carnet : ' + texte.replace(/\s+/g, ' ').slice(0, 300));
   // 4. Mouvements : agneaux en jours / mois
-  eq(await p.evaluate(() => animauxMouvementPc('agneaux').map(texteAgeListe)), ['12 j', '2 mois'], T + ' : Mouvements : âge des agneaux');
+  eq(await p.evaluate(() => animauxMouvementPc('agneaux').map(texteAgeListe)), ['2 mois', '12 j'], T + ' : Mouvements : âge des agneaux');
   // 5. bips : un seul contexte audio
-  check(await p.evaluate(() => { playBeepTrouve(); const a = playBeep.ctx; playBeepRate(); playBeepAmbigu(); playBeepDejaTrouve(); return !!a && playBeep.ctx === a; }), T + ' : un seul contexte audio pour tous les bips');
+  check(await p.evaluate(() => { playBeep(); const a = playBeep.ctx; playBeep(220); playBeepBippe(); return !!a && playBeep.ctx === a; }), T + ' : un seul contexte audio pour tous les bips');
+  await ctx.close();
+}
+// 6. en 2036 : une boucle en 4 = 2034 (avant : 2024)
+{
+  const ctx = await browser.newContext(); const p = await ctx.newPage();
+  await p.clock.setFixedTime(new Date('2036-11-20T09:00:00'));
+  await p.goto(URL_APP, { waitUntil: 'load' }); await p.waitForTimeout(300);
+  await p.evaluate(() => { DB = migrateData({}); saveData = () => true; DB.campagneDebut = 2036; DB.campagneDateDemarrage = '2036-10-01'; DB.campagneInitialisee = true; });
+  eq(await p.evaluate(() => [anneeNaissance('250000045641001'), anneeNaissance('250000045691001'), anneeNaissance('250000045671001')]), [2034, 2029, 2027], '2036 : 4 = 2034, 9 = 2029, 7 = 2027 (inconnu, chiffre de la campagne : dix ans plus tôt)');
   await ctx.close();
 }
 await browser.close();
