@@ -7,7 +7,9 @@ import { existsSync, readFileSync } from 'fs';
 const ici = path.dirname(fileURLToPath(import.meta.url));
 export const LIB_DIR = ici;
 // Appli servie en HTTP (par run_all.sh : python3 -m http.server 8998 dans www/).
-export const URL_APP = process.env.OVILOG_URL || 'http://localhost:8998/index.html';
+export const URL_APP_SANS_REGLAGE = process.env.OVILOG_URL || 'http://localhost:8998/index.html';
+// « ?sans-tri-export » : exports directs, sans la page de tri (les contrôles d'export existants attendent le fichier) ; test_tri_exports_page charge l'adresse sans ce réglage
+export const URL_APP = URL_APP_SANS_REGLAGE + (URL_APP_SANS_REGLAGE.includes('?') ? '&' : '?') + 'sans-tri-export';
 // Chromium : par défaut celui de Playwright ; CHROMIUM_PATH pour en imposer un.
 export const LAUNCH = process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {};
 // Exports d'élevage RÉELS : jamais versionnés (tests/data/ est ignoré par git).
