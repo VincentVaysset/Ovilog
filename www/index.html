@@ -559,6 +559,14 @@
   /* bulle de contact affichée : le bas de page dégagé passe SOUS le bouton (rien de cliquable sous la bulle) */
   body.avec-bulle-contact.avec-revenir-haut main#app { padding-bottom: 16px; }
   body.avec-bulle-contact #revenir-haut { padding-bottom: calc(16px + 56px + 14px + 56px + 20px); }   /* au-dessus de la bulle, même quand elle monte au-dessus du « + » */
+  /* Vérifier mères et agneaux (renderListeSerieVerif) : réponse au bip, verte (dans le groupe) ou ambre (pas dans le groupe), neutre sinon */
+  .verif-resultat { margin-top: 12px; border-radius: 14px; padding: 12px 14px; border-left: 6px solid var(--ch-icone); background: var(--ch-ligne-alt); color: var(--ch-texte); font-size: 15px; }
+  .verif-resultat.ok { border-left-color: var(--ch-vert); background: var(--ch-vert-pastel); color: var(--ch-vert-texte); }
+  .verif-resultat.alerte { border-left-color: var(--ch-ambre); background: var(--ch-ambre-pastel); color: var(--ch-ambre-texte); }
+  .verif-resultat .verif-titre { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
+  .verif-ligne { font-size: 15px; line-height: 1.6; }
+  .verif-ligne + .verif-ligne { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--ch-separateur); }
+  #verif-restants .carte-liste { margin-bottom: 8px; }
   /* Page de tri avant un export (ouvrirPageTriExport) : mobile = page plein écran (bandeau vert, barre Annuler | Exporter) ; PC = fenêtre centrée */
   .te-page { position: fixed; inset: 0; z-index: 1000; background: var(--ch-fond); display: flex; flex-direction: column; }
   .te-tete { background: var(--ch-vert); color: var(--ch-carte); padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 14px; display: flex; align-items: center; gap: 12px; }
@@ -1966,6 +1974,7 @@ function migrateData(d) {
   // relié aux fiches brebis/béliers/agnelles (espece n'est qu'une étiquette
   // déduite à l'affichage, pas une référence).
   if (!d.listeSerie) d.listeSerie = [];
+  if (!Array.isArray(d.listeSerieVerif)) d.listeSerieVerif = [];   // animaux vérifiés par « Vérifier mères et agneaux » (EID complets)
   // Coefficient du calcul de prix (prixHorsQualite = MSU × coefficient), un
   // tableau d'entrées rattachées à une campagne plutôt qu'une valeur unique :
   // le prix de référence négocié avec la laiterie change chaque année (déjà
@@ -2242,6 +2251,7 @@ function loadData() {
     resumeControleLaitier: [],
     cahierControleLaitier: [],
     listeSerie: [],
+    listeSerieVerif: [],
     parametresPrixLait: [
       { campagne: 0, coefficientMsu: 12.1538, prixReference: null, msuReference: null }
     ],
@@ -15076,8 +15086,150 @@ function renderMiseBasRapide() {
    sauvegardée comme le reste) pour survivre à une fermeture de l'appli,
    mais reste un simple tableau d'EID + espèce déduite à l'affichage —
    jamais reliée aux fiches brebis/béliers/agnelles elles-mêmes. */
+/* ---------- Vérifier mères et agneaux (Chantier de tri › Créer une liste) ----------
+   Le GROUPE = la liste bipée (brebis et/ou agneaux). En vérification, chaque bip est comparé au groupe par la parenté, dans les deux sens :
+   agneau bipé → sa mère est-elle dans le groupe ; brebis bipée → ses agneaux sont-ils dans le groupe. Agneaux pris en compte : mise bas de
+   la campagne en cours, ni mort-nés, ni sortis, ni gardés au tri (agneauActifGroupe) ; agneau adopté = la mère qui l'ÉLÈVE (mère adoptive
+   active), comme sur la fiche. Rien n'est écrit sur les fiches : seuls la liste et les animaux vérifiés (DB.listeSerieVerif) sont gardés. */
+let listeSerieVerif = false, listeSerieRestants = false, listeSerieDernier = null;
+function agneauActifGroupe(l) { return !!l && l.sexe !== 'Mort-né' && !agneauSorti(l) && l.triStatut !== 'gardée'; }
+function mereQuiEleve(l, mereBio) {
+  if (l && l.adopte && l.adoptiveEid) {
+    const a = DB.brebis.find(s => (s.statut || 'active') === 'active' && cleanEid(s.eid) === cleanEid(l.adoptiveEid));
+    if (a) return a;
+  }
+  return mereBio;
+}
+function agneauxCampagneAvecMere() {
+  const N = DB.campagneDebut, out = [];
+  DB.brebis.forEach(s => (s.agnelages || []).forEach(a => {
+    if (N !== null && N !== undefined && a.campagne !== N) return;
+    (a.lambs || []).forEach(l => { if (agneauActifGroupe(l)) out.push({ lamb: l, mere: mereQuiEleve(l, s) }); });
+  }));
+  return out;
+}
+// Un n° bipé ou tapé → { type: 'brebis', brebis } | { type: 'agneau', lamb, mere } | { type: 'agneauSorti', lamb } | { type: 'ambigu' } | null
+function resoudreAnimalMereAgneau(val, ags) {
+  const v = cleanEid(val || '');
+  if (!v) return null;
+  ags = ags || agneauxCampagneAvecMere();
+  const brebis = DB.brebis.filter(s => (s.statut || 'active') === 'active');
+  const egal = e => { const c = cleanEid(e || ''); return !!c && (c === v || (v.length >= 11 && c.length >= 11 && c.slice(-11) === v.slice(-11))); };
+  let cands;
+  if (v.length >= 11) cands = brebis.filter(b => egal(b.eid)).map(b => ({ type: 'brebis', brebis: b })).concat(ags.filter(x => egal(x.lamb.eid)).map(x => ({ type: 'agneau', lamb: x.lamb, mere: x.mere })));
+  else cands = trouverParNumero(brebis, v).map(b => ({ type: 'brebis', brebis: b })).concat(ags.filter(x => x.lamb.eid && numeroVisuel(x.lamb.eid) === v).map(x => ({ type: 'agneau', lamb: x.lamb, mere: x.mere })));
+  if (cands.length === 1) return cands[0];
+  if (cands.length > 1) return { type: 'ambigu' };
+  const sorti = v.length >= 11 ? findLambByEid(v) : null;
+  return sorti ? { type: 'agneauSorti', lamb: sorti } : null;
+}
+// Le groupe (liste bipée) résolu en brebis et agneaux connus
+function groupeMereAgneau(session, ags) {
+  const brebis = new Set(), agneaux = new Set();
+  session.forEach(e => { const r = resoudreAnimalMereAgneau(e.eid, ags); if (r && r.type === 'brebis') brebis.add(r.brebis); else if (r && r.type === 'agneau') agneaux.add(r.lamb); });
+  return { brebis, agneaux };
+}
+// Réponse à un bip en vérification : { ton: 'ok' | 'alerte' | 'neutre', titre, detail, bip }
+function verifierMereAgneau(r, groupe, ags) {
+  const nv = e => 'n°' + numeroVisuel(e);
+  if (!r) return { ton: 'neutre', titre: 'N° inconnu', detail: "Aucune brebis présente ni aucun agneau de la campagne avec ce n°.", bip: 'ambigu' };
+  if (r.type === 'ambigu') return { ton: 'neutre', titre: 'Plusieurs animaux', detail: 'Bipez ou tapez le n° complet.', bip: 'ambigu' };
+  if (r.type === 'agneauSorti') return { ton: 'neutre', titre: 'Agneau ' + nv(r.lamb.eid), detail: 'Sorti, mort ou d\'une autre campagne : il ne compte pas.', bip: 'ambigu' };
+  if (r.type === 'agneau') {
+    const adopte = r.lamb.adopte && r.lamb.adoptiveEid && r.mere && cleanEid(r.mere.eid) === cleanEid(r.lamb.adoptiveEid) ? ' (adopté)' : '';
+    if (!r.mere) return { ton: 'neutre', titre: 'Agneau ' + nv(r.lamb.eid), detail: 'Mère inconnue.', bip: 'ambigu' };
+    const dans = groupe.brebis.has(r.mere);
+    return { ton: dans ? 'ok' : 'alerte', titre: 'Agneau ' + nv(r.lamb.eid) + ' · mère ' + nv(r.mere.eid) + adopte, detail: dans ? 'Sa mère est dans le groupe.' : 'Sa mère n\'est PAS dans le groupe.', bip: dans ? 'trouve' : 'rate' };
+  }
+  const siens = ags.filter(x => x.mere === r.brebis);
+  const avecN = siens.filter(x => x.lamb.eid), sansN = siens.length - avecN.length;
+  const dansG = groupe.brebis.has(r.brebis);
+  const titre = 'Brebis ' + nv(r.brebis.eid) + (dansG ? ' · dans le groupe' : '');
+  if (!groupe.agneaux.size) {
+    return { ton: dansG ? 'ok' : 'alerte', titre: 'Brebis ' + nv(r.brebis.eid), detail: (dansG ? 'Elle est dans le groupe.' : 'Elle n\'est PAS dans le groupe.') + ' ' + siens.length + ' agneau' + (siens.length > 1 ? 'x' : '') + ' cette campagne' + (sansN ? ' (dont ' + sansN + ' sans n°)' : '') + '.', bip: dansG ? 'trouve' : 'rate' };
+  }
+  if (!siens.length) return { ton: 'neutre', titre, detail: 'Aucun agneau vivant cette campagne.', bip: 'ambigu' };
+  const presents = avecN.filter(x => groupe.agneaux.has(x.lamb));
+  const manquants = avecN.filter(x => !groupe.agneaux.has(x.lamb));
+  const sansTxt = sansN ? ' · ' + sansN + ' sans n° (à vérifier à l\'œil)' : '';
+  if (!manquants.length && presents.length) return { ton: 'ok', titre, detail: presents.length + ' agneau' + (presents.length > 1 ? 'x' : '') + ' sur ' + avecN.length + ' dans le groupe' + sansTxt, bip: 'trouve' };
+  return { ton: 'alerte', titre, detail: (presents.length ? presents.length + ' sur ' + avecN.length + ' dans le groupe · manque ' : 'Aucun de ses agneaux dans le groupe · ') + manquants.map(x => nv(x.lamb.eid)).join(', ') + sansTxt, bip: 'rate' };
+}
+// Bilan du groupe : agneaux attendus des mères du groupe, mères des agneaux du groupe, retrouvés (vérifiés) et restants
+function bilanMereAgneau(groupe, ags, verifies) {
+  const vu = e => !!e && verifies.has(cleanEid(e));
+  const attendus = ags.filter(x => groupe.brebis.has(x.mere));
+  const attendusN = attendus.filter(x => x.lamb.eid);
+  const agRetrouves = attendusN.filter(x => vu(x.lamb.eid) || groupe.agneaux.has(x.lamb));
+  const meres = [...new Set(ags.filter(x => groupe.agneaux.has(x.lamb) && x.mere).map(x => x.mere))];
+  const meresVues = meres.filter(m => vu(m.eid) || groupe.brebis.has(m));
+  return {
+    nbMeres: groupe.brebis.size, attendus: attendusN.length, sansN: attendus.length - attendusN.length, agRetrouves: agRetrouves.length,
+    agRestants: attendusN.filter(x => !agRetrouves.includes(x)),
+    nbAgneaux: groupe.agneaux.size, meres: meres.length, meresVues: meresVues.length,
+    meresRestantes: sortByAge(meres.filter(m => !meresVues.includes(m)))
+  };
+}
+
+function renderListeSerieVerif() {
+  const session = DB.listeSerie;
+  DB.listeSerieVerif = Array.isArray(DB.listeSerieVerif) ? DB.listeSerieVerif : [];
+  const ags = agneauxCampagneAvecMere();
+  const groupe = groupeMereAgneau(session, ags);
+  const verifies = new Set(DB.listeSerieVerif.map(cleanEid));
+  const b = bilanMereAgneau(groupe, ags, verifies);
+  const n = (x, sing, plur) => '<b>' + x + '</b> ' + (x > 1 ? plur : sing);
+  const lignesBilan = [];
+  if (b.nbMeres) lignesBilan.push(n(b.nbMeres, 'mère', 'mères') + ' · ' + n(b.attendus, 'agneau attendu', 'agneaux attendus') + ' · ' + n(b.agRetrouves, 'retrouvé', 'retrouvés') + ' · ' + n(b.agRestants.length, 'reste', 'restent') + (b.sansN ? '<div class="info">dont ' + b.sansN + ' sans n° en plus, à vérifier à l\'œil</div>' : ''));
+  if (b.nbAgneaux) lignesBilan.push(n(b.nbAgneaux, 'agneau', 'agneaux') + ' · ' + n(b.meres, 'mère', 'mères') + ' · ' + n(b.meresVues, 'retrouvée', 'retrouvées') + ' · ' + n(b.meresRestantes.length, 'reste', 'restent'));
+  const nbRestants = b.agRestants.length + b.meresRestantes.length;
+  const d = listeSerieDernier;
+  const restantsHtml = !listeSerieRestants ? '' :
+    b.agRestants.map(x => carteListeHtml({ nm: echapperHtml('n°' + numeroVisuel(x.lamb.eid)), pastille: '<span class="badge badge-muted">Agneau</span>', l2: echapperHtml('mère n°' + numeroVisuel(x.mere.eid)) })).join('')
+    + b.meresRestantes.map(m => carteListeHtml({ nm: echapperHtml('n°' + numeroVisuel(m.eid)), pastille: '<span class="badge badge-muted">Mère</span>', l2: echapperHtml(ags.filter(x => x.mere === m && groupe.agneaux.has(x.lamb)).map(x => 'n°' + numeroVisuel(x.lamb.eid)).join(', ')) })).join('');
+  app.innerHTML = chantierTriTabBarHtml() + `
+    <div class="card" style="margin-top:14px;">
+      <label for="scan-verif">${isDesktopMode() ? 'Saisir le n° d\'un agneau ou d\'une brebis' : 'Biper un agneau ou une brebis'}</label>
+      <input type="text" id="scan-verif" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
+      ${infoLigneHtml('Comparé au groupe (la liste de ' + session.length + ' animaux) : agneau → sa mère ; brebis → ses agneaux. Rien n\'est écrit sur les fiches.')}
+      <div id="verif-resultat" class="verif-resultat${d ? ' ' + d.ton : ' hidden'}">${d ? '<div class="verif-titre">' + echapperHtml(d.titre) + '</div><div>' + echapperHtml(d.detail) + '</div>' : ''}</div>
+    </div>
+    <div class="card" id="verif-bilan">${lignesBilan.length ? lignesBilan.map(l => '<div class="verif-ligne">' + l + '</div>').join('') : '<div class="info">Aucune brebis présente ni aucun agneau de la campagne dans la liste.</div>'}
+      ${nbRestants ? `<button type="button" class="btn btn-secondary" id="btn-verif-restants" style="margin-top:12px;">${listeSerieRestants ? 'Masquer les restants' : 'Voir les restants (' + nbRestants + ')'}</button>` : ''}
+    </div>
+    <div id="verif-restants">${restantsHtml}</div>
+    <div class="row" style="display:flex;gap:10px;margin-top:14px;">
+      <button type="button" class="btn btn-secondary" id="btn-verif-retour">Revenir à la liste</button>
+      <button type="button" class="btn btn-secondary" id="btn-verif-effacer"${DB.listeSerieVerif.length ? '' : ' disabled'}>Recommencer la vérification</button>
+    </div>`;
+  wireChantierTriTabBar();
+  const btnR = document.getElementById('btn-verif-restants');
+  if (btnR) btnR.onclick = () => { listeSerieRestants = !listeSerieRestants; renderListeSerieVerif(); };
+  document.getElementById('btn-verif-retour').onclick = () => { listeSerieVerif = false; listeSerieDernier = null; render('liste-serie'); };
+  document.getElementById('btn-verif-effacer').onclick = () => { DB.listeSerieVerif = []; listeSerieDernier = null; saveData(DB); renderListeSerieVerif(); };
+  const scan = document.getElementById('scan-verif');
+  setActiveScanTarget(scan);
+  scan.focus();
+  scan.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const val = scan.value; scan.value = '';
+    if (!cleanEid(val)) return;
+    const r = resoudreAnimalMereAgneau(val, ags);
+    const rep = verifierMereAgneau(r, groupe, ags);
+    const cle = r && r.type === 'agneau' ? cleanEid(r.lamb.eid) : (r && r.type === 'brebis' ? cleanEid(r.brebis.eid) : null);
+    const deja = cle && verifies.has(cle);
+    if (deja) playBeepDejaTrouve(); else if (rep.bip === 'trouve') playBeepTrouve(); else if (rep.bip === 'rate') playBeepRate(); else playBeepAmbigu();
+    if (deja) rep.detail = 'Déjà vérifié · ' + rep.detail;
+    if (cle && !deja) { DB.listeSerieVerif.push(cle); saveData(DB); }
+    listeSerieDernier = rep;
+    renderListeSerieVerif();
+  });
+}
+
 function renderListeSerie() {
   pageTitle.textContent = 'Chantier de tri';
+  if (listeSerieVerif && (DB.listeSerie || []).length) { renderListeSerieVerif(); return; }
+  listeSerieVerif = false;
   DB.listeSerie = DB.listeSerie || [];
   const session = DB.listeSerie;
 
@@ -15085,6 +15237,7 @@ function renderListeSerie() {
     if (DB.brebis.some(s => cleanEid(s.eid) === eid)) return 'Brebis';
     if (DB.beliers.some(s => cleanEid(s.eid) === eid)) return 'Bélier';
     if (DB.agnelles.some(s => cleanEid(s.eid) === eid)) return 'Agnelle';
+    if (findLambByEid(eid)) return 'Agneau';
     return null;
   }
 
@@ -15099,7 +15252,7 @@ function renderListeSerie() {
         <div style="font-size:14px;font-weight:600;">${session.length} ${session.length > 1 ? 'animaux' : 'animal'} dans la liste</div>
         ${session.length > 0 ? '<button type="button" class="btn btn-secondary" id="btn-vider-liste-serie" style="width:auto;padding:6px 12px;font-size:13px;">Vider</button>' : ''}
       </div>
-      <button type="button" class="btn btn-secondary" id="btn-export-liste-serie" style="margin-bottom:14px;">Export Excel</button>
+      ${session.length ? '<button type="button" class="btn btn-primary" id="btn-verif-meres-agneaux" style="margin-bottom:10px;">Vérifier mères et agneaux</button>' : ''}<button type="button" class="btn btn-secondary" id="btn-export-liste-serie" style="margin-bottom:14px;">Export Excel</button>
       <div id="liste-serie-rows"></div>
       <div id="liste-serie-empty" class="empty${session.length ? ' hidden' : ''}">${isDesktopMode() ? 'Aucun animal saisi pour l\'instant.' : 'Aucun animal scanné pour l\'instant.'}</div>
     `;
@@ -15129,9 +15282,12 @@ function renderListeSerie() {
     if (btnVider) btnVider.onclick = () => {
       if (!confirm('Vider toute la liste (' + session.length + ' ' + (session.length > 1 ? 'animaux' : 'animal') + ') ?')) return;
       session.length = 0;
+      DB.listeSerieVerif = [];
       saveData(DB);
       draw();
     };
+    const btnVerif = document.getElementById('btn-verif-meres-agneaux');
+    if (btnVerif) btnVerif.onclick = () => { listeSerieVerif = true; listeSerieDernier = null; listeSerieRestants = false; renderListeSerieVerif(); };
     document.getElementById('btn-export-liste-serie').onclick = () => {
       if (session.length === 0) { alert('La liste est vide, rien à exporter.'); return; }
       exportListeSerieXlsx(session);
@@ -32849,7 +33005,7 @@ const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', '
   // les appareils n'ont pas mis à jour. À retirer d'ici dans un chantier
   // séparé, une fois la migration confirmée sans risque sur la durée.
   'registre', 'traitementsCollectifs', 'mouvementsCollectifs', 'penalitesBacterio',
-  'listeSerie', 'resumeControleLaitier', 'cahierControleLaitier', 'lactationModele',
+  'listeSerie', 'listeSerieVerif', 'resumeControleLaitier', 'cahierControleLaitier', 'lactationModele',
   'reproGestationMin', 'reproGestationMax', 'reproRetourMin', 'reproRetourMax',
   // Chantier de tri : seuil du filtre « Critères IA » + marqueur de version du format des lots (garde-fou « Mettre à jour l'application »)
   'reproSeuilMiseBasMois', 'schemaLots',
