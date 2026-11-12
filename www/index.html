@@ -2535,6 +2535,21 @@ function age(eid) {
   if (y === null) return null;
   return new Date().getFullYear() - y;
 }
+/* Âge affiché d'un agneau, d'après la date de sa mise bas : en jours avant 2 mois (« 12 j »), puis en mois (« 3 mois ») ; null sans date valable */
+function texteAgeAgneau(dateISO) {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(String(dateISO || ''))) return null;
+  const j = Math.floor((new Date(jourAujourdhuiISO() + 'T12:00:00') - new Date(String(dateISO).slice(0, 10) + 'T12:00:00')) / 86400000);
+  if (!Number.isFinite(j) || j < 0) return null;
+  if (j < 60) return j + ' j';
+  const [y1, m1, d1] = String(dateISO).slice(0, 10).split('-').map(Number), [y2, m2, d2] = jourAujourdhuiISO().split('-').map(Number);
+  return Math.max(2, (y2 - y1) * 12 + (m2 - m1) - (d2 < d1 ? 1 : 0)) + ' mois';   // mois du calendrier, jamais « 1 mois » après « 59 j »
+}
+/* Âge affiché d'un élément de liste : agneau = jours / mois depuis sa mise bas (naissance), sinon années d'après le n° ; null = inconnu */
+function texteAgeListe(it) {
+  const t = it && it.naissance ? texteAgeAgneau(it.naissance) : null;
+  if (t) return t;
+  return !it || it.age === null || it.age === undefined ? null : it.age + (it.age > 1 ? ' ans' : ' an');
+}
 /* Format d'affichage compact d'un EID, utilisé pour lister des candidats en
    cas de numéro d'ordre ambigu : n'affiche que les 11 derniers chiffres (6
    chiffres différenciateurs + les 5 du numéro d'ordre), en coupant le
@@ -9903,9 +9918,10 @@ function poolLectureMv(categorie) {
 // Animaux ACTIFS proposés pour une catégorie, déjà triés (âge décroissant, puis n° croissant)
 function animauxMouvementPc(categorie) {
   const cfg = CATEGORIE_ANIMAL_CONFIG[categorie];
+  const naissanceAgneau = categorie === 'agneaux' ? new Map(getAgneauxInventaire().map(it => [it.lamb, it.date || null])) : null;
   return poolLectureMv(categorie).filter(cfg.isActive).map(a => {
     const soins = (a.sanitaire || []).filter(x => x && x.date).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
-    return { id: categorie === 'agneaux' ? a.eid : a.id, eid: a.eid, obj: a, categorie, numero: numeroVisuel(a.eid || ''), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: a.eid ? age(a.eid) : null,
+    return { id: categorie === 'agneaux' ? a.eid : a.id, eid: a.eid, obj: a, categorie, numero: numeroVisuel(a.eid || ''), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: a.eid ? age(a.eid) : null, naissance: naissanceAgneau ? naissanceAgneau.get(a) || null : null,
       statutRepro: categorie === 'brebis' ? statutReproductionCampagne(a) : '—', dernierSoin: soins[0] || null, vente: venteEnCoursAnimal(a) };
   }).sort(comparerAnimauxAgeNumero);
 }
@@ -10019,7 +10035,7 @@ function renderMouvementsPc() {
     const filtres = filtrerAnimauxMv(tous, E.q);
     $('mv-compte').textContent = tous.length + ' ' + (E.categorie === 'brebis' ? 'brebis' : { beliers: tous.length > 1 ? 'béliers' : 'bélier', agnelles: tous.length > 1 ? 'agnelles' : 'agnelle', agneaux: tous.length > 1 ? 'agneaux' : 'agneau' }[E.categorie]) + ' · ' + sel.size + ' sélectionné' + (cfg.actives === 'actifs' ? '' : 'e') + (sel.size > 1 ? 's' : '');
     $('mv-table').innerHTML = `<tr><th class="cb"></th><th class="l">N°</th><th class="l">Âge</th><th class="l">Statut de reproduction</th><th class="l">Dernier soin</th><th class="l">Délai en cours</th></tr>` +
-      (filtres.map((a, i) => `<tr class="clic${sel.has(a.id) ? ' sel' : ''}" data-id="${a.id}"><td class="cb"><input type="checkbox" class="mv-chk" ${sel.has(a.id) ? 'checked' : ''} style="width:16px;height:16px;margin:0;"></td><td class="l"><b>${libelleNumeroMv(a)}</b></td><td class="l">${a.age === null ? '—' : a.age + (a.age > 1 ? ' ans' : ' an')}</td><td class="l">${a.statutRepro}</td><td class="l">${a.dernierSoin ? echapperHtml(a.dernierSoin.produit || a.dernierSoin.type) + ' · ' + jj(a.dernierSoin.date) : '—'}</td><td class="l">${a.vente ? pcPill('warn', 'viande dès le ' + jj(a.vente)) : '—'}</td></tr>`).join('') || '<tr><td colspan="6" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun animal ne correspond.</td></tr>');
+      (filtres.map((a, i) => `<tr class="clic${sel.has(a.id) ? ' sel' : ''}" data-id="${a.id}"><td class="cb"><input type="checkbox" class="mv-chk" ${sel.has(a.id) ? 'checked' : ''} style="width:16px;height:16px;margin:0;"></td><td class="l"><b>${libelleNumeroMv(a)}</b></td><td class="l">${texteAgeListe(a) || '—'}</td><td class="l">${a.statutRepro}</td><td class="l">${a.dernierSoin ? echapperHtml(a.dernierSoin.produit || a.dernierSoin.type) + ' · ' + jj(a.dernierSoin.date) : '—'}</td><td class="l">${a.vente ? pcPill('warn', 'viande dès le ' + jj(a.vente)) : '—'}</td></tr>`).join('') || '<tr><td colspan="6" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun animal ne correspond.</td></tr>');
     document.querySelectorAll('#mv-table tr.clic').forEach(tr => { tr.onclick = () => { const id = tr.dataset.id; if (sel.has(id)) sel.delete(id); else sel.add(id); dessiner(); }; });
     const n = sel.size;
     $('mv-resume').textContent = E.type ? recapMouvementPc(E, n) : 'Choisis un type de mouvement et les animaux concernés';
@@ -20637,7 +20653,7 @@ function renderNouveauMouvementMobile() {
     const filtres = filtrerAnimauxMv(tous, E.q);
     const n = sel.size;
     $('mn-compte').textContent = n + ' sélectionné' + (cfg.actives === 'actifs' ? '' : 'e') + (n > 1 ? 's' : '');
-    $('mn-liste').innerHTML = filtres.map(a => `<label class="mn-it${sel.has(a.id) ? ' on' : ''}" data-id="${a.id}"><input type="checkbox" class="mn-cb"${sel.has(a.id) ? ' checked' : ''}><span class="mn-num">n°${libelleNumeroMv(a)}</span><span class="mn-age">${a.age === null ? '—' : a.age + (a.age > 1 ? ' ans' : ' an')}</span></label>`).join('')
+    $('mn-liste').innerHTML = filtres.map(a => `<label class="mn-it${sel.has(a.id) ? ' on' : ''}" data-id="${a.id}"><input type="checkbox" class="mn-cb"${sel.has(a.id) ? ' checked' : ''}><span class="mn-num">n°${libelleNumeroMv(a)}</span><span class="mn-age">${texteAgeListe(a) || '—'}</span></label>`).join('')
       || '<div class="reg-info" style="padding:8px 0 10px;">Aucun animal ne correspond.</div>';
     document.querySelectorAll('#mn-liste .mn-it').forEach(l => { l.querySelector('input').onchange = ev => { if (ev.target.checked) sel.add(l.dataset.id); else sel.delete(l.dataset.id); dessiner(); }; });
     $('mn-tout').textContent = filtres.length && filtres.every(a => sel.has(a.id)) ? 'Tout décocher' : 'Tout cocher';
@@ -21020,13 +21036,13 @@ function animauxEligiblesCarnet() {
   getAgneauxInventaire().forEach(it => {
     const l = it.lamb;
     if (agneauSorti(l)) return;
-    out.push(item(l, 'agneaux', 'Agneau', '—'));
+    out.push(Object.assign(item(l, 'agneaux', 'Agneau', '—'), { naissance: it.date || null }));
   });
   // agneaux pas encore bouclés : présentés par leur mère (court = libellé affiché partout où le carnet montre « court || n° ») ; rien n'est écrit à l'affichage
   agneauxSansNumero().forEach(it => {
     const l = it.lamb, cle = cleAgneauSansNumero(it);
     const soins = (l.sanitaire || []).filter(x => x && x.date).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
-    out.push({ id: cle, eid: cle, cle: 'agneaux', categorie: 'Agneau', obj: l, numero: numeroVisuel(it.sheep.eid), court: libelleAgneauSansNumero(l, it.sheep.eid), age: null,
+    out.push({ id: cle, eid: cle, cle: 'agneaux', categorie: 'Agneau', obj: l, numero: numeroVisuel(it.sheep.eid), court: libelleAgneauSansNumero(l, it.sheep.eid), age: null, naissance: it.date || null,
       annee: /^\d{4}/.test(it.date) ? parseInt(it.date.slice(0, 4), 10) : null, statutRepro: '—', dernierSoin: soins[0] || null, lots: [], lotsReels: [], delai: delaiEnCoursAnimal(l), sansNumero: true,
       nums: numerosRechercheAnimal(it.sheep), numsExacts: numerosExactsAnimal(it.sheep), mereEid: it.sheep.eid });   // retrouvé par TOUS les n° de sa mère (5 chiffres, n° de travail SIEOL, EID)
   });
@@ -21652,7 +21668,7 @@ function ecranCarnetAnimaux() {
         return `<div class="sheep-item${E.selection.has(a.eid) ? ' selected' : ''}" data-eid="${a.eid}">
           <input type="checkbox" class="cs-chk" ${E.selection.has(a.eid) ? 'checked' : ''} style="width:20px;height:20px;margin-right:12px;flex-shrink:0;">
           <div style="flex:1;min-width:0;">
-            <div class="num">${a.court || 'n°' + a.numero} <span class="sub">${a.categorie}${a.age !== null ? ' · ' + a.age + (a.age > 1 ? ' ans' : ' an') : ''}</span></div>
+            <div class="num">${a.court || 'n°' + a.numero} <span class="sub">${a.categorie}${texteAgeListe(a) ? ' · ' + texteAgeListe(a) : ''}</span></div>
             <div class="sub">${a.statutRepro !== '—' ? a.statutRepro + ' · ' : ''}${a.dernierSoin ? 'dernier soin : ' + echapperHtml(a.dernierSoin.produit || a.dernierSoin.type) + ' le ' + jj(a.dernierSoin.date) : 'aucun soin enregistré'}</div>
           </div>
           ${pil.length ? pcPill('warn', pil.join(' · ')) : ''}
@@ -21667,7 +21683,7 @@ function ecranCarnetAnimaux() {
           const pil = [];
           if (a.delai.lait) pil.push('lait dès le ' + jj(a.delai.lait));
           if (a.delai.viande) pil.push('viande dès le ' + jj(a.delai.viande));
-          return `<tr class="clic${E.selection.has(a.eid) ? ' sel' : ''}${i % 2 && !E.selection.has(a.eid) ? ' alt' : ''}" data-eid="${a.eid}"><td class="cb"><input type="checkbox" class="cs-chk" ${E.selection.has(a.eid) ? 'checked' : ''} style="width:16px;height:16px;margin:0;"></td><td class="l">${a.court || 'n°' + a.numero}</td><td class="l">${a.categorie}</td><td class="l">${a.age === null ? '—' : a.age + (a.age > 1 ? ' ans' : ' an')}</td><td class="l">${a.statutRepro}</td><td class="l">${a.dernierSoin ? echapperHtml(a.dernierSoin.produit || a.dernierSoin.type) + ' · ' + jj(a.dernierSoin.date) : '—'}</td><td class="l">${pil.length ? pcPill('warn', pil.join(' · ')) : '—'}</td></tr>`;
+          return `<tr class="clic${E.selection.has(a.eid) ? ' sel' : ''}${i % 2 && !E.selection.has(a.eid) ? ' alt' : ''}" data-eid="${a.eid}"><td class="cb"><input type="checkbox" class="cs-chk" ${E.selection.has(a.eid) ? 'checked' : ''} style="width:16px;height:16px;margin:0;"></td><td class="l">${a.court || 'n°' + a.numero}</td><td class="l">${a.categorie}</td><td class="l">${texteAgeListe(a) || '—'}</td><td class="l">${a.statutRepro}</td><td class="l">${a.dernierSoin ? echapperHtml(a.dernierSoin.produit || a.dernierSoin.type) + ' · ' + jj(a.dernierSoin.date) : '—'}</td><td class="l">${pil.length ? pcPill('warn', pil.join(' · ')) : '—'}</td></tr>`;
         }).join('') || '<tr><td colspan="7" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun animal ne correspond aux filtres.</td></tr>');
       document.querySelectorAll('#cs-table tr.clic').forEach(tr => {
         tr.onclick = ev => { const eid = tr.dataset.eid; if (E.selection.has(eid)) E.selection.delete(eid); else E.selection.add(eid); finChoixCandidat(); dessiner(); };
@@ -21959,7 +21975,7 @@ function pillNiveau12(a) {
   return pcPill({ aucun: 'neutral', normal: 'neutral', surveiller: 'info', limite: 'warn', depasse: 'danger' }[a.niveau.cle], lib);
 }
 const libAnimal12 = a => (a.item.court || 'n°' + a.item.numero);
-const detailAnimal12 = a => a.categorie + ' · ' + (a.item.age === null ? '—' : a.item.age + (a.item.age > 1 ? ' ans' : ' an'));
+const detailAnimal12 = a => a.categorie + ' · ' + (texteAgeListe(a.item) || '—');
 const ligneTraitement12 = t => {
   const lib = t.produit + (t.sousType ? ' · ' + t.sousType : (t.type && t.type !== t.produit ? ' · ' + t.type : ''));
   const pill = t.etat === 'oui' ? pcPill('ok', 'compte') : t.etat === 'non' ? pcPill('neutral', 'ne compte pas') : pcPill('warn', 'à confirmer · ne compte pas');
@@ -22098,7 +22114,7 @@ function lignesExport12() {
   const liste = filtrer12(D, E);
   const rows = [];
   liste.forEach(a => a.traitements.forEach(t => rows.push({
-    numero: libAnimal12(a), categorie: a.categorie, age: a.item.age, nCompte: a.nCompte, statut: a.niveau.libelle, date: t.date, produit: t.produit, type: t.sousType || t.type || '',
+    numero: libAnimal12(a), categorie: a.categorie, age: a.item.age, ageTexte: texteAgeListe(a.item) || '', nCompte: a.nCompte, statut: a.niveau.libelle, date: t.date, produit: t.produit, type: t.sousType || t.type || '',
     compte: t.etat === 'oui' ? 'compte' : t.etat === 'non' ? 'ne compte pas' : 'à confirmer (ne compte pas)', ordre: t.ordre, faitPar: t.soin.intervenant || ''
   })));
   return { D, rows };
@@ -22107,7 +22123,7 @@ async function exportTraitements12Xlsx() {
   const { D, rows } = lignesExport12();
   const bytes = await buildXlsxWorkbook([{ name: 'Traitements 12 mois', colWidths: [14, 12, 8, 14, 20, 12, 22, 20, 24, 10, 16], rows: [
     ['N°', 'Catégorie', 'Âge', 'Traitements comptés', 'Statut', 'Date', 'Produit', 'Type', 'Compte', 'N° d\'ordre', 'Fait par'],
-    ...rows.map(r => [r.numero, r.categorie, r.age === null ? '' : r.age, r.nCompte, r.statut, formatDateFr(r.date), r.produit, r.type, r.compte, r.ordre === null ? '' : r.ordre, r.faitPar])
+    ...rows.map(r => [r.numero, r.categorie, r.ageTexte, r.nCompte, r.statut, formatDateFr(r.date), r.produit, r.type, r.compte, r.ordre === null ? '' : r.ordre, r.faitPar])
   ] }]);
   await saveOrShareBinaryFile('traitements-12-mois_' + D.au + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
@@ -22125,7 +22141,7 @@ function miseEnPagePdfGenerique(specs, lignes) {
 async function exportTraitements12Pdf() {
   const { D, rows } = lignesExport12();
   const mise = miseEnPagePdfGenerique([
-    { label: 'N°', val: r => r.numero }, { label: 'Catégorie', val: r => r.categorie }, { label: 'Âge', val: r => r.age === null ? '' : r.age + ' ans' },
+    { label: 'N°', val: r => r.numero }, { label: 'Catégorie', val: r => r.categorie }, { label: 'Âge', val: r => r.ageTexte },
     { label: 'Compté', val: r => r.nCompte + (r.statut ? ' · ' + r.statut : '') }, { label: 'Date', val: r => formatDateFr(r.date) }, { label: 'Produit', val: r => r.produit },
     { label: 'Type', val: r => r.type }, { label: 'Compte', val: r => r.compte }, { label: 'N° d\'ordre', val: r => r.ordre === null ? '–' : r.ordre }, { label: 'Fait par', val: r => r.faitPar }
   ], rows);
