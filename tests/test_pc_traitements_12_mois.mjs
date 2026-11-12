@@ -102,7 +102,7 @@ console.log('OK 4 soin collectif : 1 traitement par animal, 1 ligne en vue par i
 
 // ================================================================ 5. page PC
 await jeu(true, 35);
-await page.evaluate(() => { carnetSanitairePcEtat = null; render('sanitaire'); });
+await page.evaluate(() => { carnetSanitairePcEtat = null; carnetOnglet = 'soins'; render('sanitaire'); });
 check(await page.evaluate(() => !!document.getElementById('cs-12-mois')), 'bouton « Traitements sur 12 mois » sur le carnet quand le bio est activé');
 await page.click('#cs-12-mois'); await page.waitForSelector('#pc-s12');
 const kp = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#s12-kpis .brd-kpi')].map(x => [x.querySelector('.brd-kpi-l').textContent, [x.querySelector('.brd-kpi-v').textContent.trim(), (x.querySelector('.brd-kpi-s') || { textContent: '' }).textContent.trim()]])));
@@ -174,13 +174,13 @@ const kp2 = await page.evaluate(() => [...document.querySelectorAll('#s12-kpis .
 check(kp2.join('|') === 'Animaux actifs|Aucun traitement compté|1 traitement|2 traitements|3 et plus', 'seuil 2 : cartes 1 / 2 (limite) / 3 et plus : ' + kp2.join('|'));
 await page.evaluate(() => { DB.exploitation.elevageBio = false; render('traitements-12-mois'); });
 check(await page.evaluate(() => !!document.getElementById('s12-pas-bio') && !document.getElementById('pc-s12')), 'bio non activé : message, pas de suivi');
-await page.evaluate(() => { carnetSanitairePcEtat = null; render('sanitaire'); });
+await page.evaluate(() => { carnetSanitairePcEtat = null; carnetOnglet = 'soins'; render('sanitaire'); });
 check(await page.evaluate(() => !document.getElementById('cs-12-mois')), 'bio non activé : pas de bouton sur le carnet');
 console.log('OK 8 seuil réglable (entier ≥ 1) ; bio non activé : suivi inactif.');
 
 // ================================================================ 9. mobile : même fonction, liste compacte
 await jeu(true, 35);
-await page.evaluate(() => { window.electronAPI.isDesktop = false; render('sanitaire'); });
+await page.evaluate(() => { window.electronAPI.isDesktop = false; carnetOnglet = 'soins'; render('sanitaire'); });
 check(await page.evaluate(() => !!document.getElementById('cs-12-mois')), 'mobile : bouton « Traitements sur 12 mois » sur le carnet (bio activé)');
 await page.click('#cs-12-mois'); await page.waitForSelector('#m12');
 const mk = await page.evaluate(() => [...document.querySelectorAll('#m12 .tuile-charte')].slice(0, 3).map(c => c.textContent.replace(/\s+/g, ' ').trim()));
@@ -195,7 +195,7 @@ check(await page.evaluate(() => document.querySelectorAll('.m12-an .s12-ln').len
 await page.click('#m12-vue-interv');
 check(/35 animaux/.test(await $t('#m12-interventions')), 'mobile : vue par intervention');
 check(await page.evaluate(() => window.__saves === 0 && JSON.stringify(DB) === window.__avant), 'mobile : lecture seule');
-await page.evaluate(() => { DB.exploitation.elevageBio = false; render('sanitaire'); });
+await page.evaluate(() => { DB.exploitation.elevageBio = false; carnetOnglet = 'soins'; render('sanitaire'); });
 check(await page.evaluate(() => !document.getElementById('cs-12-mois')), 'mobile, bio non activé : pas de bouton');
 await page.evaluate(() => { window.electronAPI.isDesktop = true; });
 console.log('OK 9 mobile : cartes, filtres rapides, ligne dépliable, vue par intervention, lecture seule ; bouton seulement si bio.');

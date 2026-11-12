@@ -29,7 +29,7 @@ const jeu = (bio) => page.evaluate((bio) => {
 }, bio);
 const $t = sel => page.evaluate(s => document.querySelector(s) ? document.querySelector(s).textContent.replace(/\s+/g, ' ').trim() : null, sel);
 const dates = async () => ((await $t('#cs-dates')).match(/\d{2}-\d{2}-\d{4}/g) || []);
-const ouvrir = async () => { await page.evaluate(() => { carnetSanitairePcEtat = null; carnetDernierLot = null; render('sanitaire'); }); await page.waitForSelector('#cs-produit'); };
+const ouvrir = async () => { await page.evaluate(() => { carnetSanitairePcEtat = null; carnetDernierLot = null; carnetOnglet = 'nouveau'; render('sanitaire'); }); await page.waitForSelector('#cs-produit'); };
 const preparer = async (type, categorie, produit) => {
   await page.click(`.cs-type[data-val="${type}"]`);
   if (categorie) await page.selectOption('#cs-categorie', categorie);
@@ -116,9 +116,11 @@ const sA = soins.find(s => s.produit === 'Intramicine'), sV = soins.find(s => s.
 check(sA.bio === true && sA.delaiLaitLegalJours === 7 && sA.delaiViandeLegalJours === 28 && sA.delaiLaitJours === 14 && sA.delaiViandeJours === 56 && sA.min48h === 'oui' && !sA.min48hAConfirmer, 'soin Intramicine : bio, légal 7/28, appliqué 14/56 : ' + JSON.stringify(sA));
 check(sV.bio === true && sV.delaiLaitJours === 0 && sV.delaiViandeJours === 0 && sV.min48h === 'a_confirmer' && sV.min48hAConfirmer === true, 'soin vaccin (option réglée « à confirmer ») : 0/0 appliqués, minimum 48 h à confirmer figé dans le soin : ' + JSON.stringify(sV));
 // tableaux : délais appliqués, mentions
-await page.waitForSelector('#cs-en-delai');
-const enDelai = await $t('#cs-en-delai'), derniers = await $t('#cs-derniers');
-check(/05-10-2026/.test(enDelai) && /16-11-2026/.test(enDelai) && /bio/.test(enDelai), 'tableau « En délai » : reprise 05/10, vente 16/11 (délais appliqués) : ' + enDelai.slice(0, 260));
+const enDelai = await page.evaluate(() => JSON.stringify(soinsEnDelaiCarnet().map(r => [r.dates.repriseLait, r.dates.venteDes, r.soin.bio])));
+check(/2026-10-05/.test(enDelai) && /2026-11-16/.test(enDelai) && /true/.test(enDelai), 'en délai : reprise 05/10, vente 16/11 (délais appliqués) : ' + enDelai.slice(0, 260));
+await page.evaluate(() => { carnetOnglet = 'soins'; render('sanitaire'); });
+await page.waitForSelector('#cs-derniers');
+const derniers = await $t('#cs-derniers');
 check(/minimum 48 h bio à confirmer/.test(derniers) && /bio/.test(derniers), 'tableau « Derniers soins » : mention « minimum 48 h bio à confirmer » sur le vaccin');
 console.log('OK 5 enregistrement : délais appliqués (14 / 56), légaux (7 / 28), indicateur bio et mention 48 h figés dans le soin ; tableaux cohérents.');
 

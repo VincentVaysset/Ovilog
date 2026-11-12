@@ -137,9 +137,12 @@ check((await lignes()).length === 5, 'Brebis + Antenaises (multi-choix) : 5 lign
 await page.fill('#cs-q', '00004');
 check((await lignes()).length === 1 && (await lignes())[0] === await page.evaluate(() => E(5, 4)), 'recherche d\'un n° : 1 ligne');
 await page.fill('#cs-q', '');
-await page.selectOption('#cs-millesime', '2023');
-check((await lignes()).length === 3, 'millésime 2023 : 3 lignes');
-await page.selectOption('#cs-millesime', '');
+// millésimes : plusieurs possibles (on décoche ceux qu'on ne veut pas)
+const autresMill = await page.evaluate(() => [...document.querySelectorAll('#cs-millesimes .cs-mill')].map(b => b.dataset.m).filter(m => m !== '2023'));
+for (const m of autresMill) await page.click(`#cs-millesimes .cs-mill[data-m="${m}"]`);
+check((await lignes()).length === 3, 'millésime 2023 seul coché : 3 lignes');
+for (const m of autresMill) await page.click(`#cs-millesimes .cs-mill[data-m="${m}"]`);
+await page.click('#cs-lot-mode .tab-btn[data-mode="dans"]');
 await page.selectOption('#cs-flot', 'L1');
 check((await lignes()).length === 2, 'lot A : 2 lignes');
 await page.click('#cs-reset');

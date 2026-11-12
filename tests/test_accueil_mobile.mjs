@@ -87,8 +87,10 @@ console.log('OK 3 À surveiller : lignes, pastilles bleue / rouge au-dessus de 0
 check(await m.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'l\'affichage de l\'accueil n\'écrit rien');
 await m.click('#kpi-sous-delai'); eq(await m.evaluate(() => currentView), 'sous-delai', 'lien Sous délai d\'attente');
 await m.click('#btn-back'); eq(await m.evaluate(() => currentView), 'home', 'Sous délai ouvert depuis l\'Accueil : retour à l\'Accueil');
-await m.evaluate(() => { carnetSanitaireEtat = null; render('sanitaire'); }); await m.click('#cs-sous-delai'); await m.click('#btn-back');
-eq(await m.evaluate(() => currentView), 'sanitaire', 'Sous délai ouvert depuis le Carnet : retour au Carnet');
+await m.evaluate(() => { carnetSanitaireEtat = null; carnetOnglet = 'nouveau'; render('sanitaire'); }); await m.click('#cs-sous-delai');
+check(await m.evaluate(() => currentView === 'sous-delai' && document.getElementById('btn-back').classList.contains('hidden') && !!document.querySelector('.cs-onglets #cs-sous-delai.active')), 'Sous délai ouvert depuis le Carnet : onglet du Carnet (pas de retour)');
+await m.click('#cs-onglet-nouveau');
+eq(await m.evaluate(() => currentView), 'sanitaire', 'onglet Nouveau soin : retour au Carnet');
 await m.evaluate(() => { carnetSanitaireEtat = null; render('home'); });
 await m.evaluate(() => render('home')); await m.click('#kpi-bilan-campagne'); eq(await m.evaluate(() => currentView), 'bilan-campagne', 'lien Bilan de campagne');
 await m.evaluate(() => render('home')); await m.click('#kpi-attendues-traite');

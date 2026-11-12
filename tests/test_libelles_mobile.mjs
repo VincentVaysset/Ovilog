@@ -63,7 +63,7 @@ console.log('OK 2 « Nombre (1, 2, 3 et +) », valeurs stockées inchangées.');
 // ---- 3. titres répétés : supprimés sur mobile, gardés sur PC, phrase d'info conservée
 const ecrans = [['sanitaire', 'Carnet sanitaire', /Le soin, puis les animaux/], ['produits-delais', 'Produits et délais', /Fiches produit/], ['soins-sans-bio', 'Soins sans indicateur bio', /Soins enregistrés avec la version 1\.0\.198/]];
 for (const [vue, titre, info] of ecrans) {
-  const lire = (page) => page.evaluate(([v, t]) => { render(v); return { bandeau: pageTitle.textContent, titres: [...document.querySelectorAll('#app .brd-title')].map(e => e.textContent), sub: (document.querySelector('#app .brd-sub') || {}).textContent || '' }; }, [vue, titre]);
+  const lire = (page) => page.evaluate(([v, t]) => { produitsDelaisOrigine = v === 'produits-delais' ? 'parametres' : null; carnetOnglet = 'nouveau'; render(v);   /* Produits ouvert depuis Paramètres : écran à part (ouvert du Carnet, c'est un onglet titré « Carnet sanitaire ») */ return { bandeau: pageTitle.textContent, titres: [...document.querySelectorAll('#app .brd-title')].map(e => e.textContent), sub: (document.querySelector('#app .brd-sub') || {}).textContent || '' }; }, [vue, titre]);
   const m = await lire(mob), p = await lire(pc);
   eq([m.bandeau, m.titres], [titre, []], 'mobile « ' + titre + ' » : bandeau seul, plus de grand titre répété');
   check(info.test(m.sub), 'mobile « ' + titre + ' » : la phrase d\'info reste : ' + m.sub);

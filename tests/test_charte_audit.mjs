@@ -26,9 +26,11 @@ const ecran = async (page, code) => { await page.evaluate(jeuPcEcrans); await pa
 const texteApp = (page) => page.evaluate(() => document.getElementById('app').innerText);
 
 // ---------------------------------------------------------------- A. Carnet sanitaire PC : aucun texte de balise affiché
-await ecran(pc, "render('sanitaire')");
+await ecran(pc, "carnetOnglet = 'nouveau'; render('sanitaire')");
 check(!/div style=|<\/?(div|table)/.test(await texteApp(pc)), 'A. Carnet sanitaire (PC) : aucun morceau de balise affiché');
-check(await pc.evaluate(() => !!document.querySelector('#cs-derniers > div > table#cs-table-derniers')), 'A. tableau « Derniers soins » dans son conteneur à défilement');
+await pc.evaluate(() => { carnetOnglet = 'soins'; render('sanitaire'); });
+check(await pc.evaluate(() => !!document.querySelector('#cs-derniers #cs-sr-liste > div > table#cs-table-derniers')), 'A. tableau des soins réalisés dans son conteneur à défilement');
+await pc.evaluate(() => { carnetOnglet = 'nouveau'; render('sanitaire'); });
 console.log('A OK');
 
 // ---------------------------------------------------------------- B. Tons des tuiles : jamais de rouge pour un zéro ou un « — » (écran mobile, PC et PDF)
@@ -131,7 +133,7 @@ console.log('E OK');
 
 // ---------------------------------------------------------------- F. Puces PC (.pc-seg2) : sélection en vert pastel quelle que soit la variante, libellé jamais coupé
 {
-  await ecran(pc, "render('sanitaire')");
+  await ecran(pc, "carnetOnglet = 'nouveau'; render('sanitaire')");
   await pc.click('.cs-type[data-val="Traitement"]'); await pc.waitForTimeout(100);
   const t = await pc.evaluate(() => [...document.querySelectorAll('.cs-type')].map(b => { const c = getComputedStyle(b); return b.textContent.trim() + '|' + (b.scrollWidth > b.clientWidth + 1 ? 'COUPE' : 'entier') + '|' + (b.classList.contains('selected') ? c.backgroundColor + '|' + c.color : ''); }));
   check(t.every(x => x.includes('|entier|')), 'F. Carnet sanitaire (PC) : « Vaccin », « Traitement », « Autre » entiers : ' + JSON.stringify(t));
@@ -146,7 +148,7 @@ console.log('F OK');
 {
   const VERT = 'rgb(53, 127, 75)', BLANC = 'rgb(255, 255, 255)';
   const exportsDe = (page) => page.evaluate(() => [...document.querySelectorAll('#app button')].filter(b => b.offsetParent && /excel|pdf|xlsx|export/i.test(b.textContent) && !/de ce lot|par âge|complet|mes données/i.test(b.textContent)).map(b => [b.textContent.trim(), getComputedStyle(b).backgroundColor]));
-  const ECR = [['Mouvements', "render('inventaire')", 'm'], ['Carnet sanitaire', "render('sanitaire')", 'm'], ['Brebis à régulariser', "bilanCampagneTab = 'incoherences'; render('bilan-campagne')", 'mp'], ['Registre', "registreView = 'agnelage'; render('registre')", 'mp'],
+  const ECR = [['Mouvements', "render('inventaire')", 'm'], ['Carnet sanitaire', "carnetOnglet = 'soins'; render('sanitaire')", 'mp'], ['Brebis à régulariser', "bilanCampagneTab = 'incoherences'; render('bilan-campagne')", 'mp'], ['Registre', "registreView = 'agnelage'; render('registre')", 'mp'],
     ['Contrôle laitier', "render('controle-laitier')", 'mp'], ['Inventaire', "render('inventaire-actifs')", 'mp'], ['Créer une liste', "render('liste-serie')", 'm'], ['Déclaration', "render('declaration-annuelle')", 'mp'],
     ['Sous délai', "render('sous-delai')", 'mp'], ['Bilan économique', "bilanCampagneTab = 'economique'; render('bilan-campagne')", 'mp'], ['Bilan de lactation', "bilanCampagneTab = 'lactation'; render('bilan-campagne')", 'mp'],
     ['Traitements 12 mois', "DB.exploitation = Object.assign({}, DB.exploitation, { elevageBio: true }); render('traitements-12-mois')", 'p']];
@@ -219,7 +221,7 @@ for (const page of [mob, pc]) {
 console.log('M OK');
 
 // ---------------------------------------------------------------- N. Texte des champs en #2b261c (charte), jamais en noir pur
-for (const [page, code] of [[mob, "render('list')"], [mob, "render('sanitaire')"], [pc, "mvPcEtat = null; render('inventaire')"]]) {
+for (const [page, code] of [[mob, "render('list')"], [mob, "carnetOnglet = 'nouveau'; render('sanitaire')"], [pc, "mvPcEtat = null; render('inventaire')"]]) {
   await ecran(page, code);
   const noirs = await page.evaluate(() => [...document.querySelectorAll('#app input:not([type=checkbox]):not([type=radio]):not([type=file]), #app select, #app textarea')].filter(e => e.offsetParent && !e.disabled && getComputedStyle(e).color === 'rgb(0, 0, 0)').map(e => e.id || e.className));
   check(noirs.length === 0, 'N. ' + code + ' : champs en noir pur : ' + JSON.stringify(noirs));
@@ -278,7 +280,7 @@ console.log('Q OK');
 console.log('S OK');
 
 // ---------------------------------------------------------------- T. Astérisque « obligatoire » en vert foncé, jamais en rouge
-for (const [page, code] of [[pc, "render('sanitaire')"], [mob, "render('sanitaire')"], [mob, "render('mouvement-groupe')"]]) {
+for (const [page, code] of [[pc, "carnetOnglet = 'nouveau'; render('sanitaire')"], [mob, "carnetOnglet = 'nouveau'; render('sanitaire')"], [mob, "render('mouvement-groupe')"]]) {
   await ecran(page, code);
   const c = await page.evaluate(() => [...document.querySelectorAll('.pc-req, .mn-req')].filter(e => e.offsetParent).map(e => getComputedStyle(e).color));
   check(c.length > 0 && c.every(x => x === 'rgb(47, 110, 68)'), 'T. ' + code + ' : astérisques en vert foncé : ' + JSON.stringify([...new Set(c)]));
@@ -304,7 +306,7 @@ console.log('J OK');
 
 // ---------------------------------------------------------------- H. Mobile : tout bouton .btn fait au moins 44 px ; « + » / « Ajouter » à la hauteur de son champ (44-48 px), plus étiré à 57 px ; PC inchangé
 {
-  const ECRANS_H = [["currentSheepId = 'B1'; render('detail')"], ["render('sanitaire')"], ["render('produits-delais')"], ["editContext = null; render('add-ordonnance')"], ["currentLotId = 'L1'; render('lot-repro-detail')"], ["render('controle-laitier')"], ["render('journal')"],
+  const ECRANS_H = [["currentSheepId = 'B1'; render('detail')"], ["carnetOnglet = 'nouveau'; render('sanitaire')"], ["render('produits-delais')"], ["editContext = null; render('add-ordonnance')"], ["currentLotId = 'L1'; render('lot-repro-detail')"], ["render('controle-laitier')"], ["render('journal')"],
     ["parametresTab = 'exploitation'; parametresRubrique = 'exploitation'; render('parametres')"], ["parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres')"], ["parametresTab = 'listes'; parametresRubrique = 'listes'; render('parametres')"], ["parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde'; render('parametres')"], ["render('gerer-produits')"],
     ["currentSheepId = 'B1'; render('add-echo')"], ["currentSheepId = 'B1'; render('add-note')"]];
   let n = 0;

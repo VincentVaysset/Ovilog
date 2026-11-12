@@ -6878,7 +6878,7 @@ function render(view, sheepId) {
   // (voir onEidScanned plus bas). Évite qu'un scan Bluetooth reçu sur un
   // écran sans champ de scan n'aille remplir un champ resté d'un écran quitté.
   activeScanTarget = null;
-  const isRoot = ROOT_VIEWS.has(view);
+  const isRoot = ROOT_VIEWS.has(view) || !!ongletCarnetDeVue(view);   // onglets du Carnet sanitaire (Sous délai, Produits, Ordonnances ouverts depuis le Carnet) : menu, pas de retour
   btnBack.classList.toggle('hidden', isRoot);
   btnMenu.classList.toggle('hidden', !isRoot);
   fabAdd.classList.toggle('hidden', view !== 'list');
@@ -6946,12 +6946,12 @@ function render(view, sheepId) {
     else if (view === 'lot-search') renderLotSearch(currentLotId);
     else if (view === 'mouvement-groupe') renderMouvementGroupe();
     else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
-    else if (view === 'sous-delai') renderSousDelai();
+    else if (view === 'sous-delai') { renderSousDelai(); poserOngletsCarnet(view); }
     else if (view === 'controle-lot-delai') renderControleLotDelai();
-    else if (view === 'ordonnances') renderOrdonnances();
+    else if (view === 'ordonnances') { renderOrdonnances(); poserOngletsCarnet(view); }
     else if (view === 'add-ordonnance') renderAddOrdonnance();
     else if (view === 'sanitaire') renderSanitaire();
-    else if (view === 'produits-delais') renderProduitsDelais();
+    else if (view === 'produits-delais') { renderProduitsDelais(); poserOngletsCarnet(view); }
     else if (view === 'soins-sans-bio') renderSoinsSansBio();
     else if (view === 'traitements-12-mois') renderTraitements12();
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
@@ -20687,7 +20687,7 @@ function carnetEtatInitial(opts) {
     ecran: 1, editing: null, type: 'Traitement', categorie: 'Antibiotique', produit: '', dateDebut: jourAujourdhuiISO(), dureeJours: '1',
     dose: '', voie: '', motif: '', lot: '', peremption: '', ordonnance: '', prescripteur: '', faitPar: 'Éleveur', veterinaireResponsable: '',
     delaiViande: '', delaiLait: '', commentaire: '', selection: new Set(opts.preselectEid ? [opts.preselectEid] : []), erreurs: [],
-    filtres: { cats: { brebis: true, antenaises: true, agnelles: true, beliers: true, agneaux: true }, q: '', millesime: '', statut: '', lot: '' }
+    filtres: filtresCarnetVides()
   };
 }
 // État de l'écran 1 pour MODIFIER un soin déjà enregistré (jamais pour en créer un nouveau) : préremplit tous les
@@ -20708,7 +20708,7 @@ function carnetEtatPourEdition(eid, idx, retour, collectif) {
     prescripteur: s.veterinairePrescripteur || '', faitPar: s.intervenant || 'Éleveur', veterinaireResponsable: s.veterinaireResponsable || '',
     delaiViande: jours(s.delaiViandeLegalJours), delaiLait: jours(s.delaiLaitLegalJours), commentaire: s.commentaire || '',
     selection: new Set([eid]), erreurs: [],
-    filtres: { cats: { brebis: true, antenaises: true, agnelles: true, beliers: true, agneaux: true }, q: '', millesime: '', statut: '', lot: '' }
+    filtres: filtresCarnetVides()
   };
 }
 const entierTexteOuNull = t => /^\d+$/.test(String(t).trim()) ? parseInt(t, 10) : null;
@@ -20828,9 +20828,10 @@ function ligneSoinsBouclageHtml() {
 function animauxEligiblesCarnet() {
   const classement = classementAntenaisesCampagne(campagneCohortPresente());
   const lotsDe = eid => (DB.lots || []).filter(l => (l.membres || []).includes(eid)).map(l => l.id);
+  const lotsReelsDe = eid => (DB.lots || []).filter(l => !l.auto && !/^auto-/.test(String(l.id || '')) && (l.membres || []).includes(eid)).map(l => l.id);
   const item = (a, cle, categorie, statutRepro) => {
     const soins = (a.sanitaire || []).filter(x => x && x.date).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
-    return { id: a.id || a.eid, eid: a.eid, cle, categorie, obj: a, numero: numeroVisuel(a.eid), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: age(a.eid), annee: anneeNaissance(a.eid), statutRepro, dernierSoin: soins[0] || null, lots: lotsDe(a.eid), delai: delaiEnCoursAnimal(a),
+    return { id: a.id || a.eid, eid: a.eid, cle, categorie, obj: a, numero: numeroVisuel(a.eid), court: a.numeroCourtTravailSieol || a.numeroTravailSieol || '', age: age(a.eid), annee: anneeNaissance(a.eid), statutRepro, dernierSoin: soins[0] || null, lots: lotsDe(a.eid), lotsReels: lotsReelsDe(a.eid), delai: delaiEnCoursAnimal(a),
       nums: numerosRechercheAnimal(a), numsExacts: numerosExactsAnimal(a) };
   };
   const out = [];
@@ -20850,7 +20851,7 @@ function animauxEligiblesCarnet() {
     const l = it.lamb, cle = cleAgneauSansNumero(it);
     const soins = (l.sanitaire || []).filter(x => x && x.date).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
     out.push({ id: cle, eid: cle, cle: 'agneaux', categorie: 'Agneau', obj: l, numero: numeroVisuel(it.sheep.eid), court: libelleAgneauSansNumero(l, it.sheep.eid), age: null,
-      annee: /^\d{4}/.test(it.date) ? parseInt(it.date.slice(0, 4), 10) : null, statutRepro: '—', dernierSoin: soins[0] || null, lots: [], delai: delaiEnCoursAnimal(l), sansNumero: true,
+      annee: /^\d{4}/.test(it.date) ? parseInt(it.date.slice(0, 4), 10) : null, statutRepro: '—', dernierSoin: soins[0] || null, lots: [], lotsReels: [], delai: delaiEnCoursAnimal(l), sansNumero: true,
       nums: numerosRechercheAnimal(it.sheep), numsExacts: numerosExactsAnimal(it.sheep), mereEid: it.sheep.eid });   // retrouvé par TOUS les n° de sa mère (5 chiffres, n° de travail SIEOL, EID)
   });
   return out.sort(comparerAnimauxAgeNumero);   // règle habituelle des tableaux d'animaux : âge décroissant, puis n° croissant à âge égal
@@ -20858,15 +20859,18 @@ function animauxEligiblesCarnet() {
 /* Recherche par n° du Carnet sanitaire (PC et mobile) : MÊME règle que l'Accueil et la liste des brebis (numerosRechercheAnimal : EID, 5 derniers
    chiffres, n° de travail SIEOL court / long, n° de travail du bélier ; par morceau, sans espaces ni casse) ; un agneau sans n° est retrouvé par
    tous les n° de sa MÈRE. f.candidats (facultatif) : liste réduite aux animaux d'un n° tapé puis Entrée qui en désigne plusieurs. */
+// Filtres de l'écran 2 : millésimes = ceux DÉCOCHÉS (tous cochés au départ) ; lot = Tous | Dans le lot | Hors du lot | Aucun lot (les listes automatiques
+// « Attendues à la traite », « À passer à l'écho »… ne comptent pas comme des lots : lotsReels)
+const filtresCarnetVides = () => ({ cats: { brebis: true, antenaises: true, agnelles: true, beliers: true, agneaux: true }, q: '', millesimesExclus: [], statut: '', lotMode: 'tous', lot: '' });
 function animalFiltresCarnet(liste, f) {
   const q = rechercheNumeroNormalisee(f.q);
   const catCle = { 'Brebis': 'brebis', 'Antenaise': 'antenaises', 'Agnelle': 'agnelles', 'Bélier': 'beliers', 'Agneau': 'agneaux' };
   if (f.candidats && f.candidats.size) return liste.filter(a => f.candidats.has(a.eid));
   return liste.filter(a => f.cats[catCle[a.categorie]]
     && (!q || (a.nums || []).some(n => n.includes(q)))
-    && (!f.millesime || String(a.annee) === f.millesime)
+    && (!(f.millesimesExclus || []).length || a.annee === null || a.annee === undefined || !f.millesimesExclus.includes(String(a.annee)))
     && (!f.statut || a.statutRepro === f.statut)
-    && (!f.lot || a.lots.includes(f.lot)));
+    && lotCorrespondCarnet(a, f));
 }
 /* N° tapé puis Entrée / OK, ou bippé (Carnet, PC et mobile) : EID complet (15 chiffres) ou n° national (11) = l'animal bippé, jamais ses
    agneaux ; n° court = correspondance EXACTE (zéros de tête ignorés) sur les 5 derniers chiffres, le n° de travail SIEOL court ou long, le n° de
@@ -20885,6 +20889,12 @@ function resoudreNumeroCarnet(tous, saisie) {
   if (candidats.length === 1) return { statut: 'trouve', item: candidats[0] };
   if (candidats.length > 1) return { statut: 'ambigu', candidats };
   return { statut: 'absent' };
+}
+function lotCorrespondCarnet(a, f) {
+  const mode = f.lotMode || (f.lot ? 'dans' : 'tous');
+  if (mode === 'aucun') return !(a.lotsReels || []).length;
+  if (!f.lot || mode === 'tous') return true;
+  return mode === 'hors' ? !a.lots.includes(f.lot) : a.lots.includes(f.lot);
 }
 // Retrouve l'objet ACTUEL (brebis/bélier/agnelle/agneau, quel que soit son statut) correspondant à un EID -- relecture
 // fraîche dans DB à chaque appel, jamais une référence capturée plus tôt (voir annulerLotSoinsCarnet : la synchro
@@ -21011,6 +21021,43 @@ function afficherSnackSoinSupprime(texte, avant) {
   csSnackMinuterie = setTimeout(fermer, 6000);
 }
 
+/* Carnet sanitaire en ONGLETS (mobile et PC) : Nouveau soin | Soins réalisés | Sous délai | Produits | Ordonnances. « Nouveau soin » et « Soins réalisés »
+   vivent dans la vue 'sanitaire' (carnetOnglet) ; les trois autres sont les écrans existants ('sous-delai', 'produits-delais', 'ordonnances'), ouverts
+   avec la même rangée d'onglets quand on y vient du Carnet (ongletCarnetDeVue) : ils deviennent alors des écrans de tête (menu, pas de retour) titrés
+   « Carnet sanitaire ». Ouverts d'ailleurs (Accueil › Sous délai, Paramètres › Listes › Produits), ils gardent leur retour d'origine et pas d'onglets. */
+let carnetOnglet = 'nouveau';
+const CARNET_ONGLETS = [['nouveau', 'Nouveau soin', 'Nouveau soin', 'cs-onglet-nouveau'], ['soins', 'Soins réalisés', 'Soins réalisés', 'cs-onglet-soins'],
+  ['sousdelai', 'Sous délai', "Sous délai d'attente", 'cs-sous-delai'], ['produits', 'Produits', 'Produits et délais', 'cs-produits'], ['ordonnances', 'Ordonnances', 'Ordonnances', 'cs-ordonnances']];
+function ongletCarnetDeVue(view) {
+  if (view === 'sanitaire') return carnetSanitaireEtat && carnetSanitaireEtat.editing ? null : carnetOnglet;
+  if (view === 'sous-delai') return !sousDelaiOrigine || sousDelaiOrigine === 'sanitaire' ? 'sousdelai' : null;
+  if (view === 'produits-delais') return !produitsDelaisOrigine || produitsDelaisOrigine === 'sanitaire' ? 'produits' : null;
+  if (view === 'ordonnances') return 'ordonnances';
+  return null;
+}
+function carnetOngletsHtml(actif) {
+  const pc = isDesktopMode();
+  return `<div class="tab-bar onglets-nav cs-onglets" role="tablist" aria-label="Carnet sanitaire">${CARNET_ONGLETS.map(([k, court, long, id]) =>
+    `<button type="button" class="tab-btn${k === actif ? ' active' : ''}" id="${id}" data-onglet="${k}" role="tab" aria-selected="${k === actif}">${pc ? long : court}</button>`).join('')}</div>`;
+}
+function brancherOngletsCarnet(racine) {
+  racine.querySelectorAll('.cs-onglets .tab-btn').forEach(b => { b.onclick = () => {
+    const k = b.dataset.onglet;
+    if (k === 'nouveau' || k === 'soins') { carnetOnglet = k; render('sanitaire'); }
+    else if (k === 'sousdelai') { sousDelaiOrigine = 'sanitaire'; render('sous-delai'); }
+    else if (k === 'produits') { produitsDelaisOrigine = null; render('produits-delais'); }
+    else render('ordonnances');
+  }; });
+}
+// Écrans existants ouverts comme onglets du Carnet : rangée d'onglets en tête, titre « Carnet sanitaire »
+function poserOngletsCarnet(view) {
+  const k = ongletCarnetDeVue(view);
+  if (!k) return;
+  pageTitle.textContent = 'Carnet sanitaire';
+  app.insertAdjacentHTML('afterbegin', `<div class="cs-onglets-tete">${carnetOngletsHtml(k)}</div>`);
+  brancherOngletsCarnet(app);
+}
+
 function renderCarnetSanitaire() {
   if (!carnetSanitaireEtat) carnetSanitaireEtat = carnetEtatInitial();
   const E = carnetSanitaireEtat;
@@ -21018,24 +21065,16 @@ function renderCarnetSanitaire() {
   const fmt = iso => iso ? formatDateFr(iso) : '—';
   const cat = c => (PRODUIT_CATEGORIES.find(x => x.key === c) || {}).label;
   const bandeauLot = carnetDernierLot ? `<div class="brd-alert info" id="cs-dernier-lot" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><span><b>Soin enregistré</b> : ${echapperHtml(carnetDernierLot.produit)} pour ${libAnimaux(carnetDernierLot.n)} (un soin par animal).</span><button type="button" class="btn btn-secondary" id="cs-annuler-lot" style="width:auto;padding:6px 14px;font-size:12.5px;">Annuler ce lot</button></div>` : '';
-  const entete = `<div class="brd-head">
+  const onglet = E.editing ? null : carnetOnglet;
+  const entete = (onglet ? carnetOngletsHtml(onglet) : '') + (onglet === 'soins' ? '' : `<div class="brd-head">
       <div>${isDesktopMode() ? '<h2 class="brd-title brd-doublon">Carnet sanitaire</h2>' : ''}<div class="brd-sub">Le soin, puis les animaux · <span class="pc-req">*</span> = obligatoire</div></div>
-      <div class="brd-actions">
-        <button type="button" class="btn btn-secondary" id="cs-produits">Produits et délais</button>${elevageBioActif() ? '<button type="button" class="btn btn-secondary" id="cs-12-mois">Traitements sur 12 mois</button>' : ''}
-        <button type="button" class="btn btn-secondary" id="cs-ordonnances">Ordonnances</button>
-        <button type="button" class="btn btn-secondary" id="cs-sous-delai">Sous délai d'attente</button>
-        <button type="button" class="btn btn-secondary" id="cs-export">Export Excel</button>
-      </div>
-    </div>`;
-  const etapes = E.editing ? '' : `<div class="pc-etapes"><span class="s ${E.ecran === 1 ? 'on' : 'fait'}">${E.ecran === 1 ? '1' : '✓ 1'} · Le soin</span><span>→</span><span class="s ${E.ecran === 2 ? 'on' : ''}">2 · Les animaux</span></div>`;
+    </div>`);
+  const etapes = E.editing || onglet === 'soins' ? '' : `<div class="pc-etapes"><span class="s ${E.ecran === 1 ? 'on' : 'fait'}">${E.ecran === 1 ? '1' : '✓ 1'} · Le soin</span><span>→</span><span class="s ${E.ecran === 2 ? 'on' : ''}">2 · Les animaux</span></div>`;
   const nSansBio = elevageBioActif() ? soinsSansIndicateurBio().length : 0;
   const bandeauBio = nSansBio ? `<div class="brd-alert warn" id="cs-bandeau-bio" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;"><span><b>${nSansBio} soin${nSansBio > 1 ? 's' : ''} enregistré${nSansBio > 1 ? 's' : ''} avec la 1.0.198 sans indicateur bio</b> : leurs délais sont encore les délais légaux. Rien n'est modifié sans ton clic.</span><button type="button" class="btn btn-secondary" id="cs-voir-bio" style="width:auto;padding:6px 14px;font-size:12.5px;">Voir et appliquer le mode bio</button></div>` : '';
-  app.innerHTML = `<div class="brd" id="pc-carnet">${entete}${bandeauLot}${bandeauBio}${etapes}<div id="cs-ecran"></div></div>`;
+  app.innerHTML = `<div class="brd" id="pc-carnet">${entete}${onglet === 'soins' ? '' : bandeauLot}${bandeauBio}${etapes}<div id="cs-ecran"></div></div>`;
+  brancherOngletsCarnet(app);
   if (nSansBio) document.getElementById('cs-voir-bio').onclick = () => render('soins-sans-bio');
-  const nav = (id, vue) => { document.getElementById(id).onclick = () => render(vue); };
-  document.getElementById('cs-export').onclick = () => exportCarnetSanitaireXlsx();
-  if (document.getElementById('cs-12-mois')) document.getElementById('cs-12-mois').onclick = () => render('traitements-12-mois');
-  nav('cs-produits', 'produits-delais'); nav('cs-ordonnances', 'ordonnances'); nav('cs-sous-delai', 'sous-delai'); { const b = document.getElementById('cs-sous-delai'); if (b) b.addEventListener('click', () => { sousDelaiOrigine = 'sanitaire'; }, true); }
   const btnLot = document.getElementById('cs-annuler-lot');
   if (btnLot) btnLot.onclick = () => {
     if (!confirm('Annuler ce lot : retirer le soin « ' + carnetDernierLot.produit + ' » des ' + carnetDernierLot.n + ' animaux ? Cette action est irréversible.')) return;
@@ -21044,7 +21083,8 @@ function renderCarnetSanitaire() {
     carnetDernierLot = null;
     render('sanitaire');
   };
-  if (E.ecran === 1) ecranCarnetSoin(); else ecranCarnetAnimaux();
+  if (onglet === 'soins') ongletSoinsRealises();
+  else if (E.ecran === 1) ecranCarnetSoin(); else ecranCarnetAnimaux();
 }
 
 function ecranCarnetSoin() {
@@ -21201,7 +21241,6 @@ function ecranCarnetSoin() {
     E.ecran = 2; render('sanitaire');
   };
   colonneDroite();
-  if (!E.editing) tableauxCarnet();
 }
 
 // Mentions figées dans le soin : indicateur bio, minimum 48 h bio à confirmer (non appliqué)
@@ -21209,102 +21248,175 @@ function mentionsBioSoin(x) {
   return (x.bio === true ? ' ' + pcPill('info', 'bio') : '') + (x.min48hAConfirmer ? ' ' + pcPill('warn', 'minimum 48 h bio à confirmer') : '');
 }
 // Tableaux sous le formulaire (écran 1)
-function tableauxCarnet() {
+/* Onglet « Soins réalisés » (mobile et PC) : TOUS les soins (animaux présents, agneaux sans n° compris, et sortis en lecture seule), du plus récent au plus ancien, un traitement
+   collectif sur une ligne ; filtres n° (même recherche que partout, agneau sans n° par le n° de sa mère), période, type, produit, catégories ; Modifier /
+   Suppr. sur chaque soin (Animaux pour un collectif) ; 30 puis « Voir tous les soins » ; Export Excel puis Export PDF qui suivent les filtres (lignes du
+   registre sanitaire : feuilleSanitaireXlsx, miseEnPageSanitairePdf). Les soins des animaux sortis y sont aussi, en lecture seule (soinsRealisesSortis). */
+let carnetSoinsF = null;
+const carnetSoinsFiltresVides = () => ({ q: '', du: '', au: '', type: '', produit: '', cats: { brebis: true, agnelles: true, beliers: true, agneaux: true } });
+const CAT_SOINS_REALISES = { 'Brebis': 'brebis', 'Antenaise': 'brebis', 'Agnelle': 'agnelles', 'Bélier': 'beliers', 'Agneau': 'agneaux' };
+// Soins des animaux SORTIS (vendus, morts, archivés) : lignes du registre sanitaire qui ne sont sur aucun animal présent, en lecture seule
+// (« Sorti », jamais Modifier / Suppr.) -- l'écran et ses exports montrent ainsi tout le carnet, comme le registre.
+function soinsRealisesSortis(tous) {
+  const eids = new Set(tous.filter(a => !a.sansNumero).map(a => cleanEid(a.eid)));
+  const libs = new Set(tous.filter(a => a.sansNumero).map(a => a.court));
+  return registreSanitaireRows().filter(r => r.numeroAffiche ? !libs.has(r.numeroAffiche) : !eids.has(cleanEid(r.eid))).map(r => {
+    const [type, sousType] = String(r.type || '').split(' · ');
+    const soin = { type: type || '', sousType: sousType || null, produit: r.produit, date: r.date, dose: r.dose, numeroOrdonnance: r.numeroOrdonnance, intervenant: r.faitPar, voie: r.voie, dureeJours: r.dureeJours };
+    const animal = { court: r.numeroAffiche || '', numero: numeroVisuel(r.eid || ''), categorie: r.categorie, nums: [r.numeroAffiche, r.eid, cleanEid(r.eid || ''), numeroVisuel(r.eid || '')].filter(Boolean).map(n => String(n).replace(/\s+/g, '').toLowerCase()) };
+    return { cle: 'sorti#' + r.eid + '#' + r.date + '#' + r.produit, soin, animaux: [animal], refs: [], sorti: true, ligne: r,
+      dates: { repriseLait: r.repriseLait, venteDes: r.venteDes, aucuneAttenteLait: r.aucuneAttenteLait, aucuneAttenteViande: r.aucuneAttenteViande, derniere: r.dateFin } };
+  });
+}
+function soinsRealisesCarnet(F) {
+  F = F || carnetSoinsFiltresVides();
+  const q = rechercheNumeroNormalisee(F.q);
+  const animalOk = a => F.cats[CAT_SOINS_REALISES[a.categorie]] !== false && (!q || (a.nums || []).some(n => n.includes(q)));
+  const tous = animauxEligiblesCarnet();
+  return derniersSoinsCarnet(Infinity).concat(soinsRealisesSortis(tous)).filter(g => {
+    const x = g.soin, d = String(x.date || '');
+    if (F.du && d < F.du) return false;
+    if (F.au && d > F.au) return false;
+    if (F.type && x.type !== F.type) return false;
+    if (F.produit && (x.produit || x.type || '') !== F.produit) return false;
+    return g.animaux.some(animalOk);
+  }).sort((x, y) => String(y.soin.date || '').localeCompare(String(x.soin.date || '')));
+}
+// Lignes du registre sanitaire (Excel, PDF) pour ces soins : une par animal, chacun avec SA copie du soin
+function lignesSanitaireSoinsRealises(groupes) {
+  const rows = [];
+  groupes.forEach(g => g.sorti ? rows.push(g.ligne) : g.animaux.forEach((a, k) => {
+    const s = (a.obj.sanitaire || [])[g.refs[k].idx] || g.soin;
+    rows.push({ eid: a.sansNumero ? '' : a.eid, categorie: a.categorie, ...(a.sansNumero ? { numeroAffiche: a.court } : {}),
+      type: (s.type || '') + (s.sousType ? ' · ' + s.sousType : ''), produit: s.produit || '', date: s.date || '',
+      dose: s.quantiteCc != null ? (s.quantiteCc + ' cc') : (s.dose || ''), numeroOrdonnance: s.numeroOrdonnance || '',
+      campagne: campagneDeDateRegistre(s.date), ...champsSanitaireExport(s) });
+  }));
+  return rows;
+}
+async function exportSoinsRealisesXlsx() {
+  const bytes = await buildXlsxWorkbook([feuilleSanitaireXlsx(lignesSanitaireSoinsRealises(soinsRealisesCarnet(carnetSoinsF)))]);
+  await saveOrShareBinaryFile('carnet-sanitaire-' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+async function exportSoinsRealisesPdf() {
+  const groupes = soinsRealisesCarnet(carnetSoinsF), lignes = lignesSanitaireSoinsRealises(groupes);
+  const mise = miseEnPageSanitairePdf(lignes);
+  const bytes = buildPdfTableCharte({
+    title: 'Carnet sanitaire — Soins réalisés',
+    subtitle: lignes.length + ' ligne(s) — ' + formatDateFr(jourAujourdhuiISO()),
+    columns: mise.columns, rows: mise.rows, landscape: true,
+    tuiles: [pdfTuile('vert', 'Soins', groupes.length), pdfTuile('bleu', 'Lignes (un animal par ligne)', lignes.length)],
+    ...(mise.taille ? { fontSize: mise.taille, headerSize: mise.taille + 0.5 } : {})
+  });
+  await saveOrShareBinaryFile('carnet-sanitaire-soins_' + jourAujourdhuiISO() + '.pdf', bytes, 'application/pdf');
+}
+function ongletSoinsRealises() {
+  if (!carnetSoinsF) carnetSoinsF = carnetSoinsFiltresVides();
+  const F = carnetSoinsF;
   const cont = document.getElementById('cs-ecran');
   const fmt = iso => iso ? formatDateFr(iso) : '—';
   const nom = a => a.court || 'n°' + a.numero;
-  const delai = soinsEnDelaiCarnet();
-  const nAnimaux = new Set(delai.map(r => r.animal.eid)).size;
   const echappe = echapperHtml;
   const mobile = !isDesktopMode();
-  const TABLE_DELAI = `<table class="pc-t" id="cs-table-en-delai"><tr><th class="l">N°</th><th class="l">Produit</th><th class="l">Soin du</th><th class="l">Reprise du lait</th><th class="l">Vente possible dès le</th><th class="l">Reste</th></tr>${delai.map(r => `<tr><td class="l">${echappe(nom(r.animal))} <small style="color:var(--text-muted);">${r.animal.categorie}</small></td><td class="l">${echappe(r.soin.produit || r.soin.type)}${mentionsBioSoin(r.soin)}</td><td class="l">${fmt(r.soin.date)}</td><td class="l">${r.lait ? pcPill('warn', 'le ' + fmt(r.dates.repriseLait)) : (r.dates.aucuneAttenteLait ? 'aucune attente' : (r.dates.repriseLait ? fmt(r.dates.repriseLait) + ' <small style="color:var(--text-muted);">(passée)</small>' : '—'))}</td><td class="l">${r.viande ? fmt(r.dates.venteDes) : (r.dates.aucuneAttenteViande ? 'aucune attente' : (r.dates.venteDes ? fmt(r.dates.venteDes) + ' <small style="color:var(--text-muted);">(passée)</small>' : '—'))}</td><td class="l">${[r.lait ? 'lait ' + joursRestantsAvant(r.dates.repriseLait) + ' j' : null, r.viande ? 'viande ' + joursRestantsAvant(r.dates.venteDes) + ' j' : null].filter(Boolean).join(' · ')}</td></tr>`).join('')}</table>`;
-  const nTousSoins = derniersSoinsCarnet(Infinity).length;
-  const gs = derniersSoinsCarnet(carnetVoirTousSoins ? Infinity : 15);
-  // Modifier / Suppr. sur chaque soin ; traitement collectif : Modifier (toutes les copies), Animaux (retirer un animal), Suppr. (tout le lot)
-  const actionsSoinHtml = (g, gi, carte) => {
-    const cls = carte ? 'btn btn-secondary' : 'ep-btn';
-    const del = carte ? 'btn btn-secondary btn-supprimer' : 'ep-btn ep-del';
-    const coll = g.soin.collectifId && g.refs.length > 1;
-    return `<button type="button" class="${cls} cs-soin-modifier" data-g="${gi}">Modifier</button>${coll ? ` <button type="button" class="${cls} cs-soin-animaux" data-g="${gi}">Animaux</button>` : ''} <button type="button" class="${del} cs-soin-suppr" data-g="${gi}">Suppr.</button>`;
-  };
-  const TABLE_DERNIERS = `<div style="overflow-x:auto;"><table class="pc-t" id="cs-table-derniers"><tr><th class="l">N°</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">Ordonnance</th><th class="l">Fait par</th><th class="l">Reprise lait</th><th class="l">Viande dès le</th><th class="l">Voie</th><th class="l">Durée</th><th class="l">Date de fin</th><th class="l"></th></tr>${gs.map((g, gi) => { const d = datesDuSoin(g.soin), x = g.soin; return `<tr><td class="l">${g.animaux.length > 1 ? libAnimaux(g.animaux.length) : echappe(nom(g.animaux[0]))}</td><td class="l">${echappe((x.type || '') + (x.sousType ? ' · ' + x.sousType : ''))}</td><td class="l">${echappe(x.produit || x.type || '—')}${mentionsBioSoin(x)}</td><td class="l">${fmt(x.date)}</td><td class="l">${x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? x.quantiteCc + ' cc' : echappe(x.dose || '—')}</td><td class="l">${echappe(x.numeroOrdonnance || '—')}</td><td class="l">${echappe(x.intervenant || '—')}</td><td class="l">${d.repriseLait ? fmt(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—')}</td><td class="l">${d.venteDes ? fmt(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')}</td><td class="l">${echappe(x.voie || '—')}</td><td class="l">${x.dureeJours ? x.dureeJours + ' j' : '—'}</td><td class="l">${fmt(d.derniere)}</td><td class="l" style="white-space:nowrap;">${actionsSoinHtml(g, gi, false)}</td></tr>`; }).join('') || '<tr><td colspan="13" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun soin enregistré.</td></tr>'}</table></div>`;
-  // Mobile : une carte par soin à la place des tableaux (mêmes lignes, mêmes données, même tri) ; le PC garde ses tableaux
-  const cartesDelai = `<div class="cartes-liste" id="cs-cartes-en-delai" style="margin-top:12px;">${delai.map(r => {
-    const lait = r.lait ? 'le ' + fmt(r.dates.repriseLait) : (r.dates.aucuneAttenteLait ? 'aucune attente' : (r.dates.repriseLait ? fmt(r.dates.repriseLait) + ' (passée)' : '—'));
-    const viande = r.viande ? fmt(r.dates.venteDes) : (r.dates.aucuneAttenteViande ? 'aucune attente' : (r.dates.venteDes ? fmt(r.dates.venteDes) + ' (passée)' : '—'));
-    const reste = [r.lait ? 'lait ' + joursRestantsAvant(r.dates.repriseLait) + ' j' : null, r.viande ? 'viande ' + joursRestantsAvant(r.dates.venteDes) + ' j' : null].filter(Boolean).join(' · ');
-    return carteListeHtml({ nm: echappe(nom(r.animal)), pastille: reste ? cartePastille('Reste : ' + reste, 'ambre') : '',
-      l2: echappe(r.soin.produit || r.soin.type) + mentionsBioSoin(r.soin) + ' · soin du ' + fmt(r.soin.date) + ' · ' + echappe(r.animal.categorie),
-      l3: [cartePastille('Reprise du lait : ' + lait, r.lait ? 'ambre' : ''), cartePastille('Vente possible dès le : ' + viande, r.viande ? 'ambre' : '')] });
-  }).join('')}</div>`;
-  const cartesDerniers = (() => {
-    if (!gs.length) return '<div class="info" style="padding:6px 0;">Aucun soin enregistré.</div>';
-    return `<div class="cartes-liste" id="cs-cartes-derniers" style="margin-top:12px;">${gs.map((g, gi) => {
-      const d = datesDuSoin(g.soin), x = g.soin;
-      const dose = x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? x.quantiteCc + ' cc' : echappe(x.dose || '—');
-      return carteListeHtml({ nm: g.animaux.length > 1 ? libAnimaux(g.animaux.length) : echappe(nom(g.animaux[0])),
-        pastille: cartePastille(echappe((x.type || '') + (x.sousType ? ' · ' + x.sousType : '')), 'bleu'),
-        l2: echappe(x.produit || x.type || '—') + mentionsBioSoin(x) + ' · ' + fmt(x.date) + ' · ' + dose + '<br>Ordonnance : ' + echappe(x.numeroOrdonnance || '—') + ' · Fait par : ' + echappe(x.intervenant || '—') + ' · Voie : ' + echappe(x.voie || '—') + ' · Durée : ' + (x.dureeJours ? x.dureeJours + ' j' : '—') + ' · Date de fin : ' + fmt(d.derniere),
-        l3: [cartePastille('Reprise lait : ' + (d.repriseLait ? fmt(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—'))), cartePastille('Viande dès le : ' + (d.venteDes ? fmt(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')))],
-        acts: actionsSoinHtml(g, gi, true) });
-    }).join('')}</div>`;
-  })();
-  const bloc = document.createElement('div');
-  bloc.id = 'cs-tableaux';
-  bloc.innerHTML = `
-    <div class="card" id="cs-en-delai" style="margin-top:16px;">
-      <div class="pc-cardhead"><div><p class="brd-ttl" style="margin:0;">En délai d'attente aujourd'hui</p><p class="brd-note" style="margin:2px 0 0;">${delai.length ? libAnimaux(nAnimaux) + ' · ' + delai.length + ' soin' + (delai.length > 1 ? 's' : '') + ' dont la reprise du lait ou la vente n\'est pas encore possible' : 'Aucun animal en délai d\'attente.'}</p></div></div>
-      ${delai.length ? (mobile ? cartesDelai : TABLE_DELAI) : ''}
+  const tousGroupes = soinsRealisesCarnet(carnetSoinsFiltresVides());
+  const produits = Array.from(new Set(tousGroupes.map(g => g.soin.produit || g.soin.type || '').filter(Boolean))).sort((x, y) => x.localeCompare(y, 'fr'));
+  const opt = (v, l, cur) => `<option value="${echappe(v)}"${v === cur ? ' selected' : ''}>${echappe(l)}</option>`;
+  cont.innerHTML = `<div class="card" id="cs-soins-filtres">
+      <div class="${mobile ? 'pc-fg' : 'pc-filtres-ligne'}">
+        <div class="pc-grand"><label for="cs-sr-q">Rechercher un n°</label><input type="text" id="cs-sr-q" value="${echappe(F.q)}" placeholder="n° de l'animal ou de la mère" autocomplete="off"></div>
+        <div><label for="cs-sr-du">Du</label><input type="date" id="cs-sr-du" value="${echappe(F.du)}"></div>
+        <div><label for="cs-sr-au">Au</label><input type="date" id="cs-sr-au" value="${echappe(F.au)}"></div>
+        <div><label for="cs-sr-type">Type</label><select id="cs-sr-type">${opt('', 'Tous', F.type)}${['Vaccin', 'Traitement', 'Autre'].map(t => opt(t, t, F.type)).join('')}</select></div>
+        <div><label for="cs-sr-produit">Produit</label><select id="cs-sr-produit">${opt('', 'Tous', F.produit)}${produits.map(x => opt(x, x, F.produit)).join('')}</select></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">${[['brebis', 'Brebis'], ['agnelles', 'Agnelles'], ['beliers', 'Béliers'], ['agneaux', 'Agneaux']].map(([k, l]) => `<button type="button" class="pc-gc cs-sr-cat${F.cats[k] ? ' on' : ''}" data-cat="${k}" aria-pressed="${F.cats[k]}">${F.cats[k] ? '✓ ' : ''}${l}</button>`).join('')}</div>
+      <p class="brd-note" style="margin:10px 0 0;" id="cs-sr-compte"></p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">${elevageBioActif() ? '<button type="button" class="btn btn-secondary" id="cs-12-mois" style="width:auto;padding:6px 14px;font-size:12.5px;">Traitements sur 12 mois</button>' : ''}<button type="button" class="btn btn-secondary" id="cs-voir-historique-collectif" style="width:auto;padding:6px 14px;font-size:12.5px;">Anciens traitements collectifs</button></div>
     </div>
-    <div class="card" id="cs-derniers" style="margin-top:16px;">
-      <div class="pc-cardhead" style="flex-wrap:wrap;"><div><p class="brd-ttl" style="margin:0;">Derniers soins</p><p class="brd-note" style="margin:2px 0 0;">Un traitement collectif est regroupé sur une ligne. « — » : soin ancien, saisi sans durée ni délais. Voie, durée et date de fin figurent à la suite (mentions du registre).</p></div><button type="button" class="btn btn-secondary" id="cs-voir-historique-collectif" style="width:auto;padding:6px 14px;font-size:12.5px;">Gérer / annuler un traitement collectif</button></div>
-      ${mobile ? cartesDerniers : TABLE_DERNIERS}
-      ${nTousSoins > 15 ? `<div style="margin-top:12px;"><button type="button" class="btn btn-secondary" id="cs-voir-tous-soins" style="width:auto;padding:8px 16px;">${carnetVoirTousSoins ? 'Voir les 15 derniers' : 'Voir tous les soins (' + nTousSoins + ')'}</button></div>` : ''}
-    </div>`;
-  cont.appendChild(bloc);
-  document.getElementById('cs-voir-historique-collectif').onclick = () => render('traitements-collectifs');
-  const btnTous = document.getElementById('cs-voir-tous-soins');
-  if (btnTous) btnTous.onclick = () => { carnetVoirTousSoins = !carnetVoirTousSoins; render('sanitaire'); };
-  const nomGroupe = g => g.animaux.length > 1 ? libAnimaux(g.animaux.length) : nom(g.animaux[0]);
-  const supprimer = (refs, modele, texte) => {
-    const avant = supprimerSoinsCarnet(refs, modele);
-    if (!avant) { showToast("Ce soin a changé entre-temps : l'écran est mis à jour, recommence."); render('sanitaire'); return; }
-    saveData(DB);
-    render('sanitaire');
-    afficherSnackSoinSupprime(texte, avant);
-  };
-  bloc.querySelectorAll('.cs-soin-modifier').forEach(b => { b.onclick = () => {
-    const g = gs[parseInt(b.dataset.g, 10)], r = g.refs[0];
-    const coll = g.soin.collectifId && g.refs.length > 1 ? { refs: g.refs.slice(), modele: g.soin } : null;
-    const loc = localiserSoinCarnet(r, g.soin);
-    if (!loc) { showToast("Ce soin a changé entre-temps : l'écran est mis à jour, recommence."); render('sanitaire'); return; }
-    carnetSanitaireEtat = carnetEtatPourEdition(r.eid, loc.idx, () => render('sanitaire'), coll);
-    render('sanitaire');
-  }; });
-  bloc.querySelectorAll('.cs-soin-suppr').forEach(b => { b.onclick = () => {
-    const g = gs[parseInt(b.dataset.g, 10)];
-    supprimer(g.refs, g.soin, (g.soin.produit || g.soin.type || 'Soin') + ' supprimé · ' + nomGroupe(g));
-  }; });
-  bloc.querySelectorAll('.cs-soin-animaux').forEach(b => { b.onclick = () => {
-    const g = gs[parseInt(b.dataset.g, 10)];
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.innerHTML = `<div class="modal-card" id="cs-animaux-soin">
-      <div style="font-weight:700;font-size:15px;margin-bottom:4px;">${echapperHtml(g.soin.produit || g.soin.type || 'Soin')} · ${fmt(g.soin.date)}</div>
-      <div class="brd-note" style="margin:0 0 10px;">Traitement collectif · ${libAnimaux(g.animaux.length)}. Retirer un animal ne touche que son soin.</div>
-      <div style="max-height:50vh;overflow-y:auto;">${g.animaux.map((a, i) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--ch-separateur);"><span><b style="color:var(--ch-vert-fonce);">${echapperHtml(nom(a))}</b> <small style="color:var(--text-muted);">${a.categorie}</small></span><button type="button" class="btn btn-secondary btn-supprimer cs-retirer-animal" data-i="${i}" style="width:auto;padding:0 16px;margin:0;">Retirer</button></div>`).join('')}</div>
-      <button type="button" class="btn btn-secondary" id="cs-animaux-fermer" style="margin-top:12px;">Fermer</button>
-    </div>`;
-    document.body.appendChild(overlay);
-    const fermer = () => overlay.remove();
-    overlay.querySelector('#cs-animaux-fermer').onclick = fermer;
-    overlay.onclick = ev => { if (ev.target === overlay) fermer(); };
-    overlay.querySelectorAll('.cs-retirer-animal').forEach(x => { x.onclick = () => {
-      const i = parseInt(x.dataset.i, 10);
-      fermer();
-      supprimer([g.refs[i]], g.soin, (g.soin.produit || g.soin.type || 'Soin') + ' retiré · ' + nom(g.animaux[i]));
+    <div class="card" id="cs-derniers" style="margin-top:16px;"><div id="cs-sr-liste"></div></div>
+    <div class="row em-exports" id="cs-sr-exports" style="margin-top:14px;display:flex;gap:10px;${mobile ? '' : 'justify-content:flex-end;'}"><button type="button" class="btn btn-secondary" id="cs-export"${mobile ? '' : ' style="width:auto;"'}>Export Excel</button><button type="button" class="btn btn-primary" id="cs-export-pdf"${mobile ? '' : ' style="width:auto;"'}>Export PDF</button></div>
+    <p class="brd-note" style="margin:8px 2px 0;">Les exports suivent les filtres. Animaux vendus, morts ou archivés : leurs soins restent ici en lecture seule (« Sorti »).</p>`;
+  const zone = document.getElementById('cs-sr-liste');
+  const dessiner = () => {
+    const filtres = soinsRealisesCarnet(F);
+    const nTousSoins = filtres.length;
+    const gs = carnetVoirTousSoins ? filtres : filtres.slice(0, 30);
+    document.getElementById('cs-sr-compte').textContent = nTousSoins + ' soin' + (nTousSoins > 1 ? 's' : '') + ' · du plus récent au plus ancien · un traitement collectif sur une ligne';
+    // Modifier / Suppr. sur chaque soin ; traitement collectif : Modifier (toutes les copies), Animaux (retirer un animal), Suppr. (tout le lot)
+    const actionsSoinHtml = (g, gi, carte) => {
+      if (g.sorti) return cartePastille('Sorti · lecture seule');   // animal vendu, mort ou archivé : le soin reste au carnet, il ne se modifie plus
+    const cls = carte ? 'btn btn-secondary' : 'ep-btn';
+      const del = carte ? 'btn btn-secondary btn-supprimer' : 'ep-btn ep-del';
+      const coll = g.soin.collectifId && g.refs.length > 1;
+      return `<button type="button" class="${cls} cs-soin-modifier" data-g="${gi}">Modifier</button>${coll ? ` <button type="button" class="${cls} cs-soin-animaux" data-g="${gi}">Animaux</button>` : ''} <button type="button" class="${del} cs-soin-suppr" data-g="${gi}">Suppr.</button>`;
+    };
+    const TABLE_DERNIERS = `<div style="overflow-x:auto;"><table class="pc-t" id="cs-table-derniers"><tr><th class="l">N°</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">Ordonnance</th><th class="l">Fait par</th><th class="l">Reprise lait</th><th class="l">Viande dès le</th><th class="l">Voie</th><th class="l">Durée</th><th class="l">Date de fin</th><th class="l"></th></tr>${gs.map((g, gi) => { const d = g.dates || datesDuSoin(g.soin), x = g.soin; return `<tr><td class="l">${g.animaux.length > 1 ? libAnimaux(g.animaux.length) : echappe(nom(g.animaux[0]))}</td><td class="l">${echappe((x.type || '') + (x.sousType ? ' · ' + x.sousType : ''))}</td><td class="l">${echappe(x.produit || x.type || '—')}${mentionsBioSoin(x)}</td><td class="l">${fmt(x.date)}</td><td class="l">${x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? x.quantiteCc + ' cc' : echappe(x.dose || '—')}</td><td class="l">${echappe(x.numeroOrdonnance || '—')}</td><td class="l">${echappe(x.intervenant || '—')}</td><td class="l">${d.repriseLait ? fmt(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—')}</td><td class="l">${d.venteDes ? fmt(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')}</td><td class="l">${echappe(x.voie || '—')}</td><td class="l">${x.dureeJours ? x.dureeJours + ' j' : '—'}</td><td class="l">${fmt(d.derniere)}</td><td class="l" style="white-space:nowrap;">${actionsSoinHtml(g, gi, false)}</td></tr>`; }).join('') || '<tr><td colspan="13" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun soin enregistré.</td></tr>'}</table></div>`;
+    const cartesDerniers = (() => {
+      if (!gs.length) return '<div class="info" style="padding:6px 0;">Aucun soin enregistré.</div>';
+      return `<div class="cartes-liste" id="cs-cartes-derniers" style="margin-top:12px;">${gs.map((g, gi) => {
+        const d = g.dates || datesDuSoin(g.soin), x = g.soin;
+        const dose = x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? x.quantiteCc + ' cc' : echappe(x.dose || '—');
+        return carteListeHtml({ nm: g.animaux.length > 1 ? libAnimaux(g.animaux.length) : echappe(nom(g.animaux[0])),
+          pastille: cartePastille(echappe((x.type || '') + (x.sousType ? ' · ' + x.sousType : '')), 'bleu'),
+          l2: echappe(x.produit || x.type || '—') + mentionsBioSoin(x) + ' · ' + fmt(x.date) + ' · ' + dose + '<br>Ordonnance : ' + echappe(x.numeroOrdonnance || '—') + ' · Fait par : ' + echappe(x.intervenant || '—') + ' · Voie : ' + echappe(x.voie || '—') + ' · Durée : ' + (x.dureeJours ? x.dureeJours + ' j' : '—') + ' · Date de fin : ' + fmt(d.derniere),
+          l3: [cartePastille('Reprise lait : ' + (d.repriseLait ? fmt(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—'))), cartePastille('Viande dès le : ' + (d.venteDes ? fmt(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')))],
+          acts: actionsSoinHtml(g, gi, true) });
+      }).join('')}</div>`;
+    })();
+    zone.innerHTML = (mobile ? cartesDerniers : TABLE_DERNIERS)
+      + (nTousSoins > 30 ? `<div style="margin-top:12px;"><button type="button" class="btn btn-secondary" id="cs-voir-tous-soins" style="width:auto;padding:8px 16px;">${carnetVoirTousSoins ? 'Voir les 30 derniers' : 'Voir tous les soins (' + nTousSoins + ')'}</button></div>` : '');
+    const btnTous = document.getElementById('cs-voir-tous-soins');
+    if (btnTous) btnTous.onclick = () => { carnetVoirTousSoins = !carnetVoirTousSoins; dessiner(); };
+    const nomGroupe = g => g.animaux.length > 1 ? libAnimaux(g.animaux.length) : nom(g.animaux[0]);
+    const supprimer = (refs, modele, texte) => {
+      const avant = supprimerSoinsCarnet(refs, modele);
+      if (!avant) { showToast("Ce soin a changé entre-temps : l'écran est mis à jour, recommence."); render('sanitaire'); return; }
+      saveData(DB);
+      render('sanitaire');
+      afficherSnackSoinSupprime(texte, avant);
+    };
+    zone.querySelectorAll('.cs-soin-modifier').forEach(b => { b.onclick = () => {
+      const g = gs[parseInt(b.dataset.g, 10)], r = g.refs[0];
+      const coll = g.soin.collectifId && g.refs.length > 1 ? { refs: g.refs.slice(), modele: g.soin } : null;
+      const loc = localiserSoinCarnet(r, g.soin);
+      if (!loc) { showToast("Ce soin a changé entre-temps : l'écran est mis à jour, recommence."); render('sanitaire'); return; }
+      carnetSanitaireEtat = carnetEtatPourEdition(r.eid, loc.idx, () => render('sanitaire'), coll);
+      render('sanitaire');
     }; });
-  }; });
+    zone.querySelectorAll('.cs-soin-suppr').forEach(b => { b.onclick = () => {
+      const g = gs[parseInt(b.dataset.g, 10)];
+      supprimer(g.refs, g.soin, (g.soin.produit || g.soin.type || 'Soin') + ' supprimé · ' + nomGroupe(g));
+    }; });
+    zone.querySelectorAll('.cs-soin-animaux').forEach(b => { b.onclick = () => {
+      const g = gs[parseInt(b.dataset.g, 10)];
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.innerHTML = `<div class="modal-card" id="cs-animaux-soin">
+        <div style="font-weight:700;font-size:15px;margin-bottom:4px;">${echapperHtml(g.soin.produit || g.soin.type || 'Soin')} · ${fmt(g.soin.date)}</div>
+        <div class="brd-note" style="margin:0 0 10px;">Traitement collectif · ${libAnimaux(g.animaux.length)}. Retirer un animal ne touche que son soin.</div>
+        <div style="max-height:50vh;overflow-y:auto;">${g.animaux.map((a, i) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--ch-separateur);"><span><b style="color:var(--ch-vert-fonce);">${echapperHtml(nom(a))}</b> <small style="color:var(--text-muted);">${a.categorie}</small></span><button type="button" class="btn btn-secondary btn-supprimer cs-retirer-animal" data-i="${i}" style="width:auto;padding:0 16px;margin:0;">Retirer</button></div>`).join('')}</div>
+        <button type="button" class="btn btn-secondary" id="cs-animaux-fermer" style="margin-top:12px;">Fermer</button>
+      </div>`;
+      document.body.appendChild(overlay);
+      const fermer = () => overlay.remove();
+      overlay.querySelector('#cs-animaux-fermer').onclick = fermer;
+      overlay.onclick = ev => { if (ev.target === overlay) fermer(); };
+      overlay.querySelectorAll('.cs-retirer-animal').forEach(x => { x.onclick = () => {
+        const i = parseInt(x.dataset.i, 10);
+        fermer();
+        supprimer([g.refs[i]], g.soin, (g.soin.produit || g.soin.type || 'Soin') + ' retiré · ' + nom(g.animaux[i]));
+      }; });
+    }; });
+  };
+  const qEl = document.getElementById('cs-sr-q');
+  qEl.addEventListener('input', () => { F.q = qEl.value; carnetVoirTousSoins = false; dessiner(); });
+  [['cs-sr-du', 'du'], ['cs-sr-au', 'au'], ['cs-sr-type', 'type'], ['cs-sr-produit', 'produit']].forEach(([id, k]) => { document.getElementById(id).addEventListener('change', e => { F[k] = e.target.value; carnetVoirTousSoins = false; dessiner(); }); });
+  cont.querySelectorAll('.cs-sr-cat').forEach(b => { b.onclick = () => { F.cats[b.dataset.cat] = !F.cats[b.dataset.cat]; b.classList.toggle('on', F.cats[b.dataset.cat]); b.setAttribute('aria-pressed', F.cats[b.dataset.cat]); b.textContent = (F.cats[b.dataset.cat] ? '✓ ' : '') + b.textContent.replace(/^✓ /, ''); carnetVoirTousSoins = false; dessiner(); }; });
+  document.getElementById('cs-voir-historique-collectif').onclick = () => render('traitements-collectifs');
+  if (document.getElementById('cs-12-mois')) document.getElementById('cs-12-mois').onclick = () => render('traitements-12-mois');
+  document.getElementById('cs-export').onclick = () => exportSoinsRealisesXlsx().catch(e => afficherErreurExport((e && e.message) || String(e)));
+  document.getElementById('cs-export-pdf').onclick = () => exportSoinsRealisesPdf().catch(e => afficherErreurExport((e && e.message) || String(e)));
+  dessiner();
 }
 
 function ecranCarnetAnimaux() {
@@ -21327,11 +21439,17 @@ function ecranCarnetAnimaux() {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px;">
         ${[['brebis', 'Brebis'], ['antenaises', 'Antenaises'], ['agnelles', 'Agnelles'], ['beliers', 'Béliers'], ['agneaux', 'Agneaux']].map(([k, l]) => `<button type="button" class="pc-gc cs-cat${F.cats[k] ? ' on' : ''}${comptes[k] === 0 ? ' off' : ''}" data-cat="${k}">${F.cats[k] ? '✓ ' : ''}${l} <small>${comptes[k]}</small></button>`).join('')}
       </div>
+      <label class="cs-filtre-titre">Millésimes · plusieurs possibles</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px;" id="cs-millesimes">${millesimes.map(m => { const on = !(F.millesimesExclus || []).includes(String(m)); return `<button type="button" class="pc-gc cs-mill${on ? ' on' : ''}" data-m="${m}" aria-pressed="${on}">${on ? '✓ ' : ''}${m}</button>`; }).join('')}</div>
+      <label class="cs-filtre-titre">Lot</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0 4px;">
+        <div class="tab-bar" id="cs-lot-mode" role="group" aria-label="Lot" style="margin:0;flex:1 1 300px;">${[['tous', 'Tous'], ['dans', 'Dans le lot'], ['hors', 'Hors du lot'], ['aucun', 'Aucun lot']].map(([k, l]) => `<button type="button" class="tab-btn${(F.lotMode || 'tous') === k ? ' active' : ''}" data-mode="${k}">${l}</button>`).join('')}</div>
+        ${F.lotMode === 'dans' || F.lotMode === 'hors' ? `<select id="cs-flot" aria-label="Lot visé" style="flex:1 1 200px;margin:0;"><option value="">Choisir le lot</option>${(DB.lots || []).map(l => `<option value="${l.id}"${F.lot === l.id ? ' selected' : ''}>${echapperHtml(l.nom || ('Lot ' + (l.dateCreation || '')))}</option>`).join('')}</select>` : ''}
+      </div>
+      <p class="brd-note" style="margin:0 0 12px;">Les listes automatiques (Attendues à la traite, À passer à l'écho…) ne comptent pas comme des lots.</p>
       <div class="${mobile ? 'pc-fg' : 'pc-filtres-ligne'}">
         <div class="pc-grand"><label for="cs-q">${mobile ? 'Scanner ou saisir un n°' : 'Rechercher un n°'}</label><input type="text" id="cs-q" value="${F.q}" placeholder="${mobile ? "Scanner ou saisir l'EID/n°" : 'Saisir un n°'}" autocomplete="off"${mobile ? ' autofocus' : ''}></div>
-        <div><label for="cs-millesime">Millésime</label><select id="cs-millesime"><option value="">Tous</option>${millesimes.map(m => `<option value="${m}"${F.millesime === String(m) ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
         <div><label for="cs-statut">Statut de reproduction</label><select id="cs-statut"><option value="">Tous</option>${statuts.map(m => `<option value="${m}"${F.statut === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
-        <div><label for="cs-flot">Lot</label><select id="cs-flot"><option value="">Tous</option>${(DB.lots || []).map(l => `<option value="${l.id}"${F.lot === l.id ? ' selected' : ''}>${echapperHtml(l.nom || ('Lot ' + (l.dateCreation || '')))}</option>`).join('')}</select></div>
         <div><button type="button" class="btn btn-secondary" id="cs-reset" style="width:100%;">Réinitialiser</button></div>
       </div>
       <div id="cs-scan-feedback" class="hidden" style="margin-top:8px;font-size:13px;"></div>
@@ -21415,10 +21533,11 @@ function ecranCarnetAnimaux() {
       dessiner();
     });
   }
-  $('cs-millesime').addEventListener('change', e => { F.millesime = e.target.value; dessiner(); });
+  document.querySelectorAll('#cs-millesimes .cs-mill').forEach(b => { b.onclick = () => { const m = b.dataset.m, ex = F.millesimesExclus = F.millesimesExclus || []; const i = ex.indexOf(m); if (i >= 0) ex.splice(i, 1); else ex.push(m); ecranCarnetAnimaux(); }; });
+  document.querySelectorAll('#cs-lot-mode .tab-btn').forEach(b => { b.onclick = () => { F.lotMode = b.dataset.mode; if (F.lotMode === 'tous' || F.lotMode === 'aucun') F.lot = ''; ecranCarnetAnimaux(); }; });
   $('cs-statut').addEventListener('change', e => { F.statut = e.target.value; dessiner(); });
-  $('cs-flot').addEventListener('change', e => { F.lot = e.target.value; dessiner(); });
-  $('cs-reset').onclick = () => { E.filtres = { cats: { brebis: true, antenaises: true, agnelles: true, beliers: true, agneaux: true }, q: '', millesime: '', statut: '', lot: '' }; ecranCarnetAnimaux(); };
+  if ($('cs-flot')) $('cs-flot').addEventListener('change', e => { F.lot = e.target.value; dessiner(); });
+  $('cs-reset').onclick = () => { E.filtres = filtresCarnetVides(); ecranCarnetAnimaux(); };
   $('cs-tout').onclick = () => { animalFiltresCarnet(tous, F).forEach(a => E.selection.add(a.eid)); dessiner(); };
   $('cs-rien').onclick = () => { animalFiltresCarnet(tous, F).forEach(a => E.selection.delete(a.eid)); dessiner(); };
   $('cs-modifier').onclick = () => { E.ecran = 1; render('sanitaire'); };

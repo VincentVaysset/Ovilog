@@ -36,12 +36,13 @@ for (const mobile of [true, false]) {
   check(await p.evaluate(() => isDesktopMode()) === !mobile, T + ' : mode attendu');
   const SOINS = mobile ? '#cs-cartes-derniers .carte-liste' : '#cs-table-derniers tr:not(:first-child)';
   const saisir = async (produit, eids, ordonnance) => {
-    await p.evaluate(() => { carnetSanitaireEtat = null; render('sanitaire'); });
+    await p.evaluate(() => { carnetSanitaireEtat = null; carnetOnglet = 'nouveau'; render('sanitaire'); });
     await p.selectOption('#cs-produit', produit); await p.fill('#cs-dose', '2'); await p.selectOption('#cs-voie', { index: 1 });
     if (ordonnance) await p.selectOption('#cs-ordonnance', ordonnance);
     await p.click('#cs-suivant'); await p.waitForSelector(mobile ? '#cs-cards' : '#cs-table');
     for (const e of eids) await p.click((mobile ? '#cs-cards .sheep-item' : '#cs-table tr.clic') + `[data-eid="${e}"]`);
     await p.click('#cs-enregistrer'); await p.waitForSelector('#cs-dernier-lot');
+    await p.click('#cs-onglet-soins'); await p.waitForSelector(SOINS);   // les soins enregistrés sont dans l'onglet « Soins réalisés »
   };
   const san = i => p.evaluate(i => JSON.parse(JSON.stringify(DB.brebis[i].sanitaire)), i);
   const soinAgneau = () => p.evaluate(() => JSON.parse(JSON.stringify(DB.brebis[1].agnelages[0].lambs[0].sanitaire || [])));
@@ -112,13 +113,13 @@ for (const mobile of [true, false]) {
   check((await soinAgneau()).filter(x => !x.collectifId).length === 0, T + ' : soin individuel de l\'agneau sans n° supprimé');
 
   // 6. « Voir tous les soins » au-delà de 15
-  await p.evaluate(() => { for (let k = 0; k < 16; k++) DB.brebis[2].sanitaire.push({ type: 'Traitement', sousType: 'Antibiotique', produit: 'Produit B', date: '2026-10-0' + (k % 9 + 1), quantiteCc: 1 }); carnetSanitaireEtat = null; render('sanitaire'); });
+  await p.evaluate(() => { for (let k = 0; k < 40; k++) DB.brebis[2].sanitaire.push({ type: 'Traitement', sousType: 'Antibiotique', produit: 'Produit B', date: '2026-10-0' + (k % 9 + 1), quantiteCc: 1 }); carnetSanitaireEtat = null; carnetOnglet = 'soins'; render('sanitaire'); });
   const n = () => p.evaluate(s => document.querySelectorAll(s).length, SOINS);
-  eq(await n(), 15, T + ' : 15 derniers');
+  eq(await n(), 30, T + ' : 30 derniers');
   await p.click('#cs-voir-tous-soins');
-  check(await n() > 15, T + ' : Voir tous');
+  check(await n() > 30, T + ' : Voir tous');
   await p.click('#cs-voir-tous-soins');
-  eq(await n(), 15, T + ' : retour aux 15 derniers');
+  eq(await n(), 30, T + ' : retour aux 30 derniers');
   await ctx.close();
 }
 await browser.close();
