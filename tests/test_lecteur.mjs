@@ -254,7 +254,7 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
   eq(await page.evaluate(() => currentView), 'diag-bluetooth', 'le diagnostic reste accessible depuis l\'écran Lecteur');
 
   // ---- bip sonore
-  await page.evaluate(() => { render('misebas-rapide'); window.__bips.length = 0; lecteurEnregistrerOption('bip', true); playBeepTrouve(); playBeepAmbigu(); playBeepRate(); playBeepDejaTrouve(); });
+  await page.evaluate(() => { render('misebas-rapide'); const r = document.createElement('input'); r.dataset.bips = 'recherche'; document.body.appendChild(r); setActiveScanTarget(r); window.__bips.length = 0; lecteurEnregistrerOption('bip', true); playBeepTrouve(); playBeepAmbigu(); playBeepRate(); playBeepDejaTrouve(); });
   await page.waitForTimeout(400);
   const bips = await page.evaluate(() => window.__bips);
   eq(bips.length, 6, 'bip activé : 2 + 2 + 1 + 1 notes');
@@ -270,7 +270,10 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
   eq(await page.evaluate(() => window.__bips.length), 0, 'bip coupé : la saisie manuelle d\'un n° est silencieuse aussi');
   await page.evaluate(() => { lecteurEnregistrerOption('bip', true); document.getElementById('essai-bip').value = ''; document.getElementById('essai-bip').dispatchEvent(new Event('input')); });
   await page.fill('#essai-bip', '250123456789012'); await page.waitForTimeout(200);
-  eq(await page.evaluate(() => window.__bips.length), 1, 'bip activé : la saisie manuelle bipe');
+  eq(await page.evaluate(() => window.__bips.length), 0, 'bip activé : la frappe d\'un n° ne bipe pas (seul le scan a son bip)');
+  await page.evaluate(() => { const i = document.getElementById('essai-bip'); i.value = ''; setActiveScanTarget(i); window.__bips.length = 0; onEidScanned('250123456789012'); });
+  await page.waitForTimeout(200);
+  eq(await page.evaluate(() => window.__bips.map(b => b.f)), [880], 'bip activé : un scan hors écran de recherche = UN bip neutre');
   // ---- la pastille est sur TOUS les écrans mobiles à bandeau vert (parcours des écrans du menu, de saisie, de détail et de Paramètres)
   await page.setViewportSize({ width: 360, height: 800 });
   await page.evaluate(() => { __bt.connectOk = false; __bt.delai = 0; lecteurEnregistrerOption('reconnexionAuto', false); btReconnexionAnnuler(); btConnectedAddress = null; DB.lecteurBluetooth = { address: 'AA:01', name: 'Allflex LPR 4812' }; parametresRubrique = null; });

@@ -6382,14 +6382,25 @@ function playBeep(freq, dur, type) {
   } catch (e) { /* audio non disponible, on ignore silencieusement */ }
 }
 
+/* Bips (MOBILE) : les quatre bips de RECHERCHE (trouvé, pas trouvé, plusieurs, déjà trouvé) ne sonnent que sur un écran où l'on cherche
+   des animaux d'un lot (champ marqué data-bips="recherche" : lots de recherche dont « Attendues à la traite », lots de reproduction,
+   Contrôle de lot, mise à jour de l'inventaire, Vérifier mères et agneaux) ; partout ailleurs, un scan donne UN bip neutre « c'est bipé »
+   (playBeepBippe, dans onEidScanned), jamais deux bips l'un sur l'autre. */
+function bipsRechercheActifs() {
+  return !!(activeScanTarget && activeScanTarget.isConnected && activeScanTarget.dataset && activeScanTarget.dataset.bips === 'recherche');
+}
+function playBeepBippe() { playBeep(880, 0.12); }
 function playBeepTrouve() {
+  if (!bipsRechercheActifs()) return;
   playBeep(1046, 0.1);
   setTimeout(() => playBeep(1568, 0.15), 110);
 }
 function playBeepRate() {
+  if (!bipsRechercheActifs()) return;
   playBeep(220, 0.35, 'square');
 }
 function playBeepDejaTrouve() {
+  if (!bipsRechercheActifs()) return;
   playBeep(440, 0.2, 'triangle');
 }
 // Numéro d'ordre ambigu (plusieurs animaux correspondent, l'éleveur doit
@@ -6398,22 +6409,13 @@ function playBeepDejaTrouve() {
 // deux autres cas ("absent" = un seul bip long grave, "trouvé" = deux
 // notes qui montent).
 function playBeepAmbigu() {
+  if (!bipsRechercheActifs()) return;
   playBeep(700, 0.09, 'triangle');
   setTimeout(() => playBeep(700, 0.09, 'triangle'), 130);
 }
 
-function attachEidBeep(inputEl) {
-  let wasValid = false;
-  inputEl.addEventListener('input', () => {
-    const v = cleanEid(inputEl.value);
-    if (v.length >= 11 && !wasValid) {
-      playBeep();
-      wasValid = true;
-    } else if (v.length < 11) {
-      wasValid = false;
-    }
-  });
-}
+// Ancien bip « n° complet » à la frappe : retiré (un scan a déjà son bip neutre, onEidScanned ; jamais deux bips). Gardé vide pour ses appels.
+function attachEidBeep(inputEl) { }
 
 /* ---------- Icônes (SVG monochromes, colorées via currentColor) ---------- */
 const ICON_SHEEP = `<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -10662,7 +10664,7 @@ function renderMajInventaire() {
       <div style="font-size:13px;color:var(--text-muted);margin:2px 2px 14px;">${isDesktopMode() ? 'Saisis toutes les brebis physiquement présentes dans la bergerie, une par une. Termine la saisie pour voir le rapprochement avec l\'inventaire actif.' : 'Scanne toutes les brebis physiquement présentes dans la bergerie, une par une. Termine le bipage pour voir le rapprochement avec l\'inventaire actif.'}</div>
       <div class="card">
         <label>${isDesktopMode() ? 'Saisir une brebis' : 'Scanner une brebis'}</label>
-        <input type="text" id="scan-maj-inventaire" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
+        <input type="text" id="scan-maj-inventaire" data-bips="recherche" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
         <div id="scan-maj-feedback" style="margin-top:8px;font-size:13px;"></div>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 8px;">
@@ -10720,11 +10722,13 @@ function renderMajInventaire() {
         feedback.style.color = 'var(--warning)';
         return;
       }
-      playBeepTrouve();
+      const connue = DB.brebis.some(b => (b.statut || 'active') === 'active' && (cleanEid(b.eid) === val || (val.length >= 11 && cleanEid(b.eid).slice(-11) === val.slice(-11))));
+      if (connue) playBeepTrouve(); else playBeepRate();
       feedback.textContent = '';
       session.eids.push(val);
       saveData(DB);
       draw();
+      if (!connue) { const fb = document.getElementById('scan-maj-feedback'); if (fb) { fb.textContent = 'n°' + numeroVisuel(val) + ' : brebis inconnue du troupeau (gardée dans le bipage).'; fb.style.color = 'var(--ch-ambre-texte)'; } }
     });
   }
   draw();
@@ -15243,7 +15247,7 @@ function renderListeSerieVerif() {
   app.innerHTML = chantierTriTabBarHtml() + `
     <div class="card" style="margin-top:14px;">
       <label for="scan-verif">${isDesktopMode() ? 'Saisir le n° d\'un agneau ou d\'une brebis' : 'Biper un agneau ou une brebis'}</label>
-      <input type="text" id="scan-verif" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
+      <input type="text" id="scan-verif" data-bips="recherche" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
       ${infoLigneHtml('Comparé au groupe (la liste de ' + session.length + ' animaux) : agneau → sa mère ; brebis → ses agneaux. Rien n\'est écrit sur les fiches.')}
       <div id="verif-resultat" class="verif-resultat${d ? ' ' + d.ton : ' hidden'}">${d ? '<div class="verif-titre">' + echapperHtml(d.titre) + '</div><div>' + echapperHtml(d.detail) + '</div>' : ''}</div>
     </div>
@@ -19676,7 +19680,7 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
       </div>
       <div class="sp-counter" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">${selectedIds.size} sélectionnée(s) sur ${pool.length}.</div>
       ${state.mode === 'bip' ? `
-        <input type="text" class="sp-scan" placeholder="Scanner ou saisir l'EID" autofocus>
+        <input type="text" class="sp-scan" data-bips="recherche" placeholder="Scanner ou saisir l'EID" autofocus>
         <div class="sp-scan-feedback" style="margin-top:8px;font-size:13px;"></div>
       ` : `
         <input type="text" class="sp-filtre" placeholder="Filtrer par numéro..." value="${state.filtre}" style="margin-bottom:4px;">
@@ -19948,7 +19952,7 @@ function renderLotReproDetail(lotId) {
       <p style="font-size:12px;color:var(--text-muted);margin:0;">${infoDate} · mises bas campagne ${cm !== null ? libCampagneAffichee(cm) : '-'}</p>
       <p style="font-size:26px;font-weight:700;margin:8px 0 0;" id="lr-compteur">${libN(membres.length)}</p></div>
     <label>Ajouter ${agn ? 'une antenaise' : 'une brebis'} (remplacement)</label>
-    <input type="text" id="lr-scan" placeholder="Scanner ou saisir le n°" value="${lotReproSaisie.replace(/"/g, '&quot;')}" autofocus>
+    <input type="text" id="lr-scan" data-bips="recherche" placeholder="Scanner ou saisir le n°" value="${lotReproSaisie.replace(/"/g, '&quot;')}" autofocus>
     <div id="lr-err" class="error-box hidden"></div>
     ${toastActif ? `<div id="lr-toast" style="background:${toastActif.ton === 'warn' ? 'var(--amber-bg)' : 'var(--green-bg)'};color:${toastActif.ton === 'warn' ? 'var(--amber-fg)' : 'var(--green-fg)'};border-radius:14px;padding:10px 12px;font-size:13px;font-weight:600;margin:0 0 12px;">${toastActif.texte}</div>` : ''}
     <div style="font-size:15px;font-weight:700;margin:16px 0 4px;">${agn ? 'Antenaises' : 'Brebis'} du lot</div>
@@ -20249,7 +20253,7 @@ function renderLotSearch(lotId) {
         <button type="button" class="btn btn-secondary" id="btn-reset-lot-trouvees" style="width:auto;padding:6px 12px;font-size:13px;">Remettre à zéro</button>
       </div>
       <label>${isDesktopMode() ? 'Saisir une brebis' : 'Scanner une brebis'}</label>
-      <input type="text" id="scan-lot" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
+      <input type="text" id="scan-lot" data-bips="recherche" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
       <div id="scan-feedback" style="margin-top:10px;font-size:14px;"></div>${lotAttendues ? `<button type="button" class="btn btn-primary" id="btn-mettre-traite" style="margin:14px 0 0;" disabled></button>${infoLigneHtml('Cochez les brebis trouvées, puis mettez-les à la traite : elles quittent les attendues à la traite.')}` : ''}
     </div>
     ${isDesktopMode() ? `<div class="card" style="padding:6px 0;">
@@ -22772,7 +22776,7 @@ function renderControleLotDelai() {
           <div><div style="font-size:13px;color:var(--text-muted);">Contrôle de lot</div>${infoLigneHtml('Rien n\'est enregistré : simple aide-mémoire pendant la traite.')}</div>
         </div>
         <label>${isDesktopMode() ? 'Saisir le n° d\'une brebis' : 'Scanner une brebis'}</label>
-        <input type="text" id="scan-controle-lot" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
+        <input type="text" id="scan-controle-lot" data-bips="recherche" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
         <div id="scan-controle-lot-feedback" style="margin-top:10px;font-size:14px;${session.feedback ? 'color:' + session.feedback.color + ';' : ''}">${session.feedback ? session.feedback.text : ''}</div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin:16px 0;">
@@ -31558,11 +31562,13 @@ function onEidScanned(eid) {
   // input seul : aperçu, pastille, préfixe), jamais d'Entrée simulée.
   const caseBip = (currentView === 'misebas-rapide' || currentView === 'add-agnelage' || currentView === 'identifier-agneaux') ? document.activeElement : null;
   if (caseBip && caseBip.isConnected && caseBip.matches && caseBip.matches('input.eid-input, input.eid-input-rapide, input.adopt-eid, input.adopt-eid-rapide, input.eid-input-ident')) {
+    playBeepBippe();
     caseBip.value = eid;
     caseBip.dispatchEvent(new Event('input', { bubbles: true }));
     return;
   }
   if (!activeScanTarget || !activeScanTarget.isConnected) { activeScanTarget = null; return; }
+  if (!bipsRechercheActifs()) playBeepBippe();   // bip neutre « c'est bipé » ; un écran de recherche donne lui-même le bip du résultat
   activeScanTarget.value = eid;
   activeScanTarget.dispatchEvent(new Event('input', { bubbles: true }));
   activeScanTarget.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
