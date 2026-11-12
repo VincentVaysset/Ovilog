@@ -49,6 +49,8 @@ for (const mobile of [true, false]) {
   check(/n°71001 Agneau · 12 j/.test(texte.replace(/\s+/g, ' ')) && /n°71002 Agneau · 2 mois/.test(texte.replace(/\s+/g, ' ')) || /71001.*12 j/.test(texte) && /71002.*2 mois/.test(texte), T + ' : écran du Carnet : ' + texte.replace(/\s+/g, ' ').slice(0, 300));
   // 4. Mouvements : agneaux en jours / mois
   eq(await p.evaluate(() => animauxMouvementPc('agneaux').map(texteAgeListe)), ['12 j', '2 mois'], T + ' : Mouvements : âge des agneaux');
+  // 5. bips : un seul contexte audio
+  check(await p.evaluate(() => { playBeepTrouve(); const a = playBeep.ctx; playBeepRate(); playBeepAmbigu(); playBeepDejaTrouve(); return !!a && playBeep.ctx === a; }), T + ' : un seul contexte audio pour tous les bips');
   await ctx.close();
 }
 await browser.close();
