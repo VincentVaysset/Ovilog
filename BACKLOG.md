@@ -2,15 +2,17 @@
 
 Points identifiés, non planifiés. Un point sort d'ici quand il est validé puis livré.
 
-## À corriger avant 2029
+## Anomalie de lactation SIEOL (`ano_lact`) : à revoir
 
-- **`anneeNaissance(eid)` (www/index.html)** : l'année est déduite du seul chiffre d'année de
-  l'EID (`2020 + chiffre`, moins 10 si l'année dépasse l'année courante), ce qui suppose des
-  animaux de moins de 10 ans. À partir de 2030, un animal né en 2030 (chiffre 0) serait lu
-  comme né en 2020 : il ne serait jamais « le millésime le plus jeune » (règle antenaise du
-  Bilan de reproduction) et son âge affiché serait faux. À corriger avant 2029 (par exemple en
-  ancrant la décennie sur la date d'entrée de l'animal ou sur son mouvement « Naissance »,
-  avec validation de l'éleveur avant tout changement de classement).
+L'import SIEOL du contrôle laitier ne garde plus l'anomalie de lactation du cahier (`ano_lact`) : seuls les
+contrôles et le n° de lactation sont repris. Le code 10 (vide définitive) est cherché dans l'anomalie de chaque
+contrôle et dans l'anomalie repro (`ano_repro`). À voir plus tard avec l'éleveur : l'anomalie de lactation peut-elle
+servir (code 10 ou autre) ? Si oui, la reprendre à l'import et l'afficher (plan validé avant tout code).
+
+## Imports : « SIEOL ou modèle Ovilog » partout
+
+Idée de l'éleveur : comme la carte « Contrôle laitier » (fichiers SIEOL puis modèle Excel Ovilog), proposer les deux
+sources pour chaque import qui s'y prête (Lactation, Correspondance SIEOL…). Plan à faire.
 
 ## Synchro : écriture locale dans la seconde qui suit un lancement ou une connexion
 
