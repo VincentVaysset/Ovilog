@@ -157,6 +157,7 @@ const ouvrir = async (mobile, nb, type) => {
     render('detail', DB.brebis[0].id);
     return { rang: info.rangLactation, fiche: document.getElementById('app').textContent };
   });
+  eq(t.rang, null, 'tri des agnelles : rang de lactation plus montré');
   await p.evaluate(() => { const b = [...document.querySelectorAll('.tab-btn, [data-tab]')].find(x => /Contr/.test(x.textContent)); if (b) b.click(); });
   const fiche = await p.evaluate(() => document.getElementById('app').textContent);
   check(!/Classe par quart|Estimation lactation \(UNOTEC\)|Anomalie lactation : Z/.test(fiche), 'fiche : classe provisoire, estimation et anomalie de lactation du cahier plus affichées');
