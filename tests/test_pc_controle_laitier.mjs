@@ -29,11 +29,12 @@ await page.waitForSelector('#pc-controle-laitier');
 let k = await kpis();
 // 10 brebis actives ; 7 contrôlées ; C1 (7) = 1494 ; C2 (7) = 1380 ; C3 (6) = 1060
 check(k['Brebis contrôlées'][0] === '7' && /sur 10 présentes/.test(k['Brebis contrôlées'][1]), 'brebis contrôlées 7 sur 10 : ' + JSON.stringify(k['Brebis contrôlées']));
-check(k['Moyenne C1'][0] === '1 494 mL' && k['Moyenne C2'][0] === '1 380 mL' && k['Moyenne C3'][0] === '1 060 mL', 'moyennes C1/C2/C3 : ' + JSON.stringify([k['Moyenne C1'], k['Moyenne C2'], k['Moyenne C3']]));
-check(/7 brebis/.test(k['Moyenne C2'][1]) && /6 brebis/.test(k['Moyenne C3'][1]), 'effectifs des moyennes 7 / 6 brebis');
+check(k['Dernier contrôle · C3'] && k['Dernier contrôle · C3'][0] === '1 060 mL' && /6 brebis/.test(k['Dernier contrôle · C3'][1]) && /au moins un contrôle/.test(k['Brebis contrôlées'][1]), 'tuile Dernier contrôle · C3 : ' + JSON.stringify(k));
+const moy = await page.evaluate(() => [...document.querySelectorAll('#cl-moyennes .cl-moy')].map(e => [e.querySelector('.cl-moy-l').textContent, e.querySelector('.cl-moy-v').textContent.replace(/\u00a0/g, ' '), (e.querySelector('.cl-moy-n') || { textContent: '' }).textContent]));
+check(JSON.stringify(moy) === JSON.stringify([['C1', '1 494', '7 brebis'], ['C2', '1 380', '7 brebis'], ['C3', '1 060', '6 brebis']]), 'carte Moyenne par contrôle C1/C2/C3 : ' + JSON.stringify(moy));
 check(k['Mises bas sans contrôle laitier'][0] === '2' && /1 attendue à la traite/.test(k['Mises bas sans contrôle laitier'][1]), 'mises bas sans contrôle : 2, dont 1 attendue : ' + JSON.stringify(k['Mises bas sans contrôle laitier']));
 check(await page.evaluate(() => !document.querySelector('.fiche-desktop-grid') && document.querySelector('.brd-title').textContent === 'Contrôle laitier' && /\d+ contrôles? cette campagne/.test(document.querySelector('.brd-sub').textContent)), 'titre, sous-titre, pleine largeur');
-console.log('OK 1 indicateurs : 7 brebis contrôlées sur 10 ; moyennes C1 1 494 / C2 1 380 / C3 1 060 mL (7, 7, 6 brebis) ; 2 mises bas sans contrôle (1 attendue à la traite).');
+console.log('OK 1 indicateurs : 7 brebis contrôlées sur 10 ; dernier contrôle C3 ; carte des moyennes C1 1 494 / C2 1 380 / C3 1 060 mL (7, 7, 6 brebis) ; 2 mises bas sans contrôle (1 attendue à la traite).');
 
 // ================================================================ 2. tableau sans colonne Moyenne, filtres, surlignage
 const ths = await page.evaluate(() => [...document.querySelectorAll('#cl-table th')].map(t => t.textContent.replace(/[▲▼]/g, '').trim()));
@@ -142,8 +143,8 @@ console.log('OK 6 exports Excel et PDF : mêmes fonctions que sur mobile, ils su
 // ================================================================ 7. aucun contrôle importé
 await ouvrir(false);
 k = await kpis();
-check(k['Brebis contrôlées'][0] === '0' && k['Moyenne C1'][0] === '—' && /aucun C1 importé/.test(k['Moyenne C1'][1]), 'sans contrôle : moyennes en tiret : ' + JSON.stringify([k['Brebis contrôlées'], k['Moyenne C1']]));
-check(k['Mises bas sans contrôle laitier'][0] === '—' && /dès le 1er contrôle importé/.test(k['Mises bas sans contrôle laitier'][1]) && await page.evaluate(() => !document.getElementById('carte-sans-controle-laitier')), 'règle muette avant le 1er contrôle : tiret, pas de carte');
+check(k['Brebis contrôlées'][0] === '0' && k['Dernier contrôle'][0] === '—' && /aucun contrôle importé/.test(k['Dernier contrôle'][1]) && await page.evaluate(() => [...document.querySelectorAll('#cl-moyennes .cl-moy-v')].every(e => e.textContent === '—')), 'sans contrôle : dernier contrôle et moyennes en tiret : ' + JSON.stringify([k['Brebis contrôlées'], k['Dernier contrôle']]));
+check(k['Mises bas sans contrôle laitier'][0] === '—' && /après le dernier contrôle \(C3\)/.test(k['Mises bas sans contrôle laitier'][1]) && await page.evaluate(() => !document.getElementById('carte-sans-controle-laitier')), 'règle muette avant le dernier contrôle prévu : tiret, pas de carte');
 check(/Aucun C1 importé/.test(await page.evaluate(() => document.getElementById('cl-distrib').textContent)), 'distribution : message');
 check(await page.evaluate(() => window.__saves) === 0, 'aucun saveData');
 console.log('OK 7 avant le 1er contrôle importé : moyennes et indicateur en tiret, pas de carte, pas de distribution.');

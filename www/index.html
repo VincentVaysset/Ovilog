@@ -1009,6 +1009,16 @@
   /* Contrôle laitier mobile (maquette mobile) : tuiles 2x2, bande ambre, filtres en carte, liste en cartes */
   .reg-tuile-s { font-size: 11px; color: var(--ch-texte2); }
   .cl-tuiles .reg-tuile-v { font-size: 24px; }
+  /* Moyenne par contrôle (mobile et PC) : une seule carte compacte, quel que soit le nombre de contrôles */
+  .cl-moyennes { background: var(--ch-carte); border: 1px solid var(--ch-bord); border-radius: 18px; padding: 12px 14px; margin-bottom: 14px; }
+  body.desktop-shell .cl-moyennes { border-radius: 14px; margin: 14px 0 0; }
+  .cl-moyennes-t { font-size: 13px; color: var(--ch-texte2); margin-bottom: 8px; }
+  .cl-moyennes-g { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 6px; }
+  body.desktop-shell .cl-moyennes-g { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .cl-moy-l { font-size: 11px; color: var(--ch-texte2); }
+  .cl-moy-v { font-size: 15px; font-weight: 700; color: var(--ch-bleu); font-variant-numeric: tabular-nums; }
+  .cl-moy-v.vide { color: var(--ch-icone); font-weight: 400; }
+  .cl-moy-n { font-size: 11px; color: var(--ch-texte2); }
   .cl-bande { width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; font: inherit; color: inherit; cursor: pointer; margin: 0 0 14px; padding: 12px 14px; border: 0; border-left: 5px solid var(--ch-ambre); border-radius: 14px; background: var(--ch-ambre-pastel); }
   div.cl-bande { cursor: default; }
   .cl-bande-n { font-size: 26px; font-weight: 700; color: var(--ch-ambre-texte); font-variant-numeric: tabular-nums; }
@@ -4013,8 +4023,8 @@ function brebisPasseesTraiteCampagne(campagne) {
    cette campagne (même prédicat que « Brebis passées à la traite » du Bilan de lactation : au moins un
    élément de controleLaitier de campagne N, actives et registre, voir brebisPasseesTraiteCampagne).
    But : repérer des brebis sorties mais jamais enregistrées comme sorties.
-   N'a de sens qu'APRÈS l'import du 1er contrôle laitier de la campagne (controleImporte) : avant, toutes
-   les brebis ayant mis bas seraient signalées à tort -> liste vide et controleImporte = false.
+   N'a de sens qu'APRÈS l'import du DERNIER contrôle prévu de la campagne (actif = controleImporte ET serieTerminee) :
+   avant, les brebis ayant mis bas après un contrôle seraient signalées à tort -> liste vide et actif = false.
    Fonction PURE : ne modifie rien, jamais de correction automatique (affichage + « Ouvrir la fiche »).
    Pour chaque brebis : numéro, date de mise bas, nombre d'agneaux, et l'état « attendue à la traite »
    au sens de l'appli (isAttendueTraite : la brebis a des agneaux et ils sont TOUS réglés -- elle devrait
@@ -4028,6 +4038,11 @@ function brebisMiseBasSansControleLaitier(campagne) {
   if (campagne === null || campagne === undefined) return res;
   const entrees = new Map(registreEntriesFor('brebis').map(e => [e.eid, e]));
   res.controleImporte = controleLaitierCampagneImporte(campagne);
+  // La liste n'a de sens qu'une fois la série finie (dernier contrôle prévu importé : serieControlesTerminee) :
+  // avant, une brebis qui a mis bas après un contrôle y serait à tort. Elle fait alors ressortir les tardives.
+  res.serieTerminee = serieControlesTerminee(campagne);
+  res.dernierPrevu = nbControlesPrevus();
+  res.actif = res.controleImporte && res.serieTerminee;
   const actives = DB.brebis.filter(b => (b.statut || 'active') === 'active');
   actives.forEach(b => {
     const entree = entrees.get(b.eid);
@@ -4048,15 +4063,20 @@ function brebisMiseBasSansControleLaitier(campagne) {
     });
   });
   res.sansControle = res.liste.length;
-  if (!res.controleImporte) { res.liste = []; res.sansControle = 0; return res; }
+  if (!res.actif) { res.liste = []; res.sansControle = 0; return res; }
   res.liste.sort((a, b) => (b.signalFort ? 1 : 0) - (a.signalFort ? 1 : 0) || String(a.dateMiseBas || '').localeCompare(String(b.dateMiseBas || '')) || a.numero.localeCompare(b.numero));
   res.signauxForts = res.liste.filter(l => l.signalFort).length;
   return res;
 }
+// Sous-titre de la tuile grise « Mises bas sans contrôle laitier » tant que la série n'est pas finie
+function libelleAttenteSansControle(sc) {
+  if (sc && sc.dernierPrevu) return 'après le dernier contrôle (C' + sc.dernierPrevu + ')';
+  return 'après le dernier contrôle · nombre prévu dans Paramètres › Exploitation';
+}
 /* Carte « Ont mis bas, sans contrôle laitier » (mobile ET PC : même rendu partagé). Chaîne vide tant que
-   le 1er contrôle laitier de la campagne n'est pas importé, ou quand la liste est vide. */
+   le dernier contrôle prévu de la campagne n'est pas importé (actif), ou quand la liste est vide. */
 function carteSansControleLaitierHtml(res) {
-  if (!res || !res.controleImporte || res.liste.length === 0) return '';
+  if (!res || !res.actif || res.liste.length === 0) return '';
   const jjmm = d => d ? d.slice(8, 10) + '/' + d.slice(5, 7) : 'date inconnue';
   const ligne = l => {
     const etat = l.attendueTraite
@@ -4544,16 +4564,27 @@ function controleLaitierCampagneIdxN(sheep, controle, campagne) {
   return list.findIndex(c => c && c.controle === controle && c.campagne === campagne);
 }
 /* Nombre de contrôles laitiers (PC et mobile, partout : écrans, filtres, exports, imports) -- une seule règle :
-   - maxControlesSuivi() : le maximum du type de suivi (Paramètres › Exploitation) : CLS 4, CLO 7, sinon 8 (jamais bloquant : au-delà, message ambre) ;
+   - maxControlesSuivi() : les contrôles PRÉVUS (Paramètres › Exploitation, nbControlesPrevus : CLS 1 à 4, CLO 6 ou 7, défaut 4 / 7), sinon 8 (jamais bloquant : au-delà, message ambre) ;
    - nbControlesCampagne(campagne) : les colonnes affichées vont de C1 au PLUS GRAND contrôle présent dans la campagne (fiches, registre, résumé SIEOL),
      jamais plus ; aucune donnée = 3 colonnes vides comme avant ; jamais au-delà de 8.
    - numerosControles(campagne) : [1, 2, … n]. Les données ne changent pas : chaque contrôle garde son n° (`controle`). */
 const NB_CONTROLES_MAX = 8;
-function maxControlesSuivi() {
-  const t = DB && DB.exploitation ? DB.exploitation.typeSuivi : null;
-  return t === 'cls' ? 4 : t === 'clo' ? 7 : NB_CONTROLES_MAX;
+// Contrôles PRÉVUS par campagne (Paramètres › Exploitation, `exploitation.nbControlesSuivi`) : CLS 1 à 4, CLO 6 ou 7 ;
+// absent ou hors des choix du type de suivi = le maximum du type (CLS 4, CLO 7). Non suivi / à définir : rien de prévu (null).
+const CHOIX_CONTROLES_SUIVI = { cls: [1, 2, 3, 4], clo: [6, 7] };
+function nbControlesPrevus() {
+  const ex = DB && DB.exploitation ? DB.exploitation : {};
+  const choix = CHOIX_CONTROLES_SUIVI[ex.typeSuivi];
+  if (!choix) return null;
+  const n = parseInt(ex.nbControlesSuivi, 10);
+  return choix.includes(n) ? n : choix[choix.length - 1];
 }
-function nbControlesCampagne(campagne) {
+function maxControlesSuivi() {
+  const n = nbControlesPrevus();
+  return n === null ? NB_CONTROLES_MAX : n;
+}
+// Plus grand n° de contrôle présent dans la campagne (fiches, registre, résumé SIEOL) ; 0 = aucun
+function dernierControleCampagne(campagne) {
   const N = campagne === undefined ? DB.campagneDebut : campagne;
   let max = 0;
   const voir = c => { if (c && c.campagne === N) { const n = parseInt(c.controle, 10); if (n > max && n <= NB_CONTROLES_MAX) max = n; } };
@@ -4561,12 +4592,22 @@ function nbControlesCampagne(campagne) {
   const reg = DB.registre && DB.registre.brebis ? DB.registre.brebis : {};
   Object.keys(reg).forEach(k => ((reg[k] && reg[k].controleLaitier) || []).forEach(voir));
   (DB.resumeControleLaitier || []).forEach(voir);
-  return max || 3;
+  return max;
 }
-// Ligne grise des écrans Contrôle laitier : « 4 contrôles cette campagne · suivi CLS : jusqu'à 4 »
+function nbControlesCampagne(campagne) { return dernierControleCampagne(campagne) || 3; }
+/* Série des contrôles de la campagne terminée : campagne passée, ou dernier contrôle PRÉVU importé (nbControlesPrevus).
+   Sans nombre prévu (non suivi, à définir) : jamais terminée pour la campagne en cours. */
+function serieControlesTerminee(campagne) {
+  const N = campagne === undefined ? DB.campagneDebut : campagne;
+  if (N === null || N === undefined) return false;
+  if (DB.campagneDebut !== null && DB.campagneDebut !== undefined && N < DB.campagneDebut) return true;
+  const prevus = nbControlesPrevus();
+  return prevus !== null && dernierControleCampagne(N) >= prevus;
+}
+// Ligne grise des écrans Contrôle laitier : « 4 contrôles cette campagne · suivi CLS : 4 prévus »
 function libelleControlesCampagne(nc) {
   const t = DB.exploitation ? DB.exploitation.typeSuivi : null;
-  return nc.length + ' contrôle' + (nc.length > 1 ? 's' : '') + ' cette campagne' + (t === 'cls' || t === 'clo' ? ' · suivi ' + t.toUpperCase() + ' : jusqu\'à ' + maxControlesSuivi() : '');
+  return nc.length + ' contrôle' + (nc.length > 1 ? 's' : '') + ' cette campagne' + (t === 'cls' || t === 'clo' ? ' · suivi ' + t.toUpperCase() + ' : ' + maxControlesSuivi() + ' prévu' + (maxControlesSuivi() > 1 ? 's' : '') : '');
 }
 function libelleControleOrdinal(n) { return n === 1 ? '1er' : n + 'e'; }
 function numerosControles(campagne) { return Array.from({ length: nbControlesCampagne(campagne) }, (_, i) => i + 1); }
@@ -8483,7 +8524,7 @@ function bilanLactationDesktopHtml() {
   const litres = v => v === null || v === undefined ? '—' : entier(v, ' L');
   // ---- indicateur « mises bas sans contrôle laitier »
   let kSans;
-  if (!sc.controleImporte) kSans = pcKpi('Mises bas sans contrôle laitier', '—', 'dès le 1er contrôle importé', 'neutre');
+  if (!sc.actif) kSans = pcKpi('Mises bas sans contrôle laitier', '—', libelleAttenteSansControle(sc), 'neutre');
   else if (sc.misesBasActives === 0) kSans = pcKpi('Mises bas sans contrôle laitier', '—', 'aucune mise bas enregistrée', 'neutre');
   else kSans = pcKpi('Mises bas sans contrôle laitier', sc.sansControle, sc.sansControle > 0 ? 'brebis actives · ' + sc.signauxForts + ' attendue' + (sc.signauxForts > 1 ? 's' : '') + ' à la traite' : 'toutes ont un contrôle', sc.sansControle > 0 ? 'ambre' : 'vert');
   const ratioSous = ind.misesBas > 0 && ind.brebisTraite !== null ? ind.brebisTraite + ' sur ' + ind.misesBas + (ind.misesBasSource === 'resume' ? ' (mises bas du résumé de campagne)' : '') : 'aucune mise bas enregistrée';
@@ -8501,7 +8542,7 @@ function bilanLactationDesktopHtml() {
     </div>`;
   // ---- carte sans contrôle laitier (3 premières, signaux forts d'abord)
   const jjmm = x => x ? x.slice(8, 10) + '/' + x.slice(5, 7) : 'date inconnue';
-  const carteSans = sc.controleImporte && sc.liste.length ? `<div class="card pc-card-warn" id="carte-sans-controle-laitier">
+  const carteSans = sc.actif && sc.liste.length ? `<div class="card pc-card-warn" id="carte-sans-controle-laitier">
       ${pcCardHead('Mises bas sans contrôle laitier', pcPill('warn', sc.liste.length + ' brebis'))}
       <p class="brd-note" style="margin-top:4px;">${sc.liste.length} brebis active${sc.liste.length > 1 ? 's' : ''} ayant mis bas cette campagne sans aucun contrôle laitier. Elles peuvent être sorties sans avoir été enregistrées. Rien n'est modifié seul.</p>
       ${sc.liste.slice(0, 3).map(l => `<div class="pc-li bilan-eid-link sans-controle-ligne" data-id="${l.id}"><span class="a">n°${l.numero} · mise bas le ${jjmm(l.dateMiseBas)}</span>${l.attendueTraite ? pcPill('danger', 'attendue à la traite') : pcPill('neutral', 'pas encore attendue à la traite')}<span class="f">Ouvrir la fiche</span></div>`).join('')}
@@ -9016,7 +9057,7 @@ function ligneSansControlePc(l) {
   return `<div class="pc-li bilan-eid-link sans-controle-ligne" data-id="${l.id}"><span class="a">n°${l.numero}<br><span class="b">mise bas le ${j} · ${l.nes} agneau${l.nes > 1 ? 'x' : ''}${l.mortNes ? ' (dont ' + l.mortNes + ' mort-né' + (l.mortNes > 1 ? 's' : '') + ')' : ''}</span></span>${etat}<span class="f">Ouvrir la fiche</span></div>`;
 }
 function carteSansControlePcHtml(sc, opts) {
-  if (!sc || !sc.controleImporte || !sc.liste.length) return '';
+  if (!sc || !sc.actif || !sc.liste.length) return '';
   const o = Object.assign({ max: null, lienRegulariser: null }, opts || {});
   const lignes = o.max ? sc.liste.slice(0, o.max) : sc.liste;
   const reste = sc.liste.length - lignes.length;
@@ -9024,7 +9065,7 @@ function carteSansControlePcHtml(sc, opts) {
     ${pcCardHead('Ont mis bas, sans contrôle laitier', pcPill('warn', sc.liste.length + ' brebis'))}
     <p class="brd-note" style="margin-top:4px;">Brebis actives ayant mis bas cette campagne et absentes de tous les contrôles laitiers. Elles peuvent être sorties sans avoir été enregistrées. Rien n'est modifié seul : ouvre la fiche pour décider.${sc.signauxForts > 0 ? ' <b>' + sc.signauxForts + ' attendue' + (sc.signauxForts > 1 ? 's' : '') + ' à la traite : signal fort.</b>' : ''}</p>
     ${lignes.map(ligneSansControlePc).join('')}
-    ${o.lienRegulariser ? `<button type="button" class="pc-more" id="${o.lienRegulariser}">${reste > 0 ? 'Voir les ' + reste + ' autres dans Brebis à régulariser' : 'Voir dans Brebis à régulariser'}</button>` : '<p class="brd-note" style="margin:10px 0 0;">Carte visible seulement après le 1er contrôle laitier de la campagne.</p>'}
+    ${o.lienRegulariser ? `<button type="button" class="pc-more" id="${o.lienRegulariser}">${reste > 0 ? 'Voir les ' + reste + ' autres dans Brebis à régulariser' : 'Voir dans Brebis à régulariser'}</button>` : '<p class="brd-note" style="margin:10px 0 0;">Carte visible seulement après le dernier contrôle laitier prévu de la campagne.</p>'}
   </div>`;
 }
 
@@ -9032,7 +9073,7 @@ function carteSansControlePcHtml(sc, opts) {
    Mêmes groupes et mêmes prédicats que l'écran mobile (bilanIncoherencesHtml, inchangé) : une brebis ACTIVE est
    « Ont mis bas » (agnelage de la campagne), sinon « Vide définitive », sinon « À régulariser » (une échographie
    seule ne la sort jamais de la liste). Incohérence = mise bas ET vide définitive (signalée, jamais corrigée).
-   « Sans contrôle laitier » = règle brebisMiseBasSansControleLaitier (n'existe qu'après l'import du 1er contrôle).
+   « Sans contrôle laitier » = règle brebisMiseBasSansControleLaitier (n'existe qu'après l'import du dernier contrôle prévu).
    Fonction PURE (aucune écriture). */
 function bilanARegulariserData() {
   const N = DB.campagneDebut;
@@ -15560,6 +15601,20 @@ function controleLaitierPcData(rows, nc) {
     sansControle: brebisMiseBasSansControleLaitier(DB.campagneDebut)
   };
 }
+// Dernier contrôle qui porte au moins une quantité (tuile « Dernier contrôle · Cn ») ; null = aucun
+function dernierControleAvecMoyenne(d, nc) {
+  const k = nc.slice().reverse().find(x => d.moyennes[x] && d.moyennes[x].n > 0);
+  return k === undefined ? null : k;
+}
+// Carte « Moyenne par contrôle (mL) » : C1 à Cn, 4 par ligne sur mobile, une ligne sur PC (mL écrit une seule fois dans le titre)
+function carteMoyennesControlesHtml(d, nc) {
+  const nb = v => String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+  const item = k => {
+    const m = d.moyennes[k];
+    return `<div class="cl-moy" data-controle="${k}"><div class="cl-moy-l">C${k}</div>${m.n > 0 ? `<div class="cl-moy-v">${nb(m.moyenne)}</div><div class="cl-moy-n">${m.n} brebis</div>` : '<div class="cl-moy-v vide">—</div>'}</div>`;
+  };
+  return `<div class="cl-moyennes" id="cl-moyennes"><div class="cl-moyennes-t">Moyenne par contrôle (mL)</div><div class="cl-moyennes-g">${nc.map(item).join('')}</div></div>`;
+}
 // Tranches de mL (fixes) du contrôle choisi, sur les brebis contrôlées ; nSeuil = brebis qui passent le filtre « < seuil » ou « > seuil »
 function controleLaitierDistribution(rows, controle, operateur, seuil) {
   const valeurs = rows.map(r => r['c' + controle]).filter(v => v !== null && v !== undefined);
@@ -15586,10 +15641,11 @@ function controleLaitierPcHtml(c) {
   const d = controleLaitierPcData(c.rows, nc), sc = d.sansControle, N = DB.campagneDebut;
   const ml = v => v === null || v === undefined ? '—' : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' mL';
   let kSans;
-  if (!sc.controleImporte) kSans = pcKpi('Mises bas sans contrôle laitier', '—', 'dès le 1er contrôle importé', 'neutre');
+  if (!sc.actif) kSans = pcKpi('Mises bas sans contrôle laitier', '—', libelleAttenteSansControle(sc), 'neutre');
   else if (sc.misesBasActives === 0) kSans = pcKpi('Mises bas sans contrôle laitier', '—', 'aucune mise bas enregistrée', 'neutre');
   else kSans = pcKpi('Mises bas sans contrôle laitier', sc.sansControle, sc.sansControle > 0 ? 'brebis peut-être sorties · ' + sc.signauxForts + ' attendue' + (sc.signauxForts > 1 ? 's' : '') + ' à la traite' : 'toutes ont un contrôle', sc.sansControle > 0 ? 'ambre' : 'vert');
-  const kMoy = k => d.moyennes[k].n > 0 ? pcKpi('Moyenne C' + k, ml(d.moyennes[k].moyenne), d.moyennes[k].n + ' brebis', 'bleu') : pcKpi('Moyenne C' + k, '—', 'aucun C' + k + ' importé', 'neutre');
+  const kDer = dernierControleAvecMoyenne(d, nc);
+  const kDernier = kDer !== null ? pcKpi('Dernier contrôle · C' + kDer, ml(d.moyennes[kDer].moyenne), d.moyennes[kDer].n + ' brebis', 'bleu') : pcKpi('Dernier contrôle', '—', 'aucun contrôle importé', 'neutre');
   return `<div class="brd" id="pc-controle-laitier">
     <div class="brd-head">
       <div><h2 class="brd-title brd-doublon">Contrôle laitier</h2><div class="brd-sub">Campagne ${N === null || N === undefined ? '—' : campagneLabel(N)} · ${libelleControlesCampagne(nc)} · import des résultats : Paramètres › Imports</div></div>
@@ -15599,9 +15655,10 @@ function controleLaitierPcHtml(c) {
       </div>
     </div>
     <div class="pc-kpis">
-      ${d.controlees > 0 || d.actives > 0 ? pcKpi('Brebis contrôlées', d.controlees, 'sur ' + d.actives + ' présentes', 'vert') : pcKpi('Brebis contrôlées', '—', 'aucune brebis active', 'neutre')}
-      ${nc.map(kMoy).join('')}${kSans}
+      ${d.controlees > 0 || d.actives > 0 ? pcKpi('Brebis contrôlées', d.controlees, 'sur ' + d.actives + ' présentes · au moins un contrôle', 'vert') : pcKpi('Brebis contrôlées', '—', 'aucune brebis active', 'neutre')}
+      ${kDernier}${kSans}
     </div>
+    ${carteMoyennesControlesHtml(d, nc)}
     <div class="card">
       <p class="brd-ttl">Filtrer par contrôle</p>
       <div class="pc-filtres" style="margin-top:10px;">
@@ -15799,16 +15856,18 @@ function renderControleLaitier() {
     const d = controleLaitierPcData(rows, NC), sc = d.sansControle;
     const ml = v => v === null || v === undefined ? '—' : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0') + ' mL';
     const tuile = (teinte, label, valeur, sous) => `<div class="reg-tuile ${teinte}"><div class="reg-tuile-l">${label}</div><div class="reg-tuile-v">${valeur}</div><div class="reg-tuile-s">${sous}</div></div>`;
-    const tMoy = k => d.moyennes[k].n > 0 ? tuile('bleu', 'Moyenne C' + k, ml(d.moyennes[k].moyenne), d.moyennes[k].n + ' brebis') : tuile('bleu', 'Moyenne C' + k, '—', 'aucun C' + k + ' importé');
+    const kDer = dernierControleAvecMoyenne(d, NC);
+    const tDernier = kDer !== null ? tuile('bleu', 'Dernier contrôle · C' + kDer, ml(d.moyennes[kDer].moyenne), d.moyennes[kDer].n + ' brebis') : tuile('bleu', 'Dernier contrôle', '—', 'aucun contrôle importé');
     let nb, sous;
-    if (!sc.controleImporte) { nb = '—'; sous = 'dès le 1er contrôle importé'; }
+    if (!sc.actif) { nb = '—'; sous = libelleAttenteSansControle(sc); }
     else if (sc.misesBasActives === 0) { nb = '—'; sous = 'aucune mise bas enregistrée'; }
     else if (sc.sansControle > 0) { nb = sc.sansControle; sous = (sc.signauxForts > 0 ? sc.signauxForts + ' attendue' + (sc.signauxForts > 1 ? 's' : '') + ' à la traite · ' : '') + 'à vérifier'; }
     else { nb = 0; sous = 'toutes ont un contrôle'; }
-    const ouvrable = sc.controleImporte && sc.liste.length > 0;
+    const ouvrable = sc.actif && sc.liste.length > 0;
     return `<div class="reg-tuiles cl-tuiles" id="cl-tuiles">
-        ${tuile('vert', 'Brebis contrôlées', d.controlees, 'sur ' + d.actives + ' présentes')}${NC.map(tMoy).join('')}
+        ${tuile('vert', 'Brebis contrôlées', d.controlees, 'sur ' + d.actives + ' présentes · au moins un contrôle')}${tDernier}
       </div>
+      ${carteMoyennesControlesHtml(d, NC)}
       <${ouvrable ? 'button type="button"' : 'div'} class="cl-bande" id="btn-cl-bande-sans"${ouvrable ? ' aria-expanded="false"' : ''}>
         <span class="cl-bande-n">${nb}</span>
         <span class="cl-bande-t"><b>Mises bas sans contrôle laitier</b><span>${sous}</span></span>
@@ -26841,7 +26900,7 @@ function renderImportControleLaitierSieol() {
     zone.classList.remove('hidden');
     zone.innerHTML = `<label>Contrôles trouvés dans le fichier</label>
       ${trouves.length ? `<div class="grid4" style="grid-template-columns:repeat(${Math.min(trouves.length, 4)},1fr);margin-bottom:0;">${trouves.map(n => `<button type="button" class="opt-btn cl-controle-opt${controlesSelectionnes.has(n) ? ' selected' : ''}" data-controle="${n}" aria-pressed="${controlesSelectionnes.has(n)}">C${n}</button>`).join('')}</div>` : '<div class="info">Aucun contrôle trouvé dans le fichier.</div>'}
-      ${infoLigneHtml('Tous cochés d\'office ; décoche un contrôle pour ne pas le reprendre.' + (t === 'cls' || t === 'clo' ? ' Suivi ' + t.toUpperCase() + ' : jusqu\'à ' + max + ' contrôles par campagne.' : ''))}
+      ${infoLigneHtml('Tous cochés d\'office ; décoche un contrôle pour ne pas le reprendre.' + (t === 'cls' || t === 'clo' ? ' Suivi ' + t.toUpperCase() + ' : ' + max + ' contrôle' + (max > 1 ? 's' : '') + ' prévu' + (max > 1 ? 's' : '') + ' par campagne.' : ''))}
       ${auDela.length ? `<div id="import-cl-au-dela" style="margin-top:8px;font-size:13px;color:var(--ch-ambre-texte);">${trouves.length} contrôles dans le fichier, le suivi ${t ? t.toUpperCase() : ''} en prévoit ${max} : vérifie le fichier (rien n'est bloqué).</div>` : ''}`;
     zone.querySelectorAll('.cl-controle-opt').forEach(btn => {
       btn.onclick = () => {
@@ -29910,6 +29969,12 @@ function resumeDerniereSauvegarde() {
 }
 
 /* ---------- Onglet Exploitation ---------- */
+// Choix « Contrôles par campagne » du type de suivi (CLS 1 à 4, CLO 6 ou 7) ; valeur absente ou hors choix = le maximum du type
+function optionsNbControlesHtml(typeSuivi, valeur) {
+  const choix = CHOIX_CONTROLES_SUIVI[typeSuivi] || [];
+  const v = choix.includes(parseInt(valeur, 10)) ? parseInt(valeur, 10) : choix[choix.length - 1];
+  return choix.map(n => `<option value="${n}"${n === v ? ' selected' : ''}>${n} contrôle${n > 1 ? 's' : ''}</option>`).join('');
+}
 function renderParametresExploitation(content) {
   const ex = DB.exploitation || {};
   // Indicatif de marquage = valeur de référence ; le « préfixe EID » (6 premiers chiffres de l'EID) en est le même nombre : un seul champ, la même valeur est écrite dans les deux
@@ -29935,6 +30000,11 @@ function renderParametresExploitation(content) {
       <label for="f-exp-type-suivi">Type de suivi laitier</label>
       <select id="f-exp-type-suivi">${options.map(([v, l]) => `<option value="${v}"${(ex.typeSuivi || '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
       <div class="prm-note">Détermine les données de contrôle laitier attendues (import, fiche brebis).</div>
+      <div id="bloc-exp-nb-controles"${CHOIX_CONTROLES_SUIVI[ex.typeSuivi] ? '' : ' style="display:none;"'}>
+        <label for="f-exp-nb-controles">Contrôles par campagne</label>
+        <select id="f-exp-nb-controles">${optionsNbControlesHtml(ex.typeSuivi, ex.nbControlesSuivi)}</select>
+        <div class="prm-note">Quand le dernier contrôle prévu est importé, l'appli montre les mises bas sans contrôle laitier (les tardives). À changer en début de campagne si besoin.</div>
+      </div>
       <label for="f-exp-laiterie">Laiterie</label>
       <input type="text" id="f-exp-laiterie" value="${echapperHtml(ex.laiterie || '')}" placeholder="Laiterie qui collecte le lait" autocomplete="off">
       <div class="prm-note">Plus tard, la grille de paiement de la laiterie pourra remplir le Bilan économique.</div>
@@ -29966,6 +30036,11 @@ function renderParametresExploitation(content) {
     DB.exploitation = { ...DB.exploitation, seuilTraitementsBio: parseInt(t, 10) };
     saveData(DB);
   };
+  document.getElementById('f-exp-type-suivi').onchange = (ev) => {
+    const t = ev.target.value, bloc = document.getElementById('bloc-exp-nb-controles');
+    bloc.style.display = CHOIX_CONTROLES_SUIVI[t] ? '' : 'none';
+    document.getElementById('f-exp-nb-controles').innerHTML = optionsNbControlesHtml(t, t === DB.exploitation.typeSuivi ? DB.exploitation.nbControlesSuivi : null);
+  };
   document.getElementById('btn-save-exploitation').onclick = () => {
     // Étale DB.exploitation existant plutôt que de le remplacer entièrement
     // -- sans ça, ce bouton écraserait silencieusement campagneMoisDebut/
@@ -29986,6 +30061,8 @@ function renderParametresExploitation(content) {
       typeSuivi: document.getElementById('f-exp-type-suivi').value || null,
       laiterie: document.getElementById('f-exp-laiterie').value.trim()
     };
+    // contrôles prévus : écrits seulement pour un suivi CLS / CLO (sinon la valeur déjà enregistrée reste telle quelle)
+    if (CHOIX_CONTROLES_SUIVI[DB.exploitation.typeSuivi]) DB.exploitation.nbControlesSuivi = parseInt(document.getElementById('f-exp-nb-controles').value, 10);
     saveData(DB);
     alert('Informations enregistrées.');
   };
@@ -30395,7 +30472,7 @@ function renderParametresImports(content) {
   const cartes = IMPORTS_PC.filter(c => (c.key !== 'lactation' || lactationDispo) && c.key !== 'sieol-cl');
   const sieolCl = IMPORTS_PC.find(c => c.key === 'sieol-cl');
   const ts = DB.exploitation.typeSuivi;
-  const ligneControles = (ts === 'cls' || ts === 'clo' ? ' Suivi ' + ts.toUpperCase() + ' : jusqu\'à ' + maxControlesSuivi() + ' contrôles par campagne ;' : '') + ' les contrôles présents dans le fichier sont trouvés tout seuls.';
+  const ligneControles = (ts === 'cls' || ts === 'clo' ? ' Suivi ' + ts.toUpperCase() + ' : ' + maxControlesSuivi() + ' contrôle' + (maxControlesSuivi() > 1 ? 's' : '') + ' prévu' + (maxControlesSuivi() > 1 ? 's' : '') + ' par campagne (Paramètres › Exploitation) ;' : '') + ' les contrôles présents dans le fichier sont trouvés tout seuls.';
   const blocSieol = () => `<div class="prm-sous-titre" id="import-sieol-cl">Depuis SIEOL</div>
       <div class="prm-note" id="apercu-sieol-cl">Les 2 fichiers CSV exportés de SIEOL (séparés par « ; ») : résumé (un contrôle par ligne, moyennes et litrages) et cahier de contrôle (une brebis par ligne, lait et code d'anomalie de chaque contrôle). Seuls les contrôles sont repris, avec le n° de lactation : la classe et la lactation viennent toujours de l'import « Lactation ».</div>
       <div class="prm-note" style="margin-top:6px;">Dernier import : <b id="dernier-sieol-cl" style="color:var(--text);">${texteDernierImport('sieol-cl')}</b></div>

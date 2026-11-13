@@ -40,15 +40,17 @@ const cartes = () => mob.evaluate(() => [...document.querySelectorAll('.cl-carte
 check(await mob.evaluate(() => /\d+ contrôles? cette campagne.* · quantités en mL · import des résultats : Paramètres › Imports/.test(document.getElementById('cl-ligne-imports').textContent)), 'ligne sous le titre');
 check(await mob.evaluate(() => ![...document.querySelectorAll('#app button')].some(b => /Importer/.test(b.textContent)) && !document.getElementById('cl-distrib') && !document.querySelector('table')), 'aucun import, pas de distribution du C3, plus de tableau');
 const tuiles = await mob.evaluate(() => [...document.querySelectorAll('#cl-tuiles .reg-tuile')].map(t => { const r = t.getBoundingClientRect(); return [t.querySelector('.reg-tuile-l').textContent, t.querySelector('.reg-tuile-v').textContent.replace(/\s+/g, ' '), t.querySelector('.reg-tuile-s').textContent, Math.round(r.x), Math.round(r.y), t.classList[1]]; }));
-eq(tuiles.map(t => t.slice(0, 3)), [['Brebis contrôlées', '7', 'sur 10 présentes'], ['Moyenne C1', '1 494 mL', '7 brebis'], ['Moyenne C2', '1 380 mL', '7 brebis'], ['Moyenne C3', '1 060 mL', '6 brebis']], 'tuiles');
-eq(tuiles.map(t => t[5]), ['vert', 'bleu', 'bleu', 'bleu'], 'couleurs des tuiles');
-check(new Set(tuiles.map(t => t[3])).size === 2 && new Set(tuiles.map(t => t[4])).size === 2, 'tuiles en 2 × 2');
+eq(tuiles.map(t => t.slice(0, 3)), [['Brebis contrôlées', '7', 'sur 10 présentes · au moins un contrôle'], ['Dernier contrôle · C3', '1 060 mL', '6 brebis']], 'tuiles');
+eq(tuiles.map(t => t[5]), ['vert', 'bleu'], 'couleurs des tuiles');
+check(new Set(tuiles.map(t => t[3])).size === 2 && new Set(tuiles.map(t => t[4])).size === 1, 'deux tuiles côte à côte');
+const moyMob = await mob.evaluate(() => [...document.querySelectorAll('#cl-moyennes .cl-moy')].map(e => e.querySelector('.cl-moy-l').textContent + ' ' + e.querySelector('.cl-moy-v').textContent.replace(/\s+/g, ' ')));
+eq(moyMob, ['C1 1 494', 'C2 1 380', 'C3 1 060'], 'carte Moyenne par contrôle (mL)');
 const norm = s => String(s).replace(/[  ]/g, ' ').replace(/\s+/g, ' ').trim();
 const kpiPc = Object.fromEntries(ref.map(k => [k[0].toUpperCase(), norm(k[1])]));
-eq([kpiPc['BREBIS CONTRÔLÉES'], kpiPc['MOYENNE C1'], kpiPc['MOYENNE C2'], kpiPc['MOYENNE C3']], ['7', '1 494 mL', '1 380 mL', '1 060 mL'], 'chiffres de la page PC');
+eq([kpiPc['BREBIS CONTRÔLÉES'], kpiPc['DERNIER CONTRÔLE · C3']], ['7', '1 060 mL'], 'chiffres de la page PC');
 eq(await mob.evaluate(() => [document.querySelector('.cl-bande-n').textContent, document.querySelector('.cl-bande-t b').textContent, document.querySelector('.cl-bande-t span').textContent]), ['2', 'Mises bas sans contrôle laitier', '1 attendue à la traite · à vérifier'], 'bande ambre = tuile PC (2, 1 attendue à la traite)');
 eq(norm(kpiPc['MISES BAS SANS CONTRÔLE LAITIER']), '2', 'même nombre que sur PC');
-console.log('OK 1 structure : ligne d\'imports, tuiles 2×2 (chiffres de la page PC), bande ambre, ni import ni distribution ni tableau.');
+console.log('OK 1 structure : ligne d\'imports, 2 tuiles et carte des moyennes (chiffres de la page PC), bande ambre, ni import ni distribution ni tableau.');
 
 // ---- 2. bande ambre : ouvre la liste des brebis sans contrôle
 check(await mob.evaluate(() => document.getElementById('cl-liste-sans').classList.contains('hidden')), 'liste fermée au départ');

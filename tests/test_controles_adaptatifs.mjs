@@ -42,6 +42,28 @@ const ouvrir = async (mobile, nb, type) => {
   eq(await p.evaluate(() => [nbControlesCampagne(), maxControlesSuivi()]), [3, 8], 'aucun contrôle : 3 colonnes vides comme avant ; suivi non défini : maximum 8');
   await p.evaluate(() => { DB.brebis[0].controleLaitier = [{ controle: 2, quantite: 900, campagne: 2025 }]; DB.registre.brebis['x'] = { controleLaitier: [{ controle: 5, quantite: 800, campagne: 2026 }] }; });
   eq(await p.evaluate(() => nbControlesCampagne()), 5, 'registre compris, autre campagne ignorée');
+  // contrôles PRÉVUS (Paramètres › Exploitation) et fin de série
+  const r = await p.evaluate(() => {
+    const essai = (type, nb) => { DB.exploitation.typeSuivi = type; if (nb === undefined) delete DB.exploitation.nbControlesSuivi; else DB.exploitation.nbControlesSuivi = nb; return [nbControlesPrevus(), maxControlesSuivi()]; };
+    return [essai('cls', 3), essai('cls', 6), essai('cls'), essai('clo', 6), essai('clo', 2), essai('clo'), essai('non_suivi', 4), essai(null)];
+  });
+  eq(r, [[3, 3], [4, 4], [4, 4], [6, 6], [7, 7], [7, 7], [null, 8], [null, 8]], 'contrôles prévus : CLS 1 à 4, CLO 6 ou 7, sinon le maximum du type ; non suivi / à définir : rien de prévu');
+  await p.evaluate(prep, [2, 'cls']);
+  const serie = await p.evaluate(() => {
+    const etat = () => { const sc = brebisMiseBasSansControleLaitier(2026); return [serieControlesTerminee(2026), sc.actif, sc.liste.length, libelleAttenteSansControle(sc)]; };
+    DB.exploitation.nbControlesSuivi = 3;
+    DB.brebis.push({ id: 'tard', eid: '250000045629999', statut: 'active', createdAt: 1, echographies: [], sanitaire: [], notes: [], mouvements: [], modesRepro: [], controleLaitier: [], agnelages: [{ date: '2026-11-20', campagne: 2026, lambs: [{ sexe: 'Mâle', statutFinal: 'vendu' }] }] });
+    const a = etat();
+    DB.brebis[0].controleLaitier.push({ controle: 3, quantite: 1200, campagne: 2026, date: '2026-12-10' });
+    const b = etat();
+    DB.exploitation.typeSuivi = null; const c = etat();
+    DB.exploitation.typeSuivi = 'cls'; DB.campagneDebut = 2027; const d = serieControlesTerminee(2026);
+    return { a, b, c, d };
+  });
+  eq(serie.a, [false, false, 0, 'après le dernier contrôle (C3)'], 'C2 sur 3 prévus : série pas finie, tuile grise, rien de compté');
+  eq(serie.b, [true, true, 1, 'après le dernier contrôle (C3)'], 'C3 importé : série finie, la tardive ressort');
+  eq(serie.c.slice(0, 3), [false, false, 0], 'type de suivi à définir : jamais finie pour la campagne en cours');
+  check(serie.d === true, 'campagne passée : série toujours finie');
   await p.context().close();
 }
 // 2. mobile : cartes C1 à C4, « mL » une seule fois, filtres C1 à C4
@@ -54,15 +76,20 @@ const ouvrir = async (mobile, nb, type) => {
     unites: document.querySelectorAll('#cl-table .cl-val-u').length,
     pills: [...document.querySelectorAll('.ctrl-filtre-opt')].map(b => b.textContent),
     tuiles: [...document.querySelectorAll('#cl-tuiles .reg-tuile-l')].map(e => e.textContent),
+    moyennes: [...document.querySelectorAll('#cl-moyennes .cl-moy-l')].map(e => e.textContent),
+    hMoy: document.getElementById('cl-moyennes').getBoundingClientRect().height,
     deborde: [...document.querySelectorAll('#cl-table .cl-val-v')].some(e => e.scrollWidth > e.clientWidth + 1 || e.getBoundingClientRect().right > document.documentElement.clientWidth)
   }));
-  check(/4 contrôles cette campagne · suivi CLS : jusqu'à 4 · quantités en mL/.test(m.ligne), 'mobile : ligne grise : ' + m.ligne);
+  check(/4 contrôles cette campagne · suivi CLS : 4 prévus · quantités en mL/.test(m.ligne), 'mobile : ligne grise : ' + m.ligne);
   check(m.cartes.length === 3 && m.cartes.every(c => JSON.stringify(c) === '["C1","C2","C3","C4"]'), 'mobile : cartes C1 à C4 : ' + JSON.stringify(m.cartes));
   eq(m.unites, 0, 'mobile : « mL » plus répété à chaque quantité');
   eq(m.pills, ['C1', 'C2', 'C3', 'C4'], 'mobile : filtres C1 à C4');
-  eq(m.tuiles, ['Brebis contrôlées', 'Moyenne C1', 'Moyenne C2', 'Moyenne C3', 'Moyenne C4'], 'mobile : tuiles des moyennes C1 à C4');
+  eq(m.tuiles, ['Brebis contrôlées', 'Dernier contrôle · C4'], 'mobile : deux tuiles, Brebis contrôlées et Dernier contrôle');
+  eq(m.moyennes, ['C1', 'C2', 'C3', 'C4'], 'mobile : carte Moyenne par contrôle C1 à C4');
   check(!m.deborde, 'mobile : aucune quantité coupée ni hors de l\'écran');
   await p.evaluate(prep, [7, 'clo']); await p.evaluate(() => render('controle-laitier')); await p.waitForTimeout(200);
+  const moy7 = await p.evaluate(() => ({ l: [...document.querySelectorAll('#cl-moyennes .cl-moy-l')].map(e => e.textContent).join(), h: document.getElementById('cl-moyennes').getBoundingClientRect().height, col: getComputedStyle(document.querySelector('.cl-moyennes-g')).gridTemplateColumns.split(' ').length }));
+  check(moy7.l === 'C1,C2,C3,C4,C5,C6,C7' && moy7.col === 4 && moy7.h < m.hMoy * 1.8, 'mobile : 7 moyennes dans la même carte, 4 par ligne, à peine plus haute : ' + JSON.stringify([moy7, m.hMoy]));
   check(await p.evaluate(() => [...document.querySelector('#cl-table .cl-carte').querySelectorAll('.cl-val-l')].map(e => e.textContent).join() === 'C1,C2,C3,C4,C5,C6,C7' && getComputedStyle(document.querySelector('#cl-table .cl-vals')).gridTemplateColumns.split(' ').length === 4), 'mobile : 7 contrôles = C1 à C7, 4 par ligne');
   await p.context().close();
 }
@@ -76,11 +103,15 @@ const ouvrir = async (mobile, nb, type) => {
     kpi: [...document.querySelectorAll('.pc-kpis .pc-kpi-l, .pc-kpis [class*="kpi"] .l')].length,
     sticky: getComputedStyle(document.querySelector('#cl-table td.num-fixe')).position,
     cadre: getComputedStyle(document.querySelector('.tab-num-fixe')).overflowX,
-    sub: document.querySelector('.brd-sub').textContent
+    sub: document.querySelector('.brd-sub').textContent,
+    cellules: [...document.querySelectorAll('#cl-table tr')].slice(1).map(r => [...r.cells].slice(3).map(c => c.textContent.trim()).filter(Boolean).length),
+    moyennes: [...document.querySelectorAll('#cl-moyennes .cl-moy-l')].map(e => e.textContent).join()
   }));
+  eq(t.cellules, [7, 7, 7], 'PC : chaque ligne remplit C1 à C7 (pas seulement C1 à C3)');
+  eq(t.moyennes, 'C1,C2,C3,C4,C5,C6,C7', 'PC : carte Moyenne par contrôle C1 à C7');
   eq(t.th, ['N° court', 'MàB', 'C1 (mL)', 'C2 (mL)', 'C3 (mL)', 'C4 (mL)', 'C5 (mL)', 'C6 (mL)', 'C7 (mL)'], 'PC : colonnes C1 à C7');
   eq([t.sticky, t.cadre], ['sticky', 'auto'], 'PC : le n° reste visible quand les contrôles défilent');
-  check(/7 contrôles cette campagne · suivi CLO : jusqu'à 7/.test(t.sub), 'PC : sous-titre : ' + t.sub);
+  check(/7 contrôles cette campagne · suivi CLO : 7 prévus/.test(t.sub), 'PC : sous-titre : ' + t.sub);
   // le n° reste en place après un défilement latéral
   const pos = await p.evaluate(() => { const z = document.querySelector('.tab-num-fixe'); const c = document.querySelector('#cl-table td.num-fixe'); const x0 = c.getBoundingClientRect().left; z.scrollLeft = 400; return [x0, c.getBoundingClientRect().left, z.scrollLeft]; });
   check(pos[2] > 0 ? Math.abs(pos[0] - pos[1]) < 1 : true, 'PC : n° fixe au défilement : ' + JSON.stringify(pos));
@@ -161,6 +192,25 @@ const ouvrir = async (mobile, nb, type) => {
   await p.evaluate(() => { const b = [...document.querySelectorAll('.tab-btn, [data-tab]')].find(x => /Contr/.test(x.textContent)); if (b) b.click(); });
   const fiche = await p.evaluate(() => document.getElementById('app').textContent);
   check(!/Classe par quart|Estimation lactation \(UNOTEC\)|Anomalie lactation : Z/.test(fiche), 'fiche : classe provisoire, estimation et anomalie de lactation du cahier plus affichées');
+  await p.context().close();
+}
+// 7. Paramètres › Exploitation : « Contrôles par campagne » selon le type de suivi (PC)
+{
+  const p = await ouvrir(false, 0, 'cls');
+  const r = await p.evaluate(() => {
+    parametresTab = 'exploitation'; render('parametres');
+    const bloc = () => document.getElementById('bloc-exp-nb-controles'), sel = document.getElementById('f-exp-nb-controles'), type = document.getElementById('f-exp-type-suivi');
+    const opts = () => [...document.getElementById('f-exp-nb-controles').options].map(o => o.value + (o.selected ? '*' : '')).join();
+    const out = { cls: opts(), visibleCls: bloc().style.display !== 'none' };
+    type.value = 'clo'; type.onchange({ target: type }); out.clo = opts();
+    type.value = 'non_suivi'; type.onchange({ target: type }); out.cacheNonSuivi = bloc().style.display === 'none';
+    type.value = 'cls'; type.onchange({ target: type }); document.getElementById('f-exp-nb-controles').value = '2';
+    document.getElementById('btn-save-exploitation').click();
+    out.enregistre = [DB.exploitation.typeSuivi, DB.exploitation.nbControlesSuivi, maxControlesSuivi()];
+    return out;
+  });
+  eq([r.cls, r.visibleCls, r.clo, r.cacheNonSuivi], ['1,2,3,4*', true, '6,7*', true], 'Paramètres : CLS 1 à 4, CLO 6 ou 7 (le maximum d\'office), caché sans suivi');
+  eq(r.enregistre, ['cls', 2, 2], 'Paramètres : 2 contrôles prévus enregistrés');
   await p.context().close();
 }
 await browser.close();

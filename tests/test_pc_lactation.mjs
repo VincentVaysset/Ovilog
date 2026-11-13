@@ -27,6 +27,7 @@ await page.evaluate(() => {
   const cl = (n) => ({ controle: n, quantite: 1.1, anomalie: null, date: '2027-01-20', campagne: 2026 });
   window.jeu = () => {
     DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
+    DB.exploitation = Object.assign(DB.exploitation || {}, { typeSuivi: 'cls', nbControlesSuivi: 2 });   // 2 contrôles prévus : série finie au C2
     DB.brebis = [
       fiche(eid(1), { agnelages: [mb('2026-11-05', [L('Mâle')])], controleLaitier: [cl(1), cl(2)] }),
       fiche(eid(2), { agnelages: [mb('2026-11-12', [L('Mâle', { statutFinal: 'vendu' })])], controleLaitier: [cl(1)] }),

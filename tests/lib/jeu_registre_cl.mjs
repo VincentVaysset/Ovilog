@@ -29,6 +29,7 @@ export function jeuControleLaitier(avecControles) {
   const fiche = (e, o) => Object.assign({ id: 'f' + e, eid: e, statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] }, o || {});
   const cl = (n, q, an) => ({ controle: n, quantite: q, anomalie: an || null, date: '2027-01-20', campagne: 2026 });
   DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
+  DB.exploitation = Object.assign(DB.exploitation || {}, { typeSuivi: 'cls', nbControlesSuivi: 3 });   // 3 contrôles prévus : série finie au C3
   const mb = (d, lambs) => ({ date: d, campagne: 2026, lambs: lambs || [{ sexe: 'Mâle' }] });
   const valeurs = [[1520, 1640, 1210], [1380, 960, 880], [1710, 1820, 1340], [1250, 820, 690], [1460, 1530, null], [1340, 980, 760], [1800, 1910, 1480]];
   const brebis = valeurs.map((v, i) => fiche(eid(3, 100 + i), {
