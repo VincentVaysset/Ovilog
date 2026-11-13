@@ -32,7 +32,7 @@ check(k['Brebis contrôlées'][0] === '7' && /sur 10 présentes/.test(k['Brebis 
 check(k['Moyenne C1'][0] === '1 494 mL' && k['Moyenne C2'][0] === '1 380 mL' && k['Moyenne C3'][0] === '1 060 mL', 'moyennes C1/C2/C3 : ' + JSON.stringify([k['Moyenne C1'], k['Moyenne C2'], k['Moyenne C3']]));
 check(/7 brebis/.test(k['Moyenne C2'][1]) && /6 brebis/.test(k['Moyenne C3'][1]), 'effectifs des moyennes 7 / 6 brebis');
 check(k['Mises bas sans contrôle laitier'][0] === '2' && /1 attendue à la traite/.test(k['Mises bas sans contrôle laitier'][1]), 'mises bas sans contrôle : 2, dont 1 attendue : ' + JSON.stringify(k['Mises bas sans contrôle laitier']));
-check(await page.evaluate(() => !document.querySelector('.fiche-desktop-grid') && document.querySelector('.brd-title').textContent === 'Contrôle laitier' && /3 contrôles par campagne/.test(document.querySelector('.brd-sub').textContent)), 'titre, sous-titre, pleine largeur');
+check(await page.evaluate(() => !document.querySelector('.fiche-desktop-grid') && document.querySelector('.brd-title').textContent === 'Contrôle laitier' && /\d+ contrôles? cette campagne/.test(document.querySelector('.brd-sub').textContent)), 'titre, sous-titre, pleine largeur');
 console.log('OK 1 indicateurs : 7 brebis contrôlées sur 10 ; moyennes C1 1 494 / C2 1 380 / C3 1 060 mL (7, 7, 6 brebis) ; 2 mises bas sans contrôle (1 attendue à la traite).');
 
 // ================================================================ 2. tableau sans colonne Moyenne, filtres, surlignage

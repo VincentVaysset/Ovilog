@@ -28,18 +28,18 @@ const apercu = (cle) => page.evaluate(c => ({ th: [...document.querySelectorAll(
 
 // ---- 1. cartes, colonnes lues dans les vrais modèles
 await jeu('cls'); await attendreApercus();
-eq(await page.evaluate(() => [...document.querySelectorAll('.prm-import .prm-titre')].map(e => e.textContent)), ['Correspondance SIEOL', 'Contrôle laitier', 'Contrôle laitier · fichiers SIEOL', 'Lactation', 'Nouveaux animaux', 'Inséminations'], '6 cartes d\'import (suivi CLS)');
-eq(await page.evaluate(() => [...document.querySelectorAll('.prm-import .prm-titre + .prm-note')].map(e => e.textContent)), ['Associe chaque animal à ses numéros de travail SIEOL.', 'Lait et anomalies des contrôles de la campagne en cours, par brebis.', 'Fichier résumé (les moyennes SIEOL) et fichier cahier de contrôle SIEOL brut, par campagne et par contrôle C1, C2, C3.', 'Lactation totale et indicateurs de la campagne en cours (suivi CLS ou CLO).', 'Crée les fiches manquantes et complète les fiches existantes. Trois feuilles : Brebis, Béliers, Agnelles.', 'Papier de l\'inséminateur (CLS) : un fichier, deux onglets, les béliers (code IA, n° officiel, ISOL) et les brebis inséminées (n°, code IA), relié au lot IA choisi.'], 'une ligne de description par carte');
+eq(await page.evaluate(() => [...document.querySelectorAll('.prm-import .prm-titre')].map(e => e.textContent)), ['Correspondance SIEOL', 'Contrôle laitier', 'Lactation', 'Nouveaux animaux', 'Inséminations'], '5 cartes d\'import (suivi CLS) : SIEOL et modèle Excel du contrôle laitier dans UNE carte');
+eq(await page.evaluate(() => [...document.querySelectorAll('.prm-import .prm-titre + .prm-note')].map(e => e.textContent)), ['Associe chaque animal à ses numéros de travail SIEOL.', "Lait et anomalies des contrôles, par brebis. Suivi CLS : jusqu'à 4 contrôles par campagne ; les contrôles présents dans le fichier sont trouvés tout seuls.", 'Lactation totale et indicateurs de la campagne en cours (suivi CLS ou CLO).', 'Crée les fiches manquantes et complète les fiches existantes. Trois feuilles : Brebis, Béliers, Agnelles.', 'Papier de l\'inséminateur (CLS) : un fichier, deux onglets, les béliers (code IA, n° officiel, ISOL) et les brebis inséminées (n°, code IA), relié au lot IA choisi.'], 'une ligne de description par carte');
 eq(await apercu('correspondance-sieol'), { th: ['Numéro EID complet (11 chiffres)', 'Numéro officiel Ovilog', 'Numéro long travail SIEOL', 'Numéro court travail SIEOL'], td: ['00000051001', '51001', '259001', '59001'] }, 'Correspondance SIEOL : colonnes + exemple du vrai modèle');
-eq(await apercu('controle-laitier'), { th: ['Numéro EID complet (11 chiffres)', 'Numéro SIEOL (court ou long)', 'Contrôle 1 (mL[/code])', 'Contrôle 2 (mL[/code])', 'Contrôle 3 (mL[/code])'], td: ['—', '250101', '1440', '1300', '1060'] }, 'Contrôle laitier : colonnes + exemple');
+eq(await apercu('controle-laitier'), { th: ['Numéro EID complet (11 chiffres)', 'Numéro SIEOL (court ou long)', 'Contrôle 1 (mL[/code])', 'Contrôle 2 (mL[/code])', 'Contrôle 3 (mL[/code])', 'Contrôle 4 (mL[/code])', 'Contrôle 5 (mL[/code])', 'Contrôle 6 (mL[/code])', 'Contrôle 7 (mL[/code])', 'Contrôle 8 (mL[/code])'], td: ['—', '250101', '1440', '1300', '1060', '—', '—', '—', '—', '—'] }, 'Contrôle laitier : colonnes C1 à C8 + exemple');
 eq(await apercu('lactation'), { th: ['Numéro SIEOL court', 'Lactation totale (L, campagne)', 'Jours de traite (campagne)', 'Lactation moyenne', 'Classe par quart'], td: ['501', '285.4', '178', '258', '4'] }, 'Lactation CLS : colonnes + exemple');
 eq((await apercu('nouveaux-animaux')).th, ['Origine', 'Numéro EID complet (11 ou 15 chiffres)', "Date d'entrée (JJ-MM-AAAA)", 'Statut', 'Père (facultatif)', 'Mère (facultatif)', 'Numéro long travail SIEOL', 'Numéro court travail SIEOL'], 'Nouveaux animaux : colonnes de la feuille Brebis');
 check((await apercu('nouveaux-animaux')).td[0] === 'née' && (await apercu('nouveaux-animaux')).td[4] === '—', 'Nouveaux animaux : exemple (cellules vides = —)');
 check(await page.evaluate(() => !document.getElementById('app').textContent.includes('❔') && !document.querySelector('[data-apercu-modele]') && !document.querySelector('img[src^="data:image/png"]:not(.logo-img)')), 'plus de ❔ ni d\'aperçu en images');
-eq(await page.evaluate(() => [...document.querySelectorAll('.prm-import')].map(c => [...c.querySelectorAll('.prm-actions .btn')].map(b => b.textContent + (b.classList.contains('btn-primary') ? '*' : '')))), [['Télécharger le modèle', 'Importer un fichier*'], ['Télécharger le modèle', 'Importer un fichier*'], ['Importer un fichier*'], ['Télécharger le modèle', 'Importer un fichier*'], ['Télécharger le modèle', 'Importer un fichier*'], ['Télécharger le modèle', 'Importer un fichier*']], 'deux boutons par carte (un seul pour la carte « fichiers SIEOL » : des CSV exportés de SIEOL, pas de modèle à télécharger)');
+eq(await page.evaluate(() => [...document.querySelectorAll('.prm-import')].map(c => [...c.querySelectorAll('.prm-actions .btn')].map(b => b.textContent + (b.classList.contains('btn-primary') ? '*' : '')))), [['Télécharger le modèle', 'Importer un fichier*'], ['Importer les fichiers SIEOL*', 'Télécharger le modèle', 'Importer le modèle Excel'], ['Télécharger le modèle', 'Importer un fichier*'], ['Télécharger le modèle', 'Importer un fichier*'], ['Télécharger le modèle', 'Importer un fichier*']], 'deux boutons par carte (un seul pour la carte « fichiers SIEOL » : des CSV exportés de SIEOL, pas de modèle à télécharger)');
 eq(await page.evaluate(() => [...document.querySelectorAll('[id^="dernier-"]')].map(e => e.textContent)), ['aucun', 'aucun', 'aucun', 'aucun', 'aucun', 'aucun'], 'dernier import : « aucun » au départ');
 eq(await apercu('inseminations'), { th: ['Code IA', 'N° officiel', 'ISOL', 'N° brebis', 'Code IA'], td: ['40518', '000012 40518', '112,5', '21045', '40518'] }, 'Inséminations : deux onglets (Béliers, Brebis inséminées) + exemple fictif (indicatif en 00)');
-console.log('OK 1 : 6 cartes, description, colonnes et exemples lus dans les vrais modèles, deux boutons, « aucun ».');
+console.log('OK 1 : 5 cartes (contrôle laitier : SIEOL + modèle Excel), description, colonnes et exemples lus dans les vrais modèles, deux boutons, « aucun ».');
 
 // ---- 2. Lactation CLO / non suivi
 await jeu('clo'); await attendreApercus();
@@ -69,9 +69,12 @@ console.log('OK 3 : « Télécharger le modèle » sert le fichier d\'origine po
 // ---- 4. « Importer un fichier » ouvre l'écran d'import existant
 for (const [cle, vue] of [['correspondance-sieol', 'import-correspondance-sieol'], ['controle-laitier', 'import-controle-laitier-modele'], ['lactation', 'import-lactation-modele'], ['nouveaux-animaux', 'import-nouveaux-animaux']]) {
   await jeu('cls'); await attendreApercus();
-  await page.click(`#import-${cle} .btn-primary`);
+  await page.click(cle === 'controle-laitier' ? '#btn-import-controle-laitier-modele' : `#import-${cle} .btn-primary`);
   eq(await page.evaluate(() => currentView), vue, 'écran d\'import ouvert (' + cle + ')');
 }
+await jeu('cls'); await attendreApercus();
+await page.click('#btn-import-controle-laitier-sieol');
+eq(await page.evaluate(() => currentView), 'import-controle-laitier-sieol', 'carte Contrôle laitier : « Importer les fichiers SIEOL » ouvre l\'import SIEOL');
 console.log('OK 4 : « Importer un fichier » ouvre l\'écran d\'import (logique inchangée).');
 
 // ---- 5. import réel de bout en bout avec les vrais modèles : état « dernier import »
