@@ -121,7 +121,7 @@ const carnet = await page.evaluate(async () => {
   const cap = [];
   window.buildXlsxWorkbook = async (s) => { cap.push({ t: 'xlsx', s: JSON.parse(JSON.stringify(s)) }); return new Uint8Array([1]); };
   window.saveOrShareBinaryFile = async (nom, bytes, mime) => { cap.push({ t: 'file', nom, mime }); };
-  carnetSanitairePcEtat = null; render('sanitaire');
+  carnetSanitairePcEtat = null; carnetOnglet = 'soins'; render('sanitaire');   // Export Excel : en bas de l'onglet « Soins réalisés »
   document.getElementById('cs-export').click();
   await new Promise(r => setTimeout(r, 100));
   return cap;

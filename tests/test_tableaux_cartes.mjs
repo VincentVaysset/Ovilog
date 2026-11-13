@@ -15,7 +15,7 @@ const ECRANS = [
   ['Historique des échographies', 'pc', "render('historique-echo')", 2],
   ['Ordonnances', 'pc', "render('ordonnances')", 1],
   ['Sous délai d\'attente', 'pc', "render('sous-delai')", 1],
-  ['Carnet sanitaire', 'pc', "render('sanitaire')", 4],
+  ['Carnet sanitaire · Soins réalisés', 'pc', "carnetOnglet = 'soins'; render('sanitaire')", 4],
   ['Produits et délais', 'pc', "render('produits-delais')", 3],
   ['Inventaire · brebis', 'pc', "inventaireActifsTab = 'brebis'; render('inventaire-actifs')", 5],
   ['Inventaire · agnelles', 'pc', "inventaireActifsTab = 'agnelles'; render('inventaire-actifs')", 2],
@@ -30,7 +30,7 @@ const mesure = () => {
   const cartes = [...document.querySelectorAll('#app .carte-liste')].filter(vis);
   return {
     tables: [...document.querySelectorAll('#app table')].filter(vis).length,
-    defilants: [...document.querySelectorAll('#app *')].filter(e => { const cs = getComputedStyle(e); return (cs.overflowX === 'auto' || cs.overflowX === 'scroll') && e.scrollWidth > e.clientWidth + 1 && vis(e); }).length,
+    defilants: [...document.querySelectorAll('#app *')].filter(e => { if (e.classList.contains('onglets-nav')) return false;   /* rangée d'onglets à flèches : défilement voulu */ const cs = getComputedStyle(e); return (cs.overflowX === 'auto' || cs.overflowX === 'scroll') && e.scrollWidth > e.clientWidth + 1 && vis(e); }).length,
     page: document.documentElement.scrollWidth - innerWidth,
     cartes: cartes.length, minH: cartes.length ? Math.round(Math.min(...cartes.map(c => c.getBoundingClientRect().height))) : null,
     chevronsFaux: cartes.filter(c => !!c.querySelector('.carte-liste-chev') !== c.classList.contains('ouvre')).length

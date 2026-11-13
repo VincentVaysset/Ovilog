@@ -99,17 +99,17 @@ for (const bureau of [false, true]) {
   await entree(p, '00777');
   const col = await p.evaluate(() => ({ vue: currentView, msg: document.getElementById('scan-open-err').textContent, visible: !document.getElementById('scan-open-err').classList.contains('hidden'), nb: document.querySelectorAll('#brebis-liste .al-ligne, #brebis-liste .list-table-row').length }));
   check(col.vue === 'list' && col.visible && /2 animaux correspondent/.test(col.msg) && col.nb === 2, nom + ' : Entrée sur un n° ambigu : aucune ouverture, message, liste sur les 2 candidats : ' + JSON.stringify(col));
-  eq(await bips(p), AMBIGU, nom + ' : bip ambigu');
+  eq(await bips(p), [], nom + ' : liste des brebis = pas un écran de recherche : la frappe ne bipe pas (règle des bips)');
   console.log('OK 5 ' + nom + ' : collision (même n° d\'ordre) : tous listés, jamais d\'ouverture automatique.');
 
   // ---- 6. scan / Entrée : unique -> fiche, EID complet -> fiche, introuvable -> bip raté
   await entree(p, '99999');
   check(await p.evaluate(() => currentView === 'list' && /Aucune brebis trouvée pour « 99999 »/.test(document.getElementById('scan-open-err').textContent)), nom + ' : introuvable : message, on reste sur la liste');
-  eq(await bips(p), B, nom + ' : bip « raté »');
+  eq(await bips(p), [], nom + ' : introuvable : message seul, pas de bip de recherche');
   await p.evaluate(() => render('list'));
   await entree(p, '8133');
   eq(await p.evaluate(() => [currentView, DB.brebis.find(s => s.id === 'A') && document.getElementById('app').textContent.includes('8133')]), ['detail', true], nom + ' : Entrée sur un n° à un seul résultat : la fiche s\'ouvre');
-  eq(await bips(p), A, nom + ' : bip « trouvé »');
+  eq(await bips(p), [], nom + ' : trouvé : pas de bip de recherche');
   await p.evaluate(() => render('list'));
   await entree(p, await p.evaluate(() => EID(6, 777)));
   check(await p.evaluate(() => currentView === 'detail' && document.getElementById('app').textContent.includes('00777')), nom + ' : scan d\'un EID complet : la fiche de la bonne brebis (malgré la collision d\'ordre)');

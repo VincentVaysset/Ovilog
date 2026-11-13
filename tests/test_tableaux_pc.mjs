@@ -18,7 +18,7 @@ await pc.evaluate(() => { DB.bilanEconomiqueActif = true; });   // le Bilan éco
 // [écran, code d'ouverture, nombre de tableaux attendus]
 const VUES = [
   ['Tri des agnelles', 'triPcEtat=null;render("agnelles")', 1], ['Lots existants', 'lotsPcEtat=null;render("lots")', 1], ['Chantier de tri, étape 2', 'lotsPcEtat=lotsPcEtatInitial();lotsPcEtat.lotId="L1";currentLotId="L1";render("edit-lot")', 2],
-  ['Lot de reproduction (création)', 'render("add-lot-repro")', 2], ['Mouvements d\'animaux + passés', 'render("mouvement-groupe")', 2], ['Carnet sanitaire', 'render("sanitaire")', 2], ['Produits et délais', 'render("produits-delais")', 3],
+  ['Lot de reproduction (création)', 'render("add-lot-repro")', 2], ['Mouvements d\'animaux + passés', 'render("mouvement-groupe")', 2], ['Carnet sanitaire · Soins réalisés', 'carnetOnglet = "soins"; render("sanitaire")', 1], ['Produits et délais', 'render("produits-delais")', 3],
   ['Ordonnances', 'render("ordonnances")', 1], ['Sous délai d\'attente', 'render("sous-delai")', 1], ['Contrôle laitier', 'render("controle-laitier")', 1], ['Registre', 'render("registre")', 1],
   ['Inventaire (actifs)', 'render("inventaire-actifs")', 1], ['Échographies', 'render("echo-rapide")', 2], ['Historique des échos', 'render("historique-echo")', 1], ['Mise bas rapide', 'render("misebas-rapide")', 1],
   ['Bilan de reproduction', 'bilanCampagneTab="reproduction";render("bilan-campagne")', 5], ['Bilan de lactation', 'bilanCampagneTab="lactation";render("bilan-campagne")', 1], ['Bilan économique', 'bilanCampagneTab="economique";render("bilan-campagne")', 1],

@@ -87,8 +87,8 @@ r = await scan('#scan-open', '250000012930002'); // ouvre la fiche (navigation) 
 await page.evaluate(() => { render('list'); });
 await page.waitForSelector('#scan-open', { state: 'attached' });
 const r2 = await scan('#scan-open', '250000012930002');
-check(eq(r, A) && eq(r2, A), 'liste Brebis : scan répété -> toujours le bip A (comportement inchangé), obtenu ' + JSON.stringify([r, r2]));
-console.log('OK non-régression : un écran sans session "trouvé" (liste Brebis) joue toujours le bip A, inchangé.');
+check(eq(r, []) && eq(r2, []), 'liste Brebis (pas un écran de recherche) : aucun bip de recherche à l\'Entrée, obtenu ' + JSON.stringify([r, r2]));
+console.log('OK règle des bips : la liste Brebis ne joue aucun bip de recherche (le scan y a son bip neutre, test_bips_regle).');
 
 console.log('\nTOUS LES TESTS DES BIPS DE LOT SONT PASSÉS (faux AudioContext, aucune donnée réelle)');
 await browser.close();
