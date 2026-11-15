@@ -28,6 +28,13 @@ servir (code 10 ou autre) ? Si oui, la reprendre à l'import et l'afficher (plan
 
 ## Imports : « SIEOL ou modèle Ovilog » partout
 
+Décisions de l'éleveur pour ce chantier (le « point sur les imports ») : UNE seule application (jamais de mode « avec / sans
+SIEOL »), un langage simple compris sans SIEOL ; « SIEOL » n'est nommé que là où c'est lui (source « Depuis SIEOL »).
+Renommage partout d'un coup (écrans, PDF, Excel, modèles) : « n° court SIEOL » → « n° de travail » ; « n° long SIEOL » →
+« n° de travail complet » (« N° travail compl. » dans une colonne étroite). Modèles Excel lisibles sans SIEOL (une ligne
+par colonne, codes de contrôle nommés : « /10 = vide définitive »). Puis rapprochement SIEOL ↔ Ovilog à chaque import
+(inconnues d'Ovilog, absentes de SIEOL, mises bas jamais contrôlées, vides) et liste « À transmettre au technicien ».
+
 Idée de l'éleveur : comme la carte « Contrôle laitier » (fichiers SIEOL puis modèle Excel Ovilog), proposer les deux
 sources pour chaque import qui s'y prête (Lactation, Correspondance SIEOL…). Plan à faire.
 
