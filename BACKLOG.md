@@ -11,6 +11,9 @@ l'éleveur, écran par écran, avec un visuel avant tout code : passage en portr
 pour les documents officiels : Registre, Déclaration, Traitements sur 12 mois), et un bouton « Imprimer » à la place
 de « Export PDF » ou en plus.
 
+À ajouter aussi : l'EFFECTIF en bas de chaque liste d'animaux imprimée (« 48 agnelles », « 132 brebis »…), sous le
+tableau, sur toutes les listes (demande de l'éleveur).
+
 ## Anomalie de lactation SIEOL (`ano_lact`) : à revoir
 
 L'import SIEOL du contrôle laitier ne garde plus l'anomalie de lactation du cahier (`ano_lact`) : seuls les
