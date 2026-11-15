@@ -109,7 +109,7 @@ const ouvrir = async (mobile, nb, type) => {
   }));
   eq(t.cellules, [7, 7, 7], 'PC : chaque ligne remplit C1 à C7 (pas seulement C1 à C3)');
   eq(t.moyennes, 'C1,C2,C3,C4,C5,C6,C7', 'PC : carte Moyenne par contrôle C1 à C7');
-  eq(t.th, ['N° court', 'MàB', 'C1 (mL)', 'C2 (mL)', 'C3 (mL)', 'C4 (mL)', 'C5 (mL)', 'C6 (mL)', 'C7 (mL)'], 'PC : colonnes C1 à C7');
+  eq(t.th, ['N° de travail', 'MàB', 'C1 (mL)', 'C2 (mL)', 'C3 (mL)', 'C4 (mL)', 'C5 (mL)', 'C6 (mL)', 'C7 (mL)'], 'PC : colonnes C1 à C7');
   eq([t.sticky, t.cadre], ['sticky', 'auto'], 'PC : le n° reste visible quand les contrôles défilent');
   check(/7 contrôles cette campagne · suivi CLO : 7 prévus/.test(t.sub), 'PC : sous-titre : ' + t.sub);
   // le n° reste en place après un défilement latéral
@@ -126,7 +126,7 @@ const ouvrir = async (mobile, nb, type) => {
     buildPdfTableCharte = o1; buildXlsxWorkbook = o2; saveOrShareBinaryFile = o3;
     return { pdf, xl };
   });
-  const attendu = ['N° court', 'Date de mise bas', 'C1 (mL)', 'C2 (mL)', 'C3 (mL)', 'C4 (mL)', 'C5 (mL)', 'C6 (mL)', 'C7 (mL)'];
+  const attendu = ['N° de travail', 'Date de mise bas', 'C1 (mL)', 'C2 (mL)', 'C3 (mL)', 'C4 (mL)', 'C5 (mL)', 'C6 (mL)', 'C7 (mL)'];
   eq(ex.pdf, attendu, 'export PDF : C1 à C7'); eq(ex.xl, attendu, 'export Excel : C1 à C7');
   // Lots PC, onglet contrôles
   const lot = await p.evaluate(() => {
@@ -169,7 +169,7 @@ const ouvrir = async (mobile, nb, type) => {
   const m = await p.evaluate(() => {
     const vide = Array(10).fill('');
     const rows = [vide, vide, vide, ['', '', '10-11-2026', '11-11-2026', '12-11-2026', '13-11-2026', '', '', '', ''],
-      ['Numéro EID complet (11 chiffres)', 'Numéro SIEOL (court ou long)', ...[1, 2, 3, 4, 5, 6, 7, 8].map(n => 'Contrôle ' + n + ' (mL[/code])')],
+      ['Numéro EID complet (11 chiffres)', 'N° de travail (ou complet)', ...[1, 2, 3, 4, 5, 6, 7, 8].map(n => 'Contrôle ' + n + ' (mL[/code])')],
       ['', '601', '1500', '1400', '1300', '1200', '', '', '', '']];
     const r = parserFichierControleLaitierModele(rows);
     const ancien = parserFichierControleLaitierModele([vide, vide, vide, ['', '', '10-11-2026', '11-11-2026', '12-11-2026'], ['A', 'B', 'x', 'y', 'z'], ['', '601', '1500', '1400', '1300']]);

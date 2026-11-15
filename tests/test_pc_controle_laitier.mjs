@@ -38,7 +38,7 @@ console.log('OK 1 indicateurs : 7 brebis contrôlées sur 10 ; dernier contrôle
 
 // ================================================================ 2. tableau sans colonne Moyenne, filtres, surlignage
 const ths = await page.evaluate(() => [...document.querySelectorAll('#cl-table th')].map(t => t.textContent.replace(/[▲▼]/g, '').trim()));
-check(ths.join('|') === '|N° court|MàB|C1 (mL)|C2 (mL)|C3 (mL)' && !ths.some(t => /moyenne|cumul/i.test(t)), 'colonnes : N° court / MàB / C1 / C2 / C3, aucune colonne Moyenne : ' + ths.join('|'));
+check(ths.join('|') === '|N° de travail|MàB|C1 (mL)|C2 (mL)|C3 (mL)' && !ths.some(t => /moyenne|cumul/i.test(t)), 'colonnes : N° court / MàB / C1 / C2 / C3, aucune colonne Moyenne : ' + ths.join('|'));
 check(await page.evaluate(() => document.getElementById('cl-count').textContent) === '10 brebis correspondantes sur 10' && await page.evaluate(() => document.getElementById('cl-filtre-actif').textContent) === 'Aucun filtre actif', 'compteur sans filtre');
 const toutes = await lignes();
 check(toutes.length === 10 && toutes[0][0] === '950' && toutes[0][2] === '1 520', 'tableau : 10 brebis actives (la vendue est exclue), N° court et valeurs : ' + JSON.stringify(toutes[0]));
@@ -132,7 +132,7 @@ await page.click('#btn-cl-export-xlsx');
 await page.waitForFunction(() => window.__cap.some(c => c.t === 'file'));
 const ex = await page.evaluate(() => window.__cap);
 const feuille = ex.find(c => c.t === 'xlsx').s[0].rows;
-check(feuille.length === 4 && feuille[0][0] === 'N° court' && feuille.slice(1).map(r => r[0]).join() === '951,953,955', 'export Excel = lignes filtrées (3) : ' + JSON.stringify(feuille));
+check(feuille.length === 4 && feuille[0][0] === 'N° de travail' && feuille.slice(1).map(r => r[0]).join() === '951,953,955', 'export Excel = lignes filtrées (3) : ' + JSON.stringify(feuille));
 await page.evaluate(() => { window.__cap.length = 0; });
 await page.click('#btn-cl-export-pdf');
 await page.waitForFunction(() => window.__cap.some(c => c.t === 'file'));

@@ -60,7 +60,7 @@ for (const bureau of [false, true]) {
   eq(tout, attendu, nom + ' : même tri qu\'avant (du plus âgé au plus jeune)');
   const gras = await p.evaluate(b => { const q = b ? '#brebis-liste .list-table-row .num' : '#brebis-liste .al-num'; const e = document.querySelector(q); const tags = [...document.querySelectorAll(b ? '#brebis-liste .list-table-row' : '#brebis-liste .al-ligne')].map(r => !!r.querySelector('.compact-tag')); return { poids: getComputedStyle(e).fontWeight, tags }; }, bureau);
   check(Number(gras.poids) >= 600, nom + ' : n° en gras : ' + gras.poids);
-  eq(gras.tags.filter(Boolean).length, 4, nom + ' : étiquette SIEOL sur les 4 brebis qui ont un n° SIEOL (pas sur les n°00059 et n°00777)');
+  eq(gras.tags.filter(Boolean).length, 0, nom + ' : plus d\'étiquette SIEOL (le n° de travail en gras suffit)');
   const champ = await p.evaluate(() => ({ ph: document.getElementById('scan-open').placeholder, err: !!document.getElementById('scan-open-err'), titre: pageTitle.textContent }));
   eq(champ, { ph: bureau ? 'Saisir un n° / EID' : 'Scanner ou saisir un n°', err: true, titre: 'Brebis (6)' }, nom + ' : champ (PC : sans scan), ids conservés, titre');
 

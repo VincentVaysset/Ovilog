@@ -42,7 +42,7 @@ check(mob.intact && mob.saves === 0 && pc.intact && pc.saves === 0, 'aucune écr
 
 // Excel : colonnes de l'écran, sans cumul
 const rows = mob.feuilles[0][0].rows;
-eq(rows[0], ['N° court', 'Date de mise bas', 'C1 (mL)', 'C2 (mL)', 'C3 (mL)'], 'Excel : colonnes');
+eq(rows[0], ['N° de travail', 'Date de mise bas', 'C1 (mL)', 'C2 (mL)', 'C3 (mL)'], 'Excel : colonnes');
 eq(rows[1], ['17', '10-02-2026', 1200, 1350, ''], 'Excel : ligne 17');
 eq(rows[2], ['18', '', '', '', ''], 'Excel : ligne sans contrôle ni mise bas');
 eq(rows[3], ['1021', '05-01-2026', 980, 1010, 995], 'Excel : ligne 1021');
@@ -60,7 +60,7 @@ else {
   const x = t => { const w = mots.find(m => m[2] === t); check(w, 'mot absent du PDF : ' + t); return w; };
   const ent = ['N°', 'Date', 'C1', 'C2', 'C3'].map(x);
   check(ent.every((w, i) => i === 0 || w[0] > ent[i - 1][0]) && ent.every(w => Math.abs(w[1] - ent[0][1]) < 3), 'PDF : en-tête N° court, Date de mise bas, C1, C2, C3 de gauche à droite sur une ligne');
-  check(['court', 'de', 'mise', 'bas', '(mL)'].every(t => texte.includes(t)), 'PDF : en-têtes complets, non coupés');
+  check(['travail', 'de', 'mise', 'bas', '(mL)'].every(t => texte.includes(t)), 'PDF : en-têtes complets, non coupés');
   const ligne17 = ['17', '10-02-2026', '1200', '1350'].map(x);
   check(ligne17.every((w, i) => i === 0 || w[0] > ligne17[i - 1][0]) && ligne17.every(w => Math.abs(w[1] - ligne17[0][1]) < 3), 'PDF : ligne 17 dans l\'ordre N° court, date, C1, C2');
   const y = t => x(t)[1];

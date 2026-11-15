@@ -68,7 +68,7 @@ for (const bureau of [false, true]) {
   await p.click(ids[nom][0]);
   await p.waitForSelector('#te-colonnes');
   const cols = await p.evaluate(() => [...document.querySelectorAll('.te-col-case')].map(c => [c.dataset.col, c.checked]));
-  eq(cols.map(c => c[0]), ['N° boucle', 'Naissance', 'Mode repro', 'Portée', 'Mère n° court', 'Mère classe', 'Mère lact. N-1 (L)', 'Père code IA', 'ISOL père', 'Garder', 'Écarter', 'Notes'], nom + ' : les 12 colonnes de la feuille de tri');
+  eq(cols.map(c => c[0]), ["N° d'ordre", 'Naissance', 'Mode repro', 'Portée', 'Mère n° de travail', 'Mère classe', 'Mère lact. N-1 (L)', 'Père code IA', 'ISOL père', 'Garder', 'Écarter', 'Notes'], nom + ' : les 12 colonnes de la feuille de tri');
   check(cols.every(c => c[1]), nom + ' : toutes cochées d\'office');
   if (CAP) await p.screenshot({ path: path.join(CAP, nom + '_page_export_colonnes_toutes.png') });
   // 2. export sans rien toucher : portrait, 12 en-têtes entiers (sur deux lignes si besoin), page remplie
@@ -77,7 +77,7 @@ for (const bureau of [false, true]) {
   check(r12.w < r12.h && Math.round(r12.w) === 595, nom + ' : feuille de tri en portrait A4 : ' + r12.w + '×' + r12.h);
   check(!r12.textes.some(t => /\.\.\.|…/.test(t)), nom + ' : aucun texte coupé : ' + JSON.stringify(r12.textes.filter(t => /\.\.\.|…/.test(t))));
   const entetes = r12.entetes.map(e => e[0]).join(' ');
-  for (const l of ['N°', 'boucle', 'Naissance', 'Mode', 'repro', 'Portée', 'Mère', 'classe', 'Père', 'ISOL', 'Garder', 'Écarter', 'Notes']) check(entetes.includes(l), nom + ' : en-tête « ' + l + ' » présent : ' + entetes);
+  for (const l of ['N°', "d'ordre", 'Naissance', 'Mode', 'repro', 'Portée', 'Mère', 'classe', 'Père', 'ISOL', 'Garder', 'Écarter', 'Notes']) check(entetes.includes(l), nom + ' : en-tête « ' + l + ' » présent : ' + entetes);
   check(r12.lignesP1 >= 28 && r12.basP1 > r12.h * 0.85, nom + ' : la page 1 est remplie (' + r12.lignesP1 + ' agnelles, bas à ' + Math.round(r12.basP1 / r12.h * 100) + ' %)');
   // 3. colonnes décochées : retirées du PDF et de « Trier par », au moins une colonne
   await p.evaluate(() => { window.__f = []; });
@@ -92,13 +92,13 @@ for (const bureau of [false, true]) {
   await p.click('#te-exporter'); await p.waitForFunction(() => window.__f.length === 1);
   const r8 = lirePdf(await p.evaluate(() => window.__f[0].b), nom + '_feuille_8_colonnes');
   const e8 = r8.entetes.map(e => e[0]);
-  eq(e8, ['N° boucle', 'Naissance', 'Portée', 'Mère n° court', 'Mère lact. N-1 (L)', 'Garder', 'Écarter', 'Notes'], nom + ' : PDF à 8 colonnes, titres sur une ligne');
+  eq(e8, ["N° d'ordre", 'Naissance', 'Portée', 'Mère n° de travail', 'Mère lact. N-1 (L)', 'Garder', 'Écarter', 'Notes'], nom + ' : PDF à 8 colonnes, titres sur une ligne');
   check(r8.w < r8.h && r8.lignesP1 >= 28, nom + ' : 8 colonnes, portrait, page remplie');
   // au moins une colonne : la dernière cochée ne peut pas être décochée
   await p.click(ids[nom][0]); await p.waitForSelector('#te-colonnes');
   const labels = await p.evaluate(() => [...document.querySelectorAll('.te-col-case')].map(c => c.dataset.col));
   for (const l of labels.slice(1)) await p.click(`.te-col-case[data-col="${l}"]`);
-  check(await p.evaluate(() => document.querySelector('.te-col-case[data-col="N° boucle"]').disabled && document.querySelector('.te-col-case[data-col="N° boucle"]').checked), nom + ' : au moins une colonne (la dernière ne se décoche pas)');
+  check(await p.evaluate(() => document.querySelector('.te-col-case[data-col="N° d\'ordre"]').disabled && document.querySelector('.te-col-case[data-col="N° d\'ordre"]').checked), nom + ' : au moins une colonne (la dernière ne se décoche pas)');
   await p.click('#te-annuler');
   // 4. Excel : mêmes colonnes retirées
   await p.evaluate(() => { window.__f = []; window.__xl = []; });

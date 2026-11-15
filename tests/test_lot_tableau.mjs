@@ -37,7 +37,7 @@ const etat = () => page.evaluate(() => ({
   ordre: [...document.querySelectorAll('.lot-ligne')].map(c => c.querySelector('.carte-liste-nm').textContent.trim()),
   cochees: [...document.querySelectorAll('.lot-check')].filter(c => c.checked).map(c => c.dataset.eid),
   fond: [...document.querySelectorAll('.lot-ligne')].filter(tr => tr.style.background).map(tr => tr.dataset.eid),
-  entetes: document.querySelector('.lot-ligne .carte-liste-l2') ? ['N° SIEOL'] : []   // la ligne « N° SIEOL » n'existe sur les cartes que si un membre en a un
+  entetes: document.querySelector('.lot-ligne .carte-liste-l2') ? ['N° de travail'] : []   // la ligne « N° SIEOL » n'existe sur les cartes que si un membre en a un
 }));
 const scan = async (v) => {
   await page.evaluate((v) => { const el = document.getElementById('scan-lot'); el.value = v; el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true })); }, v);
@@ -50,7 +50,7 @@ await preparer(false);
 let e = await etat();
 check(JSON.stringify(e.ordre) === JSON.stringify(['n°10001', 'n°10002', 'n°30001', 'n°30005', 'n°50003']), 'tri par âge (plus vieux d\'abord) puis numéro, obtenu ' + JSON.stringify(e.ordre));
 check(e.compteur === '0 / 5 trouvée(s)' && e.cochees.length === 0, 'compteur initial 0 / 5, obtenu ' + e.compteur);
-check(!e.entetes.includes('N° SIEOL'), 'sans n° SIEOL sur aucun membre, la colonne SIEOL ne doit pas apparaître');
+check(!e.entetes.includes('N° de travail'), 'sans n° SIEOL sur aucun membre, la colonne SIEOL ne doit pas apparaître');
 console.log('OK tableau : tri âge puis numéro =', e.ordre.join(' '), '; compteur "0 / 5 trouvée(s)" ; pas de colonne SIEOL quand aucun membre n\'en a.');
 
 // ---- Scan par EID complet puis par numéro court : la ligne se coche ----
@@ -103,8 +103,8 @@ console.log('OK remise à zéro : refus = rien ne change ; confirmation = 0 / 5 
 // ---- Colonne SIEOL quand un membre en a un ----
 await preparer(true);
 e = await etat();
-check(e.entetes.includes('N° SIEOL'), 'colonne SIEOL attendue quand un membre a un numéro');
-const sieolCell = await page.evaluate(() => document.querySelector('.lot-ligne[data-eid="250000012910002"] .carte-liste-l2').textContent.replace('N° SIEOL :', '').trim());
+check(e.entetes.includes('N° de travail'), 'colonne SIEOL attendue quand un membre a un numéro');
+const sieolCell = await page.evaluate(() => document.querySelector('.lot-ligne[data-eid="250000012910002"] .carte-liste-l2').textContent.replace('N° de travail :', '').trim());
 check(sieolCell === '543', 'n° SIEOL affiché pour le membre concerné, obtenu ' + sieolCell);
 console.log('OK SIEOL : colonne affichée uniquement quand au moins un membre a un numéro (543 pour le n°10002).');
 

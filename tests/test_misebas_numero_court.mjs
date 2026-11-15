@@ -116,7 +116,7 @@ for (const desktop of [false, true]) {
   // un EID bippé (15 chiffres) reste accepté tel quel, et sans indicatif le n° court est refusé avec un message clair
   await page.fill('.eid-input-rapide[data-id="0"]', '250000012163333');
   a = await aper(0);
-  check(a.texte === "Numéro d'ordre : n°63333" && (desktop || a.pastille === 'EID bippé'), nom + ' : EID bippé de 15 chiffres : comportement inchangé : ' + JSON.stringify(a));
+  check(a.texte === "N° d'ordre : n°63333" && (desktop || a.pastille === 'EID bippé'), nom + ' : EID bippé de 15 chiffres : comportement inchangé : ' + JSON.stringify(a));
   await page.evaluate(() => { DB.exploitation.indicatifMarquage = ''; });
   await page.fill('.eid-input-rapide[data-id="0"]', '63333');
   check(/Paramètres › Exploitation/.test((await aper(0)).texte), nom + ' : sans indicatif : message clair sous le champ');
