@@ -14,6 +14,11 @@ de « Export PDF » ou en plus.
 À ajouter aussi : l'EFFECTIF en bas de chaque liste d'animaux imprimée (« 48 agnelles », « 132 brebis »…), sous le
 tableau, sur toutes les listes (demande de l'éleveur).
 
+Orientation choisie à l'impression : un PDF portrait imprimé en « Paysage » sur la tablette n'occupe qu'une partie de la feuille
+(l'appli ne voit pas ce choix, fait après elle). Piste : le bouton « Imprimer » passerait par l'impression Android
+(PrintManager / PrintDocumentAdapter), qui donne à l'appli le papier et l'orientation choisis : la mise en page serait refaite
+pour remplir la feuille en portrait comme en paysage. Chantier natif (Android), plan et visuels avant tout code.
+
 ## Anomalie de lactation SIEOL (`ano_lact`) : à revoir
 
 L'import SIEOL du contrôle laitier ne garde plus l'anomalie de lactation du cahier (`ano_lact`) : seuls les
