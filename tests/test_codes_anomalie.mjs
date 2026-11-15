@@ -42,7 +42,7 @@ async function ouvrir(bureau) {
       cases: ['1400/09', '1400/07', '1400/10', '0/09', '0/07', '0/10', '0/11', '1400/06', '1400/11', '1400/08', '0/08', '0/03', '1400/03', '09', '07', '0'].map(cell)
     };
   });
-  eq(r.libelles, ['01 · Problème de pis', '02', '03 · Boucle électronique manquante', '04 · Boucle conventionnelle manquante', '05 · Réforme', '06 · Malade', '07 · Contrôle sauté', '08 · Mammites', '09 · Tarie', '10 · Vide définitive', '11 · Allaitante et traite'], 'libellés de départ (02 sans nom)');
+  eq(r.libelles, ['01 · Problème de pis', '02', '03 · Boucle électronique manquante', '04 · Boucle conventionnelle manquante', '05 · Réforme', '06 · Malade', '07 · Contrôle sauté', '08 · Mammite', '09 · Tarie', '10 · Vide définitive', '11 · Allaitante et traite'], 'libellés de départ (02 sans nom)');
   eq(r.cases, ['invalide', 'invalide', 'invalide', '-/9', '-/7', '-/10', '-/11', '1400/6', '1400/11', '1400/8', '-/8', 'invalide', '1400/3', '-/9', '-/7', 'vide'], 'modèle Excel : 07, 09, 10 jamais avec du lait ; 01 à 05 toujours avec');
   const regle = await p.evaluate(() => { DB.libellesAnomaliesControle = { 1: '', 2: 'Lait anormal', 3: 'Boucle électronique manquante', 4: '', 5: 'Réforme' }; return [1, 2, 4].map(n => texteAnomalieControle(n)); });
   eq(regle, ['01', '02 · Lait anormal', '04'], 'libellés réglés : vide = code seul');
@@ -54,7 +54,7 @@ async function ouvrir(bureau) {
   const p = await ouvrir(true);
   await p.evaluate(() => { parametresTab = 'regles'; render('parametres'); }); await p.waitForTimeout(300);
   eq(await p.$$eval('#card-lait .prm-code-ligne input', is => is.map(i => i.value)), ['Problème de pis', '', 'Boucle électronique manquante', 'Boucle conventionnelle manquante', 'Réforme'], 'champs pré-remplis');
-  eq(await p.$$eval('#card-lait .prm-code-fixe', ds => ds.map(d => [...d.children].map(c => c.textContent).join(' '))), ['06 Malade avec ou sans lait', '07 Contrôle sauté jamais avec du lait', '08 Mammites avec ou sans lait', '09 Tarie jamais avec du lait', '10 Vide définitive jamais avec du lait', '11 Allaitante et traite avec ou sans lait'], 'codes fixes rappelés');
+  eq(await p.$$eval('#card-lait .prm-code-fixe', ds => ds.map(d => [...d.children].map(c => c.textContent).join(' '))), ['06 Malade avec ou sans lait', '07 Contrôle sauté jamais avec du lait', '08 Mammite avec ou sans lait', '09 Tarie jamais avec du lait', '10 Vide définitive jamais avec du lait', '11 Allaitante et traite avec ou sans lait'], 'codes fixes rappelés');
   await p.fill('#f-code-anomalie-2', 'Lait <anormal>');
   await p.click('#btn-save-codes-anomalie'); await p.waitForTimeout(200);
   eq(await p.evaluate(() => DB.libellesAnomaliesControle), { 1: 'Problème de pis', 2: 'Lait <anormal>', 3: 'Boucle électronique manquante', 4: 'Boucle conventionnelle manquante', 5: 'Réforme' }, 'réglage enregistré');
@@ -76,7 +76,7 @@ async function ouvrir(bureau) {
   const p = await ouvrir(false);
   await p.evaluate(() => render('controle-laitier')); await p.waitForTimeout(300);
   eq(await p.$$eval('.cl-carte .cl-ano', as => as.map(a => a.textContent)), ['03', '02', '09'], 'mobile : code seul');
-  check(/Codes : 02 = Code 02 · 03 = Boucle électronique manquante · 09 = Tarie/.test(await p.textContent('.cl-legende')), 'mobile : légende');
+  check(/Codes : 02 = sans nom · 03 = Boucle électronique manquante · 09 = Tarie/.test(await p.textContent('.cl-legende')), 'mobile : légende');
   await p.context().close();
 }
 
