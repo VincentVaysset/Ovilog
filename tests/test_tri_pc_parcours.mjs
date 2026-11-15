@@ -88,7 +88,7 @@ for (const largeur of [1200, 1400]) {
     const txt = r.mots.join(' ');
     const titre = { aTrier: /Feuille de tri des agnelles/, gardees: /Agnelles gardées · liste SIEOL/, ecartees: /Chantier de tri · Agnelles écartées/ }[onglet];
     const tuiles = /À trier/.test(txt) && /Gardées/.test(txt) && /Écartées/.test(txt);
-    check(r.pages === 1 && r.tailles[0][0] > r.tailles[0][1] && titre.test(txt) && (onglet === 'ecartees' ? tuiles : !/Écartées/.test(txt)) && /Page 1\/1/.test(txt) && /Campagne 2027/.test(txt) && /Ovilog/.test(txt) && r.vert > 0, largeur + ' px : PDF « ' + onglet + ' » : paysage, titre de l\'onglet (feuille de tri, liste SIEOL, écartées), tuiles seulement pour les écartées, pied « Page 1/1 », bandeau vert : ' + txt.slice(0, 200));
+    check(r.pages === 1 && r.tailles[0][0] < r.tailles[0][1] && titre.test(txt) && (onglet === 'ecartees' ? tuiles : !/Écartées/.test(txt)) && /Page 1\/1/.test(txt) && /Campagne 2027/.test(txt) && /Ovilog/.test(txt) && r.vert > 0, largeur + ' px : PDF « ' + onglet + ' » : portrait (feuille A4 remplie), titre de l\'onglet (feuille de tri, liste SIEOL, écartées), tuiles seulement pour les écartées, pied « Page 1/1 », bandeau vert : ' + txt.slice(0, 200));
     if (onglet === 'aTrier') { check(['N°', 'Naissance', 'Mode', 'Portée', 'Mère', 'classe', 'lact', 'Père', 'ISOL', 'Garder', 'Écarter', 'Notes'].every(m => r.mots.some(w => w.startsWith(m))) && r.mots.includes('IA') && r.mots.includes('EP') && r.mots.includes('RE'), 'PDF À trier (feuille de tri) : en-têtes, cases Garder / Écarter, Notes, codes d\'origine IA / EP / RE'); if (largeur === 1200) pdfPc = octets; }
   }
   await page.context().close();
