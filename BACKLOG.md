@@ -2,6 +2,15 @@
 
 Points identifiés, non planifiés. Un point sort d'ici quand il est validé puis livré.
 
+## Impressions : tous les écrans à revoir
+
+Audit fait (18 PDF) : pages bien remplies, rien de coupé, mais les PDF en paysage s'impriment réduits sur tablette
+(Contrôle laitier, Registre agnelage / mouvements / sanitaire, Échographies aujourd'hui et passages, Bilan du lot IA,
+Traitements sur 12 mois). Le Tri des agnelles est passé en portrait avec « Colonnes à afficher ». À décider avec
+l'éleveur, écran par écran, avec un visuel avant tout code : passage en portrait, colonnes à cocher ou non (jamais
+pour les documents officiels : Registre, Déclaration, Traitements sur 12 mois), et un bouton « Imprimer » à la place
+de « Export PDF » ou en plus.
+
 ## Anomalie de lactation SIEOL (`ano_lact`) : à revoir
 
 L'import SIEOL du contrôle laitier ne garde plus l'anomalie de lactation du cahier (`ano_lact`) : seuls les
