@@ -34,6 +34,10 @@ Renommage partout d'un coup (écrans, PDF, Excel, modèles) : « n° court SIEOL
 « n° de travail complet » (« N° travail compl. » dans une colonne étroite). Modèles Excel lisibles sans SIEOL (une ligne
 par colonne, codes de contrôle nommés : « /10 = vide définitive »). Puis rapprochement SIEOL ↔ Ovilog à chaque import
 (inconnues d'Ovilog, absentes de SIEOL, mises bas jamais contrôlées, vides) et liste « À transmettre au technicien ».
+Tous les formats de tableur acceptés par CHAQUE import, sans que l'éleveur ait à y penser : .csv (« ; » ou « , »),
+.xlsx et .xls (ancien format Excel, à lire avec une bibliothèque intégrée à l'appli, hors ligne) ; colonnes toujours
+repérées par leur TITRE (jamais par leur place, comme l'ancien Bilan de lactation) : un lecteur de tableur unique et
+modulaire pour tous les imports.
 
 Idée de l'éleveur : comme la carte « Contrôle laitier » (fichiers SIEOL puis modèle Excel Ovilog), proposer les deux
 sources pour chaque import qui s'y prête (Lactation, Correspondance SIEOL…). Plan à faire.
