@@ -249,7 +249,7 @@ check(await page.evaluate(() => JSON.stringify(DB) === window.__avant9 && window
 // mobile : même import, aucun bloc
 await page.evaluate(() => { window.electronAPI.isDesktop = false; render('import-controle-laitier-modele'); });
 await page.setInputFiles('#import-cl-modele-file', { name: 'modele.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(xlsx) });
-await page.waitForFunction(() => /À écrire/.test(document.getElementById('import-cl-modele-preview').textContent), null, { timeout: 5000 });
+await page.waitForFunction(() => /à enregistrer/.test(document.getElementById('import-cl-modele-preview').textContent), null, { timeout: 5000 });
 check(await page.evaluate(() => !document.getElementById('alerte-cl-delai-lait')), 'mobile : aperçu d\'import sans bloc d\'alerte');
 await page.evaluate(() => { window.electronAPI.isDesktop = true; });
 console.log('OK 9 import contrôle laitier : seul le contrôle tombant entre le début du soin et la reprise du lait est listé ; rien modifié ; mobile : rien.');

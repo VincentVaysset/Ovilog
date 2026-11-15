@@ -691,6 +691,25 @@
   body.desktop-shell .tuile-pc.bleu { --tp-fond: var(--ch-bleu-pastel); --tp-trait: var(--ch-bleu); --tp-chiffre: var(--ch-bleu); }
   body.desktop-shell .tuile-pc.ambre { --tp-fond: var(--ch-ambre-pastel); --tp-trait: var(--ch-ambre-texte); --tp-chiffre: var(--ch-ambre-texte); }
   body.desktop-shell .tuile-pc.rouge { --tp-fond: var(--ch-rouge-pastel); --tp-trait: var(--ch-rouge); --tp-chiffre: var(--ch-rouge); }
+  /* Carte « Brebis à retrouver » des imports (retrouverAnimalImport, carteRetrouverImportHtml) */
+  .retrouver-tuiles { margin-bottom: 8px; }
+  .rt-titre { font-size: 15px; font-weight: 700; color: var(--ch-texte); margin-bottom: 2px; }
+  .rt-ligne { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid var(--ch-separateur); }
+  .rt-fichier { min-width: 120px; }
+  .rt-l { font-size: 12px; color: var(--ch-texte2); }
+  .rt-n { font-size: 16px; font-weight: 700; color: var(--ch-vert-fonce); font-variant-numeric: tabular-nums; }
+  .rt-droite { flex: 1; min-width: 0; display: grid; gap: 8px; }
+  .rt-q { font-size: 13px; color: var(--ch-texte); }
+  .rt-choix, .rt-saisie, .rt-ok { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .rt-choix .btn, .rt-saisie .btn, .rt-ok .btn { width: auto; flex: 0 0 auto; margin: 0; }
+  .rt-saisie input.rt-champ { width: 220px; margin: 0; }
+  .rt-apercu { font-size: 14px; flex: 1 1 100%; order: 3; }
+  .rt-apercu:empty { display: none; }
+  .rt-apercu b, .rt-ok b { color: var(--ch-vert-fonce); }
+  .rt-gris, .rt-ok span:not(.reg-pastille) { color: var(--ch-texte2); font-size: 13px; }
+  .rt-ambre { color: var(--ch-ambre-texte); font-size: 13px; }
+  .rt-ok b { font-size: 16px; }
+  .rt-alerte { font-size: 13px; color: var(--ch-ambre-texte); background: var(--ch-ambre-pastel); border-radius: 10px; padding: 8px 12px; }
   body.desktop-shell .tuile-pc .icon-circle { display: none; }
   body.desktop-shell .tuile-pc :is(.l, .brd-kpi-l, .reg-tuile-l, .decl-tuile-l) { font-size: 13px; font-weight: 400; color: var(--ch-texte2); text-transform: none; letter-spacing: 0; }
   body.desktop-shell .tuile-pc :is(.n, .brd-kpi-v, .reg-tuile-v, .decl-tuile-v) { font-size: 24px; font-weight: 700; line-height: 1.15; margin-top: 0; padding: 0; color: var(--tp-chiffre); font-variant-numeric: tabular-nums; }
@@ -26771,23 +26790,159 @@ async function lecteurConnecterEtMemoriser(address, name) {
       partagent ce numéro d'ordre (ex: 540/55040 -> 51040 chez cet
       éleveur).
    3. Aucun candidat -> non résolue. */
-function resoudreLigneSieol(numeroVisuelSieol) {
-  const direct = DB.brebis.find(s => s.numeroCourtTravailSieol && s.numeroCourtTravailSieol === numeroVisuelSieol);
-  if (direct) return { type: 'direct', sheep: direct, candidats: [] };
-  const suggestion = suggererOfficielDepuisSieol(numeroVisuelSieol);
-  const candidats = suggestion ? DB.brebis.filter(s => !s.numeroCourtTravailSieol && numeroVisuel(s.eid) === suggestion) : [];
-  return { type: candidats.length > 0 ? 'candidats' : 'aucune', sheep: null, candidats };
+/* ---------- Retrouver un animal à l'import (UNE règle pour tous les imports qui lisent un n° d'animal) ----------
+   Contrôle laitier SIEOL, Lactation, Contrôle laitier (modèle Excel), Inséminations, Bilan de lactation SIEOL.
+   Ordre : EID ou n° national (11 chiffres et plus) ; sinon n° de travail, puis n° de travail complet (6 chiffres,
+   ou son n° de travail déduit), puis n° d'ordre (5 derniers chiffres de l'EID), puis n° national sans ses zéros de tête.
+   Un seul animal = retrouvé ; plusieurs = à choisir. En dernier recours (deduire, par défaut), le n° de travail
+   est rapproché du n° d'ordre par la règle de l'élevage (suggererOfficielDepuisSieol, ex. 808 → 80008) : TOUJOURS
+   à confirmer, jamais retrouvé d'office, et seulement parmi les animaux qui n'ont pas encore de n° de travail.
+   Rien n'est écrit ici. */
+const sansZerosTete = s => String(s == null ? '' : s).trim().replace(/^0+(?=\d)/, '');
+function retrouverAnimalImport(valeur, pool, opts) {
+  opts = opts || {};
+  const v = cleanEid(String(valeur == null ? '' : valeur)).replace(/^FR/i, '');
+  if (!v) return { type: 'vide' };
+  if (!/^\d+$/.test(v)) return { type: 'aucune' };
+  const res = (l, par) => l.length === 1 ? { type: 'direct', animal: l[0], par } : { type: 'choix', candidats: l, par };
+  const nat = x => pool.filter(a => a && a.eid && eidAffichageCourt(a.eid) === x);
+  if (v.length >= 11) {
+    let l = v.length >= 12 ? pool.filter(a => a && a.eid && cleanEid(a.eid) === v) : [];
+    if (!l.length) l = nat(v.slice(-11));
+    return l.length ? res(l, 'eid') : { type: 'aucune' };
+  }
+  const vz = sansZerosTete(v);
+  const parTravail = c => pool.filter(a => a && a.numeroCourtTravailSieol && sansZerosTete(a.numeroCourtTravailSieol) === sansZerosTete(c));
+  let l = parTravail(v);
+  if (l.length) return res(l, 'travail');
+  l = pool.filter(a => a && a.numeroLongTravailSieol && sansZerosTete(a.numeroLongTravailSieol) === vz);
+  if (!l.length && v.length === 6) { const c = sieolLongVersCourt(v); if (c) l = parTravail(c); }
+  if (l.length) return res(l, 'complet');
+  if (v.length === 5) { l = pool.filter(a => a && a.eid && numeroVisuel(a.eid) === v); if (l.length) return res(l, 'ordre'); }
+  if (v.length >= 7) { l = nat(v.padStart(11, '0')); if (l.length) return res(l, 'eid'); }
+  if (opts.deduire !== false) {
+    const court = v.length === 6 ? sieolLongVersCourt(v) : v;
+    const sug = court ? suggererOfficielDepuisSieol(court) : null;
+    if (sug && sug !== v) {
+      l = pool.filter(a => a && a.eid && !a.numeroCourtTravailSieol && numeroVisuel(a.eid) === sug);
+      if (l.length) return { type: 'choix', candidats: l, par: 'deduit', ordre: sug };
+    }
+  }
+  return { type: 'aucune' };
 }
+// Une ligne d'import à retrouver : { numero (valeur du fichier), resolution, choisi (animal associé à la main), saisie (champ) }
+function ligneRetrouverImport(numero, pool, opts) { return { numero: String(numero == null ? '' : numero).trim(), resolution: retrouverAnimalImport(numero, pool, opts), choisi: null, saisie: '' }; }
+function animalRetenuImport(x) { return x ? (x.resolution && x.resolution.type === 'direct' ? x.resolution.animal : x.choisi) || null : null; }
+/* Retenir le n° du fichier sur l'animal associé à la main (pour qu'il soit retrouvé tout seul aux imports suivants) :
+   seulement un n° de travail (3 à 5 chiffres) ou un n° de travail complet (6 chiffres) ; JAMAIS un numéro déjà renseigné
+   n'est remplacé, jamais un n° déjà porté par un autre animal. `ecrire` faux = simple lecture (aperçu).
+   Retour : null (rien à retenir : EID, n° national, n° d'ordre de l'animal) | 'retenu' | 'deja' | 'different' | 'pris'. */
+function retenirNumeroImport(animal, numero, pool, ecrire) {
+  const v = cleanEid(String(numero == null ? '' : numero));
+  if (!animal || !/^\d{3,6}$/.test(v)) return null;
+  if (v.length === 5 && numeroVisuel(animal.eid) === v) return null;
+  const court = v.length === 6 ? sieolLongVersCourt(v) : v, long = v.length === 6 ? v : null;
+  const memeCourt = a => court && a.numeroCourtTravailSieol && sansZerosTete(a.numeroCourtTravailSieol) === sansZerosTete(court);
+  const memeLong = a => long && a.numeroLongTravailSieol && sansZerosTete(a.numeroLongTravailSieol) === sansZerosTete(long);
+  if (memeCourt(animal) || memeLong(animal)) return 'deja';
+  if ((pool || []).some(a => a && a !== animal && (memeCourt(a) || memeLong(a)))) return 'pris';
+  if ((court && animal.numeroCourtTravailSieol) || (long && animal.numeroLongTravailSieol)) return 'different';
+  if (ecrire) {
+    if (court) animal.numeroCourtTravailSieol = court;
+    if (!animal.numeroLongTravailSieol) { const lg = long || sieolCourtVersLong(court, anneeNaissance(animal.eid)); if (lg) animal.numeroLongTravailSieol = lg; }
+  }
+  return 'retenu';
+}
+// À la confirmation d'un import : retient le n° de chaque ligne associée à la main (choix ou saisie) ; renvoie le nombre retenu
+function retenirAssociationsImport(items, pool) {
+  return (items || []).filter(x => x && x.choisi && retenirNumeroImport(x.choisi, x.numero, pool, true) === 'retenu').length;
+}
+// Ancienne interface (Bilan de lactation SIEOL) : même recherche, forme d'avant
+function resoudreLigneSieol(numeroVisuelSieol) {
+  const r = retrouverAnimalImport(numeroVisuelSieol, DB.brebis);
+  if (r.type === 'direct') return { type: 'direct', sheep: r.animal, candidats: [] };
+  return { type: r.type === 'choix' ? 'candidats' : 'aucune', sheep: null, candidats: r.type === 'choix' ? r.candidats : [] };
+}
+function memoriserResolutionSieol(sheep, numeroVisuelSieol) { retenirNumeroImport(sheep, numeroVisuelSieol, DB.brebis, true); }
 
-/* Mémorise la résolution manuelle d'une ligne SIEOL (candidat validé par
-   l'éleveur) pour les imports futurs -- résolution directe dès l'étape 1
-   de resoudreLigneSieol au prochain import. numeroVisuelSieol (colonne du
-   fichier CSV) est la forme courte -- déduit aussi le long si possible
-   (même geste qu'une saisie manuelle via openCorrigerNumerosTravailSieolSheet),
-   sans jamais écraser un long déjà renseigné par ailleurs. */
-function memoriserResolutionSieol(sheep, numeroVisuelSieol) {
-  sheep.numeroCourtTravailSieol = numeroVisuelSieol;
-  if (!sheep.numeroLongTravailSieol) sheep.numeroLongTravailSieol = sieolCourtVersLong(numeroVisuelSieol, anneeNaissance(sheep.eid));
+/* Carte commune « Brebis à retrouver » de tous les imports (PC) : tuiles retrouvées / à choisir / à retrouver,
+   une ligne par n° du fichier non retrouvé (boutons des brebis possibles, ou champ « n° d'ordre, n° de travail ou EID »
+   avec la brebis reconnue en direct puis « Associer »), puis les lignes associées à la main (« Changer »).
+   items = lignes de ligneRetrouverImport, chacune avec une clé unique `cle` ; rien n'est écrit avant la confirmation de l'import. */
+function libelleAnimalImport(a) {
+  const ind = DB.exploitation && DB.exploitation.indicatifMarquage, c = cleanEid(a.eid || '');
+  const ailleurs = ind && c.length >= 11 && eidAffichageCourt(c).slice(0, 6) !== String(ind);
+  return 'n°' + numeroVisuel(a.eid) + ' · ' + (numeroOfficielTexte(a.eid) || '') + (a.numeroCourtTravailSieol ? ' · n° de travail ' + a.numeroCourtTravailSieol : '') + (ailleurs ? ' · achetée' : '');
+}
+function compteRetrouverImport(items) {
+  const L = items || [];
+  return { retrouvees: L.filter(x => animalRetenuImport(x)).length, aChoisir: L.filter(x => !x.choisi && x.resolution.type === 'choix').length, aRetrouver: L.filter(x => !x.choisi && x.resolution.type === 'aucune').length };
+}
+function tuilesRetrouverImportHtml(items, nom) {
+  const c = compteRetrouverImport(items);
+  return `<div class="pc-kpis retrouver-tuiles">${pcKpi((nom || 'brebis') + ' retrouvées', c.retrouvees, '', c.retrouvees ? 'vert' : 'neutre')}${pcKpi('à choisir', c.aChoisir, '', c.aChoisir ? 'ambre' : 'neutre')}${pcKpi('à retrouver', c.aRetrouver, '', c.aRetrouver ? 'ambre' : 'neutre')}</div>
+    ${infoLigneHtml('Cherchées par n° de travail, puis n° de travail complet, puis n° d\'ordre (5 derniers chiffres de la boucle). Un EID est reconnu directement.')}`;
+}
+function carteRetrouverImportHtml(items, opts) {
+  opts = opts || {};
+  const nom = opts.nom || 'brebis', col = opts.colonne || 'n° du fichier';
+  const pris = new Set((items || []).map(animalRetenuImport).filter(Boolean));
+  const ouverts = (items || []).filter(x => !x.choisi && x.resolution.type !== 'direct' && x.resolution.type !== 'vide');
+  const associes = (items || []).filter(x => x.choisi);
+  if (!ouverts.length && !associes.length) return '';
+  const gauche = x => `<div class="rt-fichier"><div class="rt-l">Dans le fichier</div><div class="rt-n">${echapperHtml(x.numero)}</div><div class="rt-l">${echapperHtml(col)}</div></div>`;
+  const question = x => {
+    const r = x.resolution, n = echapperHtml(x.numero);
+    if (r.type === 'aucune') return `Aucune ${nom === 'brebis' ? 'brebis' : 'bête'} du troupeau ne porte ce n°. Tapez son n° d'ordre (5 derniers chiffres de la boucle), son n° de travail ou son EID. Laissée vide, la ligne n'est pas importée.`;
+    if (r.par === 'deduit') return r.candidats.length === 1 ? `Le n° ${n} n'est noté sur aucune fiche. D'après la numérotation de l'élevage, c'est sans doute la n°${echapperHtml(r.ordre)} : c'est bien elle ?` : `Le n° ${n} n'est noté sur aucune fiche. D'après la numérotation de l'élevage, c'est le n° d'ordre ${echapperHtml(r.ordre)}, porté par plusieurs ${nom} : laquelle est-ce ?`;
+    const quoi = { travail: 'le n° de travail', complet: 'le n° de travail complet', ordre: 'le n° d\'ordre', eid: 'ce n°' }[r.par] || 'ce n°';
+    return `Plusieurs ${nom} portent ${quoi} ${n} : laquelle est-ce ? Sinon, tapez son n°.`;
+  };
+  const boutons = (x, liste) => { const libres = liste.filter(a => !pris.has(a)); return libres.length ? `<div class="rt-choix">${libres.map(a => `<button type="button" class="btn btn-secondary rt-choisir" data-cle="${echapperHtml(x.cle)}" data-eid="${echapperHtml(a.eid)}">${echapperHtml(libelleAnimalImport(a))}</button>`).join('')}</div>` : '<div class="info">Ces brebis sont déjà prises par une autre ligne du fichier.</div>'; };
+  const ligneOuverte = x => `<div class="rt-ligne" data-cle="${echapperHtml(x.cle)}">${gauche(x)}<div class="rt-droite"><div class="rt-q">${question(x)}</div>
+      ${x.resolution.type === 'choix' ? boutons(x, x.resolution.candidats) : ''}
+      ${`<div class="rt-saisie"><input type="text" class="rt-champ" data-cle="${echapperHtml(x.cle)}" value="${echapperHtml(x.saisie || '')}" placeholder="N° d'ordre, n° de travail ou EID" aria-label="N° de la brebis pour la ligne ${echapperHtml(x.numero)}" autocomplete="off"><span class="rt-apercu">${apercuSaisieRetrouverHtml(x, opts.pool || [], pris)}</span><button type="button" class="btn btn-primary rt-associer" data-cle="${echapperHtml(x.cle)}">Associer</button></div>`}
+    </div></div>`;
+  const ligneAssociee = x => {
+    const etat = retenirNumeroImport(x.choisi, x.numero, opts.pool || [], false);
+    const note = etat === 'retenu' ? 'n° ' + echapperHtml(x.numero) + ' retenu pour les prochains imports' : '';
+    const alerte = etat === 'different' ? `<div class="rt-alerte">Cette brebis a déjà un autre n° de travail sur sa fiche (${echapperHtml(x.choisi.numeroCourtTravailSieol || x.choisi.numeroLongTravailSieol)}) : il est gardé, le n° ${echapperHtml(x.numero)} du fichier n'est pas retenu. Les données sont quand même importées.</div>`
+      : etat === 'pris' ? `<div class="rt-alerte">Le n° ${echapperHtml(x.numero)} est déjà celui d'une autre bête : il n'est pas retenu sur cette fiche. Les données sont quand même importées.</div>` : '';
+    return `<div class="rt-ligne rt-associee" data-cle="${echapperHtml(x.cle)}">${gauche(x)}<div class="rt-droite"><div class="rt-ok"><b>${echapperHtml('n°' + numeroVisuel(x.choisi.eid))}</b><span>${echapperHtml(numeroOfficielTexte(x.choisi.eid) || '')}${note ? ' · ' + note : ''}</span><span class="reg-pastille vert">Associée</span><button type="button" class="btn btn-secondary rt-changer" data-cle="${echapperHtml(x.cle)}">Changer</button></div>${alerte}</div></div>`;
+  };
+  return `${ouverts.length ? `<div class="card retrouver-carte" style="margin-top:10px;"><div class="rt-titre">${nom === 'brebis' ? 'Brebis' : 'Animaux'} à retrouver (${ouverts.length})</div>
+      ${infoLigneHtml('Rien n\'est écrit avant la confirmation de l\'import. Une ' + (nom === 'brebis' ? 'brebis' : 'bête') + ' associée est retrouvée toute seule aux prochains imports.')}
+      ${ouverts.map(ligneOuverte).join('')}</div>` : ''}
+    ${associes.length ? `<div class="card retrouver-associees" style="margin-top:10px;"><div class="rt-titre">Associée${associes.length > 1 ? 's' : ''} à la main (${associes.length})</div>${associes.map(ligneAssociee).join('')}</div>` : ''}`;
+}
+// Aperçu en direct de la brebis tapée dans le champ (n° d'ordre, n° de travail ou EID : sans déduction)
+function brebisSaisieRetrouver(x, pool, pris) {
+  const r = retrouverAnimalImport(x.saisie, pool, { deduire: false });
+  if (r.type === 'direct') return { animal: r.animal, deja: pris && pris.has(r.animal) && r.animal !== x.choisi };
+  if (r.type === 'choix') return { candidats: r.candidats };
+  return { aucune: r.type === 'aucune' };
+}
+function apercuSaisieRetrouverHtml(x, pool, pris) {
+  if (!x.saisie) return '';
+  const b = brebisSaisieRetrouver(x, pool, pris);
+  if (b.animal && b.deja) return `<span class="rt-ambre">n°${echapperHtml(numeroVisuel(b.animal.eid))} est déjà sur une autre ligne du fichier</span>`;
+  if (b.animal) { const mb = (b.animal.agnelages || []).filter(a => a && a.date).map(a => a.date).sort().pop(); return `→ <b>n°${echapperHtml(numeroVisuel(b.animal.eid))}</b> <span class="rt-gris">· ${echapperHtml(numeroOfficielTexte(b.animal.eid) || '')}${mb ? ' · mise bas le ' + formatDateFr(mb) : ''}</span>`; }
+  if (b.candidats) return `<span class="rt-ambre">Plusieurs brebis portent ce n° : tapez son EID</span>`;
+  return `<span class="rt-ambre">Aucune brebis ne porte ce n°</span>`;
+}
+/* Branche la carte : choix d'une brebis, saisie (aperçu en direct, Entrée = Associer), Changer. onChange() redessine l'aperçu de l'import. */
+function brancherCarteRetrouverImport(zone, items, pool, onChange) {
+  if (!zone) return;
+  const par = cle => (items || []).find(x => x.cle === cle);
+  const pris = () => new Set((items || []).map(animalRetenuImport).filter(Boolean));
+  zone.querySelectorAll('.rt-choisir').forEach(btn => { btn.onclick = () => { const x = par(btn.dataset.cle); const a = pool.find(z => z.eid === btn.dataset.eid); if (x && a) { x.choisi = a; x.saisie = ''; onChange(); } }; });
+  zone.querySelectorAll('.rt-changer').forEach(btn => { btn.onclick = () => { const x = par(btn.dataset.cle); if (x) { x.choisi = null; x.saisie = ''; onChange(); } }; });
+  const associer = cle => { const x = par(cle); if (!x) return; const b = brebisSaisieRetrouver(x, pool, pris()); if (b.animal && !b.deja) { x.choisi = b.animal; x.saisie = ''; onChange(); } else { const ap = zone.querySelector('.rt-ligne[data-cle="' + CSS.escape(cle) + '"] .rt-apercu'); if (ap) ap.innerHTML = x.saisie ? apercuSaisieRetrouverHtml(x, pool, pris()) : '<span class="rt-ambre">Tapez d\'abord le n° de la brebis</span>'; } };
+  zone.querySelectorAll('.rt-champ').forEach(inp => {
+    inp.addEventListener('input', () => { const x = par(inp.dataset.cle); if (!x) return; x.saisie = inp.value.trim(); const ap = inp.parentElement.querySelector('.rt-apercu'); if (ap) ap.innerHTML = apercuSaisieRetrouverHtml(x, pool, pris()); });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); associer(inp.dataset.cle); } });
+  });
+  zone.querySelectorAll('.rt-associer').forEach(btn => { btn.onclick = () => associer(btn.dataset.cle); });
 }
 
 /* Écran d'import du Bilan de lactation SIEOL/UNOTEC -- voir résolution dans
@@ -26964,7 +27119,7 @@ function renderImportControleLaitierSieol() {
   const etatCode10 = { tous: false, lait: new Set() };   // cases « vide définitive » de la carte Code 10 : décochées d'office
   // Code 10 du fichier (contrôles repris et anomalie repro), d'après les lignes résolues ; relu à l'aperçu et à la confirmation
   const code10Sieol = () => classerCode10Import((parsedCahier || []).map(r => {
-    const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
+    const sheep = animalRetenuImport(r);
     return sheep ? { sheep, numero: r.numeroVisuelSieol, anoRepro: r.anoRepro, controles: [...controlesSelectionnes].filter(n => r.controles[n]).map(n => Object.assign({ n }, r.controles[n])) } : null;
   }), campagneImport);
   let parsedResume = null;  // [{ __idx, controle, date, laitTotal, laitControle, coefAc, nbBrebis, nbEch, nbAntenaises, laitAntenaises, nbAdultes, laitAdultes, resolutionConflit }]
@@ -27073,15 +27228,11 @@ function renderImportControleLaitierSieol() {
     }
 
     const cahier = parsedCahier || [];
-    const directes = cahier.filter(r => r.resolution.type === 'direct');
-    const aValider = cahier.filter(r => r.resolution.type === 'candidats' && !r.valideeSheep);
-    const validees = cahier.filter(r => r.resolution.type === 'candidats' && r.valideeSheep);
-    const nonResolues = cahier.filter(r => r.resolution.type === 'aucune');
-    const dejaChoisis = new Set(cahier.filter(r => r.valideeSheep).map(r => r.valideeSheep.id));
+    const retenues = cahier.filter(r => animalRetenuImport(r));
 
     const conflitsDetail = [];
     cahier.forEach(r => {
-      const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
+      const sheep = animalRetenuImport(r);
       if (!sheep) return;
       controlesSelectionnes.forEach(n => {
         const c = r.controles[n];
@@ -27120,7 +27271,7 @@ function renderImportControleLaitierSieol() {
 
     const itemsCl = [];   // alerte (PC) : contrôles pendant un délai d'attente du lait, information seulement
     cahier.forEach(r => {
-      const sh = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
+      const sh = animalRetenuImport(r);
       if (!sh) return;
       controlesSelectionnes.forEach(n => {
         if (!r.controles[n] || r.controles[n].quantite === null) return;   // un code seul (sans lait) n'est pas du lait livré pendant un délai d'attente
@@ -27131,31 +27282,8 @@ function renderImportControleLaitierSieol() {
     });
     const alerteCl = htmlAlerteControlesDelaiLait(itemsCl);
     preview.innerHTML = `
-      <div class="card" style="margin-top:14px;">
-        <div class="grid2" style="grid-template-columns:repeat(5,1fr);">
-          <div class="stat-card sc-green"><div class="stat-card-label">Directes</div><div class="stat-card-value" style="font-size:16px;">${directes.length}</div></div>
-          <div class="stat-card sc-blue"><div class="stat-card-label">Validées</div><div class="stat-card-value" style="font-size:16px;">${validees.length}</div></div>
-          <div class="stat-card sc-amber"><div class="stat-card-label">À valider</div><div class="stat-card-value" style="font-size:16px;">${aValider.length}</div></div>
-          <div class="stat-card sc-coral"><div class="stat-card-label">Non résolues</div><div class="stat-card-value" style="font-size:16px;">${nonResolues.length}</div></div>
-          <div class="stat-card sc-coral"><div class="stat-card-label">Conflits</div><div class="stat-card-value" style="font-size:16px;">${conflitsDetail.length + conflitsResumeList.length}</div></div>
-        </div>
-      </div>
-
-      ${aValider.length > 0 ? `
-      <div class="card" style="margin-top:10px;">
-        <div style="font-size:14px;font-weight:600;margin-bottom:10px;">À valider manuellement (${aValider.length})</div>
-        ${aValider.map(r => {
-          const candidatsLibres = r.resolution.candidats.filter(s => !dejaChoisis.has(s.id));
-          return `
-          <div style="border-top:1px solid var(--border);padding:10px 0;">
-            <div style="font-size:13px;margin-bottom:6px;">Numéro visuel SIEOL <strong>${r.numeroVisuelSieol}</strong></div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;">
-              ${candidatsLibres.length === 0 ? '<span style="font-size:12px;color:var(--text-muted);">Tous les candidats sont déjà attribués à une autre ligne de cet import.</span>' : candidatsLibres.map(s => `<button type="button" class="btn btn-secondary btn-choisir-candidat-cl" data-row="${r.__idx}" data-sheep="${s.id}" style="width:auto;padding:6px 12px;font-size:12px;">n°${numeroVisuel(s.eid)} — ${eidAffichageCourt(s.eid)}</button>`).join('')}
-            </div>
-          </div>
-        `; }).join('')}
-      </div>
-      ` : ''}
+      ${cahier.length ? `<div class="card" style="margin-top:14px;">${tuilesRetrouverImportHtml(cahier)}</div>
+      ${carteRetrouverImportHtml(cahier, { colonne: 'n° de travail', pool: DB.brebis })}` : ''}
 
       ${(conflitsDetail.length > 0 || conflitsResumeList.length > 0) ? `
       <div class="card" style="margin-top:10px;border-color:var(--coral-fg);">
@@ -27208,22 +27336,10 @@ function renderImportControleLaitierSieol() {
       ${(() => { const rj = cahier.flatMap(r => (r.rejets10 || []).filter(x => controlesSelectionnes.has(x.n)).map(x => 'n°' + echapperHtml(r.numeroVisuelSieol) + ' C' + x.n + ' : ' + String(x.quantite).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0') + '\u00a0mL'));
         return rj.length ? `<div class="msg-charte alerte" id="import-cl-rejets10" style="margin-top:10px;"><b>Lait et code 10 sur un même contrôle : impossible, ${rj.length > 1 ? 'contrôles laissés' : 'contrôle laissé'} de côté</b><span>${rj.join(' · ')}</span></div>` : ''; })()}
       ${carteCode10ImportHtml(code10Sieol(), etatCode10, campagneImport)}
-      ${nonResolues.length > 0 ? `
-      <div class="card" style="margin-top:10px;">
-        <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Non résolues (${nonResolues.length}) — ignorées à l'import</div>
-        <div style="font-size:12px;color:var(--text-muted);">${nonResolues.slice(0, 20).map(r => r.numeroVisuelSieol).join(', ')}${nonResolues.length > 20 ? ', ... (' + (nonResolues.length - 20) + ' de plus)' : ''}</div>
-      </div>
-      ` : ''}
     `;
 
     brancherCarteCode10(etatCode10);
-    document.querySelectorAll('.btn-choisir-candidat-cl').forEach(btn => {
-      btn.onclick = () => {
-        const row = parsedCahier[parseInt(btn.dataset.row, 10)];
-        row.valideeSheep = DB.brebis.find(s => s.id === btn.dataset.sheep);
-        renderPreview();
-      };
-    });
+    brancherCarteRetrouverImport(preview, parsedCahier || [], DB.brebis, renderPreview);
     document.querySelectorAll('.btn-conflit-resume').forEach(btn => {
       btn.onclick = () => {
         const row = parsedResume.find(r => r.__idx === parseInt(btn.dataset.idx, 10));
@@ -27239,7 +27355,7 @@ function renderImportControleLaitierSieol() {
       };
     });
 
-    btnConfirm.classList.toggle('hidden', directes.length + validees.length === 0 && resumeSelectionne.length === 0);
+    btnConfirm.classList.toggle('hidden', retenues.length === 0 && resumeSelectionne.length === 0);
     btnConfirm.textContent = nbConflitsRestants > 0 ? `Confirmer l'import (${nbConflitsRestants} conflit(s) non tranché(s) resteront inchangés)` : "Confirmer l'import";
   }
 
@@ -27353,8 +27469,8 @@ function renderImportControleLaitierSieol() {
           ref: String(get(parts, 'ref') || '').trim() || null,
           lactMoyen: parseDecimalVirgule(get(parts, 'lactMoyen')),
           classeParQuart: String(get(parts, 'classeParQuart') || '').trim() !== '' ? parseInt(get(parts, 'classeParQuart'), 10) : null,
-          resolution: resoudreLigneSieol(numeroVisuelSieol),
-          valideeSheep: null
+          ...ligneRetrouverImport(numeroVisuelSieol, DB.brebis),
+          cle: 'c' + idx
         };
       });
     dessinerControles();
@@ -27390,9 +27506,9 @@ function renderImportControleLaitierSieol() {
     let nbControlesBrebis = 0, nbCahier = 0, nbResume = 0, nbConflitsIgnores = 0;
     const nbVides = appliquerCode10Import(code10Sieol(), etatCode10, campagneImport);   // lu AVANT l'écriture des contrôles (lait de la fiche d'avant)
     (parsedCahier || []).forEach(r => {
-      const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
-      if (!sheep) return; // non résolue ou pas encore validée -- ignorée sans bloquer le reste
-      if (r.resolution.type === 'candidats') memoriserResolutionSieol(sheep, r.numeroVisuelSieol);
+      const sheep = animalRetenuImport(r);
+      if (!sheep) return; // brebis pas retrouvée -- ligne laissée de côté sans bloquer le reste
+      if (r.choisi) retenirNumeroImport(sheep, r.numero, DB.brebis, true);   // associée à la main : n° retenu pour les prochains imports (jamais un n° remplacé)
       controlesSelectionnes.forEach(n => {
         const c = r.controles[n];
         if (!c) return;
@@ -27697,11 +27813,7 @@ function parserFichierLactationModele(rows, typeSuivi) {
       continue;
     }
     if (vide) continue; // vide définitive -- jamais signalée
-    const candidats = trouverParNumero(DB.brebis, numeroSieol);
-    const resolution = candidats.length === 1 ? { type: 'direct', sheep: candidats[0] }
-      : candidats.length > 1 ? { type: 'ambigue', candidats }
-      : { type: 'aucune' };
-    lignes.push({ __idx: lignes.length, ligne: i + 1, numeroSieol, champs, resolution });
+    lignes.push(Object.assign({ __idx: lignes.length, cle: 'l' + lignes.length, ligne: i + 1, numeroSieol, champs }, ligneRetrouverImport(numeroSieol, DB.brebis)));   // recherche commune des imports
   }
   return lignes;
 }
@@ -27749,13 +27861,12 @@ function renderImportLactationModele() {
     if (!lignes) { preview.innerHTML = ''; btnConfirm.classList.add('hidden'); return; }
 
     const nonResolues = lignes.filter(l => l.resolution.type === 'ignoree');
-    const introuvables = lignes.filter(l => l.resolution.type === 'aucune');
-    const ambigues = lignes.filter(l => l.resolution.type === 'ambigue');
-    const directes = lignes.filter(l => l.resolution.type === 'direct');
+    const aRetrouver = lignes.filter(l => l.resolution.type !== 'ignoree');
+    const directes = aRetrouver.filter(l => animalRetenuImport(l));
     const aEcrire = [];    // { ligne, texte }
     const conflits = [];   // { ligne, existant, champsFichier }
     directes.forEach(l => {
-      const existant = lactationModeleExistant(l.resolution.sheep.eid, campagne);
+      const existant = lactationModeleExistant(animalRetenuImport(l).eid, campagne);
       if (!existant) { aEcrire.push(l); return; }
       if (!differeLactationModele(existant, l.champs)) return; // déjà identique -- silencieux
       conflits.push(l);
@@ -27774,60 +27885,47 @@ function renderImportLactationModele() {
     };
 
     preview.innerHTML = `
-      <div class="card" style="margin-top:14px;">
-        <div class="grid2" style="grid-template-columns:repeat(4,1fr);">
-          <div class="stat-card sc-green"><div class="stat-card-label">À écrire</div><div class="stat-card-value" style="font-size:16px;">${aEcrire.length}</div></div>
-          <div class="stat-card sc-amber"><div class="stat-card-label">Conflits</div><div class="stat-card-value" style="font-size:16px;">${conflits.length}</div></div>
-          <div class="stat-card sc-coral"><div class="stat-card-label">Numéro non résolu</div><div class="stat-card-value" style="font-size:16px;">${introuvables.length + ambigues.length}</div></div>
-          <div class="stat-card sc-coral"><div class="stat-card-label">Ignorées</div><div class="stat-card-value" style="font-size:16px;">${nonResolues.length}</div></div>
-        </div>
-      </div>
+      <div class="card" style="margin-top:14px;">${tuilesRetrouverImportHtml(aRetrouver)}
+        ${infoLigneHtml(aEcrire.length + ' à enregistrer' + (conflits.length ? ' · ' + conflits.length + ' à trancher (déjà dans Ovilog, différent du fichier)' : '') + (nonResolues.length ? ' · ' + nonResolues.length + ' ligne' + (nonResolues.length > 1 ? 's' : '') + ' sans n° de brebis' : ''))}</div>
+      ${carteRetrouverImportHtml(aRetrouver, { colonne: 'n° de travail', pool: DB.brebis })}
 
       ${conflits.length > 0 ? `
       <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Conflits (${conflits.length})</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Un enregistrement existe déjà pour cette brebis cette campagne, avec au moins une valeur différente de celle du fichier (une case vide du fichier n'est jamais comptée comme une différence).</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Déjà dans Ovilog, différent du fichier (${conflits.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Cette brebis a déjà une lactation pour cette campagne, avec au moins un chiffre différent. Rien n'est remplacé sans votre choix ; une case vide du fichier ne compte jamais.</div>
         ${conflits.map(l => {
-          const existant = lactationModeleExistant(l.resolution.sheep.eid, campagne);
+          const existant = lactationModeleExistant(animalRetenuImport(l).eid, campagne);
           return `
           <div style="border-top:1px solid var(--border);padding:8px 0;">
-            <div style="font-size:13px;margin-bottom:4px;">Ligne ${l.ligne} — n°${l.numeroSieol} — n°${numeroVisuel(l.resolution.sheep.eid)}</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Actuel : ${descriptionChamps(existant)} &nbsp;→&nbsp; Fichier : ${descriptionChamps(l.champs)}</div>
+            <div style="font-size:13px;margin-bottom:4px;">n°${numeroVisuel(animalRetenuImport(l).eid)} <span style="color:var(--text-muted);">(ligne ${l.ligne} du fichier : ${echapperHtml(l.numeroSieol)})</span></div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Dans Ovilog : ${descriptionChamps(existant)} &nbsp;→&nbsp; dans le fichier : ${descriptionChamps(l.champs)}</div>
             <div style="display:flex;gap:6px;align-items:center;">
-              <button type="button" class="btn btn-secondary btn-conflit-lact-modele" data-idx="${l.__idx}" data-choix="garder" style="width:auto;padding:5px 12px;font-size:12px;${l.resolutionConflit === 'garder' ? 'background:var(--gray-bg);' : ''}">Garder l'actuel</button>
-              <button type="button" class="btn btn-secondary btn-conflit-lact-modele" data-idx="${l.__idx}" data-choix="remplacer" style="width:auto;padding:5px 12px;font-size:12px;${l.resolutionConflit === 'remplacer' ? 'background:var(--amber-bg);border-color:var(--amber-fg);' : ''}">Remplacer</button>
-              ${l.resolutionConflit ? `<span style="font-size:11.5px;color:var(--text-muted);">Choix actuel : ${l.resolutionConflit === 'garder' ? "garder l'actuel" : 'remplacer (en bloc)'}</span>` : ''}
+              <button type="button" class="btn btn-secondary btn-conflit-lact-modele" data-idx="${l.__idx}" data-choix="garder" style="width:auto;padding:5px 12px;font-size:12px;${l.resolutionConflit === 'garder' ? 'background:var(--gray-bg);' : ''}">Garder Ovilog</button>
+              <button type="button" class="btn btn-secondary btn-conflit-lact-modele" data-idx="${l.__idx}" data-choix="remplacer" style="width:auto;padding:5px 12px;font-size:12px;${l.resolutionConflit === 'remplacer' ? 'background:var(--amber-bg);border-color:var(--amber-fg);' : ''}">Prendre le fichier</button>
+              ${l.resolutionConflit ? `<span style="font-size:11.5px;color:var(--text-muted);">Choisi : ${l.resolutionConflit === 'garder' ? 'garder Ovilog' : 'prendre le fichier (toute la ligne)'}</span>` : ''}
             </div>
           </div>`;
         }).join('')}
       </div>
       ` : ''}
 
-      ${(introuvables.length > 0 || ambigues.length > 0) ? `
-      <div class="card" style="margin-top:10px;">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--coral-fg);">Numéro non résolu (${introuvables.length + ambigues.length})</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Aucune brebis ne correspond à ce n° de travail, ou plusieurs à la fois -- rien n'est écrit pour ces lignes.</div>
-        ${introuvables.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — n°${l.numeroSieol} — aucune brebis trouvée</div>`).join('')}
-        ${ambigues.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — n°${l.numeroSieol} — ${l.resolution.candidats.length} brebis correspondent, ambigu</div>`).join('')}
-      </div>
-      ` : ''}
-
       ${nonResolues.length > 0 ? `
       <div class="card" style="margin-top:10px;">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Ignorées (${nonResolues.length})</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Ligne sans n° de travail exploitable, bien qu'elle contienne au moins une valeur.</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Lignes sans n° de brebis (${nonResolues.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Ces lignes ont des chiffres mais pas de n° : elles ne sont pas importées.</div>
         ${nonResolues.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${l.ligne} — ${descriptionChamps(l.champs)}</div>`).join('')}
       </div>
       ` : ''}
 
       ${aEcrire.length > 0 ? `
       <div class="card" style="margin-top:10px;">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">À écrire (${aEcrire.length})</div>
-        ${aEcrire.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${l.ligne} — n°${numeroVisuel(l.resolution.sheep.eid)}</span><span style="color:var(--text-muted);">${descriptionChamps(l.champs)}</span></div>`).join('')}
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;">À enregistrer (${aEcrire.length})</div>
+        ${aEcrire.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>n°${numeroVisuel(animalRetenuImport(l).eid)}</span><span style="color:var(--text-muted);">${descriptionChamps(l.champs)}</span></div>`).join('')}
       </div>
       ` : ''}
     `;
 
+    brancherCarteRetrouverImport(preview, aRetrouver, DB.brebis, renderPreview);
     document.querySelectorAll('.btn-conflit-lact-modele').forEach(btn => {
       btn.onclick = () => {
         const l = lignes[parseInt(btn.dataset.idx, 10)];
@@ -27838,7 +27936,7 @@ function renderImportLactationModele() {
 
     const nbAEcrire = aEcrire.length + conflits.filter(l => l.resolutionConflit === 'remplacer').length;
     btnConfirm.classList.toggle('hidden', nbAEcrire === 0);
-    btnConfirm.textContent = 'Confirmer l\'import' + (conflits.some(l => !l.resolutionConflit) ? ' (' + conflits.filter(l => !l.resolutionConflit).length + ' conflit(s) non tranché(s) resteront inchangés)' : '');
+    btnConfirm.textContent = 'Confirmer l\'import' + (conflits.some(l => !l.resolutionConflit) ? ' (' + conflits.filter(l => !l.resolutionConflit).length + ' brebis à trancher : Ovilog est gardé)' : '');
   }
 
   document.getElementById('import-lact-modele-file').addEventListener('change', (e) => {
@@ -27869,8 +27967,9 @@ function renderImportLactationModele() {
   document.getElementById('btn-confirm-import-lact-modele').onclick = () => {
     if (!lignes) return;
     let nbEcrites = 0;
-    lignes.filter(l => l.resolution.type === 'direct').forEach(l => {
-      const eid = l.resolution.sheep.eid;
+    lignes.filter(l => l.resolution.type !== 'ignoree' && animalRetenuImport(l)).forEach(l => {
+      if (l.choisi) retenirNumeroImport(l.choisi, l.numero, DB.brebis, true);   // associée à la main : n° retenu pour les prochains imports
+      const eid = animalRetenuImport(l).eid;
       const existant = lactationModeleExistant(eid, campagne);
       const renseignes = champsRenseignesLactationModele(l.champs);
       if (!existant) {
@@ -28458,24 +28557,14 @@ function lireBeliersIa(rows) {
   }
   return { parCle };
 }
-function resoudreAnimalInsemination(val) {
-  const pool = [...DB.brebis.filter(s => (s.statut || 'active') === 'active'), ...(DB.agnelles || []).filter(a => (a.statut || 'active') === 'active')];
-  let v = cleanEid(val || '');
-  if (!v) return { statut: 'absent' };
-  if (v.length >= 12) { const exact = pool.filter(a => cleanEid(a.eid) === v); if (exact.length === 1) return { statut: 'trouve', item: exact[0] }; }
-  if (v.length >= 6 && v.length <= 10) v = v.padStart(11, '0');
-  if (v.length >= 11) {
-    const k = v.slice(-11), r = pool.filter(a => eidAffichageCourt(a.eid) === k);
-    return r.length === 1 ? { statut: 'trouve', item: r[0] } : r.length > 1 ? { statut: 'ambigu', candidats: r } : { statut: 'absent' };
-  }
-  return trouverUnParEidOuNumero(pool, v);
-}
+// Brebis et agnelles actives : seules bêtes qu'un lot IA peut contenir (recherche commune des imports, retrouverAnimalImport)
+function poolInseminations() { return [...DB.brebis.filter(s => (s.statut || 'active') === 'active'), ...(DB.agnelles || []).filter(a => (a.statut || 'active') === 'active')]; }
 const lotsIaImportables = () => (DB.lots || []).filter(l => l && l.type === 'reproduction' && (l.mode === 'IA' || l.mode === 'EP'))
   .sort((a, b) => String(b.dateEvenement || b.dateCreation || '').localeCompare(String(a.dateEvenement || a.dateCreation || '')));
 const evenementDuLot = (animal, lot) => (animal.modesRepro || []).find(m => m && m.lotId === lot.id && (m.mode === 'IA' || m.mode === 'EP')) || null;
 /* Classement de l'aperçu (fonction pure, rien n'est écrit) : une ligne par brebis du fichier, état
    relie | aJour | conflit | inconnue | codeInconnu | belierInvalide | horsLot | introuvable | ambigu | doublon | sansIa. `remplacer` = Set des EID cochés. */
-function classerInseminationsLot(lot, rowsBeliers, rowsBrebis, remplacer) {
+function classerInseminationsLot(lot, rowsBeliers, rowsBrebis, remplacer, choix) {
   const B = lireBeliersIa(rowsBeliers);
   if (B.erreur) return { erreur: B.erreur };
   const rep = reperageColonnesIa(rowsBrebis, IA_ALIAS_BREBIS);
@@ -28485,12 +28574,14 @@ function classerInseminationsLot(lot, rowsBeliers, rowsBrebis, remplacer) {
   for (let i = rep.ligneEntete + 1; i < rowsBrebis.length; i++) {
     const row = rowsBrebis[i] || [], numero = celluleIa(row, rep.cols.numero), code = chiffresSeuls(celluleIa(row, rep.cols.code));
     if (!numero && !code) continue;
-    const l = { ligne: i + 1, numero, code, etat: null, message: '' };
+    const l = { ligne: i + 1, cle: 'i' + (i + 1), numero, code, etat: null, message: '' };
     lignes.push(l);
-    if (!numero) { l.etat = 'introuvable'; l.message = 'n° de brebis absent'; continue; }
-    const r = resoudreAnimalInsemination(numero);
-    if (r.statut === 'ambigu') { l.etat = 'ambigu'; l.message = 'plusieurs animaux portent ce n° : indiquez l\'EID ou le n° national'; continue; }
-    if (r.statut !== 'trouve') { l.etat = 'introuvable'; l.message = 'aucune brebis active ne porte ce n°'; continue; }
+    if (!numero) { l.etat = 'introuvable'; l.message = 'pas de n° de brebis sur cette ligne'; l.resolution = { type: 'vide' }; continue; }
+    l.resolution = retrouverAnimalImport(numero, poolInseminations());   // recherche commune des imports
+    l.choisi = (choix && choix.get(l.cle)) || null;
+    const animal = animalRetenuImport(l);
+    if (!animal) { l.etat = l.resolution.type === 'choix' ? 'aChoisir' : 'aRetrouver'; l.message = l.etat === 'aChoisir' ? 'plusieurs brebis possibles : choisissez-la plus haut' : 'aucune brebis du troupeau ne porte ce n° : retrouvez-la plus haut'; continue; }
+    const r = { item: animal };
     l.animal = r.item;
     if (!membres.has(cleanEid(r.item.eid))) { l.etat = 'horsLot'; l.message = 'absente du lot « ' + lot.nom + ' »'; continue; }
     const precedente = parAnimal.get(r.item.eid);
@@ -28513,9 +28604,9 @@ function classerInseminationsLot(lot, rowsBeliers, rowsBrebis, remplacer) {
     else { l.etat = 'conflit'; l.remplace = !!(remplacer && remplacer.has(r.item.eid)); l.message = 'déjà reliée à ' + (paterniteIaPereTexte(ancienne) || 'un autre père'); }
   }
   const aEcrire = lignes.filter(l => l.etat === 'relie' || (l.etat === 'conflit' && l.remplace));
-  const aVerifier = lignes.filter(l => ['codeInconnu', 'belierInvalide', 'horsLot', 'introuvable', 'ambigu', 'doublon', 'sansIa'].includes(l.etat) || (l.etat === 'conflit' && !l.remplace));
+  const aVerifier = lignes.filter(l => ['codeInconnu', 'belierInvalide', 'horsLot', 'introuvable', 'doublon', 'sansIa'].includes(l.etat) || (l.etat === 'conflit' && !l.remplace));
   const beliersUtilises = new Set(lignes.filter(l => l.ia).map(l => clePereIa(l.ia.pereCourt)));
-  return { lignes, aEcrire, aVerifier, inconnues: lignes.filter(l => l.etat === 'inconnue'), aJour: lignes.filter(l => l.etat === 'aJour'), nbBeliers: beliersUtilises.size };
+  return { lignes, aEcrire, aVerifier, aRetrouver: lignes.filter(l => l.resolution && l.resolution.type !== 'vide'), inconnues: lignes.filter(l => l.etat === 'inconnue'), aJour: lignes.filter(l => l.etat === 'aJour'), nbBeliers: beliersUtilises.size };
 }
 // Écriture (après l'aperçu) : bloc `ia` sur l'évènement du lot, puis les agneaux déjà nés suivent
 function appliquerInseminationsLot(classement) {
@@ -28536,11 +28627,11 @@ async function telechargerModeleInseminations() {
   await saveOrShareBinaryFile('Modele_Inseminations.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
 const ETATS_IMPORT_IA = { relie: ['ok', 'Relié'], aJour: ['neutral', 'Déjà à jour'], conflit: ['warn', 'Autre père'], inconnue: ['neutral', 'Paternité inconnue'], codeInconnu: ['warn', 'Code inconnu'],
-  belierInvalide: ['warn', 'Bélier à corriger'], horsLot: ['warn', 'Hors lot'], introuvable: ['warn', 'Introuvable'], ambigu: ['warn', 'N° ambigu'], doublon: ['warn', 'Deux codes'], sansIa: ['warn', 'Sans IA'] };
+  belierInvalide: ['warn', 'Bélier à corriger'], horsLot: ['warn', 'Hors lot'], introuvable: ['warn', 'Sans n°'], aChoisir: ['warn', 'À choisir'], aRetrouver: ['warn', 'À retrouver'], doublon: ['warn', 'Deux codes'], sansIa: ['warn', 'Sans IA'] };
 function renderImportInseminations() {
   pageTitle.textContent = 'Import Inséminations';
   const lots = lotsIaImportables();
-  const etat = { lotId: lots.length ? '' : null, rowsBeliers: null, rowsBrebis: null, nomFichier: '', remplacer: new Set(), message: '' };
+  const etat = { lotId: lots.length ? '' : null, rowsBeliers: null, rowsBrebis: null, nomFichier: '', remplacer: new Set(), message: '', choix: new Map(), saisies: new Map() };
   let classement = null;
   app.innerHTML = `
     <div class="card">
@@ -28562,28 +28653,36 @@ function renderImportInseminations() {
     const zone = document.getElementById('import-ia-preview');
     document.getElementById('import-ia-message').innerHTML = etat.message ? `<div class="card" id="import-ia-ok" style="margin-top:14px;background:var(--green-bg);color:var(--green-fg);">${echapperHtml(etat.message)}</div>` : '';
     const lot = lotChoisi();
-    classement = lot && etat.rowsBrebis ? classerInseminationsLot(lot, etat.rowsBeliers || [], etat.rowsBrebis, etat.remplacer) : null;
+    if (classement && classement.aRetrouver) classement.aRetrouver.forEach(x => etat.saisies.set(x.cle, x.saisie || ''));   // garde ce qui est tapé d'un dessin à l'autre
+    classement = lot && etat.rowsBrebis ? classerInseminationsLot(lot, etat.rowsBeliers || [], etat.rowsBrebis, etat.remplacer, etat.choix) : null;
+    if (classement && classement.aRetrouver) classement.aRetrouver.forEach(x => { x.saisie = etat.saisies.get(x.cle) || ''; });
     if (!classement) { zone.innerHTML = ''; return; }
     if (classement.erreur) { zone.innerHTML = `<div class="error-box" style="margin-top:14px;">${echapperHtml(classement.erreur)}</div>`; return; }
     const c = classement;
     zone.innerHTML = `<div class="card" style="margin-top:14px;">
       <div class="brd-note" style="margin:0 0 10px;">${echapperHtml(etat.nomFichier)} · lot « ${echapperHtml(lot.nom)} » · ${c.lignes.length} ligne${c.lignes.length > 1 ? 's' : ''}</div>
-      <div class="pc-kpis" id="import-ia-tuiles">${pcKpi('brebis reliées à un père', c.aEcrire.length, c.aJour.length ? c.aJour.length + ' déjà à jour' : '', 'vert')}${pcKpi('à vérifier', c.aVerifier.length, '', c.aVerifier.length ? 'ambre' : 'neutre')}${pcKpi('paternité inconnue', c.inconnues.length, '', 'neutre')}${pcKpi('béliers utilisés', c.nbBeliers, '', 'bleu')}</div>
+      <div id="import-ia-tuiles">${tuilesRetrouverImportHtml(c.aRetrouver)}</div>
+      ${infoLigneHtml(`<span id="import-ia-resume">${c.aEcrire.length} ${c.aEcrire.length > 1 ? 'brebis reliées' : 'brebis reliée'} à un père${c.aJour.length ? ' · ' + c.aJour.length + ' déjà à jour' : ''} · ${c.nbBeliers} bélier${c.nbBeliers > 1 ? 's' : ''} utilisé${c.nbBeliers > 1 ? 's' : ''}${c.inconnues.length ? ' · ' + c.inconnues.length + ' paternité' + (c.inconnues.length > 1 ? 's' : '') + ' inconnue' + (c.inconnues.length > 1 ? 's' : '') : ''}${c.aVerifier.length ? ' · ' + c.aVerifier.length + ' à vérifier' : ''}</span>`)}
+    </div>
+    ${carteRetrouverImportHtml(c.aRetrouver, { colonne: 'N° brebis', pool: poolInseminations() })}
+    <div class="card" style="margin-top:10px;">
       ${c.aVerifier.length ? `<div id="import-ia-alertes" style="display:grid;gap:6px;margin:12px 0;">${c.aVerifier.map(l => `<div class="msg-charte alerte"><b>${echapperHtml(num(l))}</b><span>${echapperHtml(l.message)}${l.etat === 'conflit' ? ' : cochez « Remplacer » pour la relier à ce bélier.' : ' : ligne ' + l.ligne + ' ignorée.'}</span></div>`).join('')}</div>` : ''}
       <div style="overflow-x:auto;"><table class="brd-t" id="import-ia-table"><thead><tr><th>N° brebis</th><th>Code IA</th><th>Père · n° officiel</th><th>ISOL</th><th>État</th><th>Remplacer</th></tr></thead><tbody>
         ${c.lignes.map(l => { const [ton, lib] = ETATS_IMPORT_IA[l.etat]; const isol = l.ia ? paterniteIaIndexTexte(l.ia) : null; return `<tr data-etat="${l.etat}"><td>${echapperHtml(num(l))}</td><td>${echapperHtml(l.code || '—')}</td><td style="white-space:nowrap;">${l.ia ? echapperHtml(paterniteIaPereTexte(l.ia)) : '—'}</td><td>${isol ? echapperHtml(isol.replace('ISOL ', '')) : '—'}</td><td>${pcPill(ton, lib)}</td><td>${l.etat === 'conflit' ? `<input type="checkbox" class="import-ia-remplacer" data-eid="${l.animal.eid}" aria-label="Remplacer le père de ${echapperHtml(num(l))}"${l.remplace ? ' checked' : ''} style="width:auto;margin:0;">` : ''}</td></tr>`; }).join('')}
       </tbody></table></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px;"><button type="button" class="btn btn-secondary" id="btn-annuler-import-ia" style="width:auto;">Annuler</button><button type="button" class="btn btn-primary" id="btn-confirm-import-ia" style="width:auto;"${c.aEcrire.length ? '' : ' disabled'}>Enregistrer ${c.aEcrire.length} ${lot.cible === 'Agnelles' ? 'agnelle' + (c.aEcrire.length > 1 ? 's' : '') : 'brebis'}</button></div>
     </div>`;
+    brancherCarteRetrouverImport(zone, c.aRetrouver, poolInseminations(), () => { c.aRetrouver.forEach(x => { if (x.choisi) etat.choix.set(x.cle, x.choisi); else etat.choix.delete(x.cle); etat.saisies.set(x.cle, x.saisie || ''); }); etat.message = ''; renderPreview(); });
     zone.querySelectorAll('.import-ia-remplacer').forEach(cb => { cb.onchange = () => { if (cb.checked) etat.remplacer.add(cb.dataset.eid); else etat.remplacer.delete(cb.dataset.eid); etat.message = ''; renderPreview(); }; });
-    document.getElementById('btn-annuler-import-ia').onclick = () => { etat.rowsBeliers = etat.rowsBrebis = null; etat.remplacer.clear(); etat.message = ''; document.getElementById('import-ia-file').value = ''; renderPreview(); };
+    document.getElementById('btn-annuler-import-ia').onclick = () => { etat.rowsBeliers = etat.rowsBrebis = null; etat.remplacer.clear(); etat.choix.clear(); etat.saisies.clear(); etat.message = ''; document.getElementById('import-ia-file').value = ''; renderPreview(); };
     document.getElementById('btn-confirm-import-ia').onclick = () => {
       if (!classement || !classement.aEcrire.length) return;
       const n = appliquerInseminationsLot(classement);
+      classement.aEcrire.forEach(l => { if (l.choisi) retenirNumeroImport(l.choisi, l.numero, poolInseminations(), true); });   // associée à la main : n° retenu pour les prochains imports
       saveData(DB);
       noterDernierImport('inseminations', null, n);
       etat.message = n + ' ' + (n > 1 ? 'brebis reliées' : 'brebis reliée') + ' à leur père (lot « ' + lot.nom + ' »).';
-      etat.rowsBeliers = etat.rowsBrebis = null; etat.remplacer.clear(); document.getElementById('import-ia-file').value = '';
+      etat.rowsBeliers = etat.rowsBrebis = null; etat.remplacer.clear(); etat.choix.clear(); etat.saisies.clear(); classement = null; document.getElementById('import-ia-file').value = '';
       renderPreview();
     };
   }
@@ -28592,7 +28691,7 @@ function renderImportInseminations() {
   document.getElementById('import-ia-file').addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
-    err.classList.add('hidden'); etat.message = ''; etat.remplacer.clear();
+    err.classList.add('hidden'); etat.message = ''; etat.remplacer.clear(); etat.choix.clear(); etat.saisies.clear(); classement = null;
     const reader = new FileReader();
     reader.onload = async () => {
       try {
@@ -28802,22 +28901,8 @@ function descriptionMesureControleLaitier(quantite, anomalie) {
   if (a) return a;
   return '(aucune valeur)';
 }
-// Résolution d'une ligne : EID (colonne A) prioritaire si renseigné, sinon
-// numéro SIEOL (colonne B) -- jamais les deux à la fois, jamais de repli
-// automatique de A vers B (voir chantier). Brebis uniquement.
-function resoudreLigneControleLaitierModele(eidVal, sieolVal) {
-  const eid = String(eidVal || '').trim();
-  const sieol = String(sieolVal || '').trim();
-  if (!eid && !sieol) return { type: 'ignoree' };
-  if (eid) {
-    const sheep = DB.brebis.find(s => eidAffichageCourt(s.eid) === eid);
-    return sheep ? { type: 'direct', sheep } : { type: 'aucune', valeur: eid };
-  }
-  const candidats = trouverParNumero(DB.brebis, sieol);
-  if (candidats.length === 1) return { type: 'direct', sheep: candidats[0] };
-  if (candidats.length > 1) return { type: 'ambigue', candidats, valeur: sieol };
-  return { type: 'aucune', valeur: sieol };
-}
+// Résolution d'une ligne : EID (colonne A) prioritaire si renseigné, sinon n° (colonne B), par la recherche
+// commune des imports (retrouverAnimalImport) -- jamais de repli automatique de A vers B. Brebis uniquement.
 /* Lecture complète du fichier : dates par contrôle (ligne 4) + lignes de
    données (à partir de la ligne 6, JUSQU'À LA FIN RÉELLE des données --
    aucun arrêt anticipé sur une ligne trouée, voir chantier). Une ligne
@@ -28845,8 +28930,8 @@ function parserFichierControleLaitierModele(rows) {
     const controles = Object.fromEntries(ns.map(n => [n, parseCelluleControleLaitierModele(row[cols[n]])]));
     if (!eidVal && !sieolVal && !ns.some(n => controles[n].present)) continue; // ligne de trame vide -- jamais signalée
     lignes.push({
-      __idx: lignes.length, ligne: i + 1, eidVal, sieolVal,
-      resolution: resoudreLigneControleLaitierModele(eidVal, sieolVal),
+      __idx: lignes.length, cle: 'm' + lignes.length, ligne: i + 1, eidVal, sieolVal,
+      ...(eidVal || sieolVal ? ligneRetrouverImport(eidVal || sieolVal, DB.brebis) : { numero: '', resolution: { type: 'ignoree' }, choisi: null, saisie: '' }),   // EID d'abord (jamais de repli de A vers B), sinon le n° : recherche commune des imports
       controles
     });
   }
@@ -28870,8 +28955,8 @@ function renderImportControleLaitierModele() {
   const choixDate = {}; // 'garder' | 'remplacer' | null, par n° de contrôle
   const etatCode10 = { tous: false, lait: new Set() };   // carte Code 10 : cases décochées d'office
   // Code 10 des contrôles du fichier (lignes résolues, contrôles actifs, cellules lisibles) ; relu à l'aperçu et à la confirmation
-  const code10Modele = () => !parsed ? null : classerCode10Import(parsed.lignes.filter(l => l.resolution.type === 'direct').map(l => ({
-    sheep: l.resolution.sheep, numero: numeroCourtSieol(l.resolution.sheep) || numeroVisuel(l.resolution.sheep.eid),
+  const code10Modele = () => !parsed ? null : classerCode10Import(parsed.lignes.filter(l => animalRetenuImport(l)).map(l => ({
+    sheep: animalRetenuImport(l), numero: numeroCourtSieol(animalRetenuImport(l)) || numeroVisuel(animalRetenuImport(l).eid),
     controles: Object.keys(parsed.datesFichier).map(Number).filter(n => infosControle(n).actif && l.controles[n] && l.controles[n].present && !l.controles[n].ambigue && !l.controles[n].invalide).map(n => ({ n, quantite: l.controles[n].quantite, anomalie: l.controles[n].anomalie }))
   })), campagne);
 
@@ -28910,8 +28995,8 @@ function renderImportControleLaitierModele() {
 
     const NS = Object.keys(parsed.datesFichier).map(Number).sort((a, b) => a - b);   // contrôles présents dans le fichier (titres de colonnes)
     const infos = Object.fromEntries(NS.map(n => [n, infosControle(n)]));
-    const directes = parsed.lignes.filter(r => r.resolution.type === 'direct');
-    const nonResolues = parsed.lignes.filter(r => r.resolution.type === 'aucune' || r.resolution.type === 'ambigue');
+    const directes = parsed.lignes.filter(r => animalRetenuImport(r));
+    const aRetrouver = parsed.lignes.filter(r => r.resolution.type !== 'ignoree');
     const ignorees = parsed.lignes.filter(r => r.resolution.type === 'ignoree');
 
     const valeursAmbigues = [];
@@ -28932,10 +29017,10 @@ function renderImportControleLaitierModele() {
         const c = ligne.controles[n];
         if (!info.actif) return;
         if (info.conflit && !info.dateAdoptee) return; // colonne bloquée tant que le conflit de date n'est pas tranché
-        const idx = controleLaitierCampagneIdxN(ligne.resolution.sheep, n, campagne);
+        const idx = controleLaitierCampagneIdxN(animalRetenuImport(ligne), n, campagne);
         if (!c.present) {
           if (idx !== -1) {
-            const existant = ligne.resolution.sheep.controleLaitier[idx];
+            const existant = animalRetenuImport(ligne).controleLaitier[idx];
             conflitsAbsence.push({ ligne, controle: n, c, existant });
             if (c.resolutionAbsence === 'remplacer') nbASupprimer++;
           }
@@ -28944,7 +29029,7 @@ function renderImportControleLaitierModele() {
         if (c.ambigue) { valeursAmbigues.push({ ligne, controle: n, brut: c.brut }); return; }
         if (c.invalide) { formatsInvalides.push({ ligne, controle: n, brut: c.brut }); return; }
         if (idx === -1) { aEcrire[n]++; return; }
-        const existant = ligne.resolution.sheep.controleLaitier[idx];
+        const existant = animalRetenuImport(ligne).controleLaitier[idx];
         if (existant.quantite === c.quantite && (existant.anomalie || null) === (c.anomalie || null)) return; // déjà identique -- ignoré silencieusement
         conflitsValeur.push({ ligne, controle: n, c, existant });
         if (c.resolutionConflit === 'remplacer') aEcrire[n]++;
@@ -28959,17 +29044,14 @@ function renderImportControleLaitierModele() {
     directes.forEach(ligne => NS.forEach(n => {
       const info = infos[n], c = ligne.controles[n];
       if (!info.actif || !info.dateAdoptee || !c.present || c.ambigue || c.invalide || c.quantite === null || c.quantite === undefined) return;   // un code seul n'est pas du lait livré
-      itemsCl.push({ sheep: ligne.resolution.sheep, controle: n, date: info.dateAdoptee });
+      itemsCl.push({ sheep: animalRetenuImport(ligne), controle: n, date: info.dateAdoptee });
     }));
     const alerteCl = htmlAlerteControlesDelaiLait(itemsCl);
     const cl10 = code10Modele(), code10AQuestion = !!cl10 && (cl10.aMarquer.length + cl10.avecLait.length) > 0;
     preview.innerHTML = `
       <div class="card" style="margin-top:14px;">
-        <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
-          <div class="stat-card sc-green"><div class="stat-card-label">À écrire</div><div class="stat-card-value" style="font-size:16px;">${NS.reduce((t, n) => t + aEcrire[n], 0)}</div></div>
-          <div class="stat-card sc-coral"><div class="stat-card-label">Non résolues</div><div class="stat-card-value" style="font-size:16px;">${nonResolues.length}</div></div>
-          <div class="stat-card sc-amber"><div class="stat-card-label">Conflits</div><div class="stat-card-value" style="font-size:16px;">${conflitsValeur.length + conflitsAbsence.length + conflitsDateListe.length}</div></div>
-        </div>
+        ${tuilesRetrouverImportHtml(aRetrouver)}
+        ${infoLigneHtml(NS.reduce((t, n) => t + aEcrire[n], 0) + ' contrôle(s) à enregistrer' + (conflitsValeur.length + conflitsAbsence.length + conflitsDateListe.length ? ' · ' + (conflitsValeur.length + conflitsAbsence.length + conflitsDateListe.length) + ' à trancher (déjà dans Ovilog, différent du fichier)' : ''))}
         <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">
           ${NS.map(n => {
             const info = infos[n];
@@ -28982,6 +29064,7 @@ function renderImportControleLaitierModele() {
         ${NS.filter(n => infos[n].actif).some(n => n > maxControlesSuivi()) ? `<div id="import-cl-modele-au-dela" style="margin-top:8px;font-size:13px;color:var(--ch-ambre-texte);">${NS.filter(n => infos[n].actif).length} contrôles dans le fichier, le suivi ${DB.exploitation.typeSuivi ? String(DB.exploitation.typeSuivi).toUpperCase() : ''} en prévoit ${maxControlesSuivi()} : vérifie le fichier (rien n'est bloqué).</div>` : ''}
       </div>
 
+      ${carteRetrouverImportHtml(aRetrouver, { colonne: 'n° du fichier', pool: DB.brebis })}
       ${alerteCl}${conflitsDateListe.length > 0 ? `
       <div class="card" style="margin-top:10px;border-color:var(--coral-fg);">
         <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--coral-fg);">Conflits de date (${conflitsDateListe.length})</div>
@@ -29012,7 +29095,7 @@ function renderImportControleLaitierModele() {
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Une valeur existe déjà. Rien n'est écrasé sans ton choix explicite ; un conflit laissé sans réponse garde la valeur actuelle.</div>
         ${conflitsValeur.map(({ ligne, controle, c, existant }) => `
         <div style="border-top:1px solid var(--border);padding:10px 0;">
-          <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${numeroVisuel(ligne.resolution.sheep.eid)} — Contrôle ${controle} déjà enregistré</div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${numeroVisuel(animalRetenuImport(ligne).eid)} — Contrôle ${controle} déjà enregistré</div>
           <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
             <span>Actuel : ${descriptionMesureControleLaitier(existant.quantite, existant.anomalie)}</span>
             <span style="color:var(--amber-fg);">Fichier propose : ${descriptionMesureControleLaitier(c.quantite, c.anomalie)}</span>
@@ -29032,7 +29115,7 @@ function renderImportControleLaitierModele() {
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Ovilog a déjà une mesure pour cet animal/ce contrôle, mais la cellule est vide dans le fichier réimporté. Rien n'est modifié sans ton choix explicite ; un conflit laissé sans réponse garde la mesure actuelle.</div>
         ${conflitsAbsence.map(({ ligne, controle, c, existant }) => `
         <div style="border-top:1px solid var(--border);padding:10px 0;">
-          <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${numeroVisuel(ligne.resolution.sheep.eid)} — Contrôle ${controle} déjà enregistré</div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${numeroVisuel(animalRetenuImport(ligne).eid)} — Contrôle ${controle} déjà enregistré</div>
           <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
             <span>Actuel : ${descriptionMesureControleLaitier(existant.quantite, existant.anomalie)}</span>
             <span style="color:var(--coral-fg);">Fichier propose : (aucune valeur)</span>
@@ -29062,23 +29145,17 @@ function renderImportControleLaitierModele() {
       </div>
       ` : ''}
 
-      ${nonResolues.length > 0 ? `
-      <div class="card" style="margin-top:10px;">
-        <div style="font-weight:600;margin-bottom:8px;color:var(--coral-fg);">Non résolues (${nonResolues.length})</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Aucune brebis ne correspond (ou plusieurs candidates) -- ces lignes ne sont pas traitées.</div>
-        ${nonResolues.map(r => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${r.ligne} — ${r.resolution.valeur}${r.resolution.type === 'ambigue' ? ' (ambiguë, ' + r.resolution.candidats.length + ' candidates)' : ' (introuvable)'}</div>`).join('')}
-      </div>
-      ` : ''}
-
       ${ignorees.length > 0 ? `
       <div class="card" style="margin-top:10px;">
-        <div style="font-weight:600;margin-bottom:8px;">Ignorées -- ni EID ni n° de travail (${ignorees.length})</div>
+        <div style="font-weight:600;margin-bottom:8px;">Lignes sans n° de brebis (${ignorees.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Ni EID ni n° de travail : elles ne sont pas importées.</div>
         ${ignorees.map(r => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${r.ligne}</div>`).join('')}
       </div>
       ` : ''}
       ${carteCode10ImportHtml(cl10, etatCode10, campagne)}
     `;
     brancherCarteCode10(etatCode10);
+    brancherCarteRetrouverImport(preview, aRetrouver, DB.brebis, renderPreview);
 
     document.querySelectorAll('.btn-conflit-date-cl').forEach(btn => {
       btn.onclick = () => { choixDate[parseInt(btn.dataset.controle, 10)] = btn.dataset.choix; renderPreview(); };
@@ -29135,9 +29212,10 @@ function renderImportControleLaitierModele() {
       const info = infosControle(n);
       if (!info.actif || info.dateAdoptee === null) return; // colonne ignorée ou conflit de date non tranché
       parsed.lignes.forEach(ligne => {
-        if (ligne.resolution.type !== 'direct') return;
+        if (!animalRetenuImport(ligne)) return;
+        if (ligne.choisi) retenirNumeroImport(ligne.choisi, ligne.numero, DB.brebis, true);   // associée à la main : n° retenu pour les prochains imports
         const c = ligne.controles[n];
-        const sheep = ligne.resolution.sheep;
+        const sheep = animalRetenuImport(ligne);
         const idx = controleLaitierCampagneIdxN(sheep, n, campagne);
         if (!c.present) {
           // Cellule vide : rien à faire SAUF si une mesure existante avait
@@ -29168,7 +29246,7 @@ function renderImportControleLaitierModele() {
       });
     });
     saveData(DB);
-    noterDernierImport('controle-laitier', campagne, parsed.lignes.filter(l => l.resolution.type === 'direct').length);
+    noterDernierImport('controle-laitier', campagne, parsed.lignes.filter(l => animalRetenuImport(l)).length);
     alert(nbEcrites + ' mesure(s) écrite(s).' + (nbSupprimees > 0 ? ' ' + nbSupprimees + ' mesure(s) supprimée(s) (valeur retirée du fichier).' : '') + (nbVides > 0 ? ' ' + nbVides + ' brebis marquée(s) vide définitive.' : ''));
     render('parametres');
   };
