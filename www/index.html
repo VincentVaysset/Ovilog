@@ -1016,6 +1016,11 @@
   .tri-export label.te-col.on { background: var(--ch-vert-pastel); font-weight: 600; }
   .tri-export label.te-col input[type="checkbox"] { display: inline-block; width: 20px; height: 20px; min-height: 0; margin: 0; padding: 0; flex: 0 0 20px; accent-color: var(--ch-vert); }
   .tri-export label.te-col span { flex: 1 1 auto; min-width: 0; line-height: 1.2; }
+  .code10-case { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 6px 0 0; font-weight: 600; color: var(--ch-texte); cursor: pointer; }
+  .code10-case input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; margin: 0; padding: 0; flex: 0 0 20px; accent-color: var(--ch-vert); }
+  .index-lactation { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 6px 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--ch-separateur); font-size: 14px; }
+  .index-lactation span { color: var(--ch-texte2); }
+  .index-lactation small { font-weight: 400; color: var(--ch-texte2); }
   .cl-moyennes { background: var(--ch-carte); border: 1px solid var(--ch-bord); border-radius: 18px; padding: 12px 14px; margin-bottom: 14px; }
   body.desktop-shell .cl-moyennes { border-radius: 14px; margin: 14px 0 0; }
   .cl-moyennes-t { font-size: 13px; color: var(--ch-texte2); margin-bottom: 8px; }
@@ -4423,6 +4428,62 @@ function marquerVideDefinitive(sheep, campagne) {
   sheep.videesDefinitives = sheep.videesDefinitives || [];
   sheep.videesDefinitives.push({ campagne: c, date: jourAujourdhuiISO() });
 }
+/* Code 10 (vide définitive) trouvé à l'import du contrôle laitier (SIEOL et modèle Excel Ovilog) : RIEN n'est marqué d'office.
+   entrees = [{ sheep, numero, controles: [{ n, quantite, anomalie }] (contrôles du fichier repris), anoRepro }] ; fonction PURE.
+   aMarquer = code 10, pas encore vide définitive, aucun lait (fichier ou fiche, campagne de l'import) ; avecLait = code 10 ET du lait
+   (à vérifier, source et lait montrés) ; deja = code 10 et déjà marquée (rien n'est changé) ; sansCode = marquée vide définitive
+   dans Ovilog (brebis présente) sans code 10 dans le fichier (information). */
+function classerCode10Import(entrees, campagne) {
+  const res = { aMarquer: [], avecLait: [], deja: [], sansCode: [] };
+  const vus = new Set();
+  (entrees || []).forEach(e => {
+    if (!e || !e.sheep || vus.has(e.sheep.id)) return;
+    const c10 = (e.controles || []).filter(c => parseInt(c.anomalie, 10) === 10).map(c => c.n);
+    const repro = String(e.anoRepro === null || e.anoRepro === undefined ? '' : e.anoRepro).trim() === '10';
+    if (!c10.length && !repro) return;
+    vus.add(e.sheep.id);
+    const it = { sheep: e.sheep, numero: e.numero, sources: c10.map(n => 'au C' + n).concat(repro ? ['en anomalie repro'] : []) };
+    if (estVideDefinitiveCampagneN(e.sheep, campagne)) { res.deja.push(it); return; }
+    const lait = {};
+    (e.sheep.controleLaitier || []).forEach(c => { if (c && c.campagne === campagne && c.quantite > 0) lait[c.controle] = c.quantite; });
+    (e.controles || []).forEach(c => { if (c.quantite > 0) lait[c.n] = c.quantite; });
+    it.lait = Object.keys(lait).map(Number).sort((a, b) => a - b).map(n => ({ n, quantite: lait[n] }));
+    (it.lait.length ? res.avecLait : res.aMarquer).push(it);
+  });
+  res.sansCode = (DB.brebis || []).filter(s => (s.statut || 'active') === 'active' && estVideDefinitiveCampagneN(s, campagne) && !vus.has(s.id))
+    .map(s => ({ sheep: s, numero: numeroCourtSieol(s) || numeroVisuel(s.eid) }));
+  return res;
+}
+// Carte « Code 10 · vide définitive » de l'aperçu d'import (vide s'il n'y a rien à dire) ; etat = { tous, lait: Set(id) } : cases décochées d'office
+function carteCode10ImportHtml(cl, etat, campagne) {
+  if (!cl || (!cl.aMarquer.length && !cl.avecLait.length && !cl.deja.length && !cl.sansCode.length)) return '';
+  const n = x => 'n°' + echapperHtml(String(x.numero));
+  const pl = (k, a, b) => k > 1 ? b : a;
+  const case_ = (cls, id, coche, texte) => `<label class="code10-case"><input type="checkbox" class="${cls}"${id ? ` data-id="${echapperHtml(id)}"` : ''}${coche ? ' checked' : ''}><span>${texte}</span></label>`;
+  const ml = q => String(Math.round(q)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0') + '\u00a0mL';
+  return `<div class="card" id="carte-code10" style="margin-top:10px;">
+    <p class="brd-ttl" style="margin:0 0 4px;">Code 10 · vide définitive</p>
+    <p class="brd-note" style="margin:0 0 10px;">Le technicien met le code 10 aux brebis vides de la campagne. Rien n'est marqué sans toi.</p>
+    ${cl.aMarquer.length ? `<div class="msg-charte alerte" id="code10-a-marquer" style="margin:0 0 10px;"><b>${cl.aMarquer.length} ${pl(cl.aMarquer.length, 'brebis en code 10, pas encore marquée vide', 'brebis en code 10, pas encore marquées vides')} dans Ovilog</b><span>${cl.aMarquer.map(n).join(' · ')}</span>
+      ${case_('code10-tous', '', etat.tous, pl(cl.aMarquer.length, 'La marquer', 'Les marquer') + ' vide définitive pour la campagne ' + campagneLabel(campagne))}</div>` : ''}
+    ${cl.avecLait.map(x => `<div class="msg-charte alerte code10-lait-bloc" style="margin:0 0 10px;"><b>Code 10 mais avec du lait : à vérifier</b><span>${n(x)} : code 10 ${x.sources.map(echapperHtml).join(' et ')}, mais ${x.lait.map(l => ml(l.quantite) + ' au C' + l.n).join(', ')}. Pas marquée.</span>
+      ${case_('code10-lait', x.sheep.id, etat.lait.has(x.sheep.id), 'La marquer vide définitive quand même')}</div>`).join('')}
+    ${cl.deja.length || cl.sansCode.length ? `<p class="brd-note" style="margin:0;">${cl.deja.length ? 'Déjà ' + pl(cl.deja.length, 'marquée', 'marquées') + ' vide définitive : ' + cl.deja.map(n).join(', ') + ' (rien n\'est changé).' : ''}${cl.deja.length && cl.sansCode.length ? '<br>' : ''}${cl.sansCode.length ? 'Vide définitive dans Ovilog, sans code 10 dans le fichier : ' + cl.sansCode.map(n).join(', ') + '.' : ''}</p>` : ''}
+  </div>`;
+}
+function brancherCarteCode10(etat, redessiner) {
+  const t = document.querySelector('#carte-code10 .code10-tous');
+  if (t) t.onchange = () => { etat.tous = t.checked; };
+  document.querySelectorAll('#carte-code10 .code10-lait').forEach(cb => { cb.onchange = () => { if (cb.checked) etat.lait.add(cb.dataset.id); else etat.lait.delete(cb.dataset.id); }; });
+}
+// À la confirmation : marque les brebis cochées (jamais d'office) ; renvoie le nombre de brebis marquées
+function appliquerCode10Import(cl, etat, campagne) {
+  if (!cl) return 0;
+  let k = 0;
+  if (etat.tous) cl.aMarquer.forEach(x => { if (!estVideDefinitiveCampagneN(x.sheep, campagne)) { marquerVideDefinitive(x.sheep, campagne); k++; } });
+  cl.avecLait.forEach(x => { if (etat.lait.has(x.sheep.id) && !estVideDefinitiveCampagneN(x.sheep, campagne)) { marquerVideDefinitive(x.sheep, campagne); k++; } });
+  return k;
+}
 function annulerVideDefinitive(sheep) {
   if (!Array.isArray(sheep.videesDefinitives)) return;
   const idx = sheep.videesDefinitives.findIndex(v => v && v.campagne === DB.campagneDebut);
@@ -4615,6 +4676,20 @@ function libelleControlesCampagne(nc) {
   const t = DB.exploitation ? DB.exploitation.typeSuivi : null;
   return nc.length + ' contrôle' + (nc.length > 1 ? 's' : '') + ' cette campagne' + (t === 'cls' || t === 'clo' ? ' · suivi ' + t.toUpperCase() + ' : ' + maxControlesSuivi() + ' prévu' + (maxControlesSuivi() > 1 ? 's' : '') : '');
 }
+/* N° de lactation (cahier de contrôle SIEOL) de la fiche brebis, onglet Index : « 3e lactation » (campagne en cours ; sinon la plus récente
+   connue, campagne précisée) ; rien s'il n'est pas connu. Jamais l'année de naissance à côté. Lecture seule. */
+function numeroLactationBrebis(sheep) {
+  const liste = (DB.cahierControleLaitier || []).filter(c => c && cleanEid(c.eid) === cleanEid(sheep.eid) && c.numLactation !== null && c.numLactation !== undefined && String(c.numLactation).trim() !== '');
+  if (!liste.length) return null;
+  const e = liste.find(c => c.campagne === DB.campagneDebut) || liste.slice().sort((a, b) => b.campagne - a.campagne)[0];
+  return { n: String(e.numLactation).trim(), campagne: e.campagne, courante: e.campagne === DB.campagneDebut };
+}
+function ligneLactationIndexHtml(sheep) {
+  const L = numeroLactationBrebis(sheep);
+  if (!L) return '';
+  const k = parseInt(L.n, 10), txt = isNaN(k) ? echapperHtml(L.n) : (k === 1 ? '1re' : k + 'e') + ' lactation';
+  return `<div class="index-lactation" id="index-num-lactation"><span>N° de lactation</span><strong>${txt}${L.courante ? '' : ' <small>(campagne ' + campagneLabel(L.campagne) + ')</small>'}</strong></div>`;
+}
 function libelleControleOrdinal(n) { return n === 1 ? '1er' : n + 'e'; }
 function numerosControles(campagne) { return Array.from({ length: nbControlesCampagne(campagne) }, (_, i) => i + 1); }
 
@@ -4639,6 +4714,7 @@ const ANOMALIE_CONTROLE_LABELS = {
   7: 'Contrôle sauté',
   8: 'Mammites',
   9: 'Tarie',
+  10: 'Vide définitive',
   11: 'Allaitante et traite'
 };
 function libelleAnomalieControle(code) {
@@ -11838,7 +11914,7 @@ function carriereCampagnesHtml(sources) {
     const controlesCampagne = controles.filter(c => c.campagne === campagne).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     const controlesRows = controlesCampagne.map(c => `
       <div class="row-item">
-        <span>${c.quantite} mL</span>
+        <span>${c.quantite === null || c.quantite === undefined ? "sans lait" : c.quantite + " mL"}${c.anomalie ? " · " + libelleAnomalieControle(c.anomalie) : ""}</span>
         <span style="color:var(--text-muted);">${formatDateFr(c.date)}</span>
       </div>
     `);
@@ -12081,7 +12157,7 @@ function renderDetail(id) {
         <div class="date">${formatDateFr(c.date)}</div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
-        <div style="font-weight:700;font-size:15px;">${c.quantite} mL</div>
+        <div style="font-weight:700;font-size:15px;">${c.quantite === null || c.quantite === undefined ? "sans lait" : c.quantite + " mL"}</div>
         ${c.anomalie ? `<span class="compact-tag compact-tag-coral" style="margin-top:4px;">${libelleAnomalieControle(c.anomalie)}</span>` : ''}
       </div>
     </div>
@@ -12110,15 +12186,9 @@ function renderDetail(id) {
   // campagne, jamais un historique par entrée -- scope à la campagne en
   // cours comme la carte Contrôle laitier ci-dessus, pas d'historique des
   // campagnes passées pour l'instant (hors périmètre de ce chantier).
-  const cahierCampagne = (DB.cahierControleLaitier || []).find(c => cleanEid(c.eid) === cleanEid(sheep.eid) && c.campagne === DB.campagneDebut);
   // Seul le n° de lactation du cahier SIEOL est montré (classe provisoire, estimation et anomalie de lactation : plus affichées ni importées ;
   // la classe et la lactation viennent de l'import « Lactation »). Données déjà enregistrées jamais effacées.
-  const cahierCardHtml = !cahierCampagne || !cahierCampagne.numLactation ? '' : `
-    <div class="card">
-      ${sectionHeaderHtml(ICON_CALENDAR, 'gray', 'Cahier de contrôle · campagne en cours')}
-      <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;"><span style="color:var(--text-muted);">N° de lactation</span><strong>${echapperHtml(String(cahierCampagne.numLactation))}</strong></div>
-    </div>
-  `;
+  // N° de lactation du cahier SIEOL : montré dans l'onglet Index (ligneLactationIndexHtml), plus dans Contrôles ; rien d'autre du cahier n'est affiché.
 
   // Bilan de lactation SIEOL/UNOTEC (voir importBilanLactation) : toujours
   // une campagne déjà close, jamais la campagne en cours -- alimente
@@ -12346,7 +12416,6 @@ function renderDetail(id) {
       ${SAISIE_MANUELLE_CONTROLE_LAITIER_ACTIVE ? '<div class="swipe-hint">Glisser à droite pour supprimer, à gauche pour modifier</div>' : ''}
       ${controleHtml}
     </div>
-    ${cahierCardHtml}
   `;
 
   const mouvTabHtml = `
@@ -12387,6 +12456,7 @@ function renderDetail(id) {
   const indexTabHtml = `
     <div class="card">
       ${sectionHeaderHtml(ICON_JOURNAL, 'gray', titreIndex)}
+      ${ligneLactationIndexHtml(sheep)}
       ${!lactationAffichee ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucune donnée de lactation importée pour cette campagne.</div>' : (typeSuiviFiche === 'clo' ? `
         <div class="grid2">
           <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col4}</div><div style="font-weight:600;">${lactationAffichee.indexIsol != null ? lactationAffichee.indexIsol : '—'}</div></div>
@@ -26887,6 +26957,12 @@ function renderImportControleLaitierSieol() {
   const campagnesOptions = campagnesDisponiblesSieol();
   let campagneImport = (DB.campagneDebut !== null && DB.campagneDebut !== undefined && campagnesOptions.includes(DB.campagneDebut)) ? DB.campagneDebut : campagnesOptions[0];
   const controlesSelectionnes = new Set();
+  const etatCode10 = { tous: false, lait: new Set() };   // cases « vide définitive » de la carte Code 10 : décochées d'office
+  // Code 10 du fichier (contrôles repris et anomalie repro), d'après les lignes résolues ; relu à l'aperçu et à la confirmation
+  const code10Sieol = () => classerCode10Import((parsedCahier || []).map(r => {
+    const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
+    return sheep ? { sheep, numero: r.numeroVisuelSieol, anoRepro: r.anoRepro, controles: [...controlesSelectionnes].filter(n => r.controles[n]).map(n => Object.assign({ n }, r.controles[n])) } : null;
+  }), campagneImport);
   let parsedResume = null;  // [{ __idx, controle, date, laitTotal, laitControle, coefAc, nbBrebis, nbEch, nbAntenaises, laitAntenaises, nbAdultes, laitAdultes, resolutionConflit }]
   let parsedCahier = null;  // [{ __idx, numeroVisuelSieol, controles:{1:{quantite,anomalie,resolutionConflit},...}, anoLact, numLactation, ref, lactMoyen, classeParQuart, resolution, valideeSheep }]
 
@@ -27043,7 +27119,7 @@ function renderImportControleLaitierSieol() {
       const sh = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
       if (!sh) return;
       controlesSelectionnes.forEach(n => {
-        if (!r.controles[n]) return;
+        if (!r.controles[n] || r.controles[n].quantite === null) return;   // un code seul (sans lait) n'est pas du lait livré pendant un délai d'attente
         const rr = (parsedResume || []).find(x => x.controle === n);
         const ix = controleLaitierCampagneIdxN(sh, n, campagneImport);
         itemsCl.push({ sheep: sh, controle: n, date: (rr && rr.date) || (ix !== -1 ? sh.controleLaitier[ix].date : null) });
@@ -27099,8 +27175,8 @@ function renderImportControleLaitierSieol() {
           <div style="border-top:1px solid var(--border);padding:10px 0;">
             <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${row.numeroVisuelSieol} — Contrôle ${controle} déjà enregistré</div>
             <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
-              <span>Actuel : ${existant.quantite} mL${existant.anomalie ? ' · ' + libelleAnomalieControle(existant.anomalie) : ''}</span>
-              <span style="color:var(--coral-fg);">Nouveau : ${c.quantite} mL${c.anomalie ? ' · ' + libelleAnomalieControle(c.anomalie) : ''}</span>
+              <span>Actuel : ${existant.quantite === null || existant.quantite === undefined ? 'sans lait' : existant.quantite + ' mL'}${existant.anomalie ? ' · ' + libelleAnomalieControle(existant.anomalie) : ''}</span>
+              <span style="color:var(--coral-fg);">Nouveau : ${c.quantite === null || c.quantite === undefined ? 'sans lait' : c.quantite + ' mL'}${c.anomalie ? ' · ' + libelleAnomalieControle(c.anomalie) : ''}</span>
             </div>
             <div class="row" style="margin-bottom:0;">
               <button type="button" class="btn btn-secondary btn-conflit-detail" data-row="${row.__idx}" data-controle="${controle}" data-choix="garder" style="flex:1;">Garder l'actuel</button>
@@ -27125,6 +27201,9 @@ function renderImportControleLaitierSieol() {
       </div>
       ` : ''}
 
+      ${(() => { const rj = cahier.flatMap(r => (r.rejets10 || []).filter(x => controlesSelectionnes.has(x.n)).map(x => 'n°' + echapperHtml(r.numeroVisuelSieol) + ' C' + x.n + ' : ' + String(x.quantite).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0') + '\u00a0mL'));
+        return rj.length ? `<div class="msg-charte alerte" id="import-cl-rejets10" style="margin-top:10px;"><b>Lait et code 10 sur un même contrôle : impossible, ${rj.length > 1 ? 'contrôles laissés' : 'contrôle laissé'} de côté</b><span>${rj.join(' · ')}</span></div>` : ''; })()}
+      ${carteCode10ImportHtml(code10Sieol(), etatCode10, campagneImport)}
       ${nonResolues.length > 0 ? `
       <div class="card" style="margin-top:10px;">
         <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Non résolues (${nonResolues.length}) — ignorées à l'import</div>
@@ -27133,6 +27212,7 @@ function renderImportControleLaitierSieol() {
       ` : ''}
     `;
 
+    brancherCarteCode10(etatCode10);
     document.querySelectorAll('.btn-choisir-candidat-cl').forEach(btn => {
       btn.onclick = () => {
         const row = parsedCahier[parseInt(btn.dataset.row, 10)];
@@ -27185,7 +27265,7 @@ function renderImportControleLaitierSieol() {
     numeroVisuelSieol: ['numero_visuel_sieol'],
     // ctl1 à ctl8 : le fichier est lu jusqu'à son dernier contrôle (CLS 4, CLO 6 ou 7 : même format, une colonne de plus par contrôle)
     ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8].flatMap(n => [['ctl' + n + 'Ml', ['ctl' + n + '_ml']], ['ctl' + n + 'Ano', ['ctl' + n + '_anomalie']]])),
-    anoLact: ['ano_lact'], numLactation: ['num_lactation'], ref: ['ref'],
+    anoLact: ['ano_lact'], anoRepro: ['ano_repro'], numLactation: ['num_lactation'], ref: ['ref'],
     lactMoyen: ['lact_moyen'], classeParQuart: ['classe_par_quart']
   };
 
@@ -27247,20 +27327,23 @@ function renderImportControleLaitierSieol() {
       .filter(parts => parts && String(get(parts, 'numeroVisuelSieol') || '').trim())
       .map((parts, idx) => {
         const numeroVisuelSieol = String(get(parts, 'numeroVisuelSieol') || '').trim();
-        const controles = {};
+        const controles = {}, rejets10 = [];
         [1, 2, 3, 4, 5, 6, 7, 8].forEach(n => {
           const [mlKey, anoKey] = CTL_COLS[n];
           const ml = parseDecimalVirgule(get(parts, mlKey));
-          if (ml !== null) {
-            const anoStr = String(get(parts, anoKey) || '').trim();
-            controles[n] = { quantite: Math.round(ml), anomalie: anoStr !== '' ? parseInt(anoStr, 10) : null, resolutionConflit: null };
-          }
+          const anoStr = String(get(parts, anoKey) || '').trim();
+          const ano = anoStr !== '' && !isNaN(parseInt(anoStr, 10)) ? parseInt(anoStr, 10) : null;
+          // un contrôle est gardé dès qu'il porte du lait OU un code (code seul = quantité vide : tarie, vide définitive, mammite…), comme le modèle Excel Ovilog
+          if (ml !== null && ano === 10) { rejets10.push({ n, quantite: Math.round(ml) }); return; }   // lait ET code 10 sur un même contrôle : impossible, laissé de côté (montré dans l'aperçu)
+          if (ml !== null || ano !== null) controles[n] = { quantite: ml !== null ? Math.round(ml) : null, anomalie: ano, resolutionConflit: null };
         });
         return {
           __idx: idx,
           numeroVisuelSieol,
           controles,
           anoLact: String(get(parts, 'anoLact') || '').trim() || null,
+          anoRepro: String(get(parts, 'anoRepro') || '').trim() || null,
+          rejets10,
           numLactation: String(get(parts, 'numLactation') || '').trim() || null,
           ref: String(get(parts, 'ref') || '').trim() || null,
           lactMoyen: parseDecimalVirgule(get(parts, 'lactMoyen')),
@@ -27300,6 +27383,7 @@ function renderImportControleLaitierSieol() {
 
   document.getElementById('btn-confirm-import-cl').onclick = () => {
     let nbControlesBrebis = 0, nbCahier = 0, nbResume = 0, nbConflitsIgnores = 0;
+    const nbVides = appliquerCode10Import(code10Sieol(), etatCode10, campagneImport);   // lu AVANT l'écriture des contrôles (lait de la fiche d'avant)
     (parsedCahier || []).forEach(r => {
       const sheep = r.resolution.type === 'direct' ? r.resolution.sheep : r.valideeSheep;
       if (!sheep) return; // non résolue ou pas encore validée -- ignorée sans bloquer le reste
@@ -27342,7 +27426,8 @@ function renderImportControleLaitierSieol() {
     });
     saveData(DB);
     alert(nbControlesBrebis + ' valeur(s) de contrôle importée(s) pour ' + nbCahier + ' brebis, ' + nbResume + ' résumé(s) mis à jour, campagne ' + (campagneImport + 1) + '.'
-      + (nbConflitsIgnores > 0 ? ' ' + nbConflitsIgnores + ' conflit(s) laissé(s) inchangé(s) (valeur existante conservée).' : ''));
+      + (nbConflitsIgnores > 0 ? ' ' + nbConflitsIgnores + ' conflit(s) laissé(s) inchangé(s) (valeur existante conservée).' : '')
+      + (nbVides > 0 ? ' ' + nbVides + ' brebis marquée(s) vide définitive.' : ''));
     noterDernierImport('sieol-cl', campagneImport, nbControlesBrebis + nbResume);
     parametresTab = 'imports'; render('parametres');
   };
@@ -28654,8 +28739,10 @@ function parserDateModeleOvilog(raw) {
    2. Contient une virgule ou un point, avec ou sans code -> jamais deviné
       (ambigu entre mL et L) -> { ambigue: true }.
    3. "quantité/CC" (CC = exactement 2 chiffres) -> quantité + code, valide
-      pour tous les codes 01-09 ; CC hors 01-09 ou pas exactement 2
-      chiffres (ex: "1400/1") -> format invalide.
+      pour tous les codes 01-11 ; CC hors 01-11 ou pas exactement 2
+      chiffres (ex: "1400/1") -> format invalide. "/CC" -> code seul
+      (01-11 ; seule forme possible pour 10 et 11, « 10 » étant 10 mL).
+      Le code 10 (vide définitive) ne va JAMAIS avec du lait : « 1400/10 » est invalide.
    4. "0X" seul (X = 1-9) -> code seul ; invalide si ce code doit toujours
       être accompagné d'une quantité (voir ANOMALIE_CONTROLE_JAMAIS_SEUL).
    5. Entier seul (n'importe quelle longueur, y compris 1 chiffre) ->
@@ -28674,8 +28761,15 @@ function parseCelluleControleLaitierModele(raw) {
   if (combo) {
     const codeStr = combo[2];
     const code = parseInt(codeStr, 10);
-    if (codeStr.length !== 2 || code < 1 || code > 9) return { present: true, invalide: true, brut: s };
+    if (codeStr.length !== 2 || code < 1 || code > 11 || code === 10) return { present: true, invalide: true, brut: s };   // codes 01 à 11 ; jamais du lait avec le code 10 (vide définitive : « /10 » seul)
     return { present: true, quantite: parseInt(combo[1], 10), anomalie: code };
+  }
+  // « /CC » : code seul sans quantité (forme obligatoire pour 10 et 11, « 10 » seul étant une quantité de 10 mL)
+  const seul = s.match(/^\/(\d{2})$/);
+  if (seul) {
+    const code = parseInt(seul[1], 10);
+    if (code < 1 || code > 11 || ANOMALIE_CONTROLE_JAMAIS_SEUL.has(code)) return { present: true, invalide: true, brut: s };
+    return { present: true, quantite: null, anomalie: code };
   }
 
   if (/^0[1-9]$/.test(s)) {
@@ -28766,6 +28860,12 @@ function renderImportControleLaitierModele() {
   const campagne = DB.campagneDebut;
   let parsed = null; // { datesFichier, lignes } -- voir parserFichierControleLaitierModele
   const choixDate = {}; // 'garder' | 'remplacer' | null, par n° de contrôle
+  const etatCode10 = { tous: false, lait: new Set() };   // carte Code 10 : cases décochées d'office
+  // Code 10 des contrôles du fichier (lignes résolues, contrôles actifs, cellules lisibles) ; relu à l'aperçu et à la confirmation
+  const code10Modele = () => !parsed ? null : classerCode10Import(parsed.lignes.filter(l => l.resolution.type === 'direct').map(l => ({
+    sheep: l.resolution.sheep, numero: numeroCourtSieol(l.resolution.sheep) || numeroVisuel(l.resolution.sheep.eid),
+    controles: Object.keys(parsed.datesFichier).map(Number).filter(n => infosControle(n).actif && l.controles[n] && l.controles[n].present && !l.controles[n].ambigue && !l.controles[n].invalide).map(n => ({ n, quantite: l.controles[n].quantite, anomalie: l.controles[n].anomalie }))
+  })), campagne);
 
   app.innerHTML = `
     <div class="card">
@@ -28850,10 +28950,11 @@ function renderImportControleLaitierModele() {
     const itemsCl = [];   // alerte (PC) : contrôles pendant un délai d'attente du lait, information seulement
     directes.forEach(ligne => NS.forEach(n => {
       const info = infos[n], c = ligne.controles[n];
-      if (!info.actif || !info.dateAdoptee || !c.present || c.ambigue || c.invalide) return;
+      if (!info.actif || !info.dateAdoptee || !c.present || c.ambigue || c.invalide || c.quantite === null || c.quantite === undefined) return;   // un code seul n'est pas du lait livré
       itemsCl.push({ sheep: ligne.resolution.sheep, controle: n, date: info.dateAdoptee });
     }));
     const alerteCl = htmlAlerteControlesDelaiLait(itemsCl);
+    const cl10 = code10Modele(), code10AQuestion = !!cl10 && (cl10.aMarquer.length + cl10.avecLait.length) > 0;
     preview.innerHTML = `
       <div class="card" style="margin-top:14px;">
         <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
@@ -28967,7 +29068,9 @@ function renderImportControleLaitierModele() {
         ${ignorees.map(r => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);">Ligne ${r.ligne}</div>`).join('')}
       </div>
       ` : ''}
+      ${carteCode10ImportHtml(cl10, etatCode10, campagne)}
     `;
+    brancherCarteCode10(etatCode10);
 
     document.querySelectorAll('.btn-conflit-date-cl').forEach(btn => {
       btn.onclick = () => { choixDate[parseInt(btn.dataset.controle, 10)] = btn.dataset.choix; renderPreview(); };
@@ -28987,7 +29090,7 @@ function renderImportControleLaitierModele() {
       };
     });
 
-    btnConfirm.classList.toggle('hidden', aEcrire[1] + aEcrire[2] + aEcrire[3] + nbASupprimer === 0);
+    btnConfirm.classList.toggle('hidden', NS.reduce((t, n) => t + aEcrire[n], 0) + nbASupprimer === 0 && !code10AQuestion);
     const nbRestants = nbConflitsValeurRestants + nbConflitsAbsenceRestants + nbConflitsDateRestants;
     btnConfirm.textContent = nbRestants > 0 ? `Confirmer l'import (${nbRestants} conflit(s) non tranché(s) resteront inchangés)` : "Confirmer l'import";
   }
@@ -29019,6 +29122,7 @@ function renderImportControleLaitierModele() {
   document.getElementById('btn-confirm-import-cl-modele').onclick = () => {
     if (!parsed) return;
     let nbEcrites = 0, nbSupprimees = 0;
+    const nbVides = appliquerCode10Import(code10Modele(), etatCode10, campagne);   // lu AVANT l'écriture (lait de la fiche d'avant)
     Object.keys(parsed.datesFichier).map(Number).sort((a, b) => a - b).forEach(n => {
       const info = infosControle(n);
       if (!info.actif || info.dateAdoptee === null) return; // colonne ignorée ou conflit de date non tranché
@@ -29057,7 +29161,7 @@ function renderImportControleLaitierModele() {
     });
     saveData(DB);
     noterDernierImport('controle-laitier', campagne, parsed.lignes.filter(l => l.resolution.type === 'direct').length);
-    alert(nbEcrites + ' mesure(s) écrite(s).' + (nbSupprimees > 0 ? ' ' + nbSupprimees + ' mesure(s) supprimée(s) (valeur retirée du fichier).' : ''));
+    alert(nbEcrites + ' mesure(s) écrite(s).' + (nbSupprimees > 0 ? ' ' + nbSupprimees + ' mesure(s) supprimée(s) (valeur retirée du fichier).' : '') + (nbVides > 0 ? ' ' + nbVides + ' brebis marquée(s) vide définitive.' : ''));
     render('parametres');
   };
 }
