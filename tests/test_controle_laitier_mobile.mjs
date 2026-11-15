@@ -73,7 +73,7 @@ console.log('OK 2 bande ambre : ouvre / referme la liste, mêmes brebis que PC, 
 const cs = await cartes();
 eq(cs.map(c => [c.num, c.mab]), mob.__lignesPc.map(l => [l[0], 'Mise bas ' + (l[1] || '—')]), 'cartes = lignes PC (N° court et mise bas), même tri');
 eq(cs.slice(0, 3).map(c => c.vals), mob.__lignesPc.slice(0, 3).map(l => [l[2], l[3], l[4]].map(v => norm(v || '—'))), 'C1 / C2 / C3 = valeurs du tableau PC');
-check(cs[1].ano.join() === '2', 'pastille du code d\'anomalie sur le C2 de la brebis 951 : ' + JSON.stringify(cs[1]));
+check(cs[1].ano.join() === '02', 'pastille du code d\'anomalie sur le C2 de la brebis 951 : ' + JSON.stringify(cs[1]));
 check(cs.slice(7).every(c => c.aucun), '« Pas encore de contrôle » pour les brebis sans valeur');
 eq(await mob.evaluate(() => [document.getElementById('cl-count').textContent, document.getElementById('cl-filtre-actif').textContent]), ['10 brebis sur 10', 'Aucun filtre actif · tri : N° de travail'], 'compteur');
 check(await mob.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1 && [...document.querySelectorAll('.cl-carte')].every(c => c.scrollWidth <= c.clientWidth + 1)), 'aucun défilement horizontal, aucune carte coupée');

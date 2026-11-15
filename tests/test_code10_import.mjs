@@ -63,7 +63,7 @@ const CAHIER = 'numero_visuel_sieol;ano_repro;ctl1_ml;ctl1_anomalie;ctl2_ml;ctl2
   check(/Déjà marquée vide définitive : n°603 \(rien n'est changé\)/.test(carte.t) && /sans code 10 dans le fichier : n°606/.test(carte.t), 'déjà marquée (603) et marquée sans code (606) en ligne grise : ' + carte.t);
   check(!/cotée/i.test(carte.t), 'jamais « cotée », toujours « code 10 »');
   const rejet = await p.evaluate(() => (document.getElementById('import-cl-rejets10') || {}).textContent || '');
-  check(/Lait et code 10 sur un même contrôle : impossible, contrôle laissé de côté/.test(rejet) && /n°601 C3 : 1\s300\smL/.test(rejet), 'SIEOL : lait + code 10 sur un même contrôle refusé et montré : ' + rejet);
+  check(/Du lait avec un code « sans lait » .* impossible, contrôle laissé de côté/.test(rejet) && /n°601 C3 : 1\s300\smL avec le code 10/.test(rejet), 'SIEOL : lait + code 10 sur un même contrôle refusé et montré : ' + rejet);
   eq(carte.cases, [false, false], 'cases décochées d\'office');
   if (CAP) { await p.evaluate(() => document.getElementById('carte-code10').scrollIntoView({ block: 'center' })); await (await p.$('#carte-code10')).screenshot({ path: path.join(CAP, 'apres_import_code10.png') }); }
   check(await p.evaluate(() => window.__saves === 0), 'aperçu : rien n\'est écrit');

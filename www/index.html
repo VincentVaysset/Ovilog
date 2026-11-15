@@ -691,6 +691,15 @@
   body.desktop-shell .tuile-pc.bleu { --tp-fond: var(--ch-bleu-pastel); --tp-trait: var(--ch-bleu); --tp-chiffre: var(--ch-bleu); }
   body.desktop-shell .tuile-pc.ambre { --tp-fond: var(--ch-ambre-pastel); --tp-trait: var(--ch-ambre-texte); --tp-chiffre: var(--ch-ambre-texte); }
   body.desktop-shell .tuile-pc.rouge { --tp-fond: var(--ch-rouge-pastel); --tp-trait: var(--ch-rouge); --tp-chiffre: var(--ch-rouge); }
+  /* Paramètres › Règles d'élevage › Lait : codes d'anomalie du contrôle */
+  .prm-codes-anomalie { display: grid; gap: 8px; margin: 8px 0 14px; }
+  .prm-code-ligne { display: flex; align-items: center; gap: 12px; }
+  .prm-code-ligne input { margin: 0; flex: 1; }
+  .prm-code { width: 28px; flex: 0 0 28px; font-weight: 700; color: var(--ch-vert-fonce); font-variant-numeric: tabular-nums; margin: 0; }
+  .prm-codes-fixes { margin: 4px 0 4px; }
+  .prm-code-fixe { display: flex; gap: 12px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--ch-separateur); font-size: 14px; color: var(--ch-texte); }
+  .prm-code-fixe span:nth-child(2) { flex: 1; }
+  .prm-code-accepte { color: var(--ch-texte2); font-size: 13px; }
   /* Carte « Brebis à retrouver » des imports (retrouverAnimalImport, carteRetrouverImportHtml) */
   .retrouver-tuiles { margin-bottom: 8px; }
   .rt-titre { font-size: 15px; font-weight: 700; color: var(--ch-texte); margin-bottom: 2px; }
@@ -4723,9 +4732,9 @@ function numerosControles(campagne) { return Array.from({ length: nbControlesCam
    inconnus. Partagée par les DEUX imports (SIEOL brut ET modèle Ovilog) :
    un même code y a toujours le même libellé, quel que soit le fichier qui
    l'a écrit. */
-const ANOMALIE_CONTROLE_LABELS = {
+const ANOMALIE_CONTROLE_LABELS = {   // 01 à 05 : libellés de départ seulement (LIBELLES_ANOMALIE_DEPART, réglables) ; 06 à 11 fixes
   1: 'Problème de pis',
-  2: 'code 2 (non documenté)',
+  2: 'Code 02',
   3: 'Boucle électronique manquante',
   4: 'Boucle conventionnelle manquante',
   5: 'Réforme',
@@ -4736,11 +4745,31 @@ const ANOMALIE_CONTROLE_LABELS = {
   10: 'Vide définitive',
   11: 'Allaitante et traite'
 };
+/* Codes 01 à 05 : leur sens dépend du technicien ; l'éleveur le règle dans Paramètres › Règles d'élevage › Lait
+   (DB.libellesAnomaliesControle { 1: '…', … }, réglage de COMPTE, dans META_FIELDS). Absent = libellé de départ ; vide = pas de nom (code seul).
+   Codes 06 à 11 : fixes, Ovilog s'en sert. Les codes enregistrés ne changent jamais : seul le texte affiché suit le réglage. */
+const CODES_ANOMALIE_REGLABLES = [1, 2, 3, 4, 5];
+const LIBELLES_ANOMALIE_DEPART = { 1: 'Problème de pis', 2: '', 3: 'Boucle électronique manquante', 4: 'Boucle conventionnelle manquante', 5: 'Réforme' };
+// Ce que chaque code accepte : 01 à 05 toujours avec du lait (ANOMALIE_CONTROLE_JAMAIS_SEUL) ; 07, 09, 10 jamais avec du lait ; 06, 08, 11 avec ou sans
+const ANOMALIE_CONTROLE_SANS_LAIT = new Set([7, 9, 10]);
+function codeAnomalieTexte(n) { return String(n).padStart(2, '0'); }
 function libelleAnomalieControle(code) {
   if (code === null || code === undefined || code === '') return null;
   const n = typeof code === 'number' ? code : parseInt(code, 10);
   if (isNaN(n)) return null;
+  if (CODES_ANOMALIE_REGLABLES.includes(n)) {
+    const L = (typeof DB !== 'undefined' && DB && DB.libellesAnomaliesControle) || null;
+    const v = L && Object.prototype.hasOwnProperty.call(L, n) ? String(L[n] || '').trim() : LIBELLES_ANOMALIE_DEPART[n];
+    return v || ('Code ' + codeAnomalieTexte(n));
+  }
   return ANOMALIE_CONTROLE_LABELS[n] || ('Anomalie ' + n);
+}
+// Fiche brebis : le code et son nom (« 03 · Boucle électronique manquante ») ; un code 01 à 05 sans nom réglé = le code seul
+function texteAnomalieControle(code) {
+  const n = typeof code === 'number' ? code : parseInt(code, 10);
+  if (isNaN(n)) return null;
+  const l = libelleAnomalieControle(n);
+  return l && l !== 'Code ' + codeAnomalieTexte(n) ? codeAnomalieTexte(n) + ' · ' + l : codeAnomalieTexte(n);
 }
 
 /* Mouvement le plus RÉCENT par DATE (pas par position dans le tableau) --
@@ -11937,7 +11966,7 @@ function carriereCampagnesHtml(sources) {
     const controlesCampagne = controles.filter(c => c.campagne === campagne).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     const controlesRows = controlesCampagne.map(c => `
       <div class="row-item">
-        <span>${c.quantite === null || c.quantite === undefined ? "sans lait" : c.quantite + " mL"}${c.anomalie ? " · " + libelleAnomalieControle(c.anomalie) : ""}</span>
+        <span>${c.quantite === null || c.quantite === undefined ? "sans lait" : c.quantite + " mL"}${c.anomalie ? " · " + echapperHtml(texteAnomalieControle(c.anomalie)) : ""}</span>
         <span style="color:var(--text-muted);">${formatDateFr(c.date)}</span>
       </div>
     `);
@@ -12181,7 +12210,7 @@ function renderDetail(id) {
       </div>
       <div style="text-align:right;flex-shrink:0;">
         <div style="font-weight:700;font-size:15px;">${c.quantite === null || c.quantite === undefined ? "sans lait" : c.quantite + " mL"}</div>
-        ${c.anomalie ? `<span class="compact-tag compact-tag-coral" style="margin-top:4px;">${libelleAnomalieControle(c.anomalie)}</span>` : ''}
+        ${c.anomalie ? `<span class="compact-tag compact-tag-amber cl-ano-fiche" style="margin-top:4px;">${echapperHtml(texteAnomalieControle(c.anomalie))}</span>` : ''}
       </div>
     </div>
   `;
@@ -15773,7 +15802,7 @@ function controleLaitierPcHtml(c) {
       </div>
       ${c.anomaliesPresentes.length > 0 ? `<div class="chip-list" style="margin:12px 0 0;flex-wrap:wrap;">
         <button type="button" class="chip chip-anomalie-opt selected" data-val="">Toutes</button>
-        ${c.anomaliesPresentes.map(code => `<button type="button" class="chip chip-anomalie-opt" data-val="${code}">${libelleAnomalieControle(code)}</button>`).join('')}
+        ${c.anomaliesPresentes.map(code => `<button type="button" class="chip chip-anomalie-opt" data-val="${code}">${echapperHtml(texteAnomalieControle(code))}</button>`).join('')}
       </div>` : ''}
     </div>
     <div class="pc-cols">
@@ -15783,7 +15812,7 @@ function controleLaitierPcHtml(c) {
           <button type="button" class="btn btn-secondary" id="btn-cl-toggle-all" style="width:auto;padding:6px 14px;font-size:13px;">Tout cocher</button>
         </div>
         <div class="tab-num-fixe"><table class="pc-t" id="cl-table"></table></div>
-        ${c.anomaliesPresentes.length > 0 ? `<p class="brd-note" style="margin:10px 0 0;">${c.anomaliesPresentes.map(x => x + ' ' + libelleAnomalieControle(x)).join(' · ')}</p>` : ''}
+        ${c.anomaliesPresentes.length > 0 ? `<p class="brd-note" style="margin:10px 0 0;">Codes : ${c.anomaliesPresentes.map(x => codeAnomalieTexte(x) + ' = ' + echapperHtml(libelleAnomalieControle(x))).join(' · ')}</p>` : ''}
       </div>
       <div class="brd-col">
         <div class="card" id="cl-distrib"></div>
@@ -15992,7 +16021,7 @@ function renderControleLaitier() {
       </div>
       ${anomaliesPresentes.length > 0 ? `<div class="cl-pills">
         <button type="button" class="cl-pill chip-anomalie-opt${state.anomalie === null ? ' selected' : ''}" data-val="">Toutes</button>
-        ${anomaliesPresentes.map(code => `<button type="button" class="cl-pill chip-anomalie-opt${state.anomalie === code ? ' selected' : ''}" data-val="${code}">${libelleAnomalieControle(code)}</button>`).join('')}
+        ${anomaliesPresentes.map(code => `<button type="button" class="cl-pill chip-anomalie-opt${state.anomalie === code ? ' selected' : ''}" data-val="${code}">${echapperHtml(texteAnomalieControle(code))}</button>`).join('')}
         <button type="button" class="cl-reset" id="btn-cl-reset">Réinitialiser</button>
       </div>` : `<div class="cl-pills"><button type="button" class="cl-reset" id="btn-cl-reset">Réinitialiser</button></div>`}
     </div>
@@ -16002,7 +16031,7 @@ function renderControleLaitier() {
         <button type="button" class="btn btn-secondary cl-toutcocher" id="btn-cl-toggle-all">Tout cocher</button>
       </div>
       <div id="cl-table"></div>
-      ${anomaliesPresentes.length > 0 ? `<div class="cl-legende">${anomaliesPresentes.map(c => c + ' ' + libelleAnomalieControle(c)).join(' · ')}</div>` : ''}
+      ${anomaliesPresentes.length > 0 ? `<div class="cl-legende">Codes : ${anomaliesPresentes.map(c => codeAnomalieTexte(c) + ' = ' + echapperHtml(libelleAnomalieControle(c))).join(' · ')}</div>` : ''}
     </div>
 
     <button type="button" class="btn btn-primary" id="btn-cl-create-lot" disabled>Créer un lot de recherche</button>
@@ -16046,14 +16075,14 @@ function renderControleLaitier() {
     const actifs = [];
     if (filtreValeur) actifs.push('C' + state.controle + ' ' + state.operateur + ' ' + state.seuil + ' mL');
     if (state.dateApres) actifs.push('mise bas après le ' + formatDateFr(state.dateApres));
-    if (state.anomalie !== null) actifs.push('anomalie ' + libelleAnomalieControle(state.anomalie));
+    if (state.anomalie !== null) actifs.push('anomalie ' + echapperHtml(texteAnomalieControle(state.anomalie)));
     document.getElementById('cl-filtre-actif').textContent = actifs.length ? 'Filtre actif : ' + actifs.join(' · ') : 'Aucun filtre actif';
     const fmt = v => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
     const cell = (k, r) => {
       const v = r['c' + k], an = r['a' + k];
       if (v === null || v === undefined) return '<td></td>';
       const sous = filtreValeur && state.controle === k && (state.operateur === '<' ? v < seuilNum : v > seuilNum);
-      const badge = an ? ` <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:var(--ch-ambre-pastel);color:var(--ch-ambre-texte);font-size:10px;font-weight:700;vertical-align:1px;">${an}</span>` : '';
+      const badge = an ? ` <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:999px;background:var(--ch-ambre-pastel);color:var(--ch-ambre-texte);font-size:10px;font-weight:700;vertical-align:1px;" title="${echapperHtml(libelleAnomalieControle(an))}">${codeAnomalieTexte(an)}</span>` : '';
       return `<td>${sous ? `<span class="pc-lo">${fmt(v)}</span>` : fmt(v)}${badge}</td>`;
     };
     const th = (key, label, cls) => `<th class="sortable ${cls || ''} cl-th" data-key="${key}">${label}${arrow(key)}</th>`;
@@ -16091,13 +16120,13 @@ function renderControleLaitier() {
     const actifs = [];
     if (filtreValeur) actifs.push('C' + state.controle + ' ' + state.operateur + ' ' + state.seuil + ' mL');
     if (state.dateApres) actifs.push('mise bas après le ' + formatDateFr(state.dateApres));
-    if (state.anomalie !== null) actifs.push('anomalie ' + libelleAnomalieControle(state.anomalie));
+    if (state.anomalie !== null) actifs.push('anomalie ' + echapperHtml(texteAnomalieControle(state.anomalie)));
     document.getElementById('cl-filtre-actif').textContent = (actifs.length ? 'Filtre actif : ' + actifs.join(' · ') : 'Aucun filtre actif') + ' · tri : N° de travail';
     const fmt = v => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
     const valeur = (k, r) => {
       const v = r['c' + k], an = r['a' + k];
       const sous = filtreValeur && v !== null && v !== undefined && state.controle === k && (state.operateur === '<' ? v < seuilNum : v > seuilNum);
-      return `<div class="cl-val${sous ? ' cl-val-signale' : ''}"><div class="cl-val-l">C${k}</div><div class="cl-val-v">${v === null || v === undefined ? '—' : fmt(v)}${an ? `<span class="cl-ano" title="${libelleAnomalieControle(an)}">${an}</span>` : ''}</div></div>`;   // « mL » une seule fois, dans la ligne grise du haut
+      return `<div class="cl-val${sous ? ' cl-val-signale' : ''}"><div class="cl-val-l">C${k}</div><div class="cl-val-v">${v === null || v === undefined ? '—' : fmt(v)}${an ? `<span class="cl-ano" title="${echapperHtml(libelleAnomalieControle(an))}">${codeAnomalieTexte(an)}</span>` : ''}</div></div>`;   // « mL » une seule fois, dans la ligne grise du haut
     };
     document.getElementById('cl-table').innerHTML = filtered.length === 0 ? '<div class="empty">Aucune brebis ne correspond aux filtres.</div>' : filtered.map(r => {
       const aucun = NC.every(k => r['c' + k] === null || r['c' + k] === undefined);
@@ -27307,8 +27336,8 @@ function renderImportControleLaitierSieol() {
           <div style="border-top:1px solid var(--border);padding:10px 0;">
             <div style="font-size:13px;font-weight:600;margin-bottom:6px;">n°${row.numeroVisuelSieol} — Contrôle ${controle} déjà enregistré</div>
             <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:8px;">
-              <span>Actuel : ${existant.quantite === null || existant.quantite === undefined ? 'sans lait' : existant.quantite + ' mL'}${existant.anomalie ? ' · ' + libelleAnomalieControle(existant.anomalie) : ''}</span>
-              <span style="color:var(--coral-fg);">Nouveau : ${c.quantite === null || c.quantite === undefined ? 'sans lait' : c.quantite + ' mL'}${c.anomalie ? ' · ' + libelleAnomalieControle(c.anomalie) : ''}</span>
+              <span>Actuel : ${existant.quantite === null || existant.quantite === undefined ? 'sans lait' : existant.quantite + ' mL'}${existant.anomalie ? ' · ' + echapperHtml(texteAnomalieControle(existant.anomalie)) : ''}</span>
+              <span style="color:var(--coral-fg);">Nouveau : ${c.quantite === null || c.quantite === undefined ? 'sans lait' : c.quantite + ' mL'}${c.anomalie ? ' · ' + echapperHtml(texteAnomalieControle(c.anomalie)) : ''}</span>
             </div>
             <div class="row" style="margin-bottom:0;">
               <button type="button" class="btn btn-secondary btn-conflit-detail" data-row="${row.__idx}" data-controle="${controle}" data-choix="garder" style="flex:1;">Garder l'actuel</button>
@@ -27333,8 +27362,8 @@ function renderImportControleLaitierSieol() {
       </div>
       ` : ''}
 
-      ${(() => { const rj = cahier.flatMap(r => (r.rejets10 || []).filter(x => controlesSelectionnes.has(x.n)).map(x => 'n°' + echapperHtml(r.numeroVisuelSieol) + ' C' + x.n + ' : ' + String(x.quantite).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0') + '\u00a0mL'));
-        return rj.length ? `<div class="msg-charte alerte" id="import-cl-rejets10" style="margin-top:10px;"><b>Lait et code 10 sur un même contrôle : impossible, ${rj.length > 1 ? 'contrôles laissés' : 'contrôle laissé'} de côté</b><span>${rj.join(' · ')}</span></div>` : ''; })()}
+      ${(() => { const rj = cahier.flatMap(r => (r.rejets10 || []).filter(x => controlesSelectionnes.has(x.n)).map(x => 'n°' + echapperHtml(r.numeroVisuelSieol) + ' C' + x.n + ' : ' + String(x.quantite).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0') + '\u00a0mL avec le code ' + codeAnomalieTexte(x.code || 10)));
+        return rj.length ? `<div class="msg-charte alerte" id="import-cl-rejets10" style="margin-top:10px;"><b>Du lait avec un code « sans lait » (07 contrôle sauté, 09 tarie, 10 vide définitive) : impossible, ${rj.length > 1 ? 'contrôles laissés' : 'contrôle laissé'} de côté</b><span>${rj.join(' · ')}</span></div>` : ''; })()}
       ${carteCode10ImportHtml(code10Sieol(), etatCode10, campagneImport)}
     `;
 
@@ -27455,7 +27484,7 @@ function renderImportControleLaitierSieol() {
           const anoStr = String(get(parts, anoKey) || '').trim();
           const ano = anoStr !== '' && !isNaN(parseInt(anoStr, 10)) ? parseInt(anoStr, 10) : null;
           // un contrôle est gardé dès qu'il porte du lait OU un code (code seul = quantité vide : tarie, vide définitive, mammite…), comme le modèle Excel Ovilog
-          if (ml !== null && ano === 10) { rejets10.push({ n, quantite: Math.round(ml) }); return; }   // lait ET code 10 sur un même contrôle : impossible, laissé de côté (montré dans l'aperçu)
+          if (ml !== null && ANOMALIE_CONTROLE_SANS_LAIT.has(ano)) { rejets10.push({ n, quantite: Math.round(ml), code: ano }); return; }   // lait ET code 07, 09 ou 10 sur un même contrôle : impossible, laissé de côté (montré dans l'aperçu)
           if (ml !== null || ano !== null) controles[n] = { quantite: ml !== null ? Math.round(ml) : null, anomalie: ano, resolutionConflit: null };
         });
         return {
@@ -28873,7 +28902,7 @@ function parseCelluleControleLaitierModele(raw) {
   if (combo) {
     const codeStr = combo[2];
     const code = parseInt(codeStr, 10);
-    if (codeStr.length !== 2 || code < 1 || code > 11 || code === 10) return { present: true, invalide: true, brut: s };   // codes 01 à 11 ; jamais du lait avec le code 10 (vide définitive : « /10 » seul)
+    if (codeStr.length !== 2 || code < 1 || code > 11 || ANOMALIE_CONTROLE_SANS_LAIT.has(code)) return { present: true, invalide: true, brut: s };   // codes 01 à 11 ; jamais du lait avec 07, 09, 10 (contrôle sauté, tarie, vide définitive : « 0/09 »)
     return { present: true, quantite: parseInt(combo[1], 10), anomalie: code };
   }
   // « 10 » et « 11 » seuls : codes sans lait (vide définitive, allaitante et traite), jamais 10 ou 11 mL
@@ -28895,7 +28924,7 @@ function parseCelluleControleLaitierModele(raw) {
 // cohérent entre les deux imports.
 function descriptionMesureControleLaitier(quantite, anomalie) {
   const q = (quantite !== null && quantite !== undefined) ? quantite + ' mL' : null;
-  const a = anomalie ? libelleAnomalieControle(anomalie) : null;
+  const a = anomalie ? echapperHtml(texteAnomalieControle(anomalie)) : null;
   if (q && a) return q + ' · ' + a;
   if (q) return q;
   if (a) return a;
@@ -29131,16 +29160,16 @@ function renderImportControleLaitierModele() {
 
       ${valeursAmbigues.length > 0 ? `
       <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Valeurs à clarifier (${valeursAmbigues.length})</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Valeur non entière (décimale à virgule/point ou autre) -- ambiguë entre mL et L, jamais devinée. Corrige le fichier ou saisis la valeur à la main.</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Quantités à vérifier (${valeursAmbigues.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Quantité à virgule : on ne sait pas si ce sont des mL ou des litres, rien n'est deviné. Écrivez des mL entiers (ex. 1400) dans le fichier.</div>
         ${valeursAmbigues.map(({ ligne, controle, brut }) => `<div style="font-size:13px;padding:5px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${ligne.ligne} — Contrôle ${controle}</span><span style="color:var(--amber-fg);">"${brut}"</span></div>`).join('')}
       </div>
       ` : ''}
 
       ${formatsInvalides.length > 0 ? `
       <div class="card" style="margin-top:10px;border-color:var(--amber-fg);">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Formats anomalie invalides (${formatsInvalides.length})</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Code seul non autorisé sans quantité, code hors 01-09, ou "quantité/code" mal formé (ex: un seul chiffre après le "/") -- jamais deviné. Corrige le fichier.</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--amber-fg);">Cases mal écrites (${formatsInvalides.length})</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Un code 01 à 05 sans lait, du lait avec un code 07, 09 ou 10, un code hors 01 à 11, ou « lait/code » mal écrit (ex. un seul chiffre après le « / ») : rien n'est deviné, ces cases ne sont pas importées. Corrigez le fichier.</div>
         ${formatsInvalides.map(({ ligne, controle, brut }) => `<div style="font-size:13px;padding:5px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>Ligne ${ligne.ligne} — Contrôle ${controle}</span><span style="color:var(--amber-fg);">"${brut}"</span></div>`).join('')}
       </div>
       ` : ''}
@@ -30321,12 +30350,30 @@ function renderParametresRegles(content) {
       <div class="prm-titre">Mises bas</div>
       ${prmInterrupteurHtml('f-exp-boucle-suivante', 'Proposer le n° de boucle suivant', 'Chaque nouvel agneau reçoit le n° qui suit le dernier bouclé de la campagne ; on peut toujours le changer ou le remplacer d\'un bip.', boucleSuivanteActive(), false)}
     </div>`;
-  const carteEco = !bilanEconomiqueDisponible() ? '' : `
-    <div class="card" id="card-bilan-economique">
+  // Lait : sens des codes d'anomalie 01 à 05 (réglage de COMPTE, libellesAnomaliesControle), codes 06 à 11 rappelés ; Bilan économique si disponible
+  const ACCEPTE = { 6: 'avec ou sans lait', 7: 'jamais avec du lait', 8: 'avec ou sans lait', 9: 'jamais avec du lait', 10: 'jamais avec du lait', 11: 'avec ou sans lait' };
+  const carteEco = `
+    <div class="card" id="card-lait">
       <div class="prm-titre">Lait</div>
+      <div class="prm-sous-titre">Codes d'anomalie du contrôle</div>
+      <div class="prm-note">Codes 01 à 05 : leur sens dépend de votre technicien ; toujours avec du lait. Le nom s'affiche sur la fiche de la brebis et en légende des tableaux du contrôle laitier ; les codes déjà enregistrés ne changent pas.</div>
+      <div class="prm-codes-anomalie">${CODES_ANOMALIE_REGLABLES.map(n => { const l = libelleAnomalieControle(n); return `<div class="prm-code-ligne"><label for="f-code-anomalie-${n}" class="prm-code">${codeAnomalieTexte(n)}</label><input type="text" id="f-code-anomalie-${n}" maxlength="60" value="${echapperHtml(l === 'Code ' + codeAnomalieTexte(n) ? '' : l)}" placeholder="Sens du code ${codeAnomalieTexte(n)} (à compléter)"></div>`; }).join('')}</div>
+      <div class="prm-sous-titre">Codes fixes (utilisés par Ovilog)</div>
+      <div class="prm-codes-fixes">${[6, 7, 8, 9, 10, 11].map(n => `<div class="prm-code-fixe"><b class="prm-code">${codeAnomalieTexte(n)}</b><span>${libelleAnomalieControle(n)}</span><span class="prm-code-accepte">${ACCEPTE[n]}</span></div>`).join('')}</div>
+      <div class="prm-actions prm-actions-fin"><button type="button" class="btn btn-primary" id="btn-save-codes-anomalie">Enregistrer</button></div>
+      ${!bilanEconomiqueDisponible() ? '' : `<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;" id="card-bilan-economique">
       ${prmInterrupteurHtml('f-exp-bilan-eco', 'Afficher le Bilan économique', 'Prix du lait, bonus et pénalités en euros, dans Bilan de campagne et le rapport PDF. Désactivé, ils sont masqués ; rien n\'est supprimé.', bilanEconomiqueActif(), false)}
+      </div>`}
     </div>`;
   content.innerHTML = prmColonnesHtml(carteRepro, carteBoucles + carteEco);
+  document.getElementById('btn-save-codes-anomalie').onclick = () => {
+    const L = {};
+    CODES_ANOMALIE_REGLABLES.forEach(n => { L[n] = document.getElementById('f-code-anomalie-' + n).value.trim(); });
+    DB.libellesAnomaliesControle = L;
+    saveData(DB);
+    alert('Codes d\'anomalie enregistrés.');
+    render('parametres');
+  };
   // UN seul Enregistrer pour les réglages de reproduction : tout est validé avant la moindre écriture
   document.getElementById('btn-save-repro').onclick = () => {
     const gMin = parseInt(document.getElementById('f-repro-gestation-min').value, 10);
@@ -33441,7 +33488,7 @@ const fbDb = initializeFirestore(fbApp, {
 // téléphone alors qu'importé sur la tablette). lecteurBluetooth reste
 // volontairement exclu : propre à l'appareil (appairage physique), il n'a
 // pas de sens partagé entre deux téléphones.
-const META_FIELDS = ['exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
+const META_FIELDS = ['libellesAnomaliesControle', 'exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
   'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'categoriesSoinsAutres', 'categoriesTraitements', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
