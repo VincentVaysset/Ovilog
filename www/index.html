@@ -27330,7 +27330,8 @@ function renderImportControleLaitierSieol() {
         const controles = {}, rejets10 = [];
         [1, 2, 3, 4, 5, 6, 7, 8].forEach(n => {
           const [mlKey, anoKey] = CTL_COLS[n];
-          const ml = parseDecimalVirgule(get(parts, mlKey));
+          const mlBrut = parseDecimalVirgule(get(parts, mlKey));
+          const ml = mlBrut === 0 ? null : mlBrut;   // 0 de lait = pas de lait (« 0 » + code = code sans lait ; « 0 » sans code = case vide)
           const anoStr = String(get(parts, anoKey) || '').trim();
           const ano = anoStr !== '' && !isNaN(parseInt(anoStr, 10)) ? parseInt(anoStr, 10) : null;
           // un contrôle est gardé dès qu'il porte du lait OU un code (code seul = quantité vide : tarie, vide définitive, mammite…), comme le modèle Excel Ovilog
@@ -28740,9 +28741,11 @@ function parserDateModeleOvilog(raw) {
       (ambigu entre mL et L) -> { ambigue: true }.
    3. "quantité/CC" (CC = exactement 2 chiffres) -> quantité + code, valide
       pour tous les codes 01-11 ; CC hors 01-11 ou pas exactement 2
-      chiffres (ex: "1400/1") -> format invalide. "/CC" -> code seul
-      (01-11 ; seule forme possible pour 10 et 11, « 10 » étant 10 mL).
-      Le code 10 (vide définitive) ne va JAMAIS avec du lait : « 1400/10 » est invalide.
+      chiffres (ex: "1400/1") -> format invalide. Le code 10 (vide
+      définitive) ne va JAMAIS avec du lait : « 1400/10 » est invalide.
+   3 bis. "10" ou "11" seul -> code seul (jamais 10 ou 11 mL).
+   3 ter. 0 de lait = pas de lait : "0/CC" -> code seul (comme "CC") ; "0"
+      seul -> case vide (comme dans le fichier SIEOL).
    4. "0X" seul (X = 1-9) -> code seul ; invalide si ce code doit toujours
       être accompagné d'une quantité (voir ANOMALIE_CONTROLE_JAMAIS_SEUL).
    5. Entier seul (n'importe quelle longueur, y compris 1 chiffre) ->
@@ -28761,16 +28764,17 @@ function parseCelluleControleLaitierModele(raw) {
   if (combo) {
     const codeStr = combo[2];
     const code = parseInt(codeStr, 10);
+  if (/^0+$/.test(s)) return { present: false };   // 0 de lait sans code = case vide
     if (codeStr.length !== 2 || code < 1 || code > 11 || code === 10) return { present: true, invalide: true, brut: s };   // codes 01 à 11 ; jamais du lait avec le code 10 (vide définitive : « /10 » seul)
-    return { present: true, quantite: parseInt(combo[1], 10), anomalie: code };
-  }
-  // « /CC » : code seul sans quantité (forme obligatoire pour 10 et 11, « 10 » seul étant une quantité de 10 mL)
-  const seul = s.match(/^\/(\d{2})$/);
-  if (seul) {
-    const code = parseInt(seul[1], 10);
-    if (code < 1 || code > 11 || ANOMALIE_CONTROLE_JAMAIS_SEUL.has(code)) return { present: true, invalide: true, brut: s };
+  if (combo && /^0+$/.test(combo[1])) {   // « 0/CC » : code sans lait, comme « CC » seul
+    const code = parseInt(combo[2], 10);
+    if (combo[2].length !== 2 || code < 1 || code > 11 || ANOMALIE_CONTROLE_JAMAIS_SEUL.has(code)) return { present: true, invalide: true, brut: s };
     return { present: true, quantite: null, anomalie: code };
   }
+    return { present: true, quantite: parseInt(combo[1], 10), anomalie: code };
+  }
+  // « 10 » et « 11 » seuls : codes sans lait (vide définitive, allaitante et traite), jamais 10 ou 11 mL
+  if (s === '10' || s === '11') return { present: true, quantite: null, anomalie: parseInt(s, 10) };
 
   if (/^0[1-9]$/.test(s)) {
     const code = parseInt(s, 10);

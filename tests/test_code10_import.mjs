@@ -34,14 +34,14 @@ async function ouvrir(bureau) {
   return p;
 }
 const RESUME = 'num_controle;date_controle;lait_total;nb_brebis\n1;20/01/2027;1500;10\n2;20/02/2027;1400;10\n3;20/03/2027;1200;10\n';
-const CAHIER = 'numero_visuel_sieol;ano_repro;ctl1_ml;ctl1_anomalie;ctl2_ml;ctl2_anomalie;ctl3_ml;ctl3_anomalie\n601;;1500;;1400;;1300;10\n602;10;;;;;;\n603;;;;;;;10\n604;;;;;;;10\n605;;1450;;1350;;;10\n';
+const CAHIER = 'numero_visuel_sieol;ano_repro;ctl1_ml;ctl1_anomalie;ctl2_ml;ctl2_anomalie;ctl3_ml;ctl3_anomalie\n601;;1500;;1400;;1300;10\n602;10;;;;;;\n603;;;;;;;10\n604;;;;;;;10\n605;;1450;;1350;;;10\n606;;0;09;;;0;\n';
 
 // 1. règles pures
 {
   const p = await ouvrir(true);
   eq(await p.evaluate(() => libelleAnomalieControle(10)), 'Vide définitive', 'code 10 = « Vide définitive »');
-  eq(await p.evaluate(() => [parseCelluleControleLaitierModele('1400/10').invalide, parseCelluleControleLaitierModele('/10'), parseCelluleControleLaitierModele('10'), parseCelluleControleLaitierModele('/11'), parseCelluleControleLaitierModele('/12').invalide, parseCelluleControleLaitierModele('/03').invalide].map(x => x === true ? true : (x.quantite === undefined ? x : [x.quantite, x.anomalie]))),
-    [true, [null, 10], [10, null], [null, 11], true, true], 'modèle Excel : « 1400/10 » refusé (jamais de lait avec le code 10), « /10 » lu, « 10 » = 10 mL, « /11 » ; « /12 » et un code jamais seul invalides');
+  eq(await p.evaluate(() => [parseCelluleControleLaitierModele('1400/10').invalide, parseCelluleControleLaitierModele('10'), parseCelluleControleLaitierModele('09'), parseCelluleControleLaitierModele('11'), parseCelluleControleLaitierModele('12'), parseCelluleControleLaitierModele('03').invalide, parseCelluleControleLaitierModele('0/10'), parseCelluleControleLaitierModele('0/08'), parseCelluleControleLaitierModele('0').present === false, parseCelluleControleLaitierModele('0/01').invalide].map(x => x === true ? true : (x.quantite === undefined ? x : [x.quantite, x.anomalie]))),
+    [true, [null, 10], [null, 9], [null, 11], [12, null], true, [null, 10], [null, 8], true, true], 'modèle Excel : 0 de lait = pas de lait (« 0/10 », « 0/08 » = code seul, « 0 » = case vide, « 0/01 » invalide) ; « 1400/10 » refusé (jamais de lait avec le code 10) ; code seul sans barre : « 10 », « 09 », « 11 » ; « 12 » = 12 mL ; un code jamais seul invalide');
   await p.context().close();
 }
 // 2. import SIEOL : aperçu, rien d'office, puis cases cochées
@@ -77,6 +77,7 @@ const CAHIER = 'numero_visuel_sieol;ano_repro;ctl1_ml;ctl1_anomalie;ctl2_ml;ctl2
   eq(r.c601, [1, 2], 'SIEOL : le contrôle lait + code 10 (C3) n\'est pas importé');
   eq(r.c604.map(c => [c.controle, c.quantite, c.anomalie]), [[3, null, 10]], 'SIEOL : contrôle à code seul gardé (quantité vide, code 10)');
   eq(r.c605, [[1, 1450, null], [2, 1350, null], [3, null, 10]], 'SIEOL : lait et code seul gardés');
+  eq(await p.evaluate(() => DB.brebis.find(x => x.numeroCourtTravailSieol === '606').controleLaitier.map(c => [c.controle, c.quantite, c.anomalie])), [[1, null, 9]], 'SIEOL : « 0 » + code 09 = code sans lait ; « 0 » sans code = rien');
   // deuxième import : les deux cases cochées
   await p.evaluate(() => render('import-controle-laitier-sieol'));
   await p.selectOption('#import-cl-campagne', '2026');
@@ -95,7 +96,7 @@ const CAHIER = 'numero_visuel_sieol;ano_repro;ctl1_ml;ctl1_anomalie;ctl2_ml;ctl2
 {
   const p = await ouvrir(true);
   const xlsx = await p.evaluate(async () => {
-    const rows = [['Modèle'], [''], [''], ['', '', '20/01/2027', '20/02/2027', '20/03/2027', '20/04/2027'], ['EID', 'SIEOL', 'Contrôle 1', 'Contrôle 2', 'Contrôle 3', 'Contrôle 4'], ['', '602', '', '', '', '/10'], ['', '605', '1450', '1350', '', '/10'], ['', '601', '', '', '', '1100']];
+    const rows = [['Modèle'], [''], [''], ['', '', '20/01/2027', '20/02/2027', '20/03/2027', '20/04/2027'], ['EID', 'SIEOL', 'Contrôle 1', 'Contrôle 2', 'Contrôle 3', 'Contrôle 4'], ['', '602', '', '', '', '10'], ['', '605', '1450', '1350', '', '10'], ['', '601', '', '', '', '1100']];
     return Array.from(await buildXlsxWorkbook([{ name: CONTROLE_LAITIER_MODELE_SHEET, rows }]));
   });
   await p.evaluate(() => render('import-controle-laitier-modele'));
