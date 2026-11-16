@@ -36,7 +36,7 @@ eq(await apercu('lactation'), { th: ['N° de travail', 'Lactation totale (L, cam
 eq((await apercu('nouveaux-animaux')).th, ['Origine', 'EID (11 ou 15 chiffres)', "Date d'entrée (JJ-MM-AAAA)", 'Statut', 'Père (facultatif)', 'Mère (facultatif)', 'N° de travail complet', 'N° de travail'], 'Nouveaux animaux : colonnes de la feuille Brebis');
 check((await apercu('nouveaux-animaux')).td[0] === 'née' && (await apercu('nouveaux-animaux')).td[4] === '—', 'Nouveaux animaux : exemple (cellules vides = —)');
 check(await page.evaluate(() => !document.getElementById('app').textContent.includes('❔') && !document.querySelector('[data-apercu-modele]') && !document.querySelector('img[src^="data:image/png"]:not(.logo-img)')), 'plus de ❔ ni d\'aperçu en images');
-eq(await page.evaluate(() => [...document.querySelectorAll('.prm-import')].map(c => [...c.querySelectorAll('.prm-actions .btn')].map(b => b.textContent + (b.classList.contains('btn-primary') ? '*' : '')))), [['Télécharger le modèle', 'Mode d\'emploi', 'Importer un fichier*'], ['Importer les fichiers SIEOL*', 'Télécharger le modèle', 'Mode d\'emploi', 'Importer le modèle Excel'], ['Télécharger le modèle', 'Mode d\'emploi', 'Importer un fichier*'], ['Télécharger le modèle', 'Mode d\'emploi', 'Importer un fichier*'], ['Télécharger le modèle', 'Mode d\'emploi', 'Importer un fichier*']], 'boutons de chaque carte (Télécharger le modèle, Mode d\'emploi, Importer) (un seul pour la carte « fichiers SIEOL » : des CSV exportés de SIEOL, pas de modèle à télécharger)');
+eq(await page.evaluate(() => [...document.querySelectorAll('.prm-import')].map(c => [...c.querySelectorAll('.prm-actions .btn')].map(b => b.textContent + (b.classList.contains('btn-primary') ? '*' : '')))), [['Télécharger le modèle', 'Mode d\'emploi', 'Importer un fichier Excel*'], ['Importer les fichiers SIEOL*', 'Télécharger le modèle', 'Mode d\'emploi', 'Importer un fichier Excel*'], ['Télécharger le modèle', 'Mode d\'emploi', 'Importer un fichier Excel*'], ['Télécharger le modèle', 'Mode d\'emploi', 'Importer un fichier Excel*'], ['Télécharger le modèle', 'Mode d\'emploi', 'Importer un fichier Excel*']], 'boutons de chaque carte (Télécharger le modèle, Mode d\'emploi, Importer) (un seul pour la carte « fichiers SIEOL » : des CSV exportés de SIEOL, pas de modèle à télécharger)');
 eq(await page.evaluate(() => [...document.querySelectorAll('[id^="dernier-"]')].map(e => e.textContent)), ['aucun', 'aucun', 'aucun', 'aucun', 'aucun', 'aucun'], 'dernier import : « aucun » au départ');
 eq(await apercu('inseminations'), { th: ['Code IA', 'N° officiel', 'ISOL', 'N° brebis', 'Code IA'], td: ['40518', '000012 40518', '112,5', '21045', '40518'] }, 'Inséminations : deux onglets (Béliers, Brebis inséminées) + exemple fictif (indicatif en 00)');
 console.log('OK 1 : 5 cartes (contrôle laitier : SIEOL + modèle Excel), description, colonnes et exemples lus dans les vrais modèles, deux boutons, « aucun ».');
@@ -66,7 +66,7 @@ for (const [cle, nomFichier] of Object.entries(attendus)) {
 }
 console.log('OK 3 : « Télécharger le modèle » sert le fichier d\'origine pour chaque import.');
 
-// ---- 4. « Importer un fichier » ouvre l'écran d'import existant
+// ---- 4. « Importer un fichier Excel » ouvre l'écran d'import existant
 for (const [cle, vue] of [['correspondance-sieol', 'import-correspondance-sieol'], ['controle-laitier', 'import-controle-laitier-modele'], ['lactation', 'import-lactation-modele'], ['nouveaux-animaux', 'import-nouveaux-animaux']]) {
   await jeu('cls'); await attendreApercus();
   await page.click(cle === 'controle-laitier' ? '#btn-import-controle-laitier-modele' : `#import-${cle} .btn-primary`);
@@ -75,7 +75,7 @@ for (const [cle, vue] of [['correspondance-sieol', 'import-correspondance-sieol'
 await jeu('cls'); await attendreApercus();
 await page.click('#btn-import-controle-laitier-sieol');
 eq(await page.evaluate(() => currentView), 'import-controle-laitier-sieol', 'carte Contrôle laitier : « Importer les fichiers SIEOL » ouvre l\'import SIEOL');
-console.log('OK 4 : « Importer un fichier » ouvre l\'écran d\'import (logique inchangée).');
+console.log('OK 4 : « Importer un fichier Excel » ouvre l\'écran d\'import (logique inchangée).');
 
 // ---- 5. import réel de bout en bout avec les vrais modèles : état « dernier import »
 const modeleCorr = orig('Modele_Correspondance_SIEOL.xlsx');

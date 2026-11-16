@@ -58,5 +58,12 @@ const rows = await p.evaluate(() => {
 eq(rows.nb, 2, 'anciens exemples (09 et 07 sans barre) reconnus');
 eq(rows.restantes, ['Ovilog', '|' + '|05-12-2026', 'EID|N° de travail|Contrôle 1', '|601|1500|1300|1060'], 'la note est retirée, la ligne modifiée (601, 1500) gardée');
 
+// 3. boutons des cartes : « Importer un fichier Excel » vert partout
+await prep();
+await p.evaluate(() => { parametresTab = 'imports'; render('parametres'); }); await p.waitForTimeout(400);
+const boutons = await p.$$eval('.prm-import .prm-actions .btn-primary', bs => bs.map(b => b.textContent));
+eq([...new Set(boutons)].sort(), ['Importer les fichiers SIEOL', 'Importer un fichier Excel'], 'libellés des boutons d\'import (verts)');
+check(!(await p.$$eval('.prm-import .prm-actions .btn-secondary', bs => bs.some(b => /Importer/.test(b.textContent)))), 'aucun bouton d\'import blanc');
+
 await browser.close();
 console.log('OK test_exemples_modeles');
