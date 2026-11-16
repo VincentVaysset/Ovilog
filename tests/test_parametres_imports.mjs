@@ -80,11 +80,13 @@ console.log('OK 4 : « Importer un fichier » ouvre l\'écran d\'import (logique
 // ---- 5. import réel de bout en bout avec les vrais modèles : état « dernier import »
 const modeleCorr = orig('Modele_Correspondance_SIEOL.xlsx');
 if (modeleCorr) {
-  // adapte les numéros d'exemple (ligne 5 : EID 00000051001) aux brebis du jeu
+  // brebis du jeu aux EID des lignes du fichier
   await jeu('cls'); await attendreApercus();
   await page.evaluate(() => { DB.brebis[0].eid = '250 000000051001'; DB.brebis[1].eid = '250 000000351001'; });
   await page.click('#import-correspondance-sieol .btn-primary');
-  await page.setInputFiles('input[type=file]', { name: 'Modele_Correspondance_SIEOL.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: modeleCorr });
+  // lignes d'exemple MODIFIÉES par l'éleveur (n° de travail complet effacé) : de vraies lignes, importées ; les exemples intacts ne le sont jamais (test_exemples_modeles)
+  const fichierCorr = Buffer.from(await page.evaluate(async () => Array.from(await buildXlsxWorkbook([{ name: SIEOL_CORRESP_SHEET, rows: [['Ovilog'], [''], [''], ['EID (11 chiffres)', 'N° d\'ordre', 'N° de travail complet', 'N° de travail'], ['00000051001', '51001', '', '59001'], ['00000351001', '51001', '', '501']] }]))));
+  await page.setInputFiles('input[type=file]', { name: 'Modele_Correspondance_SIEOL.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: fichierCorr });
   await page.waitForSelector('#btn-confirm-import-corresp-sieol:not(.hidden)', { timeout: 10000 });
   await page.click('#btn-confirm-import-corresp-sieol'); await page.waitForTimeout(300);
   eq(await page.evaluate(() => currentView), 'parametres', 'retour sur Paramètres après l\'import');
