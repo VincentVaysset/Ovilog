@@ -104,3 +104,11 @@ Reprises aussi dans `CLAUDE.md`, section « Méthode de travail ».
 - Ne jamais modifier un EID ni un numéro existant ; ne pas toucher au code de Logisol ; `firestore.rules` n'est jamais déployé depuis le dépôt (le propriétaire le publie dans la console).
 - En cas de doute : ne rien changer et le signaler.
 - Réponses en français, concrètes ; l'éleveur n'est pas développeur.
+
+
+## Chantier à venir : lot « Monte naturelle » (décidé avec l'éleveur, rien de codé)
+- Lot de repro MN : date d'entrée des béliers (obligatoire, sert de repère : début des mises bas = date + G min, règle PMB), date de retrait facultative (plus tard : mises bas trop tardives, fenêtre attendue), brebis ou agnelles cochées / bipées. Ex. bio : « MN brebis 310 » et « MN agnelles 115 ».
+- Plan de monte : réformes, puis IA / éponge, puis le reste en MN. Une brebis en retour reste dans son lot IA. Plusieurs lots par campagne possibles (ré-éponge, ré-IA après écho vide), l'un APRÈS l'autre : un nouveau lot daté avant ou le même jour que le précédent = refusé (pas de doublon). La mise bas va au lot dont la fenêtre correspond (le plus récent avant elle).
+- Mise bas d'une brebis d'un lot MN : code MN d'office, jamais de question (la question IA / RE / MN reste réservée aux lots IA / éponge).
+- Bilans : un bilan par lot (IA, éponge, MN : effectif, mises bas, fertilité, prolificité) ET le bilan troupeau global (brebis / antenaises séparées, chaque brebis une fois). Sans lot visant la campagne : 1re mise bas du groupe (règle actuelle).
+- Points à corriger avant de brancher un lot MN (sinon bugs) : typeLotPc classe tout lot de repro non « Éponge » en IA ; modeReproPourEcho / filtre « Monte naturelle » des échos et badge de la fiche lisent tout événement de lot comme IA / EP ; statsLotIA ne doit jamais recevoir un lot MN.
