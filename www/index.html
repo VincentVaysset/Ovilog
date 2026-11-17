@@ -3202,18 +3202,46 @@ function trouverParNumero(pool, numero, getEid) {
   if (!v || v.length >= 11) return [];
   return pool.filter(it => numeroVisuel(getEid(it)) === v || it.numeroLongTravailSieol === v || it.numeroCourtTravailSieol === v);
 }
-function trouverUnParEidOuNumero(pool, val, getEid) {
-  getEid = getEid || (it => it.eid);
-  const v = cleanEid(val || '');
+/* N° TAPÉ au clavier pour trouver une bête : UNE règle pour toute l'appli (champ commun wireEidLookupField, Carnet sanitaire,
+   Chantier de tri › Lots PC…). Un bip donne l'EID complet : il est trouvé tel quel (étape 0), la suite ne le concerne pas.
+   0. 11 chiffres et plus : EID exact, ou n° national (11 derniers chiffres).
+   1. N° EXACT (n° d'ordre, n° de travail, n° de travail complet, n° de travail du bélier ; zéros de tête ignorés) : un seul = trouvé d'office.
+   2. Sinon, pour 4 chiffres au plus, N° CONTENU, comme la recherche de l'onglet Brebis (« 590 » trouve 51090) : un seul = trouvé d'office
+      (5 chiffres et plus = un n° complet : jamais pris pour un morceau d'un autre n°, une brebis nouvelle reste nouvelle).
+   À chaque étape, plusieurs bêtes = « ambigu » : liste pour choisir, rien d'office.
+   3. Sinon, la numérotation de l'élevage (808 → 80008, suggererOfficielDepuisSieol) parmi les bêtes sans n° de travail : « propose »,
+      toujours à confirmer, jamais d'office. Rien n'est écrit sur une fiche. Contrôle : test_numero_tape.
+   opts.numeros(item) : n° de la bête (par défaut ceux ci-dessus) ; opts.getEid(item) : son EID. */
+function resoudreNumeroTape(pool, val, opts) {
+  opts = opts || {};
+  const getEid = opts.getEid || (it => it.eid);
+  const numerosDe = opts.numeros || (it => [numeroVisuel(getEid(it) || ''), it.numeroCourtTravailSieol, it.numeroLongTravailSieol, it.numeroTravailSieol]);
+  const v = cleanEid(String(val == null ? '' : val)).replace(/^fr/i, '');
   if (!v) return { statut: 'absent' };
-  if (v.length >= 11) {
-    const item = pool.find(it => cleanEid(getEid(it)) === v);
-    return item ? { statut: 'trouve', item } : { statut: 'absent' };
+  const res = l => l.length === 1 ? { statut: 'trouve', item: l[0] } : l.length > 1 ? { statut: 'ambigu', candidats: l } : null;
+  if (/^\d{11,}$/.test(v)) {
+    let l = v.length >= 12 ? pool.filter(it => getEid(it) && cleanEid(getEid(it)) === v) : [];
+    if (!l.length) l = pool.filter(it => getEid(it) && eidAffichageCourt(getEid(it)) === v.slice(-11));
+    return res(l) || { statut: 'absent' };
   }
-  const candidats = trouverParNumero(pool, v, getEid);
-  if (candidats.length === 1) return { statut: 'trouve', item: candidats[0] };
-  if (candidats.length > 1) return { statut: 'ambigu', candidats };
+  const sz = x => String(x == null ? '' : x).replace(/\s+/g, '').toLowerCase().replace(/^0+(?=.)/, '');
+  const cible = sz(v);
+  const nums = it => (numerosDe(it) || []).filter(Boolean).map(sz);
+  const exacts = pool.filter(it => nums(it).includes(cible));
+  const r1 = res(exacts); if (r1) return r1;
+  if (cible.length <= 4) { const r2 = res(pool.filter(it => nums(it).some(n => n.includes(cible)))); if (r2) return r2; }
+  if (/^\d{3,6}$/.test(v)) {
+    const court = v.length === 6 ? sieolLongVersCourt(v) : v;
+    const sug = court ? suggererOfficielDepuisSieol(court) : null;
+    const l = sug ? pool.filter(it => getEid(it) && !it.numeroCourtTravailSieol && numeroVisuel(getEid(it)) === sug) : [];
+    if (l.length) return { statut: 'propose', candidats: l, ordre: sug };
+  }
   return { statut: 'absent' };
+}
+// Même règle ; une proposition de la numérotation est rendue comme « plusieurs » (à choisir, jamais d'office), avec r.ordre, pour tous les écrans.
+function trouverUnParEidOuNumero(pool, val, getEid) {
+  const r = resoudreNumeroTape(pool, val, { getEid });
+  return r.statut === 'propose' ? { statut: 'ambigu', candidats: r.candidats, ordre: r.ordre } : r;
 }
 /* Affiche la liste cliquable des candidats en cas de numéro d'ordre
    ambigu (plusieurs animaux du pool partagent le même numéro) —
@@ -3223,10 +3251,10 @@ function trouverUnParEidOuNumero(pool, val, getEid) {
    préfixe pays/exploitation étant identique pour tout le cheptel et
    n'aidant donc pas l'éleveur à distinguer les candidats (voir
    eidAffichageCourt). `onPick(item)` est appelé au clic sur une candidate. */
-function renderCandidatsEidChips(candidats, containerEl, onPick, getEid) {
+function renderCandidatsEidChips(candidats, containerEl, onPick, getEid, intro) {
   getEid = getEid || (it => it.eid);
-  containerEl.innerHTML = 'Plusieurs animaux correspondent à ce numéro — précise en scannant l\'EID complet, ou choisis :<br>' +
-    candidats.map((c, i) => `<button type="button" class="chip eid-candidate-chip" data-i="${i}" style="margin:4px 4px 0 0;">${eidAffichageCourt(getEid(c))} — né(e) en ${anneeNaissance(getEid(c))}</button>`).join('');
+  containerEl.innerHTML = (intro || 'Plusieurs animaux correspondent à ce numéro — précise en scannant l\'EID complet, ou choisis :') + '<br>' +
+    candidats.map((c, i) => `<button type="button" class="chip eid-candidate-chip" data-i="${i}" style="margin:4px 4px 0 0;">${numeroCourtSieol(c) ? 'N°' + echapperHtml(numeroCourtSieol(c)) + ' · ' : ''}${eidAffichageCourt(getEid(c))} — né(e) en ${anneeNaissance(getEid(c))}</button>`).join('');
   containerEl.style.color = 'var(--warning)';
   containerEl.querySelectorAll('.eid-candidate-chip').forEach(btn => {
     btn.onclick = () => onPick(candidats[parseInt(btn.dataset.i, 10)]);
@@ -3260,7 +3288,8 @@ function wireEidLookupField(inputEl, opts) {
     if (r.statut === 'ambigu') {
       playBeepAmbigu();
       if (opts.onAmbigu) { opts.onAmbigu(r.candidats, val); return; }   // facultatif : l'écran affiche lui-même les candidats (liste filtrée) ; sans lui, boutons de choix comme avant
-      renderCandidatsEidChips(r.candidats, feedbackEl, (item) => resoudre(cleanEid(getEid(item))), getEid);
+      const intro = r.ordre ? '« ' + echapperHtml(val) + ' » n\'est noté sur aucune fiche. D\'après la numérotation de l\'élevage, c\'est sans doute la n°' + echapperHtml(r.ordre) + ' : touchez-la pour la prendre.' : null;
+      renderCandidatsEidChips(r.candidats, feedbackEl, (item) => resoudre(cleanEid(getEid(item))), getEid, intro);
       feedbackEl.classList.remove('hidden');
       return;
     }
@@ -16471,6 +16500,8 @@ function numeroOfficielTexte(eid) {
 }
 // N° de travail SIEOL d'une brebis (n° de travail attribué par SIEOL) ; null s'il n'est pas connu (affiché « — », jamais remplacé par autre chose)
 function numeroCourtSieol(a) { return (a && (a.numeroCourtTravailSieol || a.numeroTravailSieol)) || null; }
+// N° montré dans une liste à cocher : n° de travail s'il est connu, sinon n° d'ordre (affichage seul, rien n'est écrit)
+function numeroTravailOuOrdre(a) { return numeroCourtSieol(a) || numeroVisuel((a && a.eid) || ''); }
 // Père d'un agneau ou d'une agnelle : code IA et n° officiel de l'IA importée ; sinon père saisi à la main (texte tel quel) ; rien d'inventé
 function pereAgnelleTri(obj) {
   const ia = obj && obj.pereIa;
@@ -19178,15 +19209,14 @@ function lignesLotsPc(lot) {
       lots: (lots.get(k) || []).map(l => l.nom), dansCeLot: membres.has(k), dansUnAutreLot: (lots.get(k) || []).some(l => l.id !== lot.id) };
   }).sort(comparerAnimauxAgeNumero);
 }
-/* N° tapé puis Entrée (panneau d'un lot, PC) : correspondance EXACTE d'abord (n° court sans les zéros de tête, n° de travail SIEOL, EID complet ou
-   sa fin à partir de 8 chiffres), sinon par morceau comme le filtre « Rechercher un n° ». Cherché parmi tous les animaux proposés au lot. */
+/* N° tapé puis Entrée (panneau d'un lot, PC) : règle commune des n° tapés (resoudreNumeroTape : exact, puis contenu, puis numérotation de
+   l'élevage proposée — liste filtrée, rien coché d'office). Cherché parmi tous les animaux proposés au lot. */
 function correspondancesNumeroLotPc(lignes, saisie) {
-  const q = String(saisie || '').replace(/\s+/g, '').toLowerCase();
-  if (!q) return [];
-  const sansZeros = v => String(v || '').toLowerCase().replace(/^0+/, '');
-  const exactes = lignes.filter(r => sansZeros(r.numero) === sansZeros(q) || (r.court && sansZeros(r.court) === sansZeros(q)) || cleanEid(r.eid).toLowerCase() === q || (q.length >= 8 && cleanEid(r.eid).toLowerCase().endsWith(q)));
-  if (exactes.length) return exactes;
-  return lignes.filter(r => r.numero.toLowerCase().includes(q) || r.court.toLowerCase().includes(q) || cleanEid(r.eid).toLowerCase().includes(q));
+  const r = resoudreNumeroTape(lignes, saisie, { numeros: l => [l.numero, l.court, (l.obj && l.obj.numeroLongTravailSieol) || ''], getEid: l => l.eid });   // règle commune des n° tapés
+  if (r.statut === 'trouve') return [r.item];
+  if (r.statut === 'ambigu') return r.candidats;
+  if (r.statut === 'propose') { const l = r.candidats.slice(); l.propose = r.ordre; return l; }
+  return [];
 }
 function filtrerLignesLotsPc(lignes, onglet, lot) {
   const F = lotsPcEtat.F, q = F.q.replace(/\s+/g, '').toLowerCase(), nb = v => v !== '' && v !== null && v !== undefined && !isNaN(parseFloat(v));
@@ -19670,7 +19700,8 @@ function renderLotsPc() {
     const saisie = ev.target.value.trim();
     if (!saisie) return;
     const nomAnimal = agn ? 'agnelle' : 'brebis', trouves = correspondancesNumeroLotPc(lignesLotsPc(lot), saisie), lib = r => 'n°' + echoHtml(r.numero);
-    if (trouves.length === 1 && !trouves[0].dansCeLot) {
+    if (trouves.propose) { F.q = trouves.propose; E.messageNumero = { ton: 'alerte', texte: '« ' + echoHtml(saisie) + ' » n\'est noté sur aucune fiche : c\'est sans doute la n°' + echoHtml(trouves.propose) + ', cochez-la dans la liste.' }; }
+    else if (trouves.length === 1 && !trouves[0].dansCeLot) {
       const r = trouves[0], k = cleanEid(r.eid), deja = E.selection.has(k);
       E.selection.add(k); F.q = ''; ev.target.value = '';
       E.messageNumero = { ton: 'ok', texte: lib(r) + (deja ? ' déjà cochée' : ' cochée') + ' · ' + E.selection.size + ' sélectionnée' + (E.selection.size > 1 ? 's' : '') };
@@ -19876,13 +19907,13 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
     if (!listEl) return;
     let items = pool;
     if (state.filtre.trim()) {
-      const f = state.filtre.trim().toLowerCase();
-      items = items.filter(it => numeroVisuel(it.eid).toLowerCase().includes(f));
+      const f = state.filtre.replace(/\s+/g, '').toLowerCase();   // même recherche que l'onglet Brebis : tous les n° de la bête
+      items = items.filter(it => numerosRechercheAnimal(it).some(n => n.includes(f)));
     }
     listEl.innerHTML = items.map(it => `
       <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);">
         <input type="checkbox" class="sp-check" data-id="${it.id}" ${selectedIds.has(it.id) ? 'checked' : ''} style="width:18px;height:18px;margin:0;flex-shrink:0;">
-        <span style="font-size:14px;">N°${numeroVisuel(it.eid)}</span>
+        <span class="sp-num" style="font-size:14px;">N°${echapperHtml(numeroTravailOuOrdre(it))}${numeroCourtSieol(it) && it.eid ? ` <span style="font-size:12px;color:var(--text-muted);">· ${numeroVisuel(it.eid)}</span>` : ''}</span>
         <span style="font-size:12px;color:var(--text-muted);margin-left:auto;">${renderMeta(it)}</span>
       </label>
     `).join('') || '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucun animal.</div>';
@@ -19907,7 +19938,7 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
         <input type="text" class="sp-scan" data-bips="recherche" placeholder="Scanner ou saisir l'EID" autofocus>
         <div class="sp-scan-feedback" style="margin-top:8px;font-size:13px;"></div>
       ` : `
-        <input type="text" class="sp-filtre" placeholder="Filtrer par numéro..." value="${state.filtre}" style="margin-bottom:4px;">
+        <input type="text" class="sp-filtre" placeholder="Filtrer par numéro..." value="${echapperHtml(state.filtre)}" style="margin-bottom:4px;">
       `}
       <div class="sp-list" style="max-height:360px;overflow-y:auto;"></div>
     `;
@@ -19932,11 +19963,11 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
         onFound: (item) => {
           feedback.classList.remove('hidden');
           if (selectedIds.has(item.id)) {
-            feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' déjà sélectionnée.';
+            feedback.textContent = 'n°' + numeroTravailOuOrdre(item) + ' déjà sélectionnée.';
             feedback.style.color = 'var(--warning)';
             return;
           }
-          feedback.textContent = 'n°' + numeroVisuel(item.eid) + ' ajoutée.';
+          feedback.textContent = 'n°' + numeroTravailOuOrdre(item) + ' ajoutée.';
           feedback.style.color = 'var(--green-fg)';
           selectedIds.add(item.id);
           renderCounter();
@@ -21340,12 +21371,8 @@ function resoudreNumeroCarnet(tous, saisie) {
     const item = tous.find(a => !a.sansNumero && a.eid && (cleanEid(a.eid).toLowerCase() === v || cleanEid(a.eid).toLowerCase().endsWith(v)));
     return item ? { statut: 'trouve', item } : { statut: 'absent' };
   }
-  const sansZeros = x => String(x || '').toLowerCase().replace(/^0+/, '');
-  const cible = sansZeros(v);
-  const candidats = cible ? tous.filter(a => (a.numsExacts || []).some(n => sansZeros(n) === cible)) : [];
-  if (candidats.length === 1) return { statut: 'trouve', item: candidats[0] };
-  if (candidats.length > 1) return { statut: 'ambigu', candidats };
-  return { statut: 'absent' };
+  // n° tapé : règle commune de l'appli (exact, puis contenu, puis numérotation de l'élevage proposée) sur les n° exacts de chaque bête
+  return resoudreNumeroTape(tous, v, { numeros: a => a.numsExacts || [], getEid: a => a.sansNumero ? '' : a.eid });
 }
 function lotCorrespondCarnet(a, f) {
   const mode = f.lotMode || (f.lot ? 'dans' : 'tous');
@@ -21978,14 +22005,14 @@ function ecranCarnetAnimaux() {
         if (E.selection.has(a.eid)) { bip(playBeepDejaTrouve); dire(nm + ' déjà sélectionné(e).', 'var(--ch-ambre-texte)'); }
         else { bip(playBeepTrouve); E.selection.add(a.eid); dire(nm + ' ajouté(e) à la sélection.', 'var(--ch-vert-fonce)'); }
         scanInput.value = ''; F.q = ''; F.candidats = null;
-      } else if (r.statut === 'ambigu') {
+      } else if (r.statut === 'ambigu' || r.statut === 'propose') {
         bip(playBeepAmbigu);
         F.candidats = new Set(r.candidats.map(a => a.eid));
-        dire(r.candidats.length + ' animaux portent ce n° : ' + (mobile ? 'touche' : 'clique sur') + ' le bon dans la liste.', 'var(--ch-ambre-texte)');
+        dire(r.statut === 'propose' ? '« ' + val + ' » n\'est noté sur aucune fiche : c\'est sans doute la n°' + r.ordre + ', ' + (mobile ? 'touche' : 'clique sur') + '-la dans la liste.' : r.candidats.length + ' animaux portent ce n° : ' + (mobile ? 'touche' : 'clique sur') + ' le bon dans la liste.', 'var(--ch-ambre-texte)');
       } else {
         bip(playBeepRate);
         F.candidats = null;
-        dire('Aucun animal éligible ne porte exactement le n°' + val.replace(/[<>&"]/g, '') + (animalFiltresCarnet(tous, F).length ? ' : choisis-le dans la liste.' : '.'), 'var(--ch-ambre-texte)');
+        dire('Aucun animal éligible ne porte le n°' + val.replace(/[<>&"]/g, '') + (animalFiltresCarnet(tous, F).length ? ' : choisis-le dans la liste.' : '.'), 'var(--ch-ambre-texte)');
       }
       dessiner();
     });
