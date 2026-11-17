@@ -100,7 +100,7 @@ for (const bureau of [true, false]) {
   await frappe('021012');
   await page.click('.inventaire-actifs-row');
   eq(await page.evaluate(() => currentView), 'detail', nom + ' : clic -> fiche brebis');
-  eq(await page.evaluate(() => pageTitle.textContent), 'Brebis n°10012', nom + ' : la fiche est celle de la brebis cherchée');
+  eq(await page.evaluate(() => pageTitle.textContent), 'Brebis 12', nom + ' : la fiche est celle de la brebis cherchée (n° de travail)');
   // retour : la recherche est conservée
   await page.evaluate(() => render('inventaire-actifs'));
   eq(await page.inputValue('#inventaire-recherche'), '021012', nom + ' : recherche conservée au retour');

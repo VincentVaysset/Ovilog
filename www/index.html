@@ -3206,9 +3206,9 @@ function trouverParNumero(pool, numero, getEid) {
    Chantier de tri › Lots PC…). Un bip donne l'EID complet : il est trouvé tel quel (étape 0), la suite ne le concerne pas.
    0. 11 chiffres et plus : EID exact, ou n° national (11 derniers chiffres).
    1. N° EXACT (n° d'ordre, n° de travail, n° de travail complet, n° de travail du bélier ; zéros de tête ignorés) : un seul = trouvé d'office.
-   2. Sinon, pour 4 chiffres au plus, N° CONTENU, comme la recherche de l'onglet Brebis (« 590 » trouve 51090) : un seul = trouvé d'office
-      (5 chiffres et plus = un n° complet : jamais pris pour un morceau d'un autre n°, une brebis nouvelle reste nouvelle).
-   À chaque étape, plusieurs bêtes = « ambigu » : liste pour choisir, rien d'office.
+   À cette étape, plusieurs bêtes (n° d'ordre partagé) = « ambigu » : liste pour choisir, rien d'office.
+   2. Sinon, pour 4 chiffres au plus, MORCEAU de n° (n° contenu, comme la recherche de l'onglet Brebis) : « partiel », TOUJOURS une liste
+      à toucher, même pour une seule bête, jamais d'office (5 chiffres et plus = un n° complet, jamais pris pour un morceau).
    3. Sinon, la numérotation de l'élevage (808 → 80008, suggererOfficielDepuisSieol) parmi les bêtes sans n° de travail : « propose »,
       toujours à confirmer, jamais d'office. Rien n'est écrit sur une fiche. Contrôle : test_numero_tape.
    opts.numeros(item) : n° de la bête (par défaut ceux ci-dessus) ; opts.getEid(item) : son EID. */
@@ -3229,7 +3229,7 @@ function resoudreNumeroTape(pool, val, opts) {
   const nums = it => (numerosDe(it) || []).filter(Boolean).map(sz);
   const exacts = pool.filter(it => nums(it).includes(cible));
   const r1 = res(exacts); if (r1) return r1;
-  if (cible.length <= 4) { const r2 = res(pool.filter(it => nums(it).some(n => n.includes(cible)))); if (r2) return r2; }
+  if (cible.length <= 4) { const l = pool.filter(it => nums(it).some(n => n.includes(cible))); if (l.length) return { statut: 'partiel', candidats: l }; }
   if (/^\d{3,6}$/.test(v)) {
     const court = v.length === 6 ? sieolLongVersCourt(v) : v;
     const sug = court ? suggererOfficielDepuisSieol(court) : null;
@@ -3238,10 +3238,19 @@ function resoudreNumeroTape(pool, val, opts) {
   }
   return { statut: 'absent' };
 }
-// Même règle ; une proposition de la numérotation est rendue comme « plusieurs » (à choisir, jamais d'office), avec r.ordre, pour tous les écrans.
+// Même règle ; un morceau de n° ou une proposition de la numérotation est rendu comme « plusieurs » (à choisir, jamais d'office),
+// avec r.partiel ou r.ordre pour le message, pour tous les écrans.
 function trouverUnParEidOuNumero(pool, val, getEid) {
   const r = resoudreNumeroTape(pool, val, { getEid });
-  return r.statut === 'propose' ? { statut: 'ambigu', candidats: r.candidats, ordre: r.ordre } : r;
+  if (r.statut === 'propose') return { statut: 'ambigu', candidats: r.candidats, ordre: r.ordre };
+  if (r.statut === 'partiel') return { statut: 'ambigu', candidats: r.candidats, partiel: true };
+  return r;
+}
+// Texte d'introduction des boutons de choix d'un n° tapé (même phrase partout)
+function introChoixNumeroTape(r, val) {
+  if (r.ordre) return '« ' + echapperHtml(val) + ' » n\'est noté sur aucune fiche. D\'après la numérotation de l\'élevage, c\'est sans doute la n°' + echapperHtml(r.ordre) + ' : touchez-la pour la prendre.';
+  if (r.partiel) return 'Aucun n° ne vaut exactement « ' + echapperHtml(val) + ' » : touchez la bonne bête.';
+  return null;
 }
 /* Affiche la liste cliquable des candidats en cas de numéro d'ordre
    ambigu (plusieurs animaux du pool partagent le même numéro) —
@@ -3254,7 +3263,7 @@ function trouverUnParEidOuNumero(pool, val, getEid) {
 function renderCandidatsEidChips(candidats, containerEl, onPick, getEid, intro) {
   getEid = getEid || (it => it.eid);
   containerEl.innerHTML = (intro || 'Plusieurs animaux correspondent à ce numéro — précise en scannant l\'EID complet, ou choisis :') + '<br>' +
-    candidats.map((c, i) => `<button type="button" class="chip eid-candidate-chip" data-i="${i}" style="margin:4px 4px 0 0;">${numeroCourtSieol(c) ? 'N°' + echapperHtml(numeroCourtSieol(c)) + ' · ' : ''}${eidAffichageCourt(getEid(c))} — né(e) en ${anneeNaissance(getEid(c))}</button>`).join('');
+    candidats.map((c, i) => `<button type="button" class="chip eid-candidate-chip" data-i="${i}" style="margin:4px 4px 0 0;">${numeroCourtSieol(c) ? echapperHtml(numeroCourtSieol(c)) + ' · ' : ''}${eidAffichageCourt(getEid(c))} — né(e) en ${anneeNaissance(getEid(c))}</button>`).join('');
   containerEl.style.color = 'var(--warning)';
   containerEl.querySelectorAll('.eid-candidate-chip').forEach(btn => {
     btn.onclick = () => onPick(candidats[parseInt(btn.dataset.i, 10)]);
@@ -3288,8 +3297,7 @@ function wireEidLookupField(inputEl, opts) {
     if (r.statut === 'ambigu') {
       playBeepAmbigu();
       if (opts.onAmbigu) { opts.onAmbigu(r.candidats, val); return; }   // facultatif : l'écran affiche lui-même les candidats (liste filtrée) ; sans lui, boutons de choix comme avant
-      const intro = r.ordre ? '« ' + echapperHtml(val) + ' » n\'est noté sur aucune fiche. D\'après la numérotation de l\'élevage, c\'est sans doute la n°' + echapperHtml(r.ordre) + ' : touchez-la pour la prendre.' : null;
-      renderCandidatsEidChips(r.candidats, feedbackEl, (item) => resoudre(cleanEid(getEid(item))), getEid, intro);
+      renderCandidatsEidChips(r.candidats, feedbackEl, (item) => resoudre(cleanEid(getEid(item))), getEid, introChoixNumeroTape(r, val));
       feedbackEl.classList.remove('hidden');
       return;
     }
@@ -3352,7 +3360,7 @@ function wireMereAdoptiveField(inputEl, previewEl, onInput) {
       return;
     }
     const mere = trouverBrebisActiveParEidOuNumero(val);
-    if (mere) { previewEl.textContent = 'Mère adoptive : brebis n°' + numeroVisuel(mere.eid); previewEl.style.color = 'var(--success)'; }
+    if (mere) { previewEl.textContent = 'Mère adoptive : brebis ' + numeroAnimal(mere.eid); previewEl.style.color = 'var(--success)'; }
     else { previewEl.textContent = "Aucune brebis active ne correspond à ce numéro."; previewEl.style.color = 'var(--danger)'; }
   }
   inputEl.addEventListener('input', draw);
@@ -5314,7 +5322,7 @@ function genealogieNaissanceHtml(porteur, mereEid, campagneNaissance, idBtnMere)
   let html = '';
   if (mereEid) {
     const info = texteLactationMere(mereEid, campagneNaissance);
-    html += `${lib('Mère')}<div style="font-size:14px;"><strong ${idBtnMere ? `id="${idBtnMere}" ` : ''}style="color:var(--green-fg);${idBtnMere ? 'text-decoration:underline;cursor:pointer;' : ''}">n°${numeroVisuel(mereEid)}</strong></div>${info ? `<div class="genealogie-mere-lait" style="font-size:13px;color:var(--text-muted);">${info}</div>` : ''}`;
+    html += `${lib('Mère')}<div style="font-size:14px;"><strong ${idBtnMere ? `id="${idBtnMere}" ` : ''}style="color:var(--green-fg);${idBtnMere ? 'text-decoration:underline;cursor:pointer;' : ''}">${echapperHtml(numeroAnimal(mereEid))}</strong></div>${info ? `<div class="genealogie-mere-lait" style="font-size:13px;color:var(--text-muted);">${info}</div>` : ''}`;
   } else html += ligneGenealogieHtml('Mère', porteur && porteur.mere, porteur && porteur.mereLien);
   const ia = porteur && porteur.pereIa;
   if (paterniteIaConnue(ia)) {
@@ -7955,7 +7963,7 @@ function accueilDesktopHtml() {
     <div class="lg"><span><i class="lg-act"></i>Campagne en cours</span><span><i class="lg-prec"></i>Campagne précédente</span></div>
     ${accueilPcGraphiqueLait(lait)}`}</div>`;
 
-  const attRows = d.attendues.liste.slice(0, 4).map(a => `<div class="apc-rw"><span class="a">${a.numero}</span><span class="pill ${a.ton}">${a.motif}</span><span class="info">${a.date ? a.date.slice(8, 10) + '-' + a.date.slice(5, 7) : ''}</span></div>`).join('');
+  const attRows = d.attendues.liste.slice(0, 4).map(a => `<div class="apc-rw"><span class="a">${echapperHtml(a.affiche || a.numero)}</span><span class="pill ${a.ton}">${a.motif}</span><span class="info">${a.date ? a.date.slice(8, 10) + '-' + a.date.slice(5, 7) : ''}</span></div>`).join('');
   const cardAttendues = `<div class="card apc-carte"><div class="ch"><h3>Attendues à la traite</h3><span class="cnt ${d.attendues.total > 0 ? 'cnt-bleu' : 'cnt-neutre'}">${d.attendues.total}</span></div>
     <div class="info">Brebis dont l'agneau n'est plus actif.</div>
     ${d.attendues.total === 0 ? '<div class="info">Aucune brebis concernée pour l\'instant.</div>' : `<div>${attRows}</div>`}
@@ -7984,7 +7992,7 @@ function accueilPcData() {
   const s = dashboardStatsData(), R = repartitionEchoAccueil(), mort = mortaliteSanitaireData(), cmp = controleLaitierCompareData(), sexe = agneauxCampagneRestants();
   const vdPresentes = s.active.filter(x => estVideDefinitiveCampagne(x)).length;
   const attendues = attendueTraiteListe();
-  const motifs = attendues.map(b => Object.assign({ numero: numeroVisuel(b.eid), eid: b.eid }, attendueTraiteMotif(b)));
+  const motifs = attendues.map(b => Object.assign({ numero: numeroVisuel(b.eid), affiche: numeroAnimal(b), eid: b.eid }, attendueTraiteMotif(b)));
   motifs.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   const points = cmp.map((c, i) => ({ libelle: libelleControleOrdinal(c.controle) + ' contrôle', actuel: c.actuel, precedent: c.precedent, nbBrebis: s.resumes[i] ? s.resumes[i].nbBrebis : null }));
   return {
@@ -9081,7 +9089,7 @@ function bilanARegulariserMobileHtml() {
   const pctTxt = n => fmtDecimal(pct(n), 1) + ' %';
   const ageTxt = a => a === null ? 'âge inconnu' : a + (a > 1 ? ' ans' : ' an');
   const VISIBLES = 8, REPLI = 20;
-  const ligne = (b, extra, cache) => `<div class="bc-li bilan-eid-link${cache ? ' hidden' : ''}" role="button" tabindex="0" data-id="${b.id}" data-num="${b.numero}" data-eid="${b.eid}" data-age="${b.age === null ? '' : b.age}"><span class="bc-li-n">n°${b.numero}</span><span class="bc-li-a">${ageTxt(b.age)}</span>${extra || BC_CHEVRON}</div>`;
+  const ligne = (b, extra, cache) => `<div class="bc-li bilan-eid-link${cache ? ' hidden' : ''}" role="button" tabindex="0" data-id="${b.id}" data-num="${b.numero}"${b.court ? ` data-court="${echapperHtml(b.court)}"` : ''} data-eid="${b.eid}" data-age="${b.age === null ? '' : b.age}"><span class="bc-li-n">${echapperHtml(b.affiche || 'n°' + b.numero)}</span><span class="bc-li-a">${ageTxt(b.age)}</span>${extra || BC_CHEVRON}</div>`;
   const ages = [...new Set(G.aRegulariser.map(b => b.age))].filter(a => a !== null).sort((a, b) => b - a);
   const nbBrebis = n => n + ' brebis';
   // Section repliable (fermée au départ) : au-delà de REPLI lignes, « Voir les N autres » (simple affichage, aucun calcul)
@@ -9246,7 +9254,7 @@ function carteSansControlePcHtml(sc, opts) {
 function bilanARegulariserData() {
   const N = DB.campagneDebut;
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  const item = s => ({ id: s.id, eid: s.eid, numero: numeroVisuel(s.eid), age: age(s.eid), annee: anneeNaissance(s.eid) });
+  const item = s => ({ id: s.id, eid: s.eid, numero: numeroVisuel(s.eid), affiche: numeroAnimal(s), court: numeroCourtSieol(s) || '', age: age(s.eid), annee: anneeNaissance(s.eid) });
   // Six groupes qui ne se recoupent jamais (somme = brebis présentes), d'après situationTraiteCampagne : à régulariser, allaitantes,
   // attendues à la traite, traites, pas traites, vides définitives. misesBas = réunion des 4 groupes « a mis bas » (compatibilité).
   const groupes = { aRegulariser: [], misesBas: [], allaitantes: [], attendues: [], traites: [], pasTraites: [], videsDefinitives: [], incoherentes: [] };
@@ -9315,7 +9323,7 @@ function bilanARegulariserDesktopHtml() {
   const pct = n => d.actives > 0 ? Math.round(n / d.actives * 1000) / 10 : 0;
   const pctTxt = n => d.actives > 0 ? fmtDecimal(pct(n), 1) + ' %' : '—';
   const ageTxt = a => a === null ? 'âge inconnu' : a + (a > 1 ? ' ans' : ' an');
-  const ligne = (b, extra) => `<div class="pc-li bilan-eid-link" data-id="${b.id}" data-num="${b.numero}" data-eid="${b.eid}" data-age="${b.age === null ? '' : b.age}"><span class="a">n°${b.numero}</span>${extra || ''}<span class="b">${ageTxt(b.age)}</span><span class="f">Ouvrir la fiche</span></div>`;
+  const ligne = (b, extra) => `<div class="pc-li bilan-eid-link" data-id="${b.id}" data-num="${b.numero}"${b.court ? ` data-court="${echapperHtml(b.court)}"` : ''} data-eid="${b.eid}" data-age="${b.age === null ? '' : b.age}"><span class="a">${echapperHtml(b.affiche || 'n°' + b.numero)}</span>${extra || ''}<span class="b">${ageTxt(b.age)}</span><span class="f">Ouvrir la fiche</span></div>`;
   const VISIBLES = 8;
   const apercu = G.aRegulariser.map((b, i) => ligne(b).replace('class="pc-li', 'class="pc-li' + (i >= VISIBLES ? ' hidden' : ''))).join('');
   const ages = [...new Set(G.aRegulariser.map(b => b.age))].filter(a => a !== null).sort((a, b) => b - a);
@@ -9413,7 +9421,7 @@ function brancherARegulariserDesktop() {
     const filtre = q !== '' || a !== '';
     let n = 0, visibles = 0;
     lignes.forEach(l => {
-      const ok = (q === '' || l.dataset.num.includes(q) || l.dataset.eid.replace(/\s+/g, '').includes(q)) && (a === '' || l.dataset.age === a);
+      const ok = (q === '' || l.dataset.num.includes(q) || (l.dataset.court || '').includes(q) || l.dataset.eid.replace(/\s+/g, '').includes(q)) && (a === '' || l.dataset.age === a);
       if (ok) n++;
       const montre = ok && (filtre || tout || visibles < parseInt(plus ? plus.dataset.visibles : '9999', 10));
       if (montre) visibles++;
@@ -10592,7 +10600,7 @@ function renderMouvementsMobile() {
   const resteCartes = cartes.length - montrees.length;
   const plusAnciens = resteCartes > 0 || (!E.etendu && rowsToutes.length > rowsCourante.length);
   const refs = [];
-  const ligneMembre = (r) => { const k = refs.push(r) - 1; return `<div class="mm-membre"><span class="mm-nm">n°${r.court || r.numero}</span>${r.vivant ? `<button type="button" class="mm-lien mm-modifier" data-k="${k}">Modifier</button>` : '<span class="mm-mention">archivé</span>'}</div>`; };
+  const ligneMembre = (r) => { const k = refs.push(r) - 1; return `<div class="mm-membre"><span class="mm-nm">${echapperHtml(r.court || 'n°' + r.numero)}</span>${r.vivant ? `<button type="button" class="mm-lien mm-modifier" data-k="${k}">Modifier</button>` : '<span class="mm-mention">archivé</span>'}</div>`; };
   const carteHtml = (c, i) => {
     const r0 = c.rows[0], ton = TON_PASTILLE_MV[PILL_TYPE_MV(r0.type)] || 'gris';
     if (c.lot) {
@@ -10614,7 +10622,7 @@ function renderMouvementsMobile() {
     const acts = !r.vivant ? `<span class="mm-mention">${r.cle === 'agnelles' ? 'agnelle archivée : ni modification ni annulation' : 'animal archivé au registre'}</span>`
       : `<button type="button" class="mm-act mm-modifier" data-k="${k}">Modifier</button><button type="button" class="mm-act del mm-annuler" data-k="${k}">Annuler</button>`;
     return `<div class="mm-carte">
-      <div class="mm-top"><span class="mm-nm">n°${r.court || r.numero}</span><span class="reg-pastille ${ton}">${r.type}</span></div>
+      <div class="mm-top"><span class="mm-nm">${echapperHtml(r.court || 'n°' + r.numero)}</span><span class="reg-pastille ${ton}">${r.type}</span></div>
       <div class="mm-dt">${formatDateFr(r.date)}${r.detail ? ' · ' + echapperHtml(r.detail) : ''}</div>
       ${r.collectifId ? '<div class="mm-sub">Lot introuvable</div>' : ''}
       <div class="mm-acts">${acts}</div>
@@ -10923,7 +10931,7 @@ function renderMajInventaire() {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid var(--border);';
       row.innerHTML = `
-        <div style="font-weight:600;">n°${numeroVisuel(eid)}</div>
+        <div style="font-weight:600;">${echapperHtml(numeroAnimal(eid))}</div>
         <button type="button" class="btn-remove-maj-inventaire" data-eid="${eid}" style="background:none;border:none;color:var(--text-muted);font-size:19px;padding:2px 8px;line-height:1;">✕</button>
       `;
       rowsEl.appendChild(row);
@@ -10960,7 +10968,7 @@ function renderMajInventaire() {
       if (!val) return;
       if (session.eids.includes(val)) {
         playBeepDejaTrouve();
-        feedback.textContent = 'n°' + numeroVisuel(val) + (isDesktopMode() ? ' déjà saisie.' : ' déjà bipée.');
+        feedback.textContent = numeroAnimal(val) + (isDesktopMode() ? ' déjà saisie.' : ' déjà bipée.');
         feedback.style.color = 'var(--warning)';
         return;
       }
@@ -10970,7 +10978,7 @@ function renderMajInventaire() {
       session.eids.push(val);
       saveData(DB);
       draw();
-      if (!connue) { const fb = document.getElementById('scan-maj-feedback'); if (fb) { fb.textContent = 'n°' + numeroVisuel(val) + ' : brebis inconnue du troupeau (gardée dans le bipage).'; fb.style.color = 'var(--ch-ambre-texte)'; } }
+      if (!connue) { const fb = document.getElementById('scan-maj-feedback'); if (fb) { fb.textContent = numeroAnimal(val) + ' : brebis inconnue du troupeau (gardée dans le bipage).'; fb.style.color = 'var(--ch-ambre-texte)'; } }
     });
   }
   draw();
@@ -11043,13 +11051,13 @@ function renderMajInventaireValidation() {
     const enMoinsRowsHtml = rappro.enMoins.map(s => `
       <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);">
         <input type="checkbox" class="cb-exclure-enmoins" data-id="${s.id}" ${exclusions.has(s.id) ? '' : 'checked'} style="width:18px;height:18px;margin:0;flex-shrink:0;">
-        <span style="font-size:14px;">n°${numeroVisuel(s.eid)}</span>
+        <span style="font-size:14px;">${echapperHtml(numeroAnimal(s.eid))}</span>
         <span style="font-size:12px;color:var(--text-muted);margin-left:auto;">${exclusions.has(s.id) ? 'Conservée active' : 'Sera sortie'}</span>
       </label>
     `).join('') || '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucune.</div>';
 
     const enPlusRowsHtml = rappro.enPlus.map(p => {
-      const numero = 'n°' + numeroVisuel(p.eid);
+      const numero = numeroAnimal(p.eid);
       if (p.type === 'autre') {
         return `<div style="padding:8px 0;border-top:1px solid var(--border);font-size:13px;">
           ${numero} <span class="badge badge-muted" style="margin-left:6px;">${p.conflit.statutLabel}</span>
@@ -11254,7 +11262,7 @@ function findLambByEid(eid) {
    partout, seul `detailOrigin` diffère selon l'écran appelant. */
 function htmlLienMereAdoptive(lamb, cssClass) {
   if (!lamb || !lamb.adopte || !lamb.adoptiveEid) return '';
-  return `<button type="button" class="btn btn-secondary ${cssClass}" data-eid="${lamb.adoptiveEid}" style="margin-top:8px;display:block;width:100%;color:var(--blue-fg);border-color:var(--blue-fg);">Mère adoptive — n°${numeroVisuel(lamb.adoptiveEid)} — Voir sa fiche</button>`;
+  return `<button type="button" class="btn btn-secondary ${cssClass}" data-eid="${lamb.adoptiveEid}" style="margin-top:8px;display:block;width:100%;color:var(--blue-fg);border-color:var(--blue-fg);">Mère adoptive — ${echapperHtml(numeroAnimal(lamb.adoptiveEid))} — Voir sa fiche</button>`;
 }
 
 function isLambResolved(l) {
@@ -12099,7 +12107,7 @@ function ficheDesktopHeaderHtml({ icon, iconColor, titre, eid, badges }) {
 function renderDetail(id) {
   const sheep = findSheep(id);
   if (!sheep) { render('list'); return; }
-  pageTitle.textContent = 'Brebis n°' + numeroVisuel(sheep.eid);
+  pageTitle.textContent = 'Brebis ' + numeroAnimal(sheep.eid);
   if (ficheBrebisTabSheepId !== id) { ficheBrebisTab = 'ident'; ficheBrebisTabSheepId = id; ficheCarriereOuverts = {}; }
   // Refonte fiche brebis desktop (option B validée) : identité + badges
   // regroupés dans un bandeau fixe séparé (voir desktopHeaderHtml plus
@@ -12160,7 +12168,7 @@ function renderDetail(id) {
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 0;">
           ${avecNumero && l.sexe !== 'Mort-né' ? `<span style="font-weight:600;font-size:13px;min-width:58px;">${numeroAgneauTexte(l)}</span>` : ''}
           <span class="badge ${l.sexe === 'Mâle' ? 'badge-blue' : l.sexe === 'Femelle' ? 'badge-amber' : 'badge-muted'}">${l.sexe}</span>
-          ${l.adopte ? `<span class="badge badge-muted">Adopté par n°${numeroVisuel(l.adoptiveEid)}</span>` : ''}
+          ${l.adopte ? `<span class="badge badge-muted">Adopté par ${echapperHtml(numeroAnimal(l.adoptiveEid))}</span>` : ''}
         </div>
       `).join('')}
       <div class="date" style="margin-top:4px;">${formatDateFr(a.date)}</div>
@@ -12175,7 +12183,7 @@ function renderDetail(id) {
       <span style="font-size:13px;color:var(--text-muted);">Adopté :</span>
       <button type="button" class="btn-lien btn-voir-agneau-adopte" data-eid="${lamb.eid || ''}" data-target="${(lamb.sexe === 'Femelle' && lamb.triStatut === 'gardée') ? 'agnelles' : 'agneaux'}" style="min-height:0;padding:0;font-size:13px;">${numeroAgneauTexte(lamb)}</button>
       <span class="badge ${lamb.sexe === 'Mâle' ? 'badge-blue' : 'badge-amber'}">${lamb.sexe}</span>
-      <span style="font-size:12px;color:var(--text-muted);">né de <button type="button" class="btn-lien btn-voir-mere-bio-adopte" data-eid="${mereBiologique.eid}" style="min-height:0;padding:0;font-size:12px;">n°${numeroVisuel(mereBiologique.eid)}</button>${dateMiseBasDe(mereBiologique, lamb) ? ' le ' + formatDateFr(dateMiseBasDe(mereBiologique, lamb)) : ''} · ne compte pas dans sa portée</span>
+      <span style="font-size:12px;color:var(--text-muted);">né de <button type="button" class="btn-lien btn-voir-mere-bio-adopte" data-eid="${mereBiologique.eid}" style="min-height:0;padding:0;font-size:12px;">${echapperHtml(numeroAnimal(mereBiologique.eid))}</button>${dateMiseBasDe(mereBiologique, lamb) ? ' le ' + formatDateFr(dateMiseBasDe(mereBiologique, lamb)) : ''} · ne compte pas dans sa portée</span>
     </div>`).join('');
   const agnelageHtml = agnelageCourantIdx === -1 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun agnelage enregistré cette campagne.</div>' : `
     <div class="swipe-wrap" data-kind="agnelages" data-idx="${agnelageCourantIdx}">
@@ -12354,7 +12362,7 @@ function renderDetail(id) {
               <span class="badge ${l.sexe === 'Mâle' ? 'badge-blue' : 'badge-amber'}">${l.sexe}</span>
               ${mereBioDe.has(l) ? '<span class="badge badge-muted">Adopté</span>' : ''}
             </div>
-            ${mereBioDe.has(l) ? `<div style="font-size:12px;color:var(--text-muted);">né de <button type="button" class="btn-lien btn-voir-mere-bio-adopte" data-eid="${mereBioDe.get(l).eid}" style="min-height:0;padding:0;font-size:12px;">n°${numeroVisuel(mereBioDe.get(l).eid)}</button></div>` : ''}
+            ${mereBioDe.has(l) ? `<div style="font-size:12px;color:var(--text-muted);">né de <button type="button" class="btn-lien btn-voir-mere-bio-adopte" data-eid="${mereBioDe.get(l).eid}" style="min-height:0;padding:0;font-size:12px;">${echapperHtml(numeroAnimal(mereBioDe.get(l).eid))}</button></div>` : ''}
           </div>
         </div>
         ${sortieDecidee
@@ -12373,7 +12381,7 @@ function renderDetail(id) {
   }).join('');
 
   const mereBlock = sheep.mereEid
-    ? `<button type="button" class="btn btn-secondary" id="btn-voir-mere-sheep" style="margin-bottom:16px;">Voir la fiche de la mère (n°${numeroVisuel(sheep.mereEid)})</button>`
+    ? `<button type="button" class="btn btn-secondary" id="btn-voir-mere-sheep" style="margin-bottom:16px;">Voir la fiche de la mère (${echapperHtml(numeroAnimal(sheep.mereEid))})</button>`
     : '';
   // Généalogie déclarative (texte libre) : utile pour un animal acheté dont
   // le père (voire la mère) est connu sans lien de fiche réel (ex: IA) —
@@ -12616,7 +12624,7 @@ function renderDetail(id) {
   // généalogie n'ayant pas sa place dans un bandeau d'en-tête.
   const desktopHeaderHtml = !desktop ? '' : ficheDesktopHeaderHtml({
     icon: ICON_SHEEP, iconColor: 'green',
-    titre: 'Brebis n°' + numeroVisuel(sheep.eid), eid: sheep.eid,
+    titre: 'Brebis ' + numeroAnimal(sheep.eid), eid: sheep.eid,
     badges: attendueTraiteBadge + statutBadge + `<span class="badge badge-muted">${age(sheep.eid)} an(s) (${anneeNaissance(sheep.eid)})</span>`
   });
 
@@ -12645,14 +12653,14 @@ function renderDetail(id) {
   if (btnAddNote) btnAddNote.onclick = () => { editContext = null; render('add-note', sheep.id); };
   const btnMarquerVideDef = document.getElementById('btn-marquer-vide-def');
   if (btnMarquerVideDef) btnMarquerVideDef.onclick = () => {
-    if (!confirm('Marquer la brebis n°' + numeroVisuel(sheep.eid) + ' comme vide définitive pour cette campagne ? Elle ne sera plus comptée dans "mises bas restantes attendues".')) return;
+    if (!confirm('Marquer la brebis ' + numeroAnimal(sheep.eid) + ' comme vide définitive pour cette campagne ? Elle ne sera plus comptée dans "mises bas restantes attendues".')) return;
     marquerVideDefinitive(sheep);
     saveData(DB);
     render('detail', sheep.id);
   };
   const btnAnnulerVideDef = document.getElementById('btn-annuler-vide-def');
   if (btnAnnulerVideDef) btnAnnulerVideDef.onclick = () => {
-    if (!confirm('Annuler le statut "vide définitive" de la n°' + numeroVisuel(sheep.eid) + ' pour cette campagne ?')) return;
+    if (!confirm('Annuler le statut "vide définitive" de la brebis ' + numeroAnimal(sheep.eid) + ' pour cette campagne ?')) return;
     annulerVideDefinitive(sheep);
     saveData(DB);
     render('detail', sheep.id);
@@ -12713,7 +12721,7 @@ function renderDetail(id) {
   });
   const btnDeleteSheep = document.getElementById('btn-delete-sheep');
   if (btnDeleteSheep) btnDeleteSheep.onclick = () => {
-    if (!confirm('Supprimer la brebis n°' + numeroVisuel(sheep.eid) + ' ? Son carnet sanitaire, ses mises bas et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
+    if (!confirm('Supprimer la brebis ' + numeroAnimal(sheep.eid) + ' ? Son carnet sanitaire, ses mises bas et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
     // Notes (chantier "Onglet Notes") : seule donnée explicitement archivée
     // avant cette suppression sèche -- séparément de DB.registre (structure
     // figée/réglementaire du Registre d'élevage, jamais touchée ici) pour
@@ -12753,7 +12761,7 @@ function renderAddEcho(sheepId) {
   app.innerHTML = `
     ${campagneEchoOptionsHtml(campagneChoisie)}
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis n°${numeroVisuel(sheep.eid)}</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis ${echapperHtml(numeroAnimal(sheep.eid))}</div>
 
       <label>Date</label>
       <input type="date" id="f-date" value="${today}">
@@ -13119,7 +13127,7 @@ function renderAddNote(sheepId) {
 
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis n°${numeroVisuel(sheep.eid)}</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis ${echapperHtml(numeroAnimal(sheep.eid))}</div>
       ${noteFormHtml(existing, editing, 'var(--amber-fg)')}
     </div>
   `;
@@ -13214,7 +13222,7 @@ function renderAddAgnelage(sheepId) {
 
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Mère — Brebis n°${numeroVisuel(sheep.eid)}</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Mère — Brebis ${echapperHtml(numeroAnimal(sheep.eid))}</div>
       ${editing ? '' : modeMiseBasHtml(false)}
       <label for="f-date">${avortement ? 'Date de l\'avortement' : 'Date de naissance'}</label>
       <input type="date" id="f-date" value="${today}" style="margin-bottom:16px;">
@@ -13776,7 +13784,7 @@ function renderEchoRapide() {
       return `
         <div class="card" id="carte-echo-brebis" data-brebis-trouvee>
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px;">
-            <span style="font-size:20px;font-weight:700;color:var(--ch-vert-fonce);">n°${numeroVisuel(currentSheep.eid)}</span>
+            <span style="font-size:20px;font-weight:700;color:var(--ch-vert-fonce);">${echapperHtml(numeroAnimal(currentSheep.eid))}</span>
             ${prec ? `<span class="found-badge" id="echo-precedente" style="${prec.vide ? 'background:var(--ch-ambre-pastel);color:var(--ch-ambre-texte);' : ''}">Précédente : ${prec.texte}</span>` : ''}
           </div>
           <div class="info" style="margin-bottom:10px;">${age(currentSheep.eid)} an(s)${prec ? ' · écho du ' + formatDateFr(prec.echo.date) : ''}</div>
@@ -13825,7 +13833,7 @@ function renderEchoRapide() {
             <span style="width:44px;height:44px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--coral-fg);">${ICON_WARNING.replace('viewBox="0 0 24 24"', 'width="22" height="22" viewBox="0 0 24 24"')}</span>
             <div>
               <div style="font-weight:700;color:var(--coral-fg);">Brebis inconnue</div>
-              <div style="font-size:12px;color:var(--coral-fg);opacity:0.85;">Aucune fiche pour cet EID (n°${numeroVisuel(unknownEid)}).</div>
+              <div style="font-size:12px;color:var(--coral-fg);opacity:0.85;">Aucune fiche pour cet EID (${echapperHtml(numeroAnimal(unknownEid))}).</div>
             </div>
           </div>
           <button type="button" class="btn btn-primary" id="btn-create-unknown" style="margin-bottom:8px;">Créer cette brebis et continuer</button>
@@ -14865,7 +14873,7 @@ function renderIdentifierAgneaux() {
         const liste = porteesAIdentifier(E.q);
         if (!liste.length) return `<div class="msg-charte alerte" id="id-aucune">Aucune mère avec des agneaux sans n° ne correspond à « ${echapperHtml(E.q)} ».</div>`;
         return `<div ${TITRE}>${E.q ? 'Correspondent' : 'À identifier'} · ${liste.length}</div>` + liste.map(x => carteListeHtml({
-          nm: 'n°' + echapperHtml(numeroVisuel(x.sheep.eid)),
+          nm: echapperHtml(numeroAnimal(x.sheep.eid)),
           l2: echapperHtml(formatDateFr(x.date) + ' · ' + x.agneaux.map(it => agneauLibelle(it.lamb)).join(', ')),
           pastille: cartePastille(x.agneaux.length + ' sans n°'),
           ouvre: true, attrs: `data-cle="${echapperHtml(x.cle)}"`, cls: 'id-portee'
@@ -14894,10 +14902,10 @@ function renderIdentifierAgneaux() {
       const faits = lambsTous.map((l, li) => ({ l, li })).filter(x => x.l && x.l.sexe && x.l.sexe !== 'Mort-né' && cleanEid(x.l.eid || '') && !p.agneaux.some(a => a.li === x.li));
       const nbSoins = l => (l.sanitaire || []).length;
       app.innerHTML = `${tuiles}
-        <div class="card" id="id-mere"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><b style="font-size:20px;color:var(--ch-vert-fonce);">Mère n°${echapperHtml(numeroVisuel(p.sheep.eid))}</b><span class="mb-pastille">${lambsTous.filter(l => l && l.sexe && l.sexe !== 'Mort-né').length > 1 ? 'Portée de ' + lambsTous.filter(l => l && l.sexe && l.sexe !== 'Mort-né').length : 'Simple'}</span></div>
+        <div class="card" id="id-mere"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><b style="font-size:20px;color:var(--ch-vert-fonce);">Mère ${echapperHtml(numeroAnimal(p.sheep.eid))}</b><span class="mb-pastille">${lambsTous.filter(l => l && l.sexe && l.sexe !== 'Mort-né').length > 1 ? 'Portée de ' + lambsTous.filter(l => l && l.sexe && l.sexe !== 'Mort-né').length : 'Simple'}</span></div>
         <div class="info">Mise bas du ${formatDateFr(p.date)}</div></div>
         <div class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Quel agneau ?</div>
-        ${faits.map(x => `<div class="id-agneau fait"><div><b>${agneauLibelle(x.l)}</b><div class="info">n°${echapperHtml(numeroVisuel(x.l.eid))}</div></div><span class="mb-pastille vert">Identifié</span></div>`).join('')}
+        ${faits.map(x => `<div class="id-agneau fait"><div><b>${agneauLibelle(x.l)}</b><div class="info">${echapperHtml(numeroAnimal(x.l.eid))}</div></div><span class="mb-pastille vert">Identifié</span></div>`).join('')}
         ${p.agneaux.map(it => `<button type="button" class="id-agneau${E.li === it.li ? ' sel' : ''}" data-li="${it.li}" aria-pressed="${E.li === it.li}"><div><b>${agneauLibelle(it.lamb)}</b><div class="info">sans n°${nbSoins(it.lamb) ? ' · ' + nbSoins(it.lamb) + ' soin' + (nbSoins(it.lamb) > 1 ? 's' : '') + ' déjà fait' + (nbSoins(it.lamb) > 1 ? 's' : '') : ''}</div></div><span class="id-radio" aria-hidden="true"></span></button>`).join('')}
         ${E.li !== null ? `<div class="tab-bar sexe-bar" id="id-sexe" aria-label="Sexe de l'agneau">${['Mâle', 'Femelle'].map(v => `<button type="button" class="tab-btn id-sexe-opt${E.sexe === v ? ' active' : ''}" data-val="${v}" aria-pressed="${E.sexe === v}">${v}</button>`).join('')}</div>
         <label for="id-eid" style="margin-top:6px;">N° de boucle</label>${champEidAgneauHtml('eid-input-ident', 'id-eid', E.saisie, 'Saisir le n° (ex. 71001)')}
@@ -15110,17 +15118,17 @@ function renderMiseBasRapide() {
     const bloc = controles.bloquants[0];
     const warn = ICON_WARNING.replace('viewBox="0 0 24 24"', 'width="22" height="22" viewBox="0 0 24 24"');
     const unknownHtml = conflitEid ? `<div class="mb-msg bloc" id="mb-conflit"><b>EID déjà utilisé</b><span>${messageEidDejaUtilise(conflitEid)} Impossible de créer une brebis avec cet EID.</span><button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">OK</button></div>`
-      : unknownEid ? `<div class="mb-msg bloc" id="mb-inconnue"><b>Brebis inconnue</b><span>Aucune fiche pour cet EID (n°${numeroVisuel(unknownEid)}).</span><button type="button" class="btn btn-primary" id="btn-create-unknown-mb">Créer cette brebis et continuer</button><button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">Annuler ce scan</button></div>` : '';
+      : unknownEid ? `<div class="mb-msg bloc" id="mb-inconnue"><b>Brebis inconnue</b><span>Aucune fiche pour cet EID (${echapperHtml(numeroAnimal(unknownEid))}).</span><button type="button" class="btn btn-primary" id="btn-create-unknown-mb">Créer cette brebis et continuer</button><button type="button" class="btn btn-secondary" id="btn-cancel-unknown-mb">Annuler ce scan</button></div>` : '';
     const ambiguHtml = candidatsAmbigus ? `<div class="card"><div style="font-weight:600;margin-bottom:8px;">Plusieurs brebis correspondent à ce numéro</div><div id="mb-ambigu-candidats" style="font-size:13px;"></div></div>` : '';
     const confirmation = derniere ? `<div class="mb-msg ok" id="mb-confirmation"><b>${derniere.avortement ? 'Avortement enregistré' : 'Mise bas enregistrée'}</b><span>n°${derniere.numero} · ${derniere.resume}</span><button type="button" class="lien" id="btn-annuler-derniere">Annuler cette saisie</button></div>`
       : annulee ? `<div class="mb-msg neutre" id="mb-annulee"><b>${annulee}</b></div>` : '';
     const blocage = (currentSheep && bloc) ? `
-      <div class="mb-msg bloc" id="mb-blocage"><span class="mb-pastille" style="align-self:flex-start;background:var(--ch-carte);color:var(--ch-rouge);">Blocage</span><b>n°${numeroVisuel(currentSheep.eid)} a déjà mis bas cette campagne</b><span>Le ${formatDateFr(bloc.date)} · ${bloc.nbAgneaux} agneau${bloc.nbAgneaux > 1 ? 'x' : ''}. Une seule mise bas par campagne.</span></div>
+      <div class="mb-msg bloc" id="mb-blocage"><span class="mb-pastille" style="align-self:flex-start;background:var(--ch-carte);color:var(--ch-rouge);">Blocage</span><b>${echapperHtml(numeroAnimal(currentSheep.eid))} a déjà mis bas cette campagne</b><span>Le ${formatDateFr(bloc.date)} · ${bloc.nbAgneaux} agneau${bloc.nbAgneaux > 1 ? 'x' : ''}. Une seule mise bas par campagne.</span></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px;"><button type="button" class="btn btn-secondary" id="btn-ouvrir-fiche-mb" style="margin:0;border-color:var(--ch-vert);color:var(--ch-vert);">Ouvrir la fiche</button><button type="button" class="btn btn-secondary" id="btn-autre-brebis-mb" style="margin:0;">Autre brebis</button></div>
       <button type="button" class="btn-lien" id="btn-edit-existing-agnelage-rapide">Modifier l'agnelage existant</button>` : '';
     const formulaire = (currentSheep && form && !bloc) ? `
       <div class="card" id="mb-formulaire" data-brebis-trouvee>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><span style="font-size:20px;font-weight:700;color:var(--ch-vert-fonce);">n°${numeroVisuel(currentSheep.eid)}</span>${(() => { const sr = statutReproductionCampagne(currentSheep); return sr && sr !== 'Aucune info repro' ? `<span class="mb-pastille ${/^Gestante|^Mise bas/.test(sr) ? 'vert' : 'ambre'}">${sr}</span>` : ''; })()}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><span style="font-size:20px;font-weight:700;color:var(--ch-vert-fonce);">${echapperHtml(numeroAnimal(currentSheep.eid))}</span>${(() => { const sr = statutReproductionCampagne(currentSheep); return sr && sr !== 'Aucune info repro' ? `<span class="mb-pastille ${/^Gestante|^Mise bas/.test(sr) ? 'vert' : 'ambre'}">${sr}</span>` : ''; })()}</div>
         <div class="info" style="margin-bottom:10px;">${age(currentSheep.eid)} an(s)${(() => { const pe = echoPrecedenteBrebis(currentSheep); return pe ? ' · écho du ' + formatDateFr(pe.echo.date) : ''; })()}</div>
         ${modeMiseBasHtml(form.avortement)}
         <label for="f-date-rapide">Date de ${form.avortement ? 'l\'avortement' : 'mise bas'}</label>
@@ -15142,7 +15150,7 @@ function renderMiseBasRapide() {
       <div id="err" class="error-box hidden"></div>` : '';
     const derniers = (!form && !currentSheep && rows.length) ? `
       <div class="sec" style="font-size:12px;color:var(--ch-texte2);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin:4px 2px 8px;">Mises bas de la campagne · ${rows.length}</div>
-      <div class="card" id="mb-dernieres" style="padding:0 14px;">${rows.map(r => { const sh = findSheep(r.sheepId), ag = sh.agnelages[r.agnelageIdx], [lib, ton] = r.avortement ? ['Avortement', ''] : miseBasPortee(r.total); return `<div class="mb-der" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}"><div class="c"><div class="a">n°${r.courtSieol || r.numero}</div><div class="b">${formatDateFr(r.date)} · ${resumeAgnelage(ag)}</div></div><span class="mb-pastille ${ton}">${lib}</span></div>`; }).join('')}</div>
+      <div class="card" id="mb-dernieres" style="padding:0 14px;">${rows.map(r => { const sh = findSheep(r.sheepId), ag = sh.agnelages[r.agnelageIdx], [lib, ton] = r.avortement ? ['Avortement', ''] : miseBasPortee(r.total); return `<div class="mb-der" data-sheep-id="${r.sheepId}" data-agnelage-idx="${r.agnelageIdx}"><div class="c"><div class="a">${echapperHtml(r.courtSieol || 'n°' + r.numero)}</div><div class="b">${formatDateFr(r.date)} · ${resumeAgnelage(ag)}</div></div><span class="mb-pastille ${ton}">${lib}</span></div>`; }).join('')}</div>
       <div class="info" style="margin:6px 2px 12px;">La dernière saisie en haut. Toucher une ligne pour la modifier.</div>` : '';
     const aujourdhui = jourAujourdhuiISO();
     const nbf = (n) => n > 0 ? String(n) : '<span style="color:var(--text-muted);">–</span>';
@@ -15155,7 +15163,7 @@ function renderMiseBasRapide() {
         ${pcKpi('Mâles', st.males, '', 'bleu')}${pcKpi('Femelles', st.femelles, '', 'ambre')}${pcKpi('Morts-nés', st.mortNes, st.avortons ? 'dont ' + st.avortons + ' avorton' + (st.avortons > 1 ? 's' : '') : '', 'ambre')}
         ${pcKpi('Restantes', st.cb.misesBasRestantes, fmtDecimal(pctReal, 1) + ' % réalisé', 'ambre')}
       </div>`;
-      const trouvee = (currentSheep && form && !bloc) ? `<div id="pc-brebis-trouvee" data-brebis-trouvee style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;"><b style="color:var(--ch-vert-fonce);font-size:18px;">n°${numeroVisuel(currentSheep.eid)}</b>${(() => { const sr = statutReproductionCampagne(currentSheep); return sr && sr !== 'Aucune info repro' ? pcPill(/^Gestante|^Mise bas/.test(sr) ? 'ok' : 'warn', sr) : ''; })()}<span class="brd-note" style="margin:0;">${age(currentSheep.eid)} an(s)${(() => { const pe = echoPrecedenteBrebis(currentSheep); return pe ? ' · écho du ' + formatDateFr(pe.echo.date) : ''; })()}</span></div>` : '';
+      const trouvee = (currentSheep && form && !bloc) ? `<div id="pc-brebis-trouvee" data-brebis-trouvee style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;"><b style="color:var(--ch-vert-fonce);font-size:18px;">${echapperHtml(numeroAnimal(currentSheep.eid))}</b>${(() => { const sr = statutReproductionCampagne(currentSheep); return sr && sr !== 'Aucune info repro' ? pcPill(/^Gestante|^Mise bas/.test(sr) ? 'ok' : 'warn', sr) : ''; })()}<span class="brd-note" style="margin:0;">${age(currentSheep.eid)} an(s)${(() => { const pe = echoPrecedenteBrebis(currentSheep); return pe ? ' · écho du ' + formatDateFr(pe.echo.date) : ''; })()}</span></div>` : '';
       const saisie = (currentSheep && form && !bloc) ? `
         <div style="max-width:360px;">${modeMiseBasHtml(form.avortement)}</div>
         <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start;margin-bottom:12px;">
@@ -15421,7 +15429,7 @@ function groupeMereAgneau(session, ags) {
 }
 // Réponse à un bip en vérification : { ton: 'ok' | 'alerte' | 'neutre', titre, detail, bip }
 function verifierMereAgneau(r, groupe, ags) {
-  const nv = e => 'n°' + numeroVisuel(e);
+  const nv = e => numeroAnimal(e);
   if (!r) return { ton: 'neutre', titre: 'N° inconnu', detail: "Aucune brebis présente ni aucun agneau de la campagne avec ce n°.", bip: 'ambigu' };
   if (r.type === 'ambigu') return { ton: 'neutre', titre: 'Plusieurs animaux', detail: 'Bipez ou tapez le n° complet.', bip: 'ambigu' };
   if (r.type === 'agneauSorti') return { ton: 'neutre', titre: 'Agneau ' + nv(r.lamb.eid), detail: 'Sorti, mort ou d\'une autre campagne : il ne compte pas.', bip: 'ambigu' };
@@ -15475,8 +15483,8 @@ function renderListeSerieVerif() {
   const nbRestants = b.agRestants.length + b.meresRestantes.length;
   const d = listeSerieDernier;
   const restantsHtml = !listeSerieRestants ? '' :
-    b.agRestants.map(x => carteListeHtml({ nm: echapperHtml('n°' + numeroVisuel(x.lamb.eid)), pastille: '<span class="badge badge-muted">Agneau</span>', l2: echapperHtml('mère n°' + numeroVisuel(x.mere.eid)) })).join('')
-    + b.meresRestantes.map(m => carteListeHtml({ nm: echapperHtml('n°' + numeroVisuel(m.eid)), pastille: '<span class="badge badge-muted">Mère</span>', l2: echapperHtml(ags.filter(x => x.mere === m && groupe.agneaux.has(x.lamb)).map(x => 'n°' + numeroVisuel(x.lamb.eid)).join(', ')) })).join('');
+    b.agRestants.map(x => carteListeHtml({ nm: echapperHtml(numeroAnimal(x.lamb.eid)), pastille: '<span class="badge badge-muted">Agneau</span>', l2: echapperHtml('mère ' + numeroAnimal(x.mere.eid)) })).join('')
+    + b.meresRestantes.map(m => carteListeHtml({ nm: echapperHtml(numeroAnimal(m.eid)), pastille: '<span class="badge badge-muted">Mère</span>', l2: echapperHtml(ags.filter(x => x.mere === m && groupe.agneaux.has(x.lamb)).map(x => numeroAnimal(x.lamb.eid)).join(', ')) })).join('');
   app.innerHTML = chantierTriTabBarHtml() + `
     <div class="card" style="margin-top:14px;">
       <label for="scan-verif">${isDesktopMode() ? 'Saisir le n° d\'un agneau ou d\'une brebis' : 'Biper un agneau ou une brebis'}</label>
@@ -15554,7 +15562,7 @@ function renderListeSerie() {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid var(--border);';
       row.innerHTML = `
-        <div style="font-weight:600;">n°${numeroVisuel(entry.eid)}
+        <div style="font-weight:600;">${echapperHtml(numeroAnimal(entry.eid))}
           ${entry.espece ? `<span class="badge badge-green" style="margin-left:6px;">${entry.espece}</span>` : '<span class="badge badge-muted" style="margin-left:6px;">Inconnu</span>'}
         </div>
         <button type="button" class="btn-remove-liste-serie" data-idx="${idx}" style="background:none;border:none;color:var(--text-muted);font-size:19px;padding:2px 8px;line-height:1;">✕</button>
@@ -15594,7 +15602,7 @@ function renderListeSerie() {
       if (!val) return;
       if (session.some(entry => entry.eid === val)) {
         playBeepDejaTrouve();
-        feedback.textContent = 'n°' + numeroVisuel(val) + ' déjà dans la liste.';
+        feedback.textContent = numeroAnimal(val) + ' déjà dans la liste.';
         feedback.style.color = 'var(--warning)';
         return;
       }
@@ -15658,7 +15666,7 @@ function renderAddControle(sheepId) {
 
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis n°${numeroVisuel(sheep.eid)}</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Brebis ${echapperHtml(numeroAnimal(sheep.eid))}</div>
 
       <label>Contrôle de la campagne</label>
       <div class="grid4" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px;">
@@ -16330,11 +16338,11 @@ function renderAddMouvement(sheepId) {
   pageTitle.textContent = editing ? 'Modifier le mouvement' : 'Nouveau mouvement';
   const cfg = CATEGORIE_ANIMAL_CONFIG.brebis;
 
-  app.innerHTML = `<div class="card">${mouvementFormHtml('Brebis n°' + numeroVisuel(sheep.eid), cfg.typeSortie, existing)}</div>`;
+  app.innerHTML = `<div class="card">${mouvementFormHtml('Brebis ' + numeroAnimal(sheep.eid), cfg.typeSortie, existing)}</div>`;
 
   wireMouvementForm({
     alerteTraite: true,
-    animal: { label: 'Brebis n°' + numeroVisuel(sheep.eid), obj: sheep },
+    animal: { label: 'Brebis ' + numeroAnimal(sheep.eid), obj: sheep },
     typeSortie: cfg.typeSortie,
     motifsVente: cfg.motifsVente,
     existing,
@@ -16364,7 +16372,7 @@ function renderAddMouvement(sheepId) {
       // l'ajout d'un nouveau mouvement, ni sur une simple correction de cause
       // ou d'acheteur qui ne change rien au statut.
       if (editing && sheep.statut !== statutAvant) {
-        if (!confirm('Modifier ce mouvement va faire passer le statut de la brebis n°' + numeroVisuel(sheep.eid) + ' de "' + statutAvant + '" à "' + sheep.statut + '". Confirmer ?')) {
+        if (!confirm('Modifier ce mouvement va faire passer le statut de la brebis ' + numeroAnimal(sheep.eid) + ' de "' + statutAvant + '" à "' + sheep.statut + '". Confirmer ?')) {
           sheep.mouvements[editContext.idx] = ancienMouvement;
           sheep.statut = statutAvant;
           return;
@@ -16500,8 +16508,24 @@ function numeroOfficielTexte(eid) {
 }
 // N° de travail SIEOL d'une brebis (n° de travail attribué par SIEOL) ; null s'il n'est pas connu (affiché « — », jamais remplacé par autre chose)
 function numeroCourtSieol(a) { return (a && (a.numeroCourtTravailSieol || a.numeroTravailSieol)) || null; }
-// N° montré dans une liste à cocher : n° de travail s'il est connu, sinon n° d'ordre (affichage seul, rien n'est écrit)
-function numeroTravailOuOrdre(a) { return numeroCourtSieol(a) || numeroVisuel((a && a.eid) || ''); }
+/* N° d'une bête à l'ÉCRAN (brebis, bélier ; agneaux et agnelles n'ont pas de n° de travail) : « 590 » (n° de travail, sans « n° ») s'il
+   est connu, sinon « n°51090 » (n° d'ordre). Accepte la bête ou son EID (retrouvée parmi les brebis et béliers). Affichage seul : aucun
+   numéro n'est modifié ; le Registre (document officiel) garde le n° d'ordre. Contrôle : test_numero_tape. */
+let cacheNumeroAnimal = null;
+function numeroAnimal(x) {
+  let a = x && typeof x === 'object' ? x : null;
+  const eid = a ? a.eid : x;
+  if (!a && eid) {
+    if (!cacheNumeroAnimal) {
+      cacheNumeroAnimal = new Map();
+      [...(DB.beliers || []), ...(DB.brebis || [])].forEach(b => { if (b && b.eid) cacheNumeroAnimal.set(cleanEid(b.eid), b); });
+      setTimeout(() => { cacheNumeroAnimal = null; }, 0);   // valable le temps d'un affichage : un n° de travail ajouté ensuite est vu
+    }
+    a = cacheNumeroAnimal.get(cleanEid(eid)) || null;
+  }
+  const c = numeroCourtSieol(a);
+  return c ? String(c) : 'n°' + numeroVisuel(eid || '');
+}
 // Père d'un agneau ou d'une agnelle : code IA et n° officiel de l'IA importée ; sinon père saisi à la main (texte tel quel) ; rien d'inventé
 function pereAgnelleTri(obj) {
   const ia = obj && obj.pereIa;
@@ -17702,7 +17726,7 @@ function renderBeliers() {
         <div class="list-row-ident">
           ${iconCircle(ICON_RAM, 'indigo', 'sm')}
           <div>
-            <div class="num">n°${numeroVisuel(b.eid)}</div>
+            <div class="num">${echapperHtml(numeroAnimal(b.eid))}</div>
             ${sieolTravailBadgeHtml(null, null, b.numeroTravailSieol) ? `<div class="sub">${sieolTravailBadgeHtml(null, null, b.numeroTravailSieol)}</div>` : ''}
           </div>
         </div>
@@ -17714,7 +17738,7 @@ function renderBeliers() {
       const actif = !(b.statut && b.statut !== 'actif');
       return `<div class="al-ligne" data-id="${b.id}" style="${actif ? '' : 'opacity:0.6;'}">
         <div class="al-id">
-          <div class="al-num">n°${numeroVisuel(b.eid)} ${sieolTravailBadgeHtml(null, null, b.numeroTravailSieol)}</div>
+          <div class="al-num">${echapperHtml(numeroAnimal(b.eid))} ${sieolTravailBadgeHtml(null, null, b.numeroTravailSieol)}</div>
           <div class="al-age">${age(b.eid) !== null ? age(b.eid) + ' an(s)' : 'âge inconnu'}</div>
         </div>
         <div class="al-pastilles"><span class="reg-pastille ${actif ? 'vert' : 'gris'}">${actif ? 'Actif' : b.statut}</span></div>
@@ -17802,7 +17826,7 @@ function ficheBelierTabsHtml(active, notesCount) {
 function renderBelierDetail() {
   const belier = DB.beliers.find(b => b.id === currentBelierId);
   if (!belier) { render('beliers'); return; }
-  pageTitle.textContent = 'Bélier n°' + numeroVisuel(belier.eid);
+  pageTitle.textContent = 'Bélier ' + numeroAnimal(belier.eid);
   if (ficheBelierTabId !== belier.id) { ficheBelierTab = 'ident'; ficheBelierTabId = belier.id; }
 
   const sanitaire = belier.sanitaire || [];
@@ -17960,7 +17984,7 @@ function renderBelierDetail() {
   });
   const btnDeleteBelier = document.getElementById('btn-delete-belier');
   if (btnDeleteBelier) btnDeleteBelier.onclick = () => {
-    if (!confirm('Supprimer le bélier n°' + numeroVisuel(belier.eid) + ' ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
+    if (!confirm('Supprimer le bélier ' + numeroAnimal(belier.eid) + ' ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
     DB.beliers = DB.beliers.filter(b => b.id !== belier.id);
     saveData(DB);
     render('beliers');
@@ -17976,10 +18000,10 @@ function renderAddMouvementBelier() {
   pageTitle.textContent = editing ? 'Modifier le mouvement' : 'Nouveau mouvement';
   const cfg = CATEGORIE_ANIMAL_CONFIG.beliers;
 
-  app.innerHTML = `<div class="card">${mouvementFormHtml('Bélier n°' + numeroVisuel(belier.eid), cfg.typeSortie, existing)}</div>`;
+  app.innerHTML = `<div class="card">${mouvementFormHtml('Bélier ' + numeroAnimal(belier.eid), cfg.typeSortie, existing)}</div>`;
 
   wireMouvementForm({
-    animal: { label: 'Bélier n°' + numeroVisuel(belier.eid), obj: belier },
+    animal: { label: 'Bélier ' + numeroAnimal(belier.eid), obj: belier },
     typeSortie: cfg.typeSortie,
     motifsVente: cfg.motifsVente,
     existing,
@@ -17996,7 +18020,7 @@ function renderAddMouvementBelier() {
       // Confirm() ciblé : voir renderAddMouvement (brebis) pour la logique
       // identique -- uniquement si modifier ce mouvement change le statut.
       if (editing && belier.statut !== statutAvant) {
-        if (!confirm('Modifier ce mouvement va faire passer le statut du bélier n°' + numeroVisuel(belier.eid) + ' de "' + statutAvant + '" à "' + belier.statut + '". Confirmer ?')) {
+        if (!confirm('Modifier ce mouvement va faire passer le statut du bélier ' + numeroAnimal(belier.eid) + ' de "' + statutAvant + '" à "' + belier.statut + '". Confirmer ?')) {
           belier.mouvements[editBelierContext.idx] = ancienMouvement;
           belier.statut = statutAvant;
           return;
@@ -18020,7 +18044,7 @@ function renderAddNoteBelier() {
 
   app.innerHTML = `
     <div class="card">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Bélier n°${numeroVisuel(belier.eid)}</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Bélier ${echapperHtml(numeroAnimal(belier.eid))}</div>
       ${noteFormHtml(existing, editing, 'var(--amber-fg)')}
     </div>
   `;
@@ -19216,6 +19240,7 @@ function correspondancesNumeroLotPc(lignes, saisie) {
   if (r.statut === 'trouve') return [r.item];
   if (r.statut === 'ambigu') return r.candidats;
   if (r.statut === 'propose') { const l = r.candidats.slice(); l.propose = r.ordre; return l; }
+  if (r.statut === 'partiel') { const l = r.candidats.slice(); l.partiel = true; return l; }   // morceau de n° : jamais coché d'office
   return [];
 }
 function filtrerLignesLotsPc(lignes, onglet, lot) {
@@ -19700,7 +19725,8 @@ function renderLotsPc() {
     const saisie = ev.target.value.trim();
     if (!saisie) return;
     const nomAnimal = agn ? 'agnelle' : 'brebis', trouves = correspondancesNumeroLotPc(lignesLotsPc(lot), saisie), lib = r => 'n°' + echoHtml(r.numero);
-    if (trouves.propose) { F.q = trouves.propose; E.messageNumero = { ton: 'alerte', texte: '« ' + echoHtml(saisie) + ' » n\'est noté sur aucune fiche : c\'est sans doute la n°' + echoHtml(trouves.propose) + ', cochez-la dans la liste.' }; }
+    if (trouves.partiel) { F.q = saisie; E.messageNumero = { ton: 'alerte', texte: 'Aucun n° ne vaut exactement « ' + echoHtml(saisie) + ' » : cochez la bonne bête dans la liste.' }; }
+    else if (trouves.propose) { F.q = trouves.propose; E.messageNumero = { ton: 'alerte', texte: '« ' + echoHtml(saisie) + ' » n\'est noté sur aucune fiche : c\'est sans doute la n°' + echoHtml(trouves.propose) + ', cochez-la dans la liste.' }; }
     else if (trouves.length === 1 && !trouves[0].dansCeLot) {
       const r = trouves[0], k = cleanEid(r.eid), deja = E.selection.has(k);
       E.selection.add(k); F.q = ''; ev.target.value = '';
@@ -19913,7 +19939,7 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
     listEl.innerHTML = items.map(it => `
       <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);">
         <input type="checkbox" class="sp-check" data-id="${it.id}" ${selectedIds.has(it.id) ? 'checked' : ''} style="width:18px;height:18px;margin:0;flex-shrink:0;">
-        <span class="sp-num" style="font-size:14px;">N°${echapperHtml(numeroTravailOuOrdre(it))}${numeroCourtSieol(it) && it.eid ? ` <span style="font-size:12px;color:var(--text-muted);">· ${numeroVisuel(it.eid)}</span>` : ''}</span>
+        <span class="sp-num" style="font-size:14px;">${echapperHtml(numeroAnimal(it))}</span>
         <span style="font-size:12px;color:var(--text-muted);margin-left:auto;">${renderMeta(it)}</span>
       </label>
     `).join('') || '<div style="font-size:13px;color:var(--text-muted);padding:8px 0;">Aucun animal.</div>';
@@ -19955,7 +19981,7 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
       wireEidLookupField(scan, {
         pool,
         feedbackEl: feedback,
-        notFoundMessage: (val) => 'n°' + numeroVisuel(val) + ' introuvable dans cette liste.',
+        notFoundMessage: (val) => numeroAnimal(val) + ' introuvable dans cette liste.',
         // Bip C (déjà sélectionnée) joué par wireEidLookupField à la place du
         // bip A -- avant, A puis C se jouaient ensemble pour une brebis déjà
         // sélectionnée.
@@ -19963,11 +19989,11 @@ function renderSelectionPicker(containerEl, pool, selectedIds, opts) {
         onFound: (item) => {
           feedback.classList.remove('hidden');
           if (selectedIds.has(item.id)) {
-            feedback.textContent = 'n°' + numeroTravailOuOrdre(item) + ' déjà sélectionnée.';
+            feedback.textContent = numeroAnimal(item) + ' déjà sélectionnée.';
             feedback.style.color = 'var(--warning)';
             return;
           }
-          feedback.textContent = 'n°' + numeroTravailOuOrdre(item) + ' ajoutée.';
+          feedback.textContent = numeroAnimal(item) + ' ajoutée.';
           feedback.style.color = 'var(--green-fg)';
           selectedIds.add(item.id);
           renderCounter();
@@ -20168,7 +20194,7 @@ function ouvrirModalRetraitLot(lot, eid, onDone) {
   overlay.className = 'modal-overlay';
   let motif = null;
   overlay.innerHTML = `<div class="modal-card">
-      <div style="font-weight:700;font-size:15px;margin-bottom:6px;">Retirer n°${numeroVisuel(eid)} du lot ?</div>
+      <div style="font-weight:700;font-size:15px;margin-bottom:6px;">Retirer ${echapperHtml(numeroAnimal(eid))} du lot ?</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Motif (facultatif)</div>
       <div class="grid2" style="margin-bottom:14px;"><button type="button" class="opt-btn motif-retrait" data-val="Malade">Malade</button><button type="button" class="opt-btn motif-retrait" data-val="Autre">Autre</button></div>
       <button type="button" class="btn btn-secondary btn-supprimer" id="retrait-confirm" style="margin-bottom:8px;">Retirer</button>
@@ -20198,7 +20224,7 @@ function renderLotReproDetail(lotId) {
     const d = jourDe(e.date) ? formatDateFr(jourDe(e.date)) : '';
     if (e.type === 'initial') lignesHisto.push(d + ' · lot existant repris au journal · ' + libN((e.eids || []).length));
     else if ((e.eids || []).length > 5) lignesHisto.push(d + ' · ' + libN(e.eids.length) + (e.type === 'retrait' ? ' retirées' : ' affectées') + ' (' + (e.source || '?') + ')' + (e.motif ? ' · ' + e.motif.toLowerCase() : ''));
-    else (e.eids || []).slice().reverse().forEach(x => lignesHisto.push(d + ' · n°' + numeroVisuel(x) + (e.type === 'retrait' ? ' retirée' : ' ajoutée') + (e.motif ? ' · ' + e.motif.toLowerCase() : '') + (e.source === 'PC' ? ' (PC)' : '')));
+    else (e.eids || []).slice().reverse().forEach(x => lignesHisto.push(d + ' · ' + numeroAnimal(x) + (e.type === 'retrait' ? ' retirée' : ' ajoutée') + (e.motif ? ' · ' + e.motif.toLowerCase() : '') + (e.source === 'PC' ? ' (PC)' : '')));
   });
   const infoDate = lot.mode === 'EP' ? 'Pose le ' + (lot.datePose ? formatDateFr(lot.datePose) : '—') + ' · lutte le ' + formatDateFr(lot.dateEvenement) : 'IA le ' + formatDateFr(lot.dateEvenement || lot.dateCreation);
   const cm = campagneMisesBasDuLot(lot);
@@ -20211,7 +20237,7 @@ function renderLotReproDetail(lotId) {
     <div id="lr-err" class="error-box hidden"></div>
     ${toastActif ? `<div id="lr-toast" style="background:${toastActif.ton === 'warn' ? 'var(--amber-bg)' : 'var(--green-bg)'};color:${toastActif.ton === 'warn' ? 'var(--amber-fg)' : 'var(--green-fg)'};border-radius:14px;padding:10px 12px;font-size:13px;font-weight:600;margin:0 0 12px;">${toastActif.texte}</div>` : ''}
     <div style="font-size:15px;font-weight:700;margin:16px 0 4px;">${agn ? 'Antenaises' : 'Brebis'} du lot</div>
-    ${membres.length ? membres.map(m => `<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-top:8px;" data-eid="${m.eid}"><div style="font-size:14px;">n°${m.court || m.numero}${ajoutesAujourdhui.has(cleanEid(m.eid)) ? '<div style="font-size:11px;color:var(--text-muted);">ajoutée aujourd\'hui</div>' : ''}${m.sortie ? `<div style="font-size:11px;color:var(--text-muted);">${m.sortie} — reste dans le lot (hors taux)</div>` : ''}</div><button type="button" class="btn btn-secondary btn-retirer-lot" data-eid="${m.eid}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Retirer</button></div>`).join('') : '<div class="empty">Lot vide : les ' + (agn ? 'antenaises' : 'brebis') + ' s\'affectent depuis le PC, ou par bip ci-dessus.</div>'}
+    ${membres.length ? membres.map(m => `<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-top:8px;" data-eid="${m.eid}"><div style="font-size:14px;">${echapperHtml(m.court || 'n°' + m.numero)}${ajoutesAujourdhui.has(cleanEid(m.eid)) ? '<div style="font-size:11px;color:var(--text-muted);">ajoutée aujourd\'hui</div>' : ''}${m.sortie ? `<div style="font-size:11px;color:var(--text-muted);">${m.sortie} — reste dans le lot (hors taux)</div>` : ''}</div><button type="button" class="btn btn-secondary btn-retirer-lot" data-eid="${m.eid}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Retirer</button></div>`).join('') : '<div class="empty">Lot vide : les ' + (agn ? 'antenaises' : 'brebis') + ' s\'affectent depuis le PC, ou par bip ci-dessus.</div>'}
     <div style="font-size:15px;font-weight:700;margin:18px 0 4px;">Historique du lot</div>
     <div class="card" style="padding:8px 12px;" id="lr-histo">${lignesHisto.length ? lignesHisto.slice(0, 30).map(l => `<div style="font-size:12px;color:var(--text-muted);padding:6px 0;border-top:1px solid var(--border);">${l}</div>`).join('') + (lignesHisto.length > 30 ? `<div style="font-size:12px;color:var(--text-muted);padding:6px 0;">… et ${lignesHisto.length - 30} lignes plus anciennes</div>` : '') : '<div style="font-size:12px;color:var(--text-muted);padding:6px 0;">Aucun mouvement enregistré.</div>'}</div>`;
   const rendreToast = (texte, ton) => { lotReproToast = { texte, ton, t: Date.now() }; renderLotReproDetail(lot.id); setTimeout(() => { const t = document.getElementById('lr-toast'); if (t) t.remove(); lotReproToast = null; }, 6000); const n = document.getElementById('lr-scan'); if (n) n.focus(); };
@@ -20224,14 +20250,14 @@ function renderLotReproDetail(lotId) {
     pool: pool(),
     getEid: a => a.eid,
     feedbackEl: document.getElementById('lr-err'),
-    notFoundMessage: val => { const v = cleanEid(val); const autre = DB.brebis.find(s => cleanEid(s.eid) === v || numeroVisuel(s.eid) === v); return autre && !agn ? 'n°' + numeroVisuel(autre.eid) + ' n\'est pas active (' + (autre.statut || '') + ') : seules les brebis actives peuvent être ajoutées.' : 'Aucune ' + (agn ? 'antenaise' : 'brebis active') + ' correspondante.'; },
+    notFoundMessage: val => { const v = cleanEid(val); const autre = DB.brebis.find(s => cleanEid(s.eid) === v || numeroVisuel(s.eid) === v); return autre && !agn ? numeroAnimal(autre.eid) + ' n\'est pas active (' + (autre.statut || '') + ') : seules les brebis actives peuvent être ajoutées.' : 'Aucune ' + (agn ? 'antenaise' : 'brebis active') + ' correspondante.'; },
     estDejaTrouve: a => enLot(a.eid),                                   // bip différencié « déjà dans le lot » : rien n'est ajouté
     onFound: a => {
       if (!garderLotsModifiables()) return;
-      if (enLot(a.eid)) { rendreToast('n°' + numeroVisuel(a.eid) + ' est déjà dans le lot.', 'warn'); return; }
+      if (enLot(a.eid)) { rendreToast(numeroAnimal(a.eid) + ' est déjà dans le lot.', 'warn'); return; }
       if (affecterAuLotPc(lot, [{ eid: a.eid, obj: a }]) < 0) { rendreToast('Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n\'a été ajouté. À trancher sur PC.', 'warn'); return; }
       saveData(DB);
-      rendreToast('n°' + numeroVisuel(a.eid) + ' ajoutée au lot · ' + libN((lot.membres || []).length), 'ok');
+      rendreToast(numeroAnimal(a.eid) + ' ajoutée au lot · ' + libN((lot.membres || []).length), 'ok');
     }
   });
   document.querySelectorAll('.btn-retirer-lot').forEach(btn => { btn.onclick = () => {
@@ -20239,13 +20265,13 @@ function renderLotReproDetail(lotId) {
     const eid = btn.dataset.eid;
     ouvrirModalRetraitLot(lot, eid, motif => {
       const animal = trouverAnimalReproOuArchive(eid);
-      if (animal && miseBasRattacheeAuLot(animal, lot)) { rendreToast('Retrait impossible pour n°' + numeroVisuel(eid) + ' : une mise bas lui est déjà rattachée dans ce lot.', 'warn'); return; }
+      if (animal && miseBasRattacheeAuLot(animal, lot)) { rendreToast('Retrait impossible pour ' + numeroAnimal(eid) + ' : une mise bas lui est déjà rattachée dans ce lot.', 'warn'); return; }
       if (lotJournalise(lot)) { const ev = ajouterEvenementLot(lot, 'retrait', [eid], { motif }); if (ev && ev.refuse) { rendreToast('Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n\'a été retiré. À trancher sur PC.', 'warn'); return; } }
       else lot.membres = lot.membres.filter(e => cleanEid(e) !== cleanEid(eid));
       const vivant = findAnimalReproByEid(eid);
       if (vivant) vivant.modesRepro = (vivant.modesRepro || []).filter(m => m.lotId !== lot.id);
       saveData(DB);
-      rendreToast('n°' + numeroVisuel(eid) + ' retirée du lot · ' + libN((lot.membres || []).length), 'ok');
+      rendreToast(numeroAnimal(eid) + ' retirée du lot · ' + libN((lot.membres || []).length), 'ok');
     });
   }; });
 }
@@ -20426,7 +20452,7 @@ function renderEditRepro() {
     retour();
   };
   document.getElementById('btn-del-edit-repro').onclick = () => {
-    if (!confirm('Supprimer cet évènement Repro (' + libelleModeRepro(entry.mode) + ') ? ' + (animal.eid ? 'n°' + numeroVisuel(animal.eid) + ' ' : '') + 'repassera par défaut en Monte naturelle tant qu\'elle n\'est pas remise dans un lot.')) return;
+    if (!confirm('Supprimer cet évènement Repro (' + libelleModeRepro(entry.mode) + ') ? ' + (animal.eid ? numeroAnimal(animal.eid) + ' ' : '') + 'repassera par défaut en Monte naturelle tant qu\'elle n\'est pas remise dans un lot.')) return;
     if (!garderLotsModifiables()) return;
     const lotOrigine = entry.lotId ? (DB.lots || []).find(l => l.id === entry.lotId) : null;
     if (lotOrigine && lotJournalise(lotOrigine) && ecartsMembresLots().some(x => x.lotId === lotOrigine.id)) { alert("Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n'a été supprimé."); return; }
@@ -20522,7 +20548,7 @@ function renderLotSearch(lotId) {
           ${lignes.map(l => `
             <tr class="lot-ligne" data-eid="${cleanEid(l.eid)}" style="border-top:1px solid var(--border);">
               <td style="padding:0;"><label style="display:flex;align-items:center;justify-content:center;padding:10px 12px;"><input type="checkbox" class="lot-check" data-eid="${cleanEid(l.eid)}" style="width:20px;height:20px;margin:0;"></label></td>
-              <td style="padding:8px;font-weight:600;">n°${numeroVisuel(l.eid)}</td>
+              <td style="padding:8px;font-weight:600;">${echapperHtml(numeroAnimal(l.eid))}</td>
               ${afficherSieol ? `<td style="padding:8px;color:var(--text-muted);">${xlsxEscape(l.sieol) || '—'}</td>` : ''}
             </tr>`).join('') || '<tr><td colspan="3" style="padding:12px;color:var(--text-muted);">Ce lot est vide.</td></tr>'}
         </table>
@@ -20531,7 +20557,7 @@ function renderLotSearch(lotId) {
     // Mobile : une carte par membre du lot (n°, case « Trouvée », n° SIEOL) ; mêmes lignes, même tri, même case à cocher
     : (lignes.length === 0 ? '<div class="empty">Ce lot est vide.</div>' : `<div class="cartes-liste" id="lot-cartes">${lignes.map(l => carteListeHtml({
       cls: 'lot-ligne', attrs: `data-eid="${cleanEid(l.eid)}"`,
-      nm: 'n°' + numeroVisuel(l.eid),
+      nm: echapperHtml(numeroAnimal(l.eid)),
       pastille: `<label class="lot-coche"><input type="checkbox" class="lot-check" data-eid="${cleanEid(l.eid)}"> Trouvée</label>`,
       l2: afficherSieol ? 'N° de travail : ' + (xlsxEscape(l.sieol) || '—') : ''
     })).join('')}</div>`)}
@@ -20593,13 +20619,13 @@ function renderLotSearch(lotId) {
     pool: lignes,
     getEid: l => l.eid,
     feedbackEl: feedback,
-    notFoundMessage: (val) => 'n°' + numeroVisuel(val) + " n'est pas dans ce lot.",
+    notFoundMessage: (val) => numeroAnimal(val) + " n'est pas dans ce lot.",
     estDejaTrouve: (l) => estTrouvee(l.eid),
     onFound: (l) => {
       const clean = cleanEid(l.eid);
       feedback.classList.remove('hidden');
       if (estTrouvee(clean)) {
-        feedback.textContent = 'n°' + numeroVisuel(clean) + ' déjà trouvée.';
+        feedback.textContent = numeroAnimal(clean) + ' déjà trouvée.';
         feedback.style.color = 'var(--warning)';
         const tr = majLigne(clean);
         if (tr) tr.scrollIntoView({ block: 'nearest' });
@@ -20607,7 +20633,7 @@ function renderLotSearch(lotId) {
       }
       trouvees.add(clean);
       ecrireTrouveesLot(lot.id, trouvees);
-      feedback.textContent = 'n°' + numeroVisuel(clean) + ' trouvée.';
+      feedback.textContent = numeroAnimal(clean) + ' trouvée.';
       feedback.style.color = 'var(--green-fg)';
       const tr = majLigne(clean);
       if (tr) tr.scrollIntoView({ block: 'nearest' });
@@ -20971,7 +20997,7 @@ function renderNouveauMouvementMobile() {
     wireEidLookupField(scan, {
       // le résolveur lit les n° de travail SIEOL (long / court) sur les éléments du pool : on les recopie depuis l'animal
       pool: tous.map(a => Object.assign({}, a, { numeroLongTravailSieol: a.obj.numeroLongTravailSieol, numeroCourtTravailSieol: a.obj.numeroCourtTravailSieol })), feedbackEl: fb,
-      notFoundMessage: val => 'n°' + numeroVisuel(val) + ' introuvable dans cette liste.',
+      notFoundMessage: val => numeroAnimal(val) + ' introuvable dans cette liste.',
       estDejaTrouve: it => sel.has(it.id),
       onFound: it => {
         if (sel.has(it.id)) { fb.textContent = 'n°' + libelleNumeroMv(it) + ' déjà sélectionné' + (cfg.actives === 'actifs' ? '' : 'e') + '.'; fb.style.color = 'var(--ch-ambre-texte)'; return; }
@@ -22005,10 +22031,12 @@ function ecranCarnetAnimaux() {
         if (E.selection.has(a.eid)) { bip(playBeepDejaTrouve); dire(nm + ' déjà sélectionné(e).', 'var(--ch-ambre-texte)'); }
         else { bip(playBeepTrouve); E.selection.add(a.eid); dire(nm + ' ajouté(e) à la sélection.', 'var(--ch-vert-fonce)'); }
         scanInput.value = ''; F.q = ''; F.candidats = null;
-      } else if (r.statut === 'ambigu' || r.statut === 'propose') {
+      } else if (r.statut === 'ambigu' || r.statut === 'propose' || r.statut === 'partiel') {
         bip(playBeepAmbigu);
         F.candidats = new Set(r.candidats.map(a => a.eid));
-        dire(r.statut === 'propose' ? '« ' + val + ' » n\'est noté sur aucune fiche : c\'est sans doute la n°' + r.ordre + ', ' + (mobile ? 'touche' : 'clique sur') + '-la dans la liste.' : r.candidats.length + ' animaux portent ce n° : ' + (mobile ? 'touche' : 'clique sur') + ' le bon dans la liste.', 'var(--ch-ambre-texte)');
+        dire(r.statut === 'propose' ? '« ' + val + ' » n\'est noté sur aucune fiche : c\'est sans doute la n°' + r.ordre + ', ' + (mobile ? 'touche' : 'clique sur') + '-la dans la liste.'
+          : r.statut === 'partiel' ? 'Aucun n° ne vaut exactement « ' + val + ' » : ' + (mobile ? 'touche' : 'clique sur') + ' la bonne bête dans la liste.'
+          : r.candidats.length + ' animaux portent ce n° : ' + (mobile ? 'touche' : 'clique sur') + ' le bon dans la liste.', 'var(--ch-ambre-texte)');
       } else {
         bip(playBeepRate);
         F.candidats = null;
@@ -22949,7 +22977,7 @@ function renderSousDelai() {
   const onglets = `<div class="tab-bar onglets-nav bc-onglets sd-onglets">${SOUS_DELAI_CATEGORIES.map(([k, l]) => `<button type="button" class="tab-btn${k === sousDelaiOnglet ? ' active' : ''}" data-tab="${k}">${l} (${parCat[k].length})</button>`).join('')}</div>`;
   const desktopSousDelai = isDesktopMode();
   const cols = [
-    { header: 'N°', value: r => r.libelle || ('n°' + numeroVisuel(r.eid)) },
+    { header: 'N°', value: r => r.libelle || (numeroAnimal(r.eid)) },
     { header: 'Produits (soin, fin du délai)', value: r => r.soins.map(libelleSoinSousDelai).join(' ; ') },
     { header: 'Fin du délai', value: r => formatDateFr(r.finDelai) },
     { header: 'Jours restants', value: r => String(joursRestantsAvant(r.finDelai)) }
@@ -23038,7 +23066,7 @@ function renderControleLotDelai() {
       ${session.detectees.length > 0 ? `
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">Brebis sous délai détectées (${session.detectees.length})</div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
-        ${session.detectees.map(d => `<div class="card" style="padding:10px 12px;"><b>n°${numeroVisuel(d.eid)}</b> — ${echapperHtml(d.produit)} — fin le ${formatDateFr(d.finDelai)}</div>`).join('')}
+        ${session.detectees.map(d => `<div class="card" style="padding:10px 12px;"><b>${echapperHtml(numeroAnimal(d.eid))}</b> — ${echapperHtml(d.produit)} — fin le ${formatDateFr(d.finDelai)}</div>`).join('')}
       </div>` : ''}
       <button type="button" class="btn btn-secondary" id="btn-reset-controle-lot">Réinitialiser la session</button>
     `;
@@ -23058,7 +23086,7 @@ function renderControleLotDelai() {
       if (r.statut === 'absent') {
         playBeepRate();
         session.inconnue++;
-        session.feedback = { text: 'n°' + numeroVisuel(val) + " -- EID inconnue du troupeau.", color: 'var(--danger)' };
+        session.feedback = { text: numeroAnimal(val) + " -- EID inconnue du troupeau.", color: 'var(--danger)' };
         draw();
         return;
       }
@@ -23068,11 +23096,11 @@ function renderControleLotDelai() {
         playBeepDejaTrouve();
         session.sousDelai++;
         enDelai.forEach(row => session.detectees.push(row));
-        session.feedback = { text: '⚠ n°' + numeroVisuel(brebis.eid) + ' SOUS DÉLAI (' + enDelai.map(row => row.produit).join(', ') + ').', color: 'var(--danger)' };
+        session.feedback = { text: '⚠ ' + numeroAnimal(brebis.eid) + ' SOUS DÉLAI (' + enDelai.map(row => row.produit).join(', ') + ').', color: 'var(--danger)' };
       } else {
         playBeepTrouve();
         session.ok++;
-        session.feedback = { text: 'n°' + numeroVisuel(brebis.eid) + ' — OK.', color: 'var(--success)' };
+        session.feedback = { text: numeroAnimal(brebis.eid) + ' — OK.', color: 'var(--success)' };
       }
       draw();
     }
@@ -31170,7 +31198,7 @@ function maintenanceRegistreBloc() {
         let msg = resultat.archives.length + ' fiche(s) archivée(s) et retirée(s).';
         if (resultat.echecs.length) {
           msg += ' ' + resultat.echecs.length + ' échec(s) (laissée(s) en place) : ' +
-            resultat.echecs.map(e => 'n°' + numeroVisuel(e.eid) + ' (' + e.raison + ')').join(', ') + '.';
+            resultat.echecs.map(e => numeroAnimal(e.eid) + ' (' + e.raison + ')').join(', ') + '.';
         }
         setStatus((resultat.echecs.length ? '⚠️ ' : '✅ ') + msg);
         // désactivé seulement si tout a réussi (le compteur resterait sinon à

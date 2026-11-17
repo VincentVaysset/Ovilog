@@ -60,7 +60,7 @@ const sans = await mob.evaluate(() => [...document.querySelectorAll('#cl-liste-s
 check(sans.length === 2 && /n°00200/.test(sans[0]) && /attendue à la traite/.test(sans[0]) && /n°00201/.test(sans[1]) && /pas encore attendue/.test(sans[1]), 'mêmes brebis que sur PC : ' + JSON.stringify(sans));
 check(await mob.evaluate(() => !!document.getElementById('btn-cl-voir-regulariser')), '« Voir dans Brebis à régulariser »');
 await mob.click('#cl-liste-sans .bilan-eid-link');
-eq(await mob.evaluate(() => [currentView, pageTitle.textContent]), ['detail', 'Brebis n°00200'], 'clic sur une brebis : sa fiche');
+eq(await mob.evaluate(() => [currentView, pageTitle.textContent]), ['detail', 'Brebis 8133'], 'clic sur une brebis : sa fiche (n° de travail)');
 await mob.evaluate(() => render('controle-laitier'));
 await mob.click('#btn-cl-bande-sans'); await mob.click('#btn-cl-voir-regulariser');
 eq(await mob.evaluate(() => [currentView, bilanCampagneTab]), ['bilan-campagne', 'incoherences'], '« Voir dans Brebis à régulariser »');
