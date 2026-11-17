@@ -46,12 +46,12 @@ for (const [route, input, ambig, nom] of [['echo-rapide', '#scan-echo', '#echo-a
   check(n.chips === 2 && !n.trouvee, nom + ' : collision -> 2 candidats, aucune sélection automatique, obtenu ' + JSON.stringify(n));
   await entrer(route, input);
   await saisir(input, '777'); // SIEOL unique
-  n = await page.evaluate(() => ({ trouvee: !!document.querySelector('.found-badge, [data-brebis-trouvee]'), texte: document.getElementById('app').textContent.includes('n°50003') }));
-  check(n.trouvee && n.texte, nom + ' : SIEOL unique "777" -> brebis n°50003 trouvée, obtenu ' + JSON.stringify(n));
+  n = await page.evaluate(() => ({ trouvee: !!document.querySelector('.found-badge, [data-brebis-trouvee]'), texte: document.getElementById('app').textContent.includes('777') }));
+  check(n.trouvee && n.texte, nom + ' : SIEOL unique "777" -> brebis 777 (n° de travail affiché) trouvée, obtenu ' + JSON.stringify(n));
   await entrer(route, input);
   await saisir(input, E.y);
-  n = await page.evaluate(() => document.getElementById('app').textContent.includes('n°40002'));
-  check(n, nom + ' : EID complet -> brebis n°40002');
+  n = await page.evaluate(() => document.getElementById('app').textContent.includes('30001'));
+  check(n, nom + ' : EID complet -> brebis de n° de travail 30001 (n° d\'ordre 40002)');
   console.log('OK ' + nom + ' : collision "30001" -> 2 candidats sans sélection automatique ; SIEOL "777" -> n°50003 ; EID complet -> n°40002.');
 }
 // --- mouvement collectif (bip en série du sélecteur) ---

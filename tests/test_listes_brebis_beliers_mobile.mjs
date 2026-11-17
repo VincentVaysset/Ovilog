@@ -65,7 +65,7 @@ check(!br.debord, 'aucun débordement horizontal à 390 px');
 eq(br.ordre, br.attendu, 'du plus âgé au plus jeune (même tri qu\'avant)');
 check(br.ages.every(a => /^\d+ an\(s\)$/.test(a)), 'âge sous le numéro : ' + JSON.stringify(br.ages));
 check(br.numCouleur === 'rgb(47, 110, 68)' && Number(br.numPoids) >= 700, 'n° en vert foncé gras : ' + br.numCouleur + ' ' + br.numPoids);
-check(br.sieol.filter(Boolean).length === 1, 'étiquette SIEOL sur la seule brebis renseignée');
+check(br.sieol.filter(Boolean).length === 0, 'plus d\'étiquette SIEOL (le n° de travail en gras suffit)');
 const ligneA = br.pastilles[br.ordre.indexOf('n°08133')];
 eq(ligneA, ['ambre:25/09 · 2 agn.'], 'mise bas de la campagne : pastille ambre, date courte « 25/09 · 2 agn. »');
 check(br.pastilles.filter((p, i) => br.ordre[i] !== 'n°08133').every(p => p[0] === 'gris:Aucun agnelage'), 'sans mise bas : pastille grise « Aucun agnelage »');
@@ -97,7 +97,7 @@ eq(be.info, 'Du plus âgé au plus jeune. Touche un bélier pour ouvrir sa fiche
 eq(be.ajout, '+ Ajouter un bélier', 'bouton conservé');
 eq(be.pastilles.map(p => p.slice(0, 2)), [['vert', 'Actif'], ['vert', 'Actif'], ['gris', 'vendu']], 'Actif en vert, autre statut en gris');
 check(be.pastilles[2][2] === '0.6' && be.pastilles[0][2] === '1', 'statut autre que actif atténué comme avant');
-check(be.sieol.filter(Boolean).length === 1, 'étiquette SIEOL du bélier renseigné');
+check(be.sieol.filter(Boolean).length === 0, 'plus d\'étiquette SIEOL sur les béliers');
 await mob.click('.al-ligne >> nth=0');
 eq(await mob.evaluate(() => currentView), 'belier-detail', 'toucher une ligne ouvre la fiche du bélier');
 await mob.evaluate(() => render('beliers'));

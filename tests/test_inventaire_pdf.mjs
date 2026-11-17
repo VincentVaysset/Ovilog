@@ -73,9 +73,9 @@ const pc = await ouvrir(true), mob = await ouvrir(false);
 const sorties = { PC: {}, mobile: {} };
 for (const [nom, page] of [['PC', pc], ['mobile', mob]]) {
   for (const [onglet, titre, pied, entetes] of [
-    ['brebis', 'Brebis', 'brebis', ['N° court', 'N° long', 'N° officiel']],
+    ['brebis', 'Brebis', 'brebis', ['N° de travail', 'N° de travail complet', 'N° officiel']],
     ['agnelles', 'Agnelles', 'agnelles', ["N° d'ordre", 'N° officiel', 'EID complet']],
-    ['beliers', 'Béliers', 'béliers', ['N° de travail SIEOL', 'N° officiel']],
+    ['beliers', 'Béliers', 'béliers', ['N° de travail', 'N° officiel']],
     ['agneaux', 'Agneaux', 'agneaux', ["N° d'ordre", 'N° officiel', 'EID complet']]]) {
     const s = await exporter(page, onglet);
     sorties[nom][onglet] = s;
@@ -106,7 +106,7 @@ for (const [nom, page] of [['PC', pc], ['mobile', mob]]) {
   const pb = lire(nom + '_brebis_pages.pdf', sorties[nom].brebis.b64);
   check(pb.pages >= 2, nom + ' : 75 brebis sur ' + pb.pages + ' pages');
   const tb = pb.texte.map(norm);
-  check(tb[1].includes('Inventaire · Brebis (suite)') && tb[1].includes('N° court') && new RegExp('Page 2/' + pb.pages).test(tb[1]), nom + ' : page 2 : suite, en-tête du tableau répété, numérotation');
+  check(tb[1].includes('Inventaire · Brebis (suite)') && tb[1].includes('N° de travail') && new RegExp('Page 2/' + pb.pages).test(tb[1]), nom + ' : page 2 : suite, en-tête du tableau répété, numérotation');
   check(pb.couleurs[1].vert_entete > 100, nom + ' : en-tête vert répété sur la page 2');
   const tousNumeros = [...norm(pb.texte.join(' ')).matchAll(/\b001210100(\d\d)\b/g)].map(m => m[1]);
   check(new Set(tousNumeros).size === 75 && tousNumeros.length === 75, nom + ' : les 75 brebis sont dans le PDF, une fois chacune (' + tousNumeros.length + ')');

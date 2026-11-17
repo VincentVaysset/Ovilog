@@ -28,7 +28,9 @@ import zipfile, re, json, sys
 z = zipfile.ZipFile(sys.argv[1])
 ss = z.read('xl/sharedStrings.xml').decode('utf-8')
 core = z.read('docProps/core.xml').decode('utf-8')
-print(json.dumps({'chaines': re.findall(r'<t[^>]*>([^<]*)</t>', ss), 'core': core}))
+wb = z.read('xl/workbook.xml').decode('utf-8')
+tout = ''.join(z.read(n).decode('utf-8', 'ignore') for n in z.namelist() if n.endswith('.xml') or n.endswith('.rels'))
+print(json.dumps({'chaines': re.findall(r'<t[^>]*>([^<]*)</t>', ss), 'core': core, 'onglets': re.findall(r'<sheet name="([^"]+)"', wb), 'chemin': bool(re.search(r'absPath|[A-Za-z]:\\\\Users|/home/|/Users/', tout))}))
 `, dossier + fichier], { encoding: 'utf8' }));
 for (const f of MODELES) {
   const m = lecture(f);
@@ -36,6 +38,8 @@ for (const f of MODELES) {
   check(trouve.length === 0, f + ' : aucun EID d\'exemple avec un indicatif réel (hors 00…) : ' + JSON.stringify(trouve));
   const auteurs = [...m.core.matchAll(/<(?:dc:creator|cp:lastModifiedBy)>([^<]*)</g)].map(x => x[1]);
   check(auteurs.every(a => AUTEURS_PERMIS.includes(a)), f + ' : métadonnées du fichier sans nom de personne : ' + JSON.stringify(auteurs));
+  check(!m.chemin, f + ' : aucun chemin de dossier du poste d\'origine (dépôt public)');
+  check(!m.onglets.includes('Instructions'), f + ' : plus d\'onglet « Instructions » (mode d\'emploi en PDF) : ' + JSON.stringify(m.onglets));
 }
 console.log('OK 2 modèles Excel : aucun EID, n° ni nom réel (contenu et métadonnées).');
 

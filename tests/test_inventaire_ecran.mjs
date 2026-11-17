@@ -100,7 +100,7 @@ for (const bureau of [true, false]) {
   await frappe('021012');
   await page.click('.inventaire-actifs-row');
   eq(await page.evaluate(() => currentView), 'detail', nom + ' : clic -> fiche brebis');
-  eq(await page.evaluate(() => pageTitle.textContent), 'Brebis n°10012', nom + ' : la fiche est celle de la brebis cherchée');
+  eq(await page.evaluate(() => pageTitle.textContent), 'Brebis 12', nom + ' : la fiche est celle de la brebis cherchée (n° de travail)');
   // retour : la recherche est conservée
   await page.evaluate(() => render('inventaire-actifs'));
   eq(await page.inputValue('#inventaire-recherche'), '021012', nom + ' : recherche conservée au retour');
@@ -140,7 +140,7 @@ for (const bureau of [true, false]) {
   await page.click('#btn-export-inventaire-xlsx'); await page.waitForFunction(() => window.__saisies.length === 2);
   const xl = await page.evaluate(() => ({ s: window.__saisies[1], f: window.__xlsx }));
   eq(xl.s.nom, 'inventaire_brebis_2026-10-09.xlsx', nom + ' : nom de l\'Excel');
-  eq(xl.f[0].rows, [['N° court', 'N° long', 'N° officiel'], ['3', '021003', '00121010003'], ['23', '021023', '00121010023']], nom + ' : l\'Excel ne contient que les lignes affichées');
+  eq(xl.f[0].rows, [['N° de travail', 'N° de travail complet', 'N° officiel'], ['3', '021003', '00121010003'], ['23', '021023', '00121010023']], nom + ' : l\'Excel ne contient que les lignes affichées');
   check(await page.evaluate(() => window.__saves === 0 && JSON.stringify(DB) === window.__avant), nom + ' : aucune écriture de données');
   console.log('OK ' + nom + ' : boutons, recherche (tous les numéros, espaces, focus), onglets, clic vers les fiches, exports = liste affichée.');
   await page.context().close();

@@ -60,26 +60,26 @@ for (const mobile of [true, false]) {
   await p.waitForSelector('.tri-export');
   let pg = await page();
   check(/^Export PDF · /.test(pg.titre), T + ' : titre « Export PDF · … » : ' + pg.titre);
-  eq(pg.options, ["Comme à l'écran", 'N° court', 'N° long', 'N° officiel'], T + ' : exactement les colonnes du PDF');
+  eq(pg.options, ["Comme à l'écran", 'N° de travail', 'N° de travail complet', 'N° officiel'], T + ' : exactement les colonnes du PDF');
   eq(await p.evaluate(() => window.__fichiers.length), 0, T + ' : essai à blanc : rien enregistré');
-  await p.selectOption('#te-c1', 'N° court');
+  await p.selectOption('#te-c1', 'N° de travail');
   pg = await page();
   eq(pg.sens, ['1 → 9', '9 → 1'], T + ' : sens d\'une colonne de nombres');
   await p.click('.te-sens .tab-btn[data-s="-1"]');
   check(/^Aperçu.*603.*602.*601/.test((await page()).apercu), T + ' : aperçu dans l\'ordre choisi : ' + (await page()).apercu);
-  await p.selectOption('#te-c2', 'N° long');
+  await p.selectOption('#te-c2', 'N° de travail complet');
   await p.evaluate(() => { window.__lignes = []; });
   await p.click('#te-exporter');
   await p.waitForFunction(() => window.__fichiers.length === 1);
   check(await p.evaluate(() => !document.querySelector('.tri-export')), T + ' : page fermée');
-  const ecrit = await p.evaluate(() => window.__lignes.find(t => t.labels.includes('N° court')));
+  const ecrit = await p.evaluate(() => window.__lignes.find(t => t.labels.includes('N° de travail')));
   eq(ecrit.lignes.map(r => r[0]), ['603', '602', '601'], T + ' : PDF trié 9 → 1');
   await p.waitForFunction(() => triExportActif === null && !triExportEnCours, null, { timeout: 3000 });   // tri remis à zéro une fois le fichier enregistré
   // Comme à l'écran
   await p.click('#btn-export-inventaire-pdf'); await p.waitForSelector('.tri-export');
   await p.evaluate(() => { window.__lignes = []; });
   await p.click('#te-exporter'); await p.waitForFunction(() => window.__fichiers.length === 2);
-  eq((await p.evaluate(() => window.__lignes.find(t => t.labels.includes('N° court')))).lignes.map(r => r[0]), ['601', '602', '603'], T + ' : « Comme à l\'écran » : ordre de l\'écran');
+  eq((await p.evaluate(() => window.__lignes.find(t => t.labels.includes('N° de travail')))).lignes.map(r => r[0]), ['601', '602', '603'], T + ' : « Comme à l\'écran » : ordre de l\'écran');
   // Annuler : rien
   await p.click('#btn-export-inventaire-pdf'); await p.waitForSelector('.tri-export');
   await p.click('#te-annuler');

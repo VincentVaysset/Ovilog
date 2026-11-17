@@ -37,18 +37,20 @@ const ref = mob.__ref;
 const cartes = () => mob.evaluate(() => [...document.querySelectorAll('.cl-carte')].map(c => ({ num: c.querySelector('.cl-num').textContent, mab: c.querySelector('.cl-mab').textContent, vals: [...c.querySelectorAll('.cl-val-v')].map(v => (v.childNodes[0].textContent + (v.querySelector('.cl-ano') ? ' ' + v.querySelector('.cl-ano').textContent : '')).replace(/\s+/g, ' ').trim()), aucun: !!c.querySelector('.cl-aucun'), ano: [...c.querySelectorAll('.cl-ano')].map(a => a.textContent) })));
 
 // ---- 1. structure et chiffres = page PC
-check(await mob.evaluate(() => /3 contrôles par campagne · import des résultats : Paramètres › Imports/.test(document.getElementById('cl-ligne-imports').textContent)), 'ligne sous le titre');
+check(await mob.evaluate(() => /\d+ contrôles? cette campagne.* · quantités en mL · import des résultats : Paramètres › Imports/.test(document.getElementById('cl-ligne-imports').textContent)), 'ligne sous le titre');
 check(await mob.evaluate(() => ![...document.querySelectorAll('#app button')].some(b => /Importer/.test(b.textContent)) && !document.getElementById('cl-distrib') && !document.querySelector('table')), 'aucun import, pas de distribution du C3, plus de tableau');
 const tuiles = await mob.evaluate(() => [...document.querySelectorAll('#cl-tuiles .reg-tuile')].map(t => { const r = t.getBoundingClientRect(); return [t.querySelector('.reg-tuile-l').textContent, t.querySelector('.reg-tuile-v').textContent.replace(/\s+/g, ' '), t.querySelector('.reg-tuile-s').textContent, Math.round(r.x), Math.round(r.y), t.classList[1]]; }));
-eq(tuiles.map(t => t.slice(0, 3)), [['Brebis contrôlées', '7', 'sur 10 présentes'], ['Moyenne C1', '1 494 mL', '7 brebis'], ['Moyenne C2', '1 380 mL', '7 brebis'], ['Moyenne C3', '1 060 mL', '6 brebis']], 'tuiles');
-eq(tuiles.map(t => t[5]), ['vert', 'bleu', 'bleu', 'bleu'], 'couleurs des tuiles');
-check(new Set(tuiles.map(t => t[3])).size === 2 && new Set(tuiles.map(t => t[4])).size === 2, 'tuiles en 2 × 2');
+eq(tuiles.map(t => t.slice(0, 3)), [['Brebis contrôlées', '7', 'sur 10 présentes · au moins un contrôle'], ['Dernier contrôle · C3', '1 060 mL', '6 brebis']], 'tuiles');
+eq(tuiles.map(t => t[5]), ['vert', 'bleu'], 'couleurs des tuiles');
+check(new Set(tuiles.map(t => t[3])).size === 2 && new Set(tuiles.map(t => t[4])).size === 1, 'deux tuiles côte à côte');
+const moyMob = await mob.evaluate(() => [...document.querySelectorAll('#cl-moyennes .cl-moy')].map(e => e.querySelector('.cl-moy-l').textContent + ' ' + e.querySelector('.cl-moy-v').textContent.replace(/\s+/g, ' ')));
+eq(moyMob, ['C1 1 494', 'C2 1 380', 'C3 1 060'], 'carte Moyenne par contrôle (mL)');
 const norm = s => String(s).replace(/[  ]/g, ' ').replace(/\s+/g, ' ').trim();
 const kpiPc = Object.fromEntries(ref.map(k => [k[0].toUpperCase(), norm(k[1])]));
-eq([kpiPc['BREBIS CONTRÔLÉES'], kpiPc['MOYENNE C1'], kpiPc['MOYENNE C2'], kpiPc['MOYENNE C3']], ['7', '1 494 mL', '1 380 mL', '1 060 mL'], 'chiffres de la page PC');
+eq([kpiPc['BREBIS CONTRÔLÉES'], kpiPc['DERNIER CONTRÔLE · C3']], ['7', '1 060 mL'], 'chiffres de la page PC');
 eq(await mob.evaluate(() => [document.querySelector('.cl-bande-n').textContent, document.querySelector('.cl-bande-t b').textContent, document.querySelector('.cl-bande-t span').textContent]), ['2', 'Mises bas sans contrôle laitier', '1 attendue à la traite · à vérifier'], 'bande ambre = tuile PC (2, 1 attendue à la traite)');
 eq(norm(kpiPc['MISES BAS SANS CONTRÔLE LAITIER']), '2', 'même nombre que sur PC');
-console.log('OK 1 structure : ligne d\'imports, tuiles 2×2 (chiffres de la page PC), bande ambre, ni import ni distribution ni tableau.');
+console.log('OK 1 structure : ligne d\'imports, 2 tuiles et carte des moyennes (chiffres de la page PC), bande ambre, ni import ni distribution ni tableau.');
 
 // ---- 2. bande ambre : ouvre la liste des brebis sans contrôle
 check(await mob.evaluate(() => document.getElementById('cl-liste-sans').classList.contains('hidden')), 'liste fermée au départ');
@@ -58,7 +60,7 @@ const sans = await mob.evaluate(() => [...document.querySelectorAll('#cl-liste-s
 check(sans.length === 2 && /n°00200/.test(sans[0]) && /attendue à la traite/.test(sans[0]) && /n°00201/.test(sans[1]) && /pas encore attendue/.test(sans[1]), 'mêmes brebis que sur PC : ' + JSON.stringify(sans));
 check(await mob.evaluate(() => !!document.getElementById('btn-cl-voir-regulariser')), '« Voir dans Brebis à régulariser »');
 await mob.click('#cl-liste-sans .bilan-eid-link');
-eq(await mob.evaluate(() => [currentView, pageTitle.textContent]), ['detail', 'Brebis n°00200'], 'clic sur une brebis : sa fiche');
+eq(await mob.evaluate(() => [currentView, pageTitle.textContent]), ['detail', 'Brebis 8133'], 'clic sur une brebis : sa fiche (n° de travail)');
 await mob.evaluate(() => render('controle-laitier'));
 await mob.click('#btn-cl-bande-sans'); await mob.click('#btn-cl-voir-regulariser');
 eq(await mob.evaluate(() => [currentView, bilanCampagneTab]), ['bilan-campagne', 'incoherences'], '« Voir dans Brebis à régulariser »');
@@ -71,9 +73,9 @@ console.log('OK 2 bande ambre : ouvre / referme la liste, mêmes brebis que PC, 
 const cs = await cartes();
 eq(cs.map(c => [c.num, c.mab]), mob.__lignesPc.map(l => [l[0], 'Mise bas ' + (l[1] || '—')]), 'cartes = lignes PC (N° court et mise bas), même tri');
 eq(cs.slice(0, 3).map(c => c.vals), mob.__lignesPc.slice(0, 3).map(l => [l[2], l[3], l[4]].map(v => norm(v || '—'))), 'C1 / C2 / C3 = valeurs du tableau PC');
-check(cs[1].ano.join() === '2', 'pastille du code d\'anomalie sur le C2 de la brebis 951 : ' + JSON.stringify(cs[1]));
+check(cs[1].ano.join() === '02', 'pastille du code d\'anomalie sur le C2 de la brebis 951 : ' + JSON.stringify(cs[1]));
 check(cs.slice(7).every(c => c.aucun), '« Pas encore de contrôle » pour les brebis sans valeur');
-eq(await mob.evaluate(() => [document.getElementById('cl-count').textContent, document.getElementById('cl-filtre-actif').textContent]), ['10 brebis sur 10', 'Aucun filtre actif · tri : N° court'], 'compteur');
+eq(await mob.evaluate(() => [document.getElementById('cl-count').textContent, document.getElementById('cl-filtre-actif').textContent]), ['10 brebis sur 10', 'Aucun filtre actif · tri : N° de travail'], 'compteur');
 check(await mob.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1 && [...document.querySelectorAll('.cl-carte')].every(c => c.scrollWidth <= c.clientWidth + 1)), 'aucun défilement horizontal, aucune carte coupée');
 console.log('OK 3 liste en cartes = lignes de la page PC, pastille d\'anomalie, rien de coupé.');
 

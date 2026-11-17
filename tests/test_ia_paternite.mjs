@@ -62,9 +62,10 @@ eq(await p.evaluate(() => [paterniteIaPereTexte({ pereCourt: '40518', pereNumero
 const avant = await p.evaluate(() => JSON.stringify(DB));
 await importer(p, [['40518', 'FR 000012 40518', '112,5'], ['40731', '00001240731', '98'], ['40999', 'abc', '']],
   [['69001', '40518'], ['69002', '040731'], ['69002', '40731'], ['69003', ''], ['69004', '40815'], ['69005', '40999'], ['69006', '40518'], ['69099', '40518']]);
-eq(await etats(p), [['n°69001', 'relie'], ['n°69002', 'relie'], ['n°69003', 'inconnue'], ['n°69004', 'codeInconnu'], ['n°69005', 'belierInvalide'], ['n°69006', 'horsLot'], ['69099', 'introuvable']],
-  'aperçu : reliée (zéros de tête ignorés, doublon identique fusionné), paternité inconnue, code inconnu, bélier mal renseigné, hors lot, introuvable');
-eq(await tuiles(p), ['brebis reliées à un père 2', 'à vérifier 4', 'paternité inconnue 1', 'béliers utilisés 2'], 'tuiles de l\'aperçu');
+eq(await etats(p), [['n°69001', 'relie'], ['n°69002', 'relie'], ['n°69003', 'inconnue'], ['n°69004', 'codeInconnu'], ['n°69005', 'belierInvalide'], ['n°69006', 'horsLot'], ['69099', 'aRetrouver']],
+  'aperçu : reliée (zéros de tête ignorés, doublon identique fusionné), paternité inconnue, code inconnu, bélier mal renseigné, hors lot, à retrouver');
+eq(await tuiles(p), ['brebis retrouvées 6', 'à choisir 0', 'à retrouver 1'], 'tuiles de l\'aperçu (carte commune des imports)');
+eq(await p.textContent('#import-ia-resume'), '2 brebis reliées à un père · 2 béliers utilisés · 1 paternité inconnue · 3 à vérifier', 'résumé de l\'aperçu');
 check(/absente du lot « IA octobre »[\s\S]*ligne \d+ ignorée/.test(await p.evaluate(() => document.getElementById('import-ia-alertes').textContent)), 'message ambre pour chaque ligne laissée de côté');
 check(await p.evaluate(a => JSON.stringify(DB) === a, avant), 'rien n\'est écrit avant « Enregistrer »');
 await p.click('#btn-confirm-import-ia');

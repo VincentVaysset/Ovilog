@@ -69,7 +69,7 @@ eq([await coche([8, 46]), (await msg())[0]], [true, 'ok'], 'EID complet tapé (a
 // plusieurs : rien de coché, liste filtrée sur la saisie
 await entree('0012');
 const plusieurs = await page.evaluate(() => [lotsPcEtat.selection.size, document.getElementById('lt-q').value, [...document.querySelectorAll('#lt-table tr[data-eid]')].map(r => r.children[1].textContent.trim())]);
-eq([plusieurs[0], plusieurs[1], await msg()], [2, '0012', ['alerte', '2 brebis correspondent à « 0012 » : coche la bonne dans la liste.']], 'plusieurs résultats : rien de coché, saisie gardée, message ambre');
+eq([plusieurs[0], plusieurs[1], await msg()], [2, '0012', ['alerte', 'Aucun n° ne vaut exactement « 0012 » : cochez la bonne bête dans la liste.']], 'plusieurs résultats : rien de coché, saisie gardée, message ambre');
 check(plusieurs[2].includes('80012') && plusieurs[2].includes('90012'), 'la liste est filtrée sur les brebis correspondantes : ' + plusieurs[2].join(','));
 // aucune
 await entree('77777');

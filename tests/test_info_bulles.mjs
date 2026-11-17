@@ -108,10 +108,9 @@ for (const [vue, champs] of [['import-bilan-lactation', ['Fichier CSV']], ['impo
 // conflits d'import : une ligne d'information sous le titre « Conflits à trancher » ; « Valeurs à vérifier » sans bulle
 await page.evaluate(() => { DB.resumeControleLaitier = [{ campagne: 2026, controle: 1 }]; window.__avant = JSON.stringify(DB); render('import-controle-laitier-sieol'); });
 await page.selectOption('#import-cl-campagne', '2026');
-await page.click('.cl-controle-opt[data-controle="1"]');
 await page.setInputFiles('#import-cl-resume-file', { name: 'resume.csv', mimeType: 'text/csv', buffer: Buffer.from('num_controle;date_controle;lait_total;nb_brebis\n1;20/01/2027;1500;10\n') });
 await page.waitForFunction(() => document.getElementById('app').textContent.includes('Conflits à trancher'), null, { timeout: 5000 });
-{ const T = 'Rien n\'est écrasé sans ton choix ; sans réponse, la valeur actuelle est conservée.'; const e = await sansBulle('Import SIEOL : conflits'); eq(e.infos.map(i => i.t), [T], 'Conflits à trancher : une seule ligne d\'information'); uneInfo(e, T, 'Conflits à trancher');
+{ const T = 'Rien n\'est écrasé sans ton choix ; sans réponse, la valeur actuelle est conservée.'; const e = await sansBulle('Import SIEOL : conflits'); eq(e.infos.map(i => i.t), ['Tous cochés d\'office ; décoche un contrôle pour ne pas le reprendre.', T], 'Conflits à trancher : une seule ligne d\'information (plus celle des contrôles trouvés dans le fichier)'); uneInfo(e, T, 'Conflits à trancher');
   check(await page.evaluate(() => { const t = [...document.querySelectorAll('#app div')].find(d => /^Conflits à trancher \(\d+\)$/.test(d.textContent.trim()) && d.children.length === 0); return !!t && t.nextElementSibling && t.nextElementSibling.classList.contains('info'); }), 'Conflits à trancher : la ligne suit immédiatement le titre'); }
 check(await page.evaluate(() => window.__saves === 0), 'groupe 5 : aucune écriture');
 console.log('OK groupe 5 : première configuration (texte sous le champ), sept écrans d\'import sans bulle, conflits d\'import (ligne d\'information).');

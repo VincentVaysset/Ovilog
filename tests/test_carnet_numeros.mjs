@@ -82,7 +82,7 @@ for (const mobile of [true, false]) {
   eq((await sel()).length, 2, T + ' : rien de plus coché');
 
   await p.fill('#cs-q', '777777'); await p.press('#cs-q', 'Enter');
-  check(/Aucun animal éligible ne porte exactement le n°777777/.test(await fb()), T + ' : aucun : message ambre');
+  check(/Aucun animal éligible ne porte le n°777777/.test(await fb()), T + ' : aucun : message ambre');
   check(await p.evaluate(() => getComputedStyle(document.getElementById('cs-scan-feedback')).color) !== 'rgb(163, 58, 49)', T + ' : jamais en rouge');
 
   if (mobile) {

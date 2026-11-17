@@ -37,7 +37,7 @@ const ECRANS = [
   ['Contrôle laitier (1er/2e/3e)', `render('add-controle')`, ['.ctrl-opt[data-val="2"]']],
   ['Nouvelle agnelle (origine)', `render('add-agnelle')`, ['.origine-opt[data-val="née"]']],
   ['Mouvement (type)', `render('add-mouvement')`, ['.type-opt']],
-  ['Import contrôle laitier', `render('import-controle-laitier-sieol')`, ['.cl-controle-opt[data-controle="1"]']],
+  ['Import contrôle laitier (contrôles trouvés dans le fichier)', `render('import-controle-laitier-sieol'); { const i = document.getElementById('import-cl-resume-file'); const dt = new DataTransfer(); dt.items.add(new File(['num_controle;date_controle;lait_total;nb_brebis\\n1;20/01/2027;1500;10\\n2;20/02/2027;1400;10\\n'], 'r.csv', { type: 'text/csv' })); i.files = dt.files; i.dispatchEvent(new Event('change')); }`, ['.cl-controle-opt[data-controle="1"]']],
   ['Rapprochement inventaire', `DB.majInventaireSession = { eids: [EID(901), EID(902)] }; render('maj-inventaire-validation')`, []],
   ['Traitements 12 mois', `render('traitements-12-mois')`, ['#m12-vue-interv']],
   ['Fenêtre Qualité', `render('qualite'); openQualiteSheet(null)`, ['#qs-listeria .opt-btn[data-val="negatif"]']],

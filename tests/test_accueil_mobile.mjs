@@ -201,7 +201,7 @@ await m.evaluate(jeu, ''); await m.evaluate(() => {
 });
 const cl = await m.evaluate(() => ({ titre: document.querySelector('#ac-controle-laitier .ac-titre').textContent, cols: [...document.querySelectorAll('#ac-controle-laitier .ac-cl div')].map(d => [d.querySelector('span').textContent, d.querySelector('b').textContent, d.querySelector('small').textContent]), texte: document.getElementById('app').textContent }));
 eq(cl.titre, 'Contrôle laitier · moyenne par contrôle', 'titre');
-eq(cl.cols, [['1er contrôle', '2,10 L', '398 brebis'], ['2e contrôle', '1,80 L', '391 brebis'], ['3e contrôle', '—', '0 brebis']], 'moyenne et nombre de brebis par contrôle (« — » et « 0 brebis » sans résumé)');
+eq(cl.cols, [['1er contrôle', '2,10 L', '398 brebis'], ['2e contrôle', '1,80 L', '391 brebis']], 'moyenne et nombre de brebis par contrôle : C1 à Cn de la campagne (2 contrôles importés = 2 colonnes, jamais plus)');
 check(!/relevé\(s\) enregistré\(s\)/.test(cl.texte), 'plus de « relevés enregistrés au total »');
 check(await m.evaluate(() => !/Répartition par stade/.test(document.getElementById('app').textContent)), 'plus d\'ancienne carte « Répartition par stade »');
 console.log('OK 6 Contrôle laitier : moyenne et brebis par contrôle.');

@@ -38,9 +38,9 @@ check(parNum['60007'] === null, 'code hors IA/RE/EP/MN : « — » (null)');
 check(res.gardees.length === 1 && res.gardees[0][1] === null, 'achetée (sans mère) : « — » (null)');
 check(await page.evaluate(() => origineNaissanceAgnelle(null, null, null) === null && origineNaissanceAgnelle(E(9, 99), null, '2026-01-11') === null), 'mère absente de la base ou non donnée : null');
 check(await page.evaluate(() => origineNaissanceAgnelle(E(1, 1), null, '2026-01-11') === 'IA'), 'repli par la date de naissance quand l\'agneau n\'est pas donné');
-// rang de lactation : seulement si le cahier SIEOL est importé
+// rang de lactation : plus montré au tri des agnelles (information non utilisée), même avec le cahier SIEOL importé
 const rangs = Object.fromEntries(res.aTrier.map(x => [x[0], x[2]]));
-check(rangs['60001'] === '3' && rangs['60002'] === null, 'rang de lactation : 3 (cahier importé pour la mère 80001), null sinon : ' + JSON.stringify(rangs));
+check(Object.values(rangs).every(v => v === null), 'rang de lactation plus montré, même avec le cahier importé pour la mère 80001 : ' + JSON.stringify(rangs));
 // pastille : code de 2 lettres seul, libellé en accessibilité, ni title, ni pictogramme, ni légende
 const html = await page.evaluate(() => ['IA', 'RE', 'EP', 'MN', null].map(c => origineNaissancePastilleHtml(c)));
 const labels = html.map(h => (/aria-label="([^"]*)"/.exec(h) || [])[1]);
@@ -50,5 +50,5 @@ const texte = await page.evaluate(h => h.map(x => { const d = document.createEle
 check(JSON.stringify(texte) === JSON.stringify(['IA', 'RE', 'EP', 'MN', '—']), 'le texte visible est le code seul (ou « — ») : ' + JSON.stringify(texte));
 // rien n'est écrit ni modifié
 check(await page.evaluate(() => JSON.stringify(DB) === window.__avant && !window.__saves), 'l\'origine est calculée à l\'affichage : rien n\'est stocké ni écrit');
-console.log('OK origine de naissance : IA / RE / EP / MN, « — » (sans code, mère vendue ou inconnue, achetée), pastille à code seul avec libellé en accessibilité, rang de lactation seulement avec cahier SIEOL.');
+console.log('OK origine de naissance : IA / RE / EP / MN, « — » (sans code, mère vendue ou inconnue, achetée), pastille à code seul avec libellé en accessibilité, rang de lactation plus montré.');
 await browser.close();

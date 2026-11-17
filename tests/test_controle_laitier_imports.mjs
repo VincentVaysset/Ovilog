@@ -37,13 +37,13 @@ console.log('OK 1 Contrôle laitier PC et mobile : plus aucun bouton d\'import, 
 const pc = await ouvrir(true);
 await pc.evaluate(() => { parametresTab = 'imports'; render('parametres'); });
 await pc.waitForSelector('#import-sieol-cl');
-eq(await pc.evaluate(() => document.querySelector('#import-sieol-cl .prm-titre').textContent), 'Contrôle laitier · fichiers SIEOL', 'carte « Contrôle laitier · fichiers SIEOL »');
+eq(await pc.evaluate(() => [document.querySelector('#import-controle-laitier .prm-titre').textContent, document.getElementById('import-sieol-cl').textContent, !!document.querySelector('#import-controle-laitier #btn-import-controle-laitier-sieol'), !!document.querySelector('#import-controle-laitier #btn-import-controle-laitier-modele')]), ['Contrôle laitier', 'Depuis SIEOL', true, true], 'UNE carte « Contrôle laitier » : SIEOL puis modèle Excel Ovilog');
 eq(await pc.evaluate(() => document.getElementById('dernier-sieol-cl').textContent), 'aucun', 'dernier import : aucun au départ');
 await pc.click('#btn-import-controle-laitier-sieol');
 await pc.waitForSelector('#import-cl-resume-file');
-// écran d'import intact : campagne, C1/C2/C3, fichier résumé ET fichier cahier de contrôle
+// écran d'import : campagne, fichier résumé ET fichier cahier de contrôle ; les contrôles ne sont plus à choisir avant (trouvés dans les fichiers)
 eq(await pc.evaluate(() => [!!document.getElementById('import-cl-campagne'), [...document.querySelectorAll('.cl-controle-opt')].map(b => b.textContent), !!document.getElementById('import-cl-resume-file'), !!document.getElementById('import-cl-cahier-file'), !!document.getElementById('btn-confirm-import-cl')]),
-  [true, ['C1', 'C2', 'C3'], true, true, true], 'écran SIEOL intact : campagne, C1/C2/C3, fichier résumé, fichier cahier, confirmation');
+  [true, [], true, true, true], 'écran SIEOL : campagne, fichier résumé, fichier cahier, confirmation ; aucun contrôle à choisir avant les fichiers');
 // retour (flèche) -> Paramètres › Imports
 await pc.click('#btn-back');
 await pc.waitForSelector('#import-sieol-cl');
@@ -53,10 +53,10 @@ await pc.click('#btn-import-controle-laitier-sieol');
 await pc.waitForSelector('#import-cl-resume-file');
 const avant = await pc.evaluate(() => { const b = DB.brebis.find(x => x.numeroCourtTravailSieol === '8134'); return { n: (b.controleLaitier || []).length, resumes: DB.resumeControleLaitier.length }; });
 await pc.selectOption('#import-cl-campagne', '2026');
-await pc.click('.cl-controle-opt[data-controle="1"]');
 await pc.setInputFiles('#import-cl-resume-file', { name: 'resume.csv', mimeType: 'text/csv', buffer: Buffer.from('num_controle;date_controle;lait_total;nb_brebis\n1;20/01/2027;1500;10\n') });
 await pc.setInputFiles('#import-cl-cahier-file', { name: 'cahier.csv', mimeType: 'text/csv', buffer: Buffer.from('numero_visuel_sieol;ctl1_ml;ctl1_anomalie\n8134;1111;\n') });
 await pc.waitForSelector('#btn-confirm-import-cl:not(.hidden)', { timeout: 5000 });
+eq(await pc.evaluate(() => [...document.querySelectorAll('#import-cl-controles .cl-controle-opt')].map(b => b.textContent + (b.classList.contains('selected') ? '*' : ''))), ['C1*'], 'contrôles trouvés dans les fichiers : C1, coché d\'office');
 await pc.click('#btn-confirm-import-cl');
 await pc.waitForSelector('#import-sieol-cl');
 const apres = await pc.evaluate(() => { const b = DB.brebis.find(x => x.numeroCourtTravailSieol === '8134'); return { n: (b.controleLaitier || []).length, valeur: (b.controleLaitier || []).map(c => c.quantite), resumes: DB.resumeControleLaitier.length, vue: currentView, onglet: parametresTab, dernier: document.getElementById('dernier-sieol-cl').textContent }; });
@@ -64,7 +64,7 @@ check(apres.n === avant.n + 1 && apres.valeur.includes(1111) && apres.resumes ==
 eq([apres.vue, apres.onglet], ['parametres', 'imports'], 'fin de l\'import : retour à Paramètres › Imports');
 check(/20-01-2027|campagne 2027/.test(apres.dernier) || /campagne 2027/.test(apres.dernier), 'dernier import mémorisé : ' + apres.dernier);
 check((pc.__alertes || []).some(m => /1 valeur\(s\) de contrôle importée\(s\)/.test(m)), 'message de confirmation inchangé : ' + JSON.stringify(pc.__alertes));
-console.log('OK 2 Paramètres › Imports : carte, écran SIEOL intact (campagne, C1/C2/C3, résumé et cahier), retour et fin d\'import vers Imports, dernier import mémorisé.');
+console.log('OK 2 Paramètres › Imports : carte unique, écran SIEOL (campagne, résumé et cahier, contrôles trouvés seuls), retour et fin d\'import vers Imports, dernier import mémorisé.');
 
 // ================================================================ 3. mobile : Paramètres n'a pas d'Imports (PC uniquement)
 const mob = await ouvrir(false);

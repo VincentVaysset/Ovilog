@@ -30,6 +30,8 @@ async function ouvrir(pc) {
     window.E = eid;
     window.jeuLait = (avecControle) => {
       DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-10-01'; DB.campagneInitialisee = true;
+      // suivi CLS à 1 contrôle prévu : la série est finie dès le C1 (règle « après le dernier contrôle prévu », voir test_controles_adaptatifs)
+      DB.exploitation = Object.assign(DB.exploitation || {}, { typeSuivi: 'cls', nbControlesSuivi: 1 });
       DB.brebis = [
         /* A */ fiche(eid(6, 1), { agnelages: [mb('2026-11-05', [L('Mâle')])], controleLaitier: avecControle ? [cl(1, 2026)] : [] }),            // contrôlée : exclue
         /* B */ fiche(eid(6, 2), { agnelages: [mb('2026-11-12', [vendu('Mâle'), vendu('Femelle')])] }),                                         // jamais contrôlée, agneaux tous réglés : attendue -> signal fort

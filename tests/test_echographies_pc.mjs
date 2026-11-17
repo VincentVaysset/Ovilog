@@ -200,7 +200,7 @@ const H = await pc.evaluate(() => ({
   compte: document.getElementById('ep-histo-compte').textContent, cols: [...document.querySelectorAll('#ep-histo-table th')].map(t => t.textContent),
   lignes: [...document.querySelectorAll('#ep-histo-table tbody tr')].map(r => [...r.children].slice(0, 4).map(c => c.textContent.replace(/\s+/g, ' ').trim())),
   thFond: getComputedStyle(document.querySelector('#ep-histo-table th')).backgroundColor, bulles: document.querySelectorAll('#app .info-bulle-btn').length }));
-eq(H.cols, ['N° court', 'Date', 'Campagne', 'Résultat', ''], 'colonnes de l\'historique (avec Campagne)');
+eq(H.cols, ['N° de travail', 'Date', 'Campagne', 'Résultat', ''], 'colonnes de l\'historique (avec Campagne)');
 eq(H.compte, '20 échographies', 'toutes les échos de toutes les brebis (la vendue comprise)');
 const ligne = (num, date) => H.lignes.filter(l => l[0] === num && l[1] === date);
 check(ligne('8001', '01-08-2026')[0][3] === 'Début 1' && ligne('8002', '01-08-2026')[0][3] === 'Milieu 2 et +' && ligne('8003', '01-08-2026')[0][3] === 'Fin 3 et + Parasitisme', 'comptage : 1, « 2 et + » (Double), « 3 et + » : ' + JSON.stringify(H.lignes.slice(0, 3)));
@@ -234,7 +234,7 @@ await pc.evaluate(() => {
 await pc.click('#ep-export-xlsx'); await pc.waitForTimeout(100);
 const xl = await pc.evaluate(() => window.__xlsx[0]);
 eq(xl.map(f => f.name), ['Résumé', 'Détail'], 'Excel Aujourd\'hui : deux feuilles');
-eq(xl[1].rows[0], ['N° court', 'Millésime', 'Aujourd\'hui', 'Dernière écho', 'Résultat', 'Comptage', 'Lots'], 'Excel Détail : colonnes');
+eq(xl[1].rows[0], ['N° de travail', 'Millésime', 'Aujourd\'hui', 'Dernière écho', 'Résultat', 'Comptage', 'Lots'], 'Excel Détail : colonnes');
 eq(xl[1].rows.length, 17, 'Excel Détail : toutes les brebis de la vue (16 + en-tête)');
 eq(xl[1].rows.find(r => r[0] === '8002'), ['8002', 2018, 'À mettre bas', '01-08-2026', 'Pleine · Milieu', '2 et +', 'IA septembre'], 'Excel : ligne d\'une pleine à mettre bas');
 const txt = xl[0].rows.map(r => r.join(' | '));
