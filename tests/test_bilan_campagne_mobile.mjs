@@ -154,15 +154,15 @@ const tauxPc = await pc.evaluate(() => { const a = document.querySelector('.brd-
 check(tauxPc && norm(await mob.textContent('.bc-taux b')) === norm(tauxPc), 'taux de réussite = page PC : ' + tauxPc);
 const ligPc = await pc.evaluate(() => [...document.querySelector('.brd-t').querySelectorAll('tr')].slice(1).map(tr => [...tr.children].map(td => td.textContent.trim())));
 const ligMobCles = await mob.evaluate(() => [...document.querySelectorAll('#bc-groupes .bc-lg:not(.hidden)')].map(l => [...l.children].map(c => c.textContent.trim())));
-eq(ligMobCles.map(l => l[0]), ['Brebis présentes', 'Mises bas', 'Fertilité', 'Agneaux nés', 'Prolificité', 'Mortalité totale'], 'lignes clés d\'abord');
+eq(ligMobCles.map(l => l[0]), ['Brebis présentes', 'Mises bas', 'Fertilité', 'Prolificité', 'Agneaux nés', 'Femelles', 'Mâles', 'Morts-nés', 'Morts après naissance', 'Mortinatalité', 'Mortalité après naissance', 'Mortalité totale'], 'lignes affichées d\'office : agneaux (femelles, mâles) et mortalité');
 await mob.click('#bc-tout-afficher');
 const ligMob = await mob.evaluate(() => [...document.querySelectorAll('#bc-groupes .bc-lg')].map(l => [...l.children].map(c => c.textContent.trim())));
 check(await mob.evaluate(() => document.querySelectorAll('#bc-groupes .bc-lg.hidden').length === 0) && (await mob.textContent('#bc-tout-afficher')) === 'Réduire', '« Tout afficher » montre toutes les lignes');
 eq(ligMob.map(l => l.slice(1)), ligPc.map(l => l.slice(1)), 'toutes les valeurs (Brebis / Antenaises / Total) = tableau de la page PC');
 check(ligMob.every((l, i) => ligPc[i][0].startsWith(l[0])), 'mêmes libellés (abrégés) : ' + ligMob.map(l => l[0]).join(' | '));
 await mob.click('#bc-tout-afficher');
-check(await mob.evaluate(() => document.querySelectorAll('#bc-groupes .bc-lg:not(.hidden)').length === 6), '« Réduire » revient aux 6 lignes clés');
-console.log('OK 6 Bilan de reproduction : taux ' + tauxPc + ', 4 tuiles et ' + ligMob.length + ' lignes du tableau par groupe d\'âge = page PC ; 6 lignes clés puis « Tout afficher » / « Réduire ».');
+check(await mob.evaluate(() => document.querySelectorAll('#bc-groupes .bc-lg:not(.hidden)').length === 12), '« Réduire » revient aux 12 lignes affichées d\'office');
+console.log('OK 6 Bilan de reproduction : taux ' + tauxPc + ', 4 tuiles et ' + ligMob.length + ' lignes du tableau par groupe d\'âge = page PC ; 12 lignes d\'office puis « Tout afficher » / « Réduire ».');
 
 // ================================================================ 7. détail par millésime (repliable) = tableau PC
 const millPc = await pc.evaluate(() => [...document.querySelectorAll('.brd-t')].find(t => /Millésime/.test(t.textContent)).querySelectorAll('tr:not(:first-child)').length && [...[...document.querySelectorAll('.brd-t')].find(t => /Millésime/.test(t.textContent)).querySelectorAll('tr')].slice(1).map(tr => [...tr.children].map(td => td.textContent.replace('antenaises', '').trim())));

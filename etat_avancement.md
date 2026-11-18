@@ -112,3 +112,12 @@ Reprises aussi dans `CLAUDE.md`, section « Méthode de travail ».
 - Mise bas d'une brebis d'un lot MN : code MN d'office, jamais de question (la question IA / RE / MN reste réservée aux lots IA / éponge).
 - Bilans : un bilan par lot (IA, éponge, MN : effectif, mises bas, fertilité, prolificité) ET le bilan troupeau global (brebis / antenaises séparées, chaque brebis une fois). Sans lot visant la campagne : 1re mise bas du groupe (règle actuelle).
 - Points à corriger avant de brancher un lot MN (sinon bugs) : typeLotPc classe tout lot de repro non « Éponge » en IA ; modeReproPourEcho / filtre « Monte naturelle » des échos et badge de la fiche lisent tout événement de lot comme IA / EP ; statsLotIA ne doit jamais recevoir un lot MN.
+
+
+## Chantier « Bilan — comptes saisis en cours de campagne » (fait, à reconfirmer en test terrain)
+- Cas de départ : compte d'un éleveur testeur, troupeau saisi / importé APRÈS ses mises bas et sans date d'entrée -> « 0 brebis présente », « 141 mises bas de brebis absentes de la population de départ », fertilité « — ».
+- Corrigé : présentes au début des mises bas de leur groupe ou lot ; une brebis qui a mis bas compte toujours ; date d'entrée inconnue = présente depuis toujours (marqueur `dateInconnue` à partir de maintenant, trace pour l'existant) ; registre « (date de saisie) » ; fiche « Date d'entrée : inconnue ».
+- Bilan par groupe d'âge : agneaux (femelles, mâles) et mortalité affichés d'office sur mobile.
+- À vérifier sur le terrain : chiffres du testeur (effectif, fertilité, taux de réussite) ; chiffres de l'éleveur avant / après (capture du bilan avant installation, écarts attendus : effectif qui monte si des brebis créées ou importées sans date étaient exclues ; passage de « présentes au démarrage » à « présentes au début des mises bas »).
+- Fait ensuite : champ « À quoi il sert » sur la fiche produit (maquette validée), Produits et délais (affichage, recherche), choix du produit au Carnet.
+- Maquette validée, à coder plus tard : rappel de l'écho à la saisie de la mise bas (« pleine · IA · 2 attendus », message ambre si le nombre ne colle pas), date de mise bas prévue en fenêtre (lot + G min à G max, retour décalé d'un ou deux cycles), « Mises bas attendues » à l'Accueil.

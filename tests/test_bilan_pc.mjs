@@ -181,7 +181,7 @@ await page.evaluate(() => {
 await page.waitForSelector('.brd');
 const al = await page.evaluate(() => ({ warn: !!document.querySelector('.brd-alert.warn') && /pas de renouvellement/.test(document.querySelector('.brd-alert.warn').textContent), info: [...document.querySelectorAll('.brd-alert.info')].map(a => a.textContent.replace(/\s+/g, ' ')).join(' / '), err: document.querySelector('details.brd-alert.err') ? document.querySelector('details.brd-alert.err').textContent.replace(/\s+/g, ' ') : null }));
 check(al.warn, 'avertissement « pas de renouvellement » affiché');
-check(/1 mise bas de brebis absente de la population de départ \(entrées après le démarrage de la campagne\) est comptée dans les totaux, pas dans la fertilité/.test(al.info), 'brebis hors population de départ expliquée : ' + al.info);
+check(!/absente de la population de départ/.test(al.info), 'règle PMB : une brebis entrée après le démarrage qui a mis bas est dans l\'effectif, plus d\'alerte « absente de la population de départ » : ' + al.info);
 check(al.err && /Agneau sans sexe valide/.test(al.err) && /Mise bas sans date/.test(al.err) && /rien n'a été corrigé/.test(al.err), 'points de données à vérifier listés, rien corrigé : ' + al.err);
 const sx = await ligneTable(page, 0, 'Sexe non renseigné');
 check(sx && sx[2] === '1', 'ligne « Sexe non renseigné » ajoutée au tableau : ' + sx);

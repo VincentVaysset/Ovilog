@@ -89,7 +89,7 @@ r = await R(() => {
   return out;
 });
 check(r.veille.ren === false && r.veille.w, 'S2 entrée la veille de la bascule : pas un renouvellement, avertissement');
-check(r.jour.ren === true && !r.jour.w && r.lendemain.m === 2025, 'S2 entrée le jour de la bascule : renouvellement ; (lendemain : exclue de la population, millésime 2025)');
+check(r.jour.ren === true && !r.jour.w && r.lendemain.m === 2026, 'S2 entrée le jour de la bascule : renouvellement ; lendemain : comptée (règle PMB : arrivée avant le début des mises bas), millésime 2026');
 check(r.sansRenouv.m === 2025 && r.sansRenouv.a === 1 && r.sansRenouv.b === 2 && /pas de renouvellement/.test(r.sansRenouv.w), 'S2 sans renouvellement : millésime 2025 reste classé antenaises, avertissement, aucun reclassement : ' + JSON.stringify(r.sansRenouv).slice(0, 200));
 check(/Aucune agnelle n&#39;est entrée|Aucune agnelle n'est entrée/.test(r.sansRenouv.html), 'S2 l\'avertissement s\'affiche dans l\'écran du bilan');
 console.log('OK S2 avertissement : comparé à campagneDateDemarrage (28/09 non, 29/09 oui) ; sans renouvellement le millésime 2025 reste antenaises (1) / brebis (2), bandeau affiché.');

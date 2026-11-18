@@ -5015,12 +5015,43 @@ function brebisDuBilan() {
    jour-là) et pas encore sortie (une sortie postérieure ou le jour même ne la
    retire pas). Prédicat de campagneCohortPresente, paramétré par la date pour
    servir aussi aux campagnes passées (bilanReproductionCampagne). */
+/* DATE D'ENTRÉE INCONNUE (comptes saisis en cours de campagne) : la date de SAISIE n'est pas une date d'arrivée. Vrai si :
+   - le mouvement d'entrée porte le marqueur `dateInconnue: true` (posé depuis ce chantier quand aucune date d'entrée n'est tapée) ;
+   - ou entrée « Mise à jour inventaire » (bête retrouvée au bipage) ;
+   - ou entrée « Création… » / « Import Nouveaux animaux… » et date d'entrée de la fiche laissée vide (le formulaire et l'import
+     n'écrivent `dateEntree` que si l'éleveur la tape) ;
+   - ou fiche créée d'office à une écho ou une mise bas (date d'entrée = jour de création, écho ou mise bas ce jour-là) ;
+   - ou aucune entrée ni date d'entrée. Lecture seule : aucune donnée n'est modifiée. Contrôle : test_bilan_compte_en_cours. */
+function entreeDateInconnue(a) {
+  if (!a) return false;
+  const e = (a.mouvements || []).find(m => m && m.type === 'Entrée');
+  if (!e) return !a.dateEntree;
+  if (e.dateInconnue === true) return true;
+  const cause = String(e.cause || '');
+  if (cause === MOTIF_MAJ_INVENTAIRE) return true;
+  if (/^(Création|Import Nouveaux animaux)/.test(cause)) {
+    if ('dateEntree' in a && !a.dateEntree) return true;
+    const jourCreation = a.createdAt ? formatISOLocal(new Date(a.createdAt)) : null;
+    if (jourCreation && String(a.dateEntree || '').slice(0, 10) === jourCreation && /^Création/.test(cause)
+      && ((a.echographies || []).some(x => x && String(x.date || '').slice(0, 10) === jourCreation) || (a.agnelages || []).some(x => x && String(x.date || '').slice(0, 10) === jourCreation))) return true;
+  }
+  return false;
+}
+// Date d'ENTRÉE RÉELLE (AAAA-MM-JJ) d'une bête, null si inconnue (entreeDateInconnue) ou absente
+function dateEntreeConnue(a) {
+  if (!a || entreeDateInconnue(a)) return null;
+  const e = (a.mouvements || []).find(m => m && m.type === 'Entrée');
+  const d = (e && e.date) || a.dateEntree || null;
+  return d ? String(d).slice(0, 10) : null;
+}
 function estBrebisPresenteALaDate(s, refDate) {
   const mouvements = s.mouvements || [];
-  const entreeMvt = mouvements.find(m => m.type === 'Entrée');
-  const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
-  const entreeDate = entreeDateStr ? dateLocaleDepuisISO(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
-  if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > refDate) return false; // entrée après la date de référence : pas présente au démarrage
+  if (!entreeDateInconnue(s)) {   // date d'entrée inconnue (saisie en cours de campagne) : présente depuis toujours
+    const entreeMvt = mouvements.find(m => m.type === 'Entrée');
+    const entreeDateStr = (entreeMvt && entreeMvt.date) || s.dateEntree || null;
+    const entreeDate = entreeDateStr ? dateLocaleDepuisISO(entreeDateStr) : (s.createdAt ? new Date(s.createdAt) : null);
+    if (!entreeDate || isNaN(entreeDate.getTime()) || entreeDate > refDate) return false; // entrée après la date de référence : pas présente
+  }
   if ((s.statut || 'active') === 'active') return true;
   // Inactive aujourd'hui : ne compte que si sa sortie a eu lieu APRÈS la date de référence.
   const sortieMvt = [...mouvements].reverse().find(m => ['Vente', 'Morte', 'Mort', 'Vente reproduction', 'Perte', 'Autoconsommation', SORTIE_INVENTAIRE].includes(m.type));   // « Mise à jour inventaire » est aussi une sortie
@@ -5047,24 +5078,44 @@ function premiereMiseBasCampagne(brebis, N) {
   brebis.forEach(s => (s.agnelages || []).forEach(a => { if (a && a.campagne === N && a.date && !a.avortement) { const x = String(a.date).slice(0, 10); if (!d || x < d) d = x; } }));
   return d;
 }
-/* Population du bilan de la campagne N (présentes au démarrage `presentes`), chaque brebis UNE fois : son début des mises bas est celui de
-   SON LOT de repro visant N (lotReproBrebisCampagne, debutMisesBasLot) ; sans lot, la 1re mise bas réelle des brebis SANS lot de son groupe
-   (antenaises / adultes, `classement`). Une sortie avant ce début (et sans mise bas en N) est retirée. Retourne la population et le détail. */
-function populationPMBCampagne(presentes, N, classement) {
-  classement = classement || classementAntenaisesCampagne(presentes);
+/* Population du bilan de la campagne N (règle PMB), chaque brebis UNE fois, parmi `candidates` (brebis du bilan qui ont pu être là pendant N) :
+   - une brebis qui a MIS BAS en N est toujours dans l'effectif ;
+   - sinon son début des mises bas est celui de SON lot de repro visant N (lotReproBrebisCampagne, debutMisesBasLot), ou, sans lot, la 1re
+     mise bas réelle des brebis SANS lot de son groupe (antenaises / adultes, `classement`) ;
+   - hors effectif : vraie date d'entrée APRÈS ce début (entrée inconnue = présente depuis toujours, entreeDateInconnue), ou sortie avant
+     ce début (sortieAvantDebutMiseBas : sortie sans date comprise ; aucune mise bas encore = toute sortie).
+   Retourne la population et le détail des sorties. */
+function populationPMBCampagne(candidates, N, classement) {
+  classement = classement || classementAntenaisesCampagne(candidates);
   const grp = s => classement.groupe(s.eid) === 'antenaises' ? 'antenaises' : 'adultes';
-  const lotDe = new Map(presentes.map(s => [s, lotReproBrebisCampagne(s, N)]));
-  const sansLot = g => presentes.filter(s => !lotDe.get(s) && grp(s) === g);
+  const lotDe = new Map(candidates.map(s => [s, lotReproBrebisCampagne(s, N)]));
+  const sansLot = g => candidates.filter(s => !lotDe.get(s) && grp(s) === g);
   const debutGroupe = { antenaises: premiereMiseBasCampagne(sansLot('antenaises'), N), adultes: premiereMiseBasCampagne(sansLot('adultes'), N) };
   const sorties = { antenaises: 0, adultes: 0 };
-  const cohort = presentes.filter(s => {
+  const cohort = candidates.filter(s => {
     if ((s.agnelages || []).some(a => a && a.campagne === N)) return true;
-    const lot = lotDe.get(s);
-    if (!sortieAvantDebutMiseBas(s, lot ? debutMisesBasLot(lot) : debutGroupe[grp(s)])) return true;
+    const lot = lotDe.get(s), debut = lot ? debutMisesBasLot(lot) : debutGroupe[grp(s)];
+    const entree = dateEntreeConnue(s);
+    if (entree && debut && entree > debut) return false;          // vraie arrivée après le début des mises bas : pas présente
+    if (!sortieAvantDebutMiseBas(s, debut)) return true;
     sorties[grp(s)]++;
     return false;
   });
   return { cohort, sortiesAvantMiseBas: { antenaises: sorties.antenaises, adultes: sorties.adultes } };
+}
+/* Brebis du bilan qui ont pu être là pendant la campagne N : entrée (connue) au plus tard le dernier jour de N, et pas sorties avant son
+   1er jour (date de démarrage réelle pour la campagne en cours). La population exacte est ensuite fixée par populationPMBCampagne. */
+function candidatesBilanCampagne(N) {
+  const debutN = N === DB.campagneDebut && campagneRefDate() ? formatISOLocal(campagneRefDate()) : formatISOLocal(new Date(N, campagneMoisDebutConfig() - 1, campagneJourDebutConfig()));
+  const fin = new Date(N + 1, campagneMoisDebutConfig() - 1, campagneJourDebutConfig()); fin.setDate(fin.getDate() - 1);
+  const finN = formatISOLocal(fin);
+  return brebisDuBilan().filter(s => {
+    if ((s.agnelages || []).some(a => a && a.campagne === N)) return true;
+    const e = dateEntreeConnue(s);
+    if (e && e > finN) return false;
+    if (estSortieDuTroupeau(s)) { const d = dateSortieAnimal(s); if (d && d < debutN) return false; }
+    return true;
+  });
 }
 // Ligne grise : « Sorties avant le début des mises bas, hors effectif : 2 antenaises, 1 adulte » ; '' s'il n'y en a pas
 function libelleSortiesAvantMiseBasCampagne(d) {
@@ -5076,7 +5127,7 @@ function libelleSortiesAvantMiseBasCampagne(d) {
 function campagneCohortPresente() {
   const refDate = campagneRefDate();
   if (!refDate) return DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  return populationPMBCampagne(brebisDuBilan().filter(s => estBrebisPresenteALaDate(s, refDate)), DB.campagneDebut).cohort;
+  return populationPMBCampagne(candidatesBilanCampagne(DB.campagneDebut), DB.campagneDebut).cohort;
 }
 
 /* Date de début de la campagne en cours au format 'YYYY-MM-DD' : la date
@@ -6226,9 +6277,9 @@ function bilanReproductionCampagne(N) {
 
   // ---- population et classement antenaises / adultes
   const toutes = brebisDuBilan();
-  const presentesDepart = toutes.filter(s => estBrebisPresenteALaDate(s, refDate));
-  // présentes à la mise bas : une sortie avant le début des mises bas de son groupe est hors effectif (populationPMBCampagne)
-  const pmb = populationPMBCampagne(presentesDepart, N);
+  // présentes à la mise bas (populationPMBCampagne) : mises bas toujours comptées, date d'entrée inconnue = présente, sortie ou arrivée
+  // après le début des mises bas de son groupe / lot = hors effectif
+  const pmb = populationPMBCampagne(candidatesBilanCampagne(N), N);
   const sortiesAvantMiseBas = pmb.sortiesAvantMiseBas;
   const cohort = pmb.cohort;
   const classement = classementAntenaisesCampagne(cohort);
@@ -9766,22 +9817,24 @@ function brdLignesGroupes(b) {
   ligne('', 'Brebis présentes', g => g.presentes, brut, { cle: true });
   ligne('b', 'Mises bas', g => g.misesBas, id, { cle: true, gras: true });
   ligne('i', 'Fertilité (mises bas ÷ présentes)', g => g.fertilite, v => brdPct(v), { cle: true, court: 'Fertilité' });
+  ligne('b', 'Prolificité', g => g.prolificite, v => brdNum(v), { cle: true });
   ligne('i', 'Portées simples', g => g.portees.simples, id);
   ligne('i', 'Portées doubles', g => g.portees.doubles, id);
   ligne('i', 'Portées triples', g => g.portees.triples, id);
   if (T.portees.quatreEtPlus > 0) ligne('i', 'Portées de 4 et plus', g => g.portees.quatreEtPlus, id);
   if (T.sansAgneau > 0) ligne('i', 'Mises bas sans agneau enregistré', g => g.sansAgneau, id);
+  // agneaux et mortalité : affichés d'office (mobile comme PC, même ordre) ; mortinatalité = morts-nés ÷ nés,
+  // mortalité totale = (morts-nés + morts après naissance) ÷ nés
   ligne('b', 'Agneaux nés', g => g.nes.total, id, { cle: true, gras: true });
-  ligne('i', 'Femelles', g => g.nes.femelles, id);
-  ligne('i', 'Mâles', g => g.nes.males, id);
-  ligne('i', 'Morts-nés', g => g.nes.mortNes, id);
+  ligne('i', 'Femelles', g => g.nes.femelles, id, { cle: true });
+  ligne('i', 'Mâles', g => g.nes.males, id, { cle: true });
+  ligne('i', 'Morts-nés', g => g.nes.mortNes, id, { cle: true });
+  ligne('b', 'Morts après naissance', g => g.mortsApres, id, { cle: true });
+  ligne('i', 'Mortinatalité', g => g.mortinatalite, v => brdPct(v, 2), { cle: true });
+  ligne('i', 'Mortalité après naissance', g => g.mortaliteApresNaissance, v => brdPct(v, 2), { cle: true });
+  ligne('b', 'Mortalité totale', g => g.mortaliteTotale, v => brdPct(v, 2), { cle: true });
   ligne('i', 'Agneaux adoptés', g => g.adoptes || 0, id);
   if (T.nes.sexeInvalide > 0) ligne('i', 'Sexe non renseigné', g => g.nes.sexeInvalide, id);
-  ligne('b', 'Morts après naissance', g => g.mortsApres, id);
-  ligne('b', 'Prolificité', g => g.prolificite, v => brdNum(v), { cle: true });
-  ligne('i', 'Mortinatalité', g => g.mortinatalite, v => brdPct(v, 2));
-  ligne('i', 'Mortalité après naissance', g => g.mortaliteApresNaissance, v => brdPct(v, 2));
-  ligne('b', 'Mortalité totale', g => g.mortaliteTotale, v => brdPct(v, 2), { cle: true });
   return out;
 }
 
@@ -9810,7 +9863,7 @@ function bilanReproductionDesktopHtml() {
   let taux = '';
   if (b.courante) {
     const t = tauxReussiteGlobal(campagneCohortPresente());
-    taux = `<div class="brd-alert info">Taux de réussite global <strong>${fmtDecimal(t.taux, 1)} %</strong> — ${t.misesBas} mise${t.misesBas > 1 ? 's' : ''} bas ÷ (${t.misesBas} + ${t.videsDefinitives} vide${t.videsDefinitives > 1 ? 's' : ''} définitive${t.videsDefinitives > 1 ? 's' : ''}), sur les brebis présentes depuis le début de la campagne.</div>`;
+    taux = `<div class="brd-alert info">Taux de réussite global <strong>${fmtDecimal(t.taux, 1)} %</strong> — ${t.misesBas} mise${t.misesBas > 1 ? 's' : ''} bas ÷ (${t.misesBas} + ${t.videsDefinitives} vide${t.videsDefinitives > 1 ? 's' : ''} définitive${t.videsDefinitives > 1 ? 's' : ''}), sur les brebis présentes au début des mises bas.</div>`;
   }
 
   // ---- KPI
@@ -11197,10 +11250,10 @@ function renderMajInventaireValidation() {
       aCreer.forEach((p, i) => {
         const sheep = {
           id: Date.now().toString() + Math.random().toString(36).slice(2, 6) + i,
-          eid: p.eid, createdAt: Date.now(), dateEntree: dateJour, pere: null, mere: null,
+          eid: p.eid, createdAt: Date.now(), dateEntree: null, pere: null, mere: null,
           echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active'
         };
-        sheep.mouvements.push({ type: 'Entrée', cause: MOTIF_MAJ_INVENTAIRE, date: dateJour });
+        sheep.mouvements.push({ type: 'Entrée', cause: MOTIF_MAJ_INVENTAIRE, date: dateJour, dateInconnue: true });
         DB.brebis.push(sheep);
       });
 
@@ -11264,7 +11317,7 @@ function renderAddSheep() {
     const pere = document.getElementById('f-pere').value.trim();
     const mere = document.getElementById('f-mere').value.trim();
     const sheep = { id: Date.now().toString(), eid, createdAt: Date.now(), dateEntree, pere, mere, echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active' };
-    sheep.mouvements.push({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || jourAujourdhuiISO() });
+    sheep.mouvements.push(Object.assign({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || jourAujourdhuiISO() }, dateEntree ? {} : { dateInconnue: true }));
     DB.brebis.push(sheep);
     saveData(DB);
     render('detail', sheep.id);
@@ -12477,7 +12530,7 @@ function renderDetail(id) {
         <div><div style="font-size:12px;color:var(--text-muted);">Âge</div><div style="font-weight:600;">${age(sheep.eid)} an(s) (${anneeNaissance(sheep.eid)})</div></div>
         <div><div style="font-size:12px;color:var(--text-muted);">N° d'ordre</div><div style="font-weight:600;">n°${numeroVisuel(sheep.eid)}</div></div>
       </div>
-      ${sheep.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(sheep.dateEntree)}</strong></div>` : ''}
+      ${entreeDateInconnue(sheep) ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">inconnue</strong></div>` : sheep.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(sheep.dateEntree)}</strong></div>` : ''}
       <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
         <div>
           <div style="font-size:12px;color:var(--text-muted);">N° de travail</div>
@@ -13968,9 +14021,9 @@ function renderEchoRapide() {
           const eidFormatted = unknownEid;
           const newSheep = {
             id: Date.now().toString() + Math.random().toString(36).slice(2,6),
-            eid: eidFormatted, createdAt: Date.now(), dateEntree: jourAujourdhuiISO(),
+            eid: eidFormatted, createdAt: Date.now(), dateEntree: null,
             echographies: [], agnelages: [], sanitaire: [], controleLaitier: [], statut: 'active',
-            mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: jourAujourdhuiISO() }]
+            mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: jourAujourdhuiISO(), dateInconnue: true }]
           };
           DB.brebis.push(newSheep);
           saveData(DB);
@@ -15321,9 +15374,9 @@ function renderMiseBasRapide() {
         if (cleanEid(unknownEid).length < 11) { alert("Numéro EID incomplet — impossible de créer une fiche à partir d'un simple numéro d'ordre. Scanne ou saisis l'EID complet."); return; }
         const newSheep = {
           id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-          eid: unknownEid, createdAt: Date.now(), dateEntree: jourAujourdhuiISO(),
+          eid: unknownEid, createdAt: Date.now(), dateEntree: null,
           echographies: [], agnelages: [], sanitaire: [], controleLaitier: [], statut: 'active',
-          mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: jourAujourdhuiISO() }]
+          mouvements: [{ type: 'Entrée', cause: 'Création (ajout manuel)', date: jourAujourdhuiISO(), dateInconnue: true }]
         };
         DB.brebis.push(newSheep);
         saveData(DB);
@@ -17832,7 +17885,7 @@ function renderAddBelier() {
     err.classList.add('hidden');
     const dateEntree = document.getElementById('input-date-entree').value || null;
     const belier = { id: Date.now().toString(), eid, createdAt: Date.now(), dateEntree, sanitaire: [], mouvements: [], statut: 'actif' };
-    belier.mouvements.push({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || jourAujourdhuiISO() });
+    belier.mouvements.push(Object.assign({ type: 'Entrée', cause: 'Création (ajout manuel)', date: dateEntree || jourAujourdhuiISO() }, dateEntree ? {} : { dateInconnue: true }));
     DB.beliers.push(belier);
     saveData(DB);
     currentBelierId = belier.id;
@@ -17948,7 +18001,7 @@ function renderBelierDetail() {
         <div><div style="font-size:12px;color:var(--text-muted);">Âge</div><div style="font-weight:600;">${age(belier.eid)} an(s) (${anneeNaissance(belier.eid)})</div></div>
         <div><div style="font-size:12px;color:var(--text-muted);">N° d'ordre</div><div style="font-weight:600;">n°${numeroVisuel(belier.eid)}</div></div>
       </div>
-      ${belier.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(belier.dateEntree)}</strong></div>` : ''}
+      ${entreeDateInconnue(belier) ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">inconnue</strong></div>` : belier.dateEntree ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Date d'entrée : <strong style="color:var(--text);">${formatDateFr(belier.dateEntree)}</strong></div>` : ''}
       <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
         <div>
           <div style="font-size:12px;color:var(--text-muted);">N° de travail</div>
@@ -21652,7 +21705,7 @@ function ecranCarnetSoin() {
         <div><label>Catégorie <span class="pc-req">*</span></label><select id="cs-categorie" ${E.type === 'Vaccin' ? 'disabled' : ''}>${E.type === 'Traitement' ? categoriesTraitementOptions(E.categorie, opt, false) : E.type === 'Autre' ? categoriesSoinAutreOptions(E.categorie, opt) : '<option>Vaccin</option>'}</select></div>
       </div>
       <div class="pc-fg">
-        <div><label>Produit ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><select id="cs-produit"><option value="">${E.type === 'Autre' ? 'Aucun (soin de plaie)' : 'Choisir…'}</option>${produits.map(n => opt(n, n + (ficheProduit(n).complete ? '' : ' (fiche incomplète)'), E.produit)).join('')}<option value="__nouveau__">+ Nouveau produit…</option></select></div>
+        <div><label>Produit ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><select id="cs-produit"><option value="">${E.type === 'Autre' ? 'Aucun (soin de plaie)' : 'Choisir…'}</option>${produits.map(n => { const fp = ficheProduit(n); return opt(n, n + (fp.usage ? ' — ' + fp.usage : '') + (fp.complete ? '' : ' (fiche incomplète)'), E.produit); }).join('')}<option value="__nouveau__">+ Nouveau produit…</option></select></div>
         <div><label>Dose par animal (cc) ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><input type="number" id="cs-dose" min="0" step="0.1" value="${E.dose}" placeholder="ex. 8"></div>
         <div><label>Voie d'administration ${E.type === 'Autre' ? '<span class="pc-opt">(facultatif)</span>' : '<span class="pc-req">*</span>'}</label><select id="cs-voie"><option value="">Choisir…</option>${VOIES_ADMINISTRATION.map(v => opt(v, v, E.voie)).join('')}</select></div>
         <div><label>Motif <span class="pc-opt">(facultatif)</span></label><input type="text" id="cs-motif" value="${echapperHtml(E.motif)}" placeholder="Pathologie traitée"></div>
@@ -23242,6 +23295,7 @@ function ficheProduit(nom) {
     delaiLait, delaiViande,
     surOrdonnance: !!(info && info.surOrdonnance),
     complete: delaiLait !== null && delaiViande !== null,
+    usage: info && typeof info.usage === 'string' && info.usage.trim() ? info.usage.trim() : null,   // « À quoi il sert » (facultatif, texte de l'éleveur)
     categorieSoin: info && info.categorieSoin ? info.categorieSoin : null,   // produit de la liste « autres » : sa catégorie (soin « Autre », ou traitement ajouté par l'éleveur)
     typeSoin: info && info.typeSoin === 'Traitement' ? 'Traitement' : null,
     bouclage: info && info.bouclage && Number(info.bouclage.doseCc) > 0 ? { doseCc: Number(info.bouclage.doseCc), voie: info.bouclage.voie || '' } : null,
@@ -23265,6 +23319,8 @@ function ecrireFicheProduit(nom, f) {
     posologie: f.posologie || null, delaiAttente: f.delaiLait, delaiLait: f.delaiLait, delaiViande: f.delaiViande,
     surOrdonnance: !!f.surOrdonnance
   };
+  const usage = f.usage !== undefined ? f.usage : ancien.usage;   // « À quoi il sert » : celui passé par l'appelant (null = effacé), sinon celui déjà noté
+  if (typeof usage === 'string' && usage.trim()) e.usage = usage.trim().slice(0, 120);
   if (ancien.reserveVeterinaire) e.reserveVeterinaire = true;   // option retirée : la valeur déjà enregistrée n'est jamais effacée (plus lue)
   // soin au bouclage des agneaux : celui passé par l'appelant (null = retiré), sinon celui déjà réglé
   const bouclage = f.bouclage !== undefined ? f.bouclage : ancien.bouclage;
@@ -23323,6 +23379,9 @@ function ouvrirFicheProduitModal(options) {
         <select id="fp-categorie" style="margin-bottom:0;"></select>
         <div id="fp-correction"></div>
       </div>
+      <label for="fp-usage">À quoi il sert (facultatif)</label>
+      <input type="text" id="fp-usage" maxlength="120" value="${echapperHtml((fiche && fiche.usage) || '')}" placeholder="ex. diarrhées des agneaux" style="margin-bottom:4px;">
+      <p class="brd-note" style="margin:0 0 12px;">Pour vous rappeler son usage. 120 caractères au plus.</p>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
         <div><label>Délai viande (jours) *</label><input type="number" id="fp-viande" min="0" step="1" value="${v(pre.delaiViande)}" placeholder="0 = aucune attente"></div>
         <div><label>Délai lait (jours) *</label><input type="number" id="fp-lait" min="0" step="1" value="${v(pre.delaiLait)}" placeholder="0 = aucune attente"></div>
@@ -23411,7 +23470,8 @@ function ouvrirFicheProduitModal(options) {
     const viande = lire('#fp-viande'), lait = lire('#fp-lait');
     if (viande === null) return montrer('Le délai viande est obligatoire (nombre de jours entier, 0 autorisé).');
     if (lait === null) return montrer('Le délai lait est obligatoire (nombre de jours entier, 0 autorisé).');
-    const fiche2 = { posologie: overlay.querySelector('#fp-poso').value.trim(), delaiLait: lait, delaiViande: viande, surOrdonnance: overlay.querySelector('#fp-ord').checked };
+    const fiche2 = { posologie: overlay.querySelector('#fp-poso').value.trim(), delaiLait: lait, delaiViande: viande, surOrdonnance: overlay.querySelector('#fp-ord').checked,
+      usage: overlay.querySelector('#fp-usage').value.trim().slice(0, 120) || null };
     if (overlay.querySelector('#fp-bouclage').checked) {
       const doseTxt = overlay.querySelector('#fp-bouclage-dose').value.trim().replace(',', '.');
       if (!/^\d+(\.\d+)?$/.test(doseTxt) || !(parseFloat(doseTxt) > 0)) return montrer('Indique la dose par agneau (cc) donnée au bouclage.');
@@ -23480,7 +23540,7 @@ function renderProduitsDelais() {
     return carteListeHtml({
       nm: xlsxEscape(f.nom),
       pastille: f.complete ? cartePastille('Complète', 'vert') : cartePastille(f.aConfirmer ? 'À confirmer' : 'Incomplète', 'ambre'),
-      l2: 'Viande' + (bio ? ' (légal)' : '') + ' : ' + jours(f.delaiViande) + ' · Lait' + (bio ? ' (légal)' : '') + ' : ' + jours(f.delaiLait) + (f.posologie ? '<br>Posologie : ' + xlsxEscape(f.posologie) : ''),
+      l2: (f.usage ? '<span class="pd-usage" style="color:var(--ch-texte);">' + echapperHtml(f.usage) + '</span><br>' : '') + 'Viande' + (bio ? ' (légal)' : '') + ' : ' + jours(f.delaiViande) + ' · Lait' + (bio ? ' (légal)' : '') + ' : ' + jours(f.delaiLait) + (f.posologie ? '<br>Posologie : ' + xlsxEscape(f.posologie) : ''),
       l3: [f.bouclage ? cartePastille(echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage))), 'vert') : '', cartePastille('Ordonnance : ' + (dispo ? (f.surOrdonnance ? 'sur ordonnance' : 'non') : '—')),
         bio ? cartePastille('Minimum 48 h bio : ' + etatBioTexte(f.min48h, 'à confirmer', f.min48hDefaut), f.min48h === 'a_confirmer' ? 'ambre' : '') : '', bio ? cartePastille('Compte dans les 3 traitements : ' + etatBioTexte(f.compte, 'à confirmer', f.compteDefaut), f.compte === 'a_confirmer' ? 'ambre' : '') : ''],
       acts: `<button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}">Modifier</button><button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="color:var(--ch-rouge);">Supprimer</button>`
@@ -23512,13 +23572,19 @@ function renderProduitsDelais() {
       ${mobile ? `<div class="cartes-liste" id="pd-cartes-anciennes" style="margin-top:12px;">${aConfirmer.map(carteConfirmer).join('')}</div>` : `<table class="pc-t"><tr><th class="l">Produit</th><th class="l">Catégorie</th><th class="l">Délai lait</th><th class="l">Ancienne posologie</th><th class="l">Délai viande</th><th class="l"></th></tr>${aConfirmer.map(ligneConfirmer).join('')}</table>`}
       <div id="pd-err" class="error-box hidden" style="margin-top:10px;"></div>
     </div>` : ''}
+    ${tous.length > 1 ? `<input type="text" id="pd-recherche" placeholder="Rechercher un produit (nom ou usage)" style="margin:0 0 12px;">` : ''}
     ${fiches.map(({ cat, produits }) => `<div class="card">
       ${pcCardHead(cat.label, pcPill('neutral', produits.length + ' produit' + (produits.length > 1 ? 's' : '')))}
-      ${produits.length === 0 ? '<p class="brd-note" style="margin:8px 0 0;">Aucun produit.</p>' : mobile ? `<div class="cartes-liste" style="margin-top:12px;">${produits.map(f => carteProduit(f, cat)).join('')}</div>` : `<div style="overflow-x:auto;"><table class="pc-t" style="margin-top:8px;"><tr><th class="l">Produit</th><th class="l">Fiche</th><th>Viande${bio ? ' (légal)' : ''}</th><th>Lait${bio ? ' (légal)' : ''}</th><th class="l">Posologie habituelle</th><th class="l">Ordonnance</th>${bio ? '<th class="l" style="white-space:normal;max-width:120px;">Minimum 48 h bio</th><th class="l" style="white-space:normal;max-width:130px;">Compte dans les 3 traitements</th>' : ''}<th></th></tr>
-      ${produits.map(f => `<tr><td class="l"><b>${echapperHtml(f.nom)}</b>${f.bouclage ? ' ' + pcPill('ok', echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage)))) : ''}</td><td class="l">${statut(f)}</td><td>${jours(f.delaiViande)}</td><td>${jours(f.delaiLait)}</td><td class="l">${echapperHtml(f.posologie || '—')}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.surOrdonnance ? 'Sur ordonnance' : 'Non') : '—'}</td>${bio ? `<td class="l pd-min48" style="white-space:normal;max-width:150px;">${etatBio(f.min48h, 'minimum 48 h bio à confirmer', f.min48hDefaut)}</td><td class="l pd-compte">${etatBio(f.compte, 'à confirmer', f.compteDefaut)}</td>` : ''}<td style="white-space:nowrap;"><button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`).join('')}</table></div>`}
+      ${produits.length === 0 ? '<p class="brd-note" style="margin:8px 0 0;">Aucun produit.</p>' : mobile ? `<div class="cartes-liste" style="margin-top:12px;">${produits.map(f => `<div class="pd-ligne" data-recherche="${echapperHtml((f.nom + ' ' + (f.usage || '')).toLowerCase())}">${carteProduit(f, cat)}</div>`).join('')}</div>` : `<div style="overflow-x:auto;"><table class="pc-t" style="margin-top:8px;"><tr><th class="l">Produit</th><th class="l">Fiche</th><th>Viande${bio ? ' (légal)' : ''}</th><th>Lait${bio ? ' (légal)' : ''}</th><th class="l">Posologie habituelle</th><th class="l">Ordonnance</th>${bio ? '<th class="l" style="white-space:normal;max-width:120px;">Minimum 48 h bio</th><th class="l" style="white-space:normal;max-width:130px;">Compte dans les 3 traitements</th>' : ''}<th></th></tr>
+      ${produits.map(f => `<tr class="pd-ligne" data-recherche="${echapperHtml((f.nom + ' ' + (f.usage || '')).toLowerCase())}"><td class="l"><b>${echapperHtml(f.nom)}</b>${f.usage ? `<div class="pd-usage" style="font-size:13px;color:var(--ch-texte2);">${echapperHtml(f.usage)}</div>` : ''}${f.bouclage ? ' ' + pcPill('ok', echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage)))) : ''}</td><td class="l">${statut(f)}</td><td>${jours(f.delaiViande)}</td><td>${jours(f.delaiLait)}</td><td class="l">${echapperHtml(f.posologie || '—')}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.surOrdonnance ? 'Sur ordonnance' : 'Non') : '—'}</td>${bio ? `<td class="l pd-min48" style="white-space:normal;max-width:150px;">${etatBio(f.min48h, 'minimum 48 h bio à confirmer', f.min48hDefaut)}</td><td class="l pd-compte">${etatBio(f.compte, 'à confirmer', f.compteDefaut)}</td>` : ''}<td style="white-space:nowrap;"><button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`).join('')}</table></div>`}
     </div>`).join('')}
   </div>`;
   const rafraichir = () => render('produits-delais');
+  const rech = document.getElementById('pd-recherche');
+  if (rech) rech.addEventListener('input', () => {
+    const q = rech.value.trim().toLowerCase();
+    document.querySelectorAll('#pc-produits-delais .pd-ligne').forEach(l => { l.style.display = !q || (l.dataset.recherche || '').includes(q) ? '' : 'none'; });
+  });
   document.getElementById('pd-retour').onclick = () => render('sanitaire');
   document.getElementById('pd-nouveau').onclick = () => ouvrirFicheProduitModal({ categorieKey: 'antibiotiques', onSaved: rafraichir });
   document.querySelectorAll('.pd-modifier').forEach(b => { b.onclick = () => ouvrirFicheProduitModal({ nom: decodeURIComponent(b.dataset.nom), onSaved: rafraichir }); });
@@ -23983,8 +24049,10 @@ function ligneMouvementRegistre(eid, categorie, m, sexe) {
   if (detail.trim().toLowerCase() === type.toLowerCase()) detail = '';   // « Naissance », « Achat » : le type le dit déjà
   if (t === 'Vente reproduction') detail = 'reproduction' + (detail ? ' · ' + detail : '');
   if (t === SORTIE_INVENTAIRE) detail = SORTIE_INVENTAIRE + (detail && detail !== SORTIE_INVENTAIRE ? ' · ' + detail : '');
-  return { eid, categorie, type, typeBrut: t, sexe: sexe || '', detail, date: m.date || '', campagne: campagneDeDateRegistre(m.date) };
+  return { eid, categorie, type, typeBrut: t, sexe: sexe || '', detail, date: m.date || '', campagne: campagneDeDateRegistre(m.date), dateSaisie: m.dateInconnue === true };
 }
+// Date d'un mouvement du registre : « 12/11/2026 (date de saisie) » pour une entrée dont la vraie date est inconnue (tri normal par date)
+function dateMouvementRegistreTexte(r) { return formatDateFr(r.date) + (r.dateSaisie ? ' (date de saisie)' : ''); }
 // « Naissance · femelle » : type affiché avec le sexe de l'agneau (filtres et regroupements sur le type seul)
 const typeAfficheRegistre = r => r.type + (r.sexe ? ' · ' + r.sexe.toLowerCase() : '');
 // Catégorie : quatre choix ; « Agneaux nés » = agneaux ET agnelles de renouvellement (mâles et femelles)
@@ -23999,8 +24067,13 @@ function registreMouvementsRows() {
   const rows = [];
   REGISTRE_CATEGORIES.forEach(c => {
     registreEntriesFor(c.key).forEach(entry => {
+      const fiche = entry.actif ? (c.key === 'brebis' ? DB.brebis : c.key === 'beliers' ? DB.beliers : DB.agnelles).find(a => a.eid === entry.eid) : null;
+      const inconnue = !!fiche && entreeDateInconnue(fiche);   // données d'avant le marqueur : reconnues par leur trace (fiche active)
+      let premiere = true;
       entry.mouvements.forEach(m => {
-        rows.push(ligneMouvementRegistre(entry.eid, c.label, m, ''));
+        const r = ligneMouvementRegistre(entry.eid, c.label, m, '');
+        if (m.type === 'Entrée' && premiere) { premiere = false; if (inconnue) r.dateSaisie = true; }
+        rows.push(r);
       });
     });
   });
@@ -24199,7 +24272,7 @@ function registreMobileVue(view, filtreNumero, colFiltres) {
     const allRows = registreMouvementsRows(), rows = registreMouvementsFilteredRows(filtreNumero, colFiltres);
     return { rows, nbSelects: 3, nom: ['mouvement', 'mouvements'], vide: 'Aucun mouvement ne correspond aux filtres.',
       controlsHtml: registreCategorieMouvementSelectHtml(colFiltres.categorie, false) + registreColSelectHtml('type', 'Type', allRows.map(r => r.type), colFiltres.type) + registreCampagneSelectHtml(allRows.map(r => r.campagne), colFiltres.campagne),
-      carte: r => registreCarteHtml('n°' + numeroVisuel(r.eid), r.categorie, registrePastille(typeAfficheRegistre(r), registreTeinteMouvement(r.typeBrut === SORTIE_INVENTAIRE ? SORTIE_INVENTAIRE : r.type)), formatDateFr(r.date), echapperHtml(r.detail), registreCampagneLabel(r)) };
+      carte: r => registreCarteHtml('n°' + numeroVisuel(r.eid), r.categorie, registrePastille(typeAfficheRegistre(r), registreTeinteMouvement(r.typeBrut === SORTIE_INVENTAIRE ? SORTIE_INVENTAIRE : r.type)), dateMouvementRegistreTexte(r), echapperHtml(r.detail), registreCampagneLabel(r)) };
   }
   const allRows = registreSanitaireRows(), rows = registreSanitaireFilteredRows(filtreNumero, colFiltres);
   return { rows, nbSelects: 3, nom: ['soin', 'soins'], vide: 'Aucun soin ne correspond aux filtres.',
@@ -26083,7 +26156,7 @@ async function exportRegistreXlsx() {
     { name: 'Mouvements', colWidths: [16, 14, 14, 24, 12, 14], rows: [
       ['N°', 'Catégorie', 'Type', 'Cause / détail', 'Date', 'Campagne'],
       ...registreMouvementsFilteredRows(registreFiltre, registreColFiltres.mouvements).map(r =>
-        ['n°' + eidAffichageCourt(r.eid), r.categorie, typeAfficheRegistre(r), r.detail, formatDateFr(r.date), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
+        ['n°' + eidAffichageCourt(r.eid), r.categorie, typeAfficheRegistre(r), r.detail, dateMouvementRegistreTexte(r), r.campagne === null ? '' : 'Campagne ' + (r.campagne + 1)])
     ]},
     feuilleSanitaireXlsx(registreSanitaireFilteredRows(registreFiltre, registreColFiltres.sanitaire))
   ];
@@ -26178,7 +26251,7 @@ async function exportRegistrePdf() {
       { label: 'Cause / détail', x: 270 }, { label: 'Date', x: 480 }, { label: 'Campagne', x: 540 }
     ];
     rows = registreMouvementsFilteredRows(filtreNumero, colFiltres).map(r => [
-      'n°' + eidAffichageCourt(r.eid), r.categorie, typeAfficheRegistre(r), r.detail, formatDateFr(r.date), registreCampagneLabelTexte(r)
+      'n°' + eidAffichageCourt(r.eid), r.categorie, typeAfficheRegistre(r), r.detail, dateMouvementRegistreTexte(r), registreCampagneLabelTexte(r)
     ]);
   } else {
     title = "Registre d'élevage — Sanitaire";
@@ -26296,7 +26369,7 @@ function registrePcTableHtml(view) {
   if (view === 'mouvements') {
     const rows = registreMouvementsFilteredRows(f, cf);
     return { n: rows.length, unite: 'mouvement', unites: 'mouvements', html: rows.length === 0 ? vide('Aucun mouvement ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type</th><th class="l">Cause / détail</th><th class="l">Date</th><th class="l">Campagne</th></tr>
-      ${rows.map(r => `<tr>${td(eidTxt(r.eid))}${td(r.categorie)}${td(typeAfficheRegistre(r))}${td(echapperHtml(r.detail))}${td(formatDateFr(r.date))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
+      ${rows.map(r => `<tr>${td(eidTxt(r.eid))}${td(r.categorie)}${td(typeAfficheRegistre(r))}${td(echapperHtml(r.detail))}${td(dateMouvementRegistreTexte(r))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
   }
   const rows = registreSanitaireFilteredRows(f, cf);
   return { n: rows.length, unite: 'soin', unites: 'soins', html: rows.length === 0 ? vide('Aucun soin ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">N° ordonnance</th><th class="l">Campagne</th></tr>
@@ -28361,7 +28434,7 @@ function creerBrebisImport(champs, validation) {
     pere: champs.pereVal || '', mere: champs.mereVal || '',
     echographies: [], agnelages: [], sanitaire: [], mouvements: [], controleLaitier: [], statut: 'active'
   };
-  sheep.mouvements.push({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement });
+  sheep.mouvements.push(Object.assign({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement }, dateEntree ? {} : { dateInconnue: true }));
   if (validation.sieol && (validation.sieol.long || validation.sieol.court)) {
     sheep.numeroLongTravailSieol = validation.sieol.long || null;
     sheep.numeroCourtTravailSieol = validation.sieol.court || null;
@@ -28376,7 +28449,7 @@ function creerBelierImport(champs, validation) {
   const dateEntree = validation.dateParsee || null;
   const dateMouvement = dateEntree || jourAujourdhuiISO();
   const belier = { id: nouvelIdAnimalImporte(), eid: champs.eidVal, createdAt: Date.now(), dateEntree, sanitaire: [], mouvements: [], statut: 'actif' };
-  belier.mouvements.push({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement });
+  belier.mouvements.push(Object.assign({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement }, dateEntree ? {} : { dateInconnue: true }));
   if (champs.numeroLibreVal) belier.numeroTravailSieol = champs.numeroLibreVal;
   if (champs.pereVal) belier.pere = champs.pereVal;
   if (champs.mereVal) belier.mere = champs.mereVal;
@@ -28393,7 +28466,7 @@ function creerAgnelleImport(champs, validation) {
     id: nouvelIdAnimalImporte(), eid: champs.eidVal, origine: champs.origine.toLowerCase(), dateEntree,
     pere: champs.pereVal || '', mere: champs.mereVal || '', sanitaire: [], mouvements: []
   };
-  ag.mouvements.push({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement });
+  ag.mouvements.push(Object.assign({ type: 'Entrée', cause: 'Import Nouveaux animaux (' + (champs.origine || '?') + ')', date: dateMouvement }, dateEntree ? {} : { dateInconnue: true }));
   if (validation.sieol && (validation.sieol.long || validation.sieol.court)) {
     ag.numeroLongTravailSieol = validation.sieol.long || null;
     ag.numeroCourtTravailSieol = validation.sieol.court || null;
