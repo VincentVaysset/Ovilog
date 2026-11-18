@@ -27,6 +27,7 @@ for (const tz of ['UTC', 'Europe/Paris']) {
     const A = fiche(eid(3, 1), { id: 'A', sanitaire: [{ type: 'Traitement', sousType: 'Antibiotique', produit: 'Intramicine', date: '2026-09-29', quantiteCc: 8, intervenant: 'Éleveur' }] });   // fin de délai le 02/10
     const B = fiche(eid(3, 2), { id: 'B', mouvements: [{ type: 'Entrée', cause: 'Renouvellement', date: '2025-10-01' }] });                // entrée EXACTEMENT le 1er octobre 2025
     const C = fiche(eid(3, 3), { id: 'C', statut: 'vendue', mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', date: '2025-10-01' }] });   // sortie EXACTEMENT le 1er octobre 2025
+    B.agnelages = [{ date: '2025-10-01', campagne: 2025, codeRepro: 'MN', lambs: [{ sexe: 'Femelle', eid: '' }] }];   // mises bas commencées le 1er octobre : C, vendue ce jour-là, était présente à la mise bas
     DB.brebis = [A, B, C]; DB.beliers = []; DB.agnelles = []; DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
     const o = {};
     o.jour = jourAujourdhuiISO();
