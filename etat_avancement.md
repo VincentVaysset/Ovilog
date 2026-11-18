@@ -119,4 +119,5 @@ Reprises aussi dans `CLAUDE.md`, section « Méthode de travail ».
 - Corrigé : présentes au début des mises bas de leur groupe ou lot ; une brebis qui a mis bas compte toujours ; date d'entrée inconnue = présente depuis toujours (marqueur `dateInconnue` à partir de maintenant, trace pour l'existant) ; registre « (date de saisie) » ; fiche « Date d'entrée : inconnue ».
 - Bilan par groupe d'âge : agneaux (femelles, mâles) et mortalité affichés d'office sur mobile.
 - À vérifier sur le terrain : chiffres du testeur (effectif, fertilité, taux de réussite) ; chiffres de l'éleveur avant / après (capture du bilan avant installation, écarts attendus : effectif qui monte si des brebis créées ou importées sans date étaient exclues ; passage de « présentes au démarrage » à « présentes au début des mises bas »).
-- Demande suivante (plan à valider) : champ « à quoi sert ce produit » sur la fiche produit.
+- Fait ensuite : champ « À quoi il sert » sur la fiche produit (maquette validée), Produits et délais (affichage, recherche), choix du produit au Carnet.
+- Maquette validée, à coder plus tard : rappel de l'écho à la saisie de la mise bas (« pleine · IA · 2 attendus », message ambre si le nombre ne colle pas), date de mise bas prévue en fenêtre (lot + G min à G max, retour décalé d'un ou deux cycles), « Mises bas attendues » à l'Accueil.
