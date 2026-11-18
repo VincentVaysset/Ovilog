@@ -109,7 +109,9 @@ for (const desktop of [false, true]) {
   await page.waitForSelector('#lamb-list-rapide');
   await sexe(0, 'Mâle');
   await page.fill('.eid-input-rapide[data-id="0"]', '61001');
-  check(/déjà|utilisé/i.test((await aper(0)).texte), nom + ' : n° déjà donné à un autre agneau : signalé dès la saisie');
+  let txtDeja = '';
+  for (let k = 0; k < 20 && !/déjà|utilisé/i.test(txtDeja); k++) { txtDeja = (await aper(0)).texte; if (!/déjà|utilisé/i.test(txtDeja)) await page.waitForTimeout(100); }   // aperçu posé après la frappe : attendu (machine chargée)
+  check(/déjà|utilisé/i.test(txtDeja), nom + ' : n° déjà donné à un autre agneau : signalé dès la saisie');
   await page.click('#btn-valider-misebas');
   check(/déjà|utilisé/i.test(await page.evaluate(() => document.getElementById('err').textContent)) && (await page.evaluate(() => DB.brebis.find(b => b.id.endsWith('00102')).agnelages.length)) === 0, nom + ' : et refusé à l\'enregistrement');
 
