@@ -133,7 +133,7 @@ r = await page.evaluate(() => {
     fiche(eid(3, 6), { agnelages: [{ date: '2026-01-13', campagne: 2025, lambs: [] }] }),                                                                         // sans agneau
     fiche(eid(3, 7), { agnelages: [{ date: '2026-01-14', campagne: 2025, lambs: [{ sexe: 'Mâle' }] }, { date: '2026-02-14', campagne: 2025, lambs: [{ sexe: 'Femelle' }] }] }), // mises bas multiples
     fiche(eid(3, 8), { agnelages: [{ date: '2025-01-14', campagne: 2024, lambs: [{ sexe: 'Mâle' }] }] }),                                                         // autre campagne : ignorée
-    fiche(eid(3, 9), { mouvements: entree('Achat', '2025-12-01'), agnelages: [{ date: '2026-03-01', campagne: 2025, lambs: [{ sexe: 'Femelle' }, { sexe: 'Femelle' }] }] }) // hors cohorte (entrée après le démarrage)
+    fiche(eid(3, 9), { mouvements: entree('Achat', '2025-12-01'), agnelages: [{ date: '2026-03-01', campagne: 2025, lambs: [{ sexe: 'Femelle' }, { sexe: 'Femelle' }] }] }) // achetée après le démarrage, a mis bas : dans l'effectif (règle PMB)
   ], { registre: { brebis: {
     [eid(3, 10)]: { eid: eid(3, 10), mouvements: [{ type: 'Entrée', date: '2024-01-01' }, { type: 'Vente', date: '2026-04-01' }], agnelages: [{ date: '2026-01-20', campagne: 2025, lambs: [{ sexe: 'Mâle' }] }] }   // brebis du registre (fiche retirée), vendue après le démarrage
   }, beliers: {}, agnelles: {} } });
@@ -141,11 +141,11 @@ r = await page.evaluate(() => {
 });
 const g = r.groupes.total; // toutes du même millésime -> toutes antenaises : on lit le total
 check(g.portees.simples === 4 && g.portees.doubles === 1 && g.portees.triples === 1 && g.portees.quatreEtPlus === 1 && g.sansAgneau === 1, 'portées : 3 -> triple, 5 -> 4 et plus, 0 -> sans agneau : ' + JSON.stringify(g.portees) + ' sansAgneau=' + g.sansAgneau);
-check(g.misesBas === 8 && g.misesBasCohorte === 7 && r.horsBilan.misesBasHorsCohorte === 1 && r.horsBilan.brebisAvecMiseBasHorsCohorte === 1 && r.horsBilan.entreesTardives === 1, 'hors cohorte : incluse dans les mises bas (8), exclue de la fertilité (7 sur ' + g.presentes + ' présentes), compteur hors bilan : ' + JSON.stringify(r.horsBilan));
-check(g.presentes === 9, 'population : 8 fiches (dont la mère adoptive) + la brebis du registre, sans la brebis entrée tard = 9 : ' + g.presentes);
+check(g.misesBas === 8 && g.misesBasCohorte === 8 && r.horsBilan.misesBasHorsCohorte === 0 && r.horsBilan.brebisAvecMiseBasHorsCohorte === 0 && r.horsBilan.entreesTardives === 0, 'règle PMB : la brebis achetée après le démarrage MAIS qui a mis bas est dans l\'effectif (8 mises bas sur ' + g.presentes + ' présentes), plus rien « hors bilan » : ' + JSON.stringify(r.horsBilan));
+check(g.presentes === 10, 'population : 9 fiches (dont la mère adoptive et l\'achetée qui a mis bas) + la brebis du registre = 10 : ' + g.presentes);
 check(g.nes.total === 3 + 5 + 1 + 1 + 0 + 1 + 2 + 1 && g.nes.sexeInvalide === 1, 'agneaux : l\'adopté est compté UNE fois (chez sa mère biologique), le sexe invalide est compté parmi les nés : ' + JSON.stringify(g.nes));
 const cd = r.anomalies.map(a => a.code).sort();
-check(['agneau-sexe-invalide', 'mise-bas-hors-cohorte', 'mise-bas-sans-agneau', 'mises-bas-multiples'].every(c => cd.includes(c)), 'anomalies remontées sans correction : ' + cd);
+check(['agneau-sexe-invalide', 'mise-bas-sans-agneau', 'mises-bas-multiples'].every(c => cd.includes(c)) && !cd.includes('mise-bas-hors-cohorte'), 'anomalies remontées sans correction (plus de « hors cohorte » : une brebis qui a mis bas est dans l\'effectif) : ' + cd);
 check(r.groupes.total.misesBas === 8 && !r.anomalies.some(a => a.code === 'mises-bas-multiples' && a.nombre !== 1), 'mises bas multiples : seule la première est comptée, signalée une fois');
 console.log('OK 3 cas limites : campagne vide (ratios null), triple / 4+ / sans agneau, adopté compté une fois, sexe invalide signalé, hors cohorte incluse dans les totaux et hors fertilité (compteur hors bilan), brebis du registre comptée, mises bas multiples signalées.');
 
