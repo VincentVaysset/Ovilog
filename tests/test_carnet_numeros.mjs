@@ -40,7 +40,7 @@ for (const mobile of [true, false]) {
   if (mobile) {
     const res = q => p.evaluate(q => { const r = resoudreNumeroCarnet(animauxEligiblesCarnet(), q); return [r.statut, r.item ? r.item.court || r.item.numero : (r.candidats || []).map(a => a.court || a.numero).sort()]; }, q);
     eq(await res('023'), ['ambigu', ['023', 'Mâle de n°01023 (sans n°)']], 'n° court SIEOL de la mère : la brebis et son agneau sans n°, rien d\'office');
-    eq(await res('23'), ['ambigu', ['023', 'Mâle de n°01023 (sans n°)']], 'zéros de tête ignorés');
+    eq(await res('23'), ['partiel', ['023', 'Mâle de n°01023 (sans n°)']], 'n° de travail sans son zéro de tête : jamais d\'office (« 23 » ≠ « 023 »), à choisir');
     eq(await res('2106023'), ['ambigu', ['023', 'Mâle de n°01023 (sans n°)']], 'n° long SIEOL');
     eq(await res('512'), ['ambigu', ['512', 'Femelle de n°69002 (sans n°)', 'Mâle de n°69002 (sans n°)']], 'n° court SIEOL d\'une autre mère (bug signalé)');
     eq(await res('88'), ['trouve', '88'], 'n° de travail du bélier');

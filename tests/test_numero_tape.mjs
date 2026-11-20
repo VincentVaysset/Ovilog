@@ -28,7 +28,7 @@ const r = await p.evaluate(() => {
   const t = v => { const x = resoudreNumeroTape(DB.brebis, v); return x.statut + ':' + (x.item ? x.item.id : (x.candidats || []).map(c => c.id).join(',')) + (x.ordre ? '>' + x.ordre : ''); };
   return ['590', '0590', '55090', '51090', '250000045651090', '00045651090', '543', '250043', '1090', '77', '9123', '808', '80008', '12345', '99', ''].map(t);
 });
-eq(r, ['trouve:a', 'trouve:a', 'trouve:g', 'ambigu:a,g', 'trouve:a', 'trouve:a', 'trouve:b', 'trouve:b', 'partiel:a,g', 'partiel:d,e', 'partiel:f', 'propose:c>80008', 'trouve:c', 'absent:', 'absent:', 'absent:'],
+eq(r, ['trouve:a', 'partiel:a', 'trouve:g', 'ambigu:a,g', 'trouve:a', 'trouve:a', 'trouve:b', 'trouve:b', 'partiel:a,g', 'partiel:d,e', 'partiel:f', 'propose:c>80008', 'trouve:c', 'absent:', 'absent:', 'absent:'],
   'règle des n° tapés');
 // écrans anciens : une proposition devient « à choisir », jamais d'office
 eq(await p.evaluate(() => { const x = trouverUnParEidOuNumero(DB.brebis, '808'); return [x.statut, x.ordre, x.candidats.length]; }), ['ambigu', '80008', 1], 'proposition = à choisir');

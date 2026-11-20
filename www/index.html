@@ -3270,16 +3270,10 @@ function openCorrigerNumeroTravailSieolBelierSheet(belier, onSaved) {
    SIEOL qui coïncide avec le numéro d'ordre Ovilog d'un autre animal)
    retombe naturellement dans la liste de candidats ci-dessus (voir
    wireEidLookupField), sans code spécifique. */
-function trouverParNumero(pool, numero, getEid) {
-  getEid = getEid || (it => it.eid);
-  const v = cleanEid(numero || '');
-  if (!v || v.length >= 11) return [];
-  return pool.filter(it => numeroVisuel(getEid(it)) === v || it.numeroLongTravailSieol === v || it.numeroCourtTravailSieol === v);
-}
 /* N° TAPÉ au clavier pour trouver une bête : UNE règle pour toute l'appli (champ commun wireEidLookupField, Carnet sanitaire,
    Chantier de tri › Lots PC…). Un bip donne l'EID complet : il est trouvé tel quel (étape 0), la suite ne le concerne pas.
    0. 11 chiffres et plus : EID exact, ou n° national (11 derniers chiffres).
-   1. N° EXACT (n° d'ordre, n° de travail, n° de travail complet, n° de travail du bélier ; zéros de tête ignorés) : un seul = trouvé d'office.
+   1. N° EXACT (n° de travail, n° de travail complet, n° de travail du bélier : zéro de tête compris ; n° d'ordre : zéros de tête ignorés) : un seul = trouvé d'office.
    À cette étape, plusieurs bêtes (n° d'ordre partagé) = « ambigu » : liste pour choisir, rien d'office.
    2. Sinon, pour 4 chiffres au plus, MORCEAU de n° (n° contenu, comme la recherche de l'onglet Brebis) : « partiel », TOUJOURS une liste
       à toucher, même pour une seule bête, jamais d'office (5 chiffres et plus = un n° complet, jamais pris pour un morceau).
@@ -3298,10 +3292,14 @@ function resoudreNumeroTape(pool, val, opts) {
     if (!l.length) l = pool.filter(it => getEid(it) && eidAffichageCourt(getEid(it)) === v.slice(-11));
     return res(l) || { statut: 'absent' };
   }
-  const sz = x => String(x == null ? '' : x).replace(/\s+/g, '').toLowerCase().replace(/^0+(?=.)/, '');
-  const cible = sz(v);
+  // n° de travail (court, complet, bélier) : comparé EXACTEMENT, zéro de tête compris (« 0117 » ≠ « 117 », deux brebis différentes) ;
+  // seul le n° d'ordre (5 chiffres de l'EID) ignore ses zéros de tête (« 2117 » = « 02117 »). Morceau de n° (étape suivante) : sans zéros.
+  const brut = x => String(x == null ? '' : x).replace(/\s+/g, '').toLowerCase();
+  const sz = x => brut(x).replace(/^0+(?=.)/, '');
+  const cible = sz(v), cibleBrute = brut(v);
   const nums = it => (numerosDe(it) || []).filter(Boolean).map(sz);
-  const exacts = pool.filter(it => nums(it).includes(cible));
+  const numExact = n => { const b = brut(n); return /^\d{5}$/.test(b) ? sz(b) === cible : b === cibleBrute; };
+  const exacts = pool.filter(it => (numerosDe(it) || []).filter(Boolean).some(numExact));
   const r1 = res(exacts); if (r1) return r1;
   if (cible.length <= 4) { const l = pool.filter(it => nums(it).some(n => n.includes(cible))); if (l.length) return { statut: 'partiel', candidats: l }; }
   if (/^\d{3,6}$/.test(v)) {
@@ -3402,8 +3400,10 @@ function wireEidLookupField(inputEl, opts) {
    ci-dessus (pool = brebis actives) ; conservés sous leur nom d'origine,
    utilisés par wireMereAdoptiveField et par la validation à
    l'enregistrement de renderAddAgnelage/renderMiseBasRapide. */
+// Règle commune des n° tapés (resoudreNumeroTape, pool = brebis actives) : liste des brebis possibles, une seule si elle est trouvée d'office.
 function trouverBrebisActivesParNumero(numero) {
-  return trouverParNumero(DB.brebis.filter(s => (s.statut || 'active') === 'active'), numero);
+  const r = trouverUnParEidOuNumero(DB.brebis.filter(s => (s.statut || 'active') === 'active'), numero);
+  return r.statut === 'trouve' ? [r.item] : r.statut === 'ambigu' ? r.candidats : [];
 }
 function trouverBrebisActiveParEidOuNumero(val) {
   const actives = DB.brebis.filter(s => (s.statut || 'active') === 'active');
@@ -3428,9 +3428,9 @@ function wireMereAdoptiveField(inputEl, previewEl, onInput) {
     if (onInput) onInput();
     const val = inputEl.value.trim();
     if (!val) { previewEl.innerHTML = ''; return; }
-    const candidates = trouverBrebisActivesParNumero(val);
-    if (candidates.length > 1) {
-      renderCandidatsEidChips(candidates, previewEl, (s) => { inputEl.value = s.eid; draw(); });
+    const r = trouverUnParEidOuNumero(DB.brebis.filter(s => (s.statut || 'active') === 'active'), val);
+    if (r.statut === 'ambigu') {   // plusieurs brebis, morceau de n° ou numérotation de l'élevage : toujours à choisir, jamais d'office
+      renderCandidatsEidChips(r.candidats, previewEl, (s) => { inputEl.value = s.eid; draw(); }, null, introChoixNumeroTape(r, val));
       return;
     }
     const mere = trouverBrebisActiveParEidOuNumero(val);
@@ -15729,12 +15729,12 @@ function resoudreAnimalMereAgneau(val, ags) {
   if (!v) return null;
   ags = ags || agneauxCampagneAvecMere();
   const brebis = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  const egal = e => { const c = cleanEid(e || ''); return !!c && (c === v || (v.length >= 11 && c.length >= 11 && c.slice(-11) === v.slice(-11))); };
-  let cands;
-  if (v.length >= 11) cands = brebis.filter(b => egal(b.eid)).map(b => ({ type: 'brebis', brebis: b })).concat(ags.filter(x => egal(x.lamb.eid)).map(x => ({ type: 'agneau', lamb: x.lamb, mere: x.mere })));
-  else cands = trouverParNumero(brebis, v).map(b => ({ type: 'brebis', brebis: b })).concat(ags.filter(x => x.lamb.eid && numeroVisuel(x.lamb.eid) === v).map(x => ({ type: 'agneau', lamb: x.lamb, mere: x.mere })));
-  if (cands.length === 1) return cands[0];
-  if (cands.length > 1) return { type: 'ambigu' };
+  // Règle commune des n° tapés (resoudreNumeroTape) : brebis par tous leurs n°, agneaux par leur n° d'ordre ; un morceau de n° ou la
+  // numérotation de l'élevage n'est jamais pris d'office (= plusieurs, neutre)
+  const pool = brebis.map(b => ({ type: 'brebis', brebis: b, eid: b.eid })).concat(ags.filter(x => x.lamb.eid).map(x => ({ type: 'agneau', lamb: x.lamb, mere: x.mere, eid: x.lamb.eid })));
+  const r = resoudreNumeroTape(pool, v, { numeros: c => c.type === 'brebis' ? [numeroVisuel(c.eid), c.brebis.numeroCourtTravailSieol, c.brebis.numeroLongTravailSieol, c.brebis.numeroTravailSieol] : [numeroVisuel(c.eid)] });
+  if (r.statut === 'trouve') { const c = Object.assign({}, r.item); delete c.eid; return c; }
+  if (r.statut !== 'absent') return { type: 'ambigu' };
   const sorti = v.length >= 11 ? findLambByEid(v) : null;
   return sorti ? { type: 'agneauSorti', lamb: sorti } : null;
 }
@@ -27297,11 +27297,12 @@ function retrouverAnimalImport(valeur, pool, opts) {
     if (!l.length) l = nat(v.slice(-11));
     return l.length ? res(l, 'eid') : { type: 'aucune' };
   }
-  const vz = sansZerosTete(v);
-  const parTravail = c => pool.filter(a => a && a.numeroCourtTravailSieol && sansZerosTete(a.numeroCourtTravailSieol) === sansZerosTete(c));
+  // n° de travail : la correspondance EXACTE (zéro de tête compris : « 0117 » ≠ « 117 ») gagne ; sans zéros seulement si aucune n'est exacte
+  const exactOuSansZeros = (champ, c) => { const e = pool.filter(a => a && a[champ] && String(a[champ]).trim() === c); return e.length ? e : pool.filter(a => a && a[champ] && sansZerosTete(a[champ]) === sansZerosTete(c)); };
+  const parTravail = c => exactOuSansZeros('numeroCourtTravailSieol', c);
   let l = parTravail(v);
   if (l.length) return res(l, 'travail');
-  l = pool.filter(a => a && a.numeroLongTravailSieol && sansZerosTete(a.numeroLongTravailSieol) === vz);
+  l = exactOuSansZeros('numeroLongTravailSieol', v);
   if (!l.length && v.length === 6) { const c = sieolLongVersCourt(v); if (c) l = parTravail(c); }
   if (l.length) return res(l, 'complet');
   if (v.length === 5) { l = pool.filter(a => a && a.eid && numeroVisuel(a.eid) === v); if (l.length) return res(l, 'ordre'); }
@@ -27328,8 +27329,8 @@ function retenirNumeroImport(animal, numero, pool, ecrire) {
   if (!animal || !/^\d{3,6}$/.test(v)) return null;
   if (v.length === 5 && numeroVisuel(animal.eid) === v) return null;
   const court = v.length === 6 ? sieolLongVersCourt(v) : v, long = v.length === 6 ? v : null;
-  const memeCourt = a => court && a.numeroCourtTravailSieol && sansZerosTete(a.numeroCourtTravailSieol) === sansZerosTete(court);
-  const memeLong = a => long && a.numeroLongTravailSieol && sansZerosTete(a.numeroLongTravailSieol) === sansZerosTete(long);
+  const memeCourt = a => court && a.numeroCourtTravailSieol && String(a.numeroCourtTravailSieol).trim() === court;
+  const memeLong = a => long && a.numeroLongTravailSieol && String(a.numeroLongTravailSieol).trim() === long;
   if (memeCourt(animal) || memeLong(animal)) return 'deja';
   if ((pool || []).some(a => a && a !== animal && (memeCourt(a) || memeLong(a)))) return 'pris';
   if ((court && animal.numeroCourtTravailSieol) || (long && animal.numeroLongTravailSieol)) return 'different';
@@ -28224,7 +28225,7 @@ function renderImportCorrespondanceSieol() {
    comparer par magnitude -- toutes les autres colonnes sont numériques.
 
    Résolution : numéro SIEOL COURT uniquement (pas d'EID sur ce fichier),
-   via trouverParNumero(), brebis uniquement -- jamais d'EID en repli
+   via la règle commune des n° tapés, brebis uniquement -- jamais d'EID en repli
    (aucune colonne EID sur ce modèle, à la différence du Contrôle laitier).
 
    Une ligne dont TOUTES les colonnes de mesure sont vides ou à 0 (brebis
@@ -29421,7 +29422,7 @@ function renderImportCellules() {
    directe à eidAffichageCourt(brebis.eid), comme Correspondance SIEOL (un
    numéro officiel est unique par construction, jamais ambigu). Colonne B
    (numéro SIEOL court/long) utilisée UNIQUEMENT si A est vide sur cette
-   ligne, via trouverParNumero() (numéro court Ovilog + long/court travail
+   ligne, via la règle commune des n° tapés (numéro court Ovilog + long/court travail
    SIEOL, gère nativement l'ambiguïté) -- JAMAIS de repli automatique de A
    vers B si A ne résout aucun animal.
 
