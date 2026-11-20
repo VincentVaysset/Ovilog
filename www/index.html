@@ -2276,8 +2276,87 @@ function migrateData(d) {
     (d.mouvementsCollectifs || []).forEach(m => { if (m.categorie === 'agneaux') m.categorie = 'agnelles'; });
     d.agnellesRenommeesDepuisAgneaux20260921 = true;
   }
+  poserIdsElements(d, 'contenu');   // lot 4 : identifiant technique de chaque élément de liste (anciens éléments : d'après leur contenu)
   return d;
 }
+
+/* ---------- Identifiant technique de chaque élément de liste (lot 4, livraison 1) ----------
+   Chaque élément d'une liste d'une fiche (mise bas, agneau, écho, soin, mouvement, contrôle, note, évènement de repro, vide définitive,
+   échantillon de cellules, marque de traite) porte un `id` technique INVISIBLE ; aucun n° d'animal n'est touché, un id déjà présent
+   (soin « S-… », etc.) est gardé tel quel.
+   - Ancien élément (sans id, à la lecture de la base ou reçu d'un autre appareil) : id CALCULÉ d'après son contenu (`h` + empreinte), donc le
+     même sur tous les appareils ; deux éléments identiques d'une même liste sont départagés par leur rang d'occurrence (« -2 », « -3 »…) :
+     aucun ne se confond avec l'autre.
+   - Nouvel élément (créé sur cet appareil depuis la dernière lecture) : id unique tiré au hasard (`e` + horodatage + aléa), posé à
+     l'enregistrement (saveData).
+   La synchro n'utilise pas encore ces id (livraison 2). Lecture et affichage inchangés. Contrôle : test_ids_elements. */
+// (fonctions, jamais de const : migrateData tourne pendant `let DB = loadData()`, avant les déclarations const du script)
+function listesElementsFiche() { return ['agnelages', 'echographies', 'sanitaire', 'mouvements', 'controleLaitier', 'notes', 'modesRepro', 'videesDefinitives', 'cellules', 'nonTraite', 'miseTraite']; }
+function listesElementsAgneau() { return ['sanitaire', 'mouvements', 'notes']; }
+// Texte stable d'une valeur (clés triées, `id` de l'élément lui-même écarté) : deux contenus égaux donnent toujours le même texte
+function texteStableElement(v, racine) {
+  if (v === null || v === undefined) return 'null';
+  if (Array.isArray(v)) return '[' + v.map(x => texteStableElement(x, false)).join(',') + ']';
+  if (typeof v === 'object') return '{' + Object.keys(v).filter(k => !(racine && k === 'id') && v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + texteStableElement(v[k], false)).join(',') + '}';
+  return JSON.stringify(v);
+}
+// Empreinte FNV-1a sur 2 × 32 bits, en base 36 (déterministe, sans dépendance)
+function empreinteTexte(t) {
+  let a = 0x811c9dc5, b = 0x01000193 ^ t.length;
+  for (let i = 0; i < t.length; i++) {
+    const c = t.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c ^ (i & 0xff), 0x01000193) >>> 0;
+  }
+  return a.toString(36) + b.toString(36);
+}
+function idAleatoireElement() { return 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+// Pose les id manquants d'UNE liste ; mode 'contenu' (anciens éléments) ou 'nouveau' (créés ici). Rend le nombre d'id posés.
+function poserIdsListe(liste, mode) {
+  if (!Array.isArray(liste)) return 0;
+  let n = 0;
+  const pris = new Set(liste.filter(e => e && typeof e === 'object' && e.id).map(e => String(e.id)));
+  const rangs = {};
+  liste.forEach(e => {
+    if (!e || typeof e !== 'object' || Array.isArray(e) || e.id) return;
+    let id;
+    if (mode === 'nouveau') { do { id = idAleatoireElement(); } while (pris.has(id)); }
+    else {
+      const base = 'h' + empreinteTexte(texteStableElement(e, true));
+      rangs[base] = (rangs[base] || 0) + 1;
+      id = rangs[base] === 1 ? base : base + '-' + rangs[base];
+      while (pris.has(id)) { rangs[base]++; id = base + '-' + rangs[base]; }
+    }
+    e.id = id; pris.add(id); n++;
+  });
+  return n;
+}
+// Pose les id manquants de toutes les listes d'une fiche (brebis, bélier, agnelle, fiche du registre), agneaux des mises bas compris
+function poserIdsFiche(fiche, mode) {
+  if (!fiche || typeof fiche !== 'object') return 0;
+  let n = 0;
+  listesElementsFiche().forEach(k => { n += poserIdsListe(fiche[k], mode); });
+  (fiche.agnelages || []).forEach(ag => {
+    if (!ag || !Array.isArray(ag.lambs)) return;
+    n += poserIdsListe(ag.lambs, mode);
+    ag.lambs.forEach(l => { if (l) listesElementsAgneau().forEach(k => { n += poserIdsListe(l[k], mode); }); });
+  });
+  return n;
+}
+// Toute la base : brebis, béliers, agnelles et fiches du registre
+function poserIdsElements(db, mode) {
+  if (!db) return 0;
+  let n = 0;
+  ['brebis', 'beliers', 'agnelles'].forEach(c => (db[c] || []).forEach(f => { n += poserIdsFiche(f, mode); }));
+  const reg = db.registre || {};
+  ['brebis', 'beliers', 'agnelles'].forEach(c => Object.values(reg[c] || {}).forEach(f => { n += poserIdsFiche(f, mode); }));
+  return n;
+}
+/* Garde-fou du FORMAT des données du compte (lot 4) : `meta.schemaDonnees` dit quel rangement le compte utilise ; un appareil dont l'appli
+   ne connaît pas ce rangement (version plus ancienne) n'envoie PLUS RIEN vers le cloud (ses saisies restent sur l'appareil) et affiche
+   « Mettre à jour l'application ». Cette version connaît le format 1 (listes d'origine) ; le rangement élément par élément sera le 2. */
+function schemaDonneesVersionCourante() { return 1; }
+function donneesVerrouillees() { return ((typeof DB !== 'undefined' && DB && DB.schemaDonnees) || 0) > schemaDonneesVersionCourante(); }
 
 function loadData() {
   const raw = localStorage.getItem(DB_KEY);
@@ -2453,6 +2532,7 @@ function controlerOctetsSauvegarde(bytes, data) {
    cette valeur de retour, comportement inchangé pour eux. */
 function saveData(data) {
   try {
+    poserIdsElements(data, 'nouveau');   // lot 4 : un élément créé ici reçoit un id unique
     localStorage.setItem(DB_KEY, JSON.stringify(data));
     return true;
   } catch (e) {
@@ -33150,7 +33230,9 @@ window.updateHeaderSyncBadge = function updateHeaderSyncBadge() {
   if (bandeau) {
     bandeau.hidden = !attente;
     const texte = document.getElementById('sync-bandeau-texte');
-    if (texte) texte.textContent = window.__syncAttenteCompte
+    if (texte) texte.textContent = window.__syncFormatRecent
+      ? 'Mettre à jour l\'application : votre compte utilise une version plus récente d\'Ovilog · rien n\'est envoyé, vos saisies restent sur cet appareil'
+      : window.__syncAttenteCompte
       ? 'lecture de votre compte en cours · vos saisies sont gardées sur cet appareil et ne partiront qu\'après'
       : 'vos saisies sont gardées sur cet appareil · nouvelle tentative automatique (voir Paramètres)';
   }
@@ -34444,6 +34526,8 @@ const META_FIELDS = ['libellesAnomaliesControle', 'exploitation', 'campagneDebut
   'bilanEconomiqueActif',
   // Interrupteur du Bilan économique disponible sur ce compte (voir bilanEconomiqueDisponible) : faux pour un compte neuf
   'bilanEconomiqueDisponible', 'boucleSuivanteAuto', 'seuilCellules',
+  // Format des données du compte (lot 4, voir donneesVerrouillees) : posé par le passage au rangement élément par élément
+  'schemaDonnees',
   // Drapeau de migration CÔTÉ CLOUD (jamais localStorage seul) -- voir
   // migrerRegistreVersCollection : doit être visible de tous les appareils
   // du compte, sinon un appareil qui vient de se réinstaller relancerait la
@@ -34971,6 +35055,8 @@ async function commitOpsInBatches(ops) {
 
 async function syncAllToCloud(data) {
   if (!ecritureCloudAutorisee()) return;
+  // compte rangé dans un format plus récent que cette appli : rien n'est envoyé (les saisies restent ici), bandeau « Mettre à jour l'application »
+  if (donneesVerrouillees()) { window.__syncFormatRecent = true; marquerSynchroEnAttente(true); if (window.updateHeaderSyncBadge) window.updateHeaderSyncBadge(); return; }
   const ops = [];
   for (const col of DOC_COLLECTIONS) buildAnimalCollectionOps(col, getRecordsArrayForSync(col, data), ops);
   buildMetaOp(data, ops);
@@ -34992,6 +35078,7 @@ async function syncAllToCloud(data) {
 // cloud activée -- corrigé ici plutôt que dans la fonction de base.
 saveData = function(data) {
   try {
+    poserIdsElements(data, 'nouveau');   // lot 4 : un élément créé ici reçoit un id unique
     localStorage.setItem(DB_KEY, JSON.stringify(data));
   } catch (e) {
     console.error('Échec de saveData (localStorage.setItem)', e);
@@ -35424,6 +35511,7 @@ async function startListeners(dejaAppairePrecedemment) {
         let fusion = fusionnerInstantaneDistant(colName, arr, ancienneRef);
         if (premiereFusion && (colName === 'brebis' || colName === 'beliers' || colName === 'agnelles')) fusion = ecarterCollisionsPremiereLecture(colName, fusion, arr);
         setRecordsArrayForSync(colName, fusion);
+        poserIdsElements(DB, 'contenu');   // lot 4 : élément reçu sans id (appareil pas encore à jour) = id d'après son contenu, le même partout
       });
       persisterSyncLastSynced();
       if (duServeur) lectureServeurTerminee(colName);
