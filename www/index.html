@@ -3124,6 +3124,113 @@ function afficherSnackCorrectionEid(texte, changements, redessiner) {
   el.querySelector('#ce-snack-annuler').onclick = () => { annulerCorrectionEid(changements); saveData(DB); fermer(); redessiner(); };
   ceSnackMinuterie = setTimeout(fermer, 6000);
 }
+/* ---------- Suppressions annulables (fiche brebis, bélier, agnelle, agneau : un élément ; animal entier) ----------
+   Un élément de fiche (mise bas, soin, mouvement, écho, note…) se supprime en UN geste, sans confirm() ; un animal entier passe par
+   un message de la charte. Ensuite, bandeau 6 s « … supprimé · Annuler » = données EXACTES d'avant (fiche, lots, traitements collectifs,
+   notes archivées). Le n° d'un animal supprimé est retiré des lots (n° orphelins), avec le nombre de lots dans le bandeau ; il n'est pas
+   gardé ensuite (décision de l'éleveur : après « Annuler », un n° supprimé peut resservir). Une brebis ou une agnelle qui a déjà des
+   infos de repro ou de lait ne se supprime JAMAIS (infosReproLaitAnimal) : elle sort par un mouvement (vente, mort). */
+let supSnackMinuterie = null;
+function afficherSnackAnnuler(texte, annuler) {
+  document.querySelectorAll('.sup-snack').forEach(el => el.remove());
+  clearTimeout(supSnackMinuterie);
+  const el = document.createElement('div');
+  el.className = 'tri-snack sup-snack'; el.setAttribute('role', 'status');
+  el.innerHTML = `<span>${echapperHtml(texte)}</span><button type="button" id="sup-snack-annuler">Annuler</button>`;
+  document.body.appendChild(el);
+  const fermer = () => { clearTimeout(supSnackMinuterie); el.remove(); };
+  el.querySelector('#sup-snack-annuler').onclick = () => { fermer(); annuler(); };
+  supSnackMinuterie = setTimeout(fermer, 6000);
+}
+const copieProfonde = x => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
+function instantaneSuppression() {
+  return { lots: copieProfonde(DB.lots), traitementsCollectifs: copieProfonde(DB.traitementsCollectifs), notesArchiveesBrebis: copieProfonde(DB.notesArchiveesBrebis) };
+}
+function restaurerInstantaneSuppression(g) { Object.keys(g).forEach(k => { if (g[k] === undefined) delete DB[k]; else DB[k] = g[k]; }); }
+// Remet une fiche exacte (repérée par son id) dans sa liste, à sa place d'avant
+function remettreFiche(liste, fiche, index) {
+  const arr = DB[liste] = DB[liste] || [];
+  const i = arr.findIndex(x => x && x.id === fiche.id);
+  if (i >= 0) arr[i] = fiche; else arr.splice(index >= 0 && index <= arr.length ? index : arr.length, 0, fiche);
+}
+// n° orphelins : l'EID d'un animal supprimé est retiré des lots ; renvoie le nombre de lots touchés
+function retirerEidDesLots(eid) {
+  const v = eidAffichageCourt(eid); let n = 0;
+  if (!v) return 0;
+  (DB.lots || []).forEach(l => {
+    if (!l || !Array.isArray(l.membres)) return;
+    const avant = l.membres.length;
+    l.membres = l.membres.filter(m => eidAffichageCourt(m) !== v);
+    if (l.membres.length !== avant) n++;
+  });
+  return n;
+}
+// Infos de repro ou de lait d'une brebis ou d'une agnelle (mises bas, échos, lots IA / éponge, vide définitive, contrôles, cellules, lactation) :
+// libellés de ce qui existe ; vide = l'animal peut être supprimé (erreur de saisie)
+function infosReproLaitAnimal(a) {
+  if (!a) return [];
+  const e = cleanEid(a.eid || ''), l = [];
+  if ((a.agnelages || []).length) l.push('mises bas');
+  if ((a.echographies || []).length) l.push('échographies');
+  if ((a.modesRepro || []).length) l.push('IA / éponge');
+  if ((a.videesDefinitives || []).length) l.push('vide définitive');
+  if ((a.controleLaitier || []).length) l.push('contrôles laitiers');
+  if ((a.cellules || []).length) l.push('cellules');
+  if ((a.nonTraite || []).length || (a.miseTraite || []).length) l.push('situation de traite');
+  if (e && (DB.bilanLactation || []).some(x => x && cleanEid(x.eid || '') === e)) l.push('lactation');
+  return l;
+}
+function suppressionImpossibleHtml(a, qui) {
+  const l = infosReproLaitAnimal(a);
+  return `<div class="sup-impossible" style="margin-top:4px;font-size:12.5px;color:var(--ch-texte2);">Suppression impossible : ${qui} a déjà des infos de repro ou de lait (${echapperHtml(l.join(', '))}). Pour la retirer du troupeau, enregistrez une sortie (vente, mort).</div>`;
+}
+// Message de la charte avant de supprimer un animal entier (jamais confirm())
+function demanderSuppressionCharte(titre, texte, onOk) {
+  document.getElementById('sup-confirm')?.remove();
+  const ov = document.createElement('div');
+  ov.className = 'sheet-overlay'; ov.id = 'sup-confirm';
+  ov.innerHTML = `<div class="sheet-card" role="dialog" aria-labelledby="sup-titre">
+      <div id="sup-titre" style="font-weight:700;font-size:16px;margin-bottom:6px;">${echapperHtml(titre)}</div>
+      <div style="font-size:14px;color:var(--ch-texte2);margin-bottom:14px;">${echapperHtml(texte)}</div>
+      <button type="button" class="btn btn-secondary btn-supprimer" id="sup-ok">Supprimer</button>
+      <button type="button" class="btn btn-secondary" id="sup-annuler" style="margin-top:8px;">Annuler</button>
+    </div>`;
+  document.body.appendChild(ov);
+  const fermer = () => ov.remove();
+  ov.querySelector('#sup-annuler').onclick = fermer;
+  ov.querySelector('#sup-ok').onclick = () => { fermer(); onOk(); };
+  ov.addEventListener('click', e => { if (e.target === ov) fermer(); });
+}
+// Libellé d'un élément de fiche supprimé (bandeau)
+function libelleElementSupprime(kind, el) {
+  const d = el && el.date ? ' du ' + formatDateFr(el.date) : '';
+  return ({ agnelages: 'Mise bas', echographies: 'Écho', sanitaire: 'Soin', mouvements: 'Mouvement', controleLaitier: 'Contrôle', notes: 'Note' }[kind] || 'Élément') + d + ' supprimé' + (kind === 'agnelages' || kind === 'echographies' || kind === 'notes' ? 'e' : '');
+}
+/* Supprimer un élément d'une fiche (liste DB[liste], fiche d'id `id`) : un geste, bandeau Annuler = fiche et état partagé exacts d'avant */
+function supprimerElementFiche(liste, fiche, kind, idx, apres, redessiner) {
+  const index = (DB[liste] || []).indexOf(fiche), avant = copieProfonde(fiche), g = instantaneSuppression();
+  fiche[kind] = fiche[kind] || [];
+  const retire = fiche[kind].splice(idx, 1)[0];
+  if (kind === 'sanitaire') retirerMembreCollectifSoin(retire, fiche);   // traitement collectif : l'historique suit (nombre d'animaux)
+  if (apres) apres(fiche, retire);
+  saveData(DB);
+  redessiner();
+  afficherSnackAnnuler(libelleElementSupprime(kind, retire), () => { remettreFiche(liste, avant, index); restaurerInstantaneSuppression(g); saveData(DB); redessiner(); });
+}
+/* Supprimer un animal entier (brebis, bélier, agnelle) : message de la charte, puis bandeau Annuler (fiche remise à sa place, lots,
+   notes archivées exacts d'avant) */
+function supprimerAnimalEntier(liste, animal, categorie, libelle, avantSuppression, apres) {
+  if (categorie !== 'belier' && infosReproLaitAnimal(animal).length) return;   // jamais : infos de repro ou de lait (sortie par un mouvement)
+  const index = (DB[liste] || []).indexOf(animal), avant = copieProfonde(animal), g = instantaneSuppression();
+  if (avantSuppression) avantSuppression(animal);
+  DB[liste] = (DB[liste] || []).filter(x => x.id !== animal.id);
+  const nLots = retirerEidDesLots(animal.eid);
+  saveData(DB);
+  apres();
+  afficherSnackAnnuler(libelle + ' supprimé' + (categorie === 'belier' ? '' : 'e') + (nLots ? ' · retiré' + (categorie === 'belier' ? '' : 'e') + ' de ' + nLots + ' lot' + (nLots > 1 ? 's' : '') : ''), () => {
+    remettreFiche(liste, avant, index); restaurerInstantaneSuppression(g); saveData(DB); apres();
+  });
+}
 /* Fiche "Corriger l'EID" (sheet-overlay) -- réservée aux brebis/béliers sans historique (brebisSansHistorique/belierSansHistorique).
    EID normalisé sur 15 chiffres (n° national de 11 chiffres accepté), contrôle d'unicité sous toutes les formes (conflitEidToutesFormes),
    liste des liens qui seront mis à jour AVANT d'enregistrer, puis un seul geste (sans confirm) et le bandeau « EID corrigé · Annuler ». */
@@ -7305,49 +7412,14 @@ fabAdd.onclick = () => render('add-sheep');
 
 let editContext = null; // { kind, idx }
 
-/* Message de confirmation spécifique à la suppression d'un agnelage --
-   contrairement aux autres kinds (échographie, soin, mouvement, contrôle
-   laitier), un agnelage embarque directement ses agneaux (EID, sexe,
-   adoption, statut vendu/mort, mouvements) : il n'existe pas de fiche
-   agneau séparée (voir getAgneauxInventaire). Le supprimer élimine tout ça
-   d'un coup, sans qu'un message générique ne le laisse deviner -- d'où ce
-   message détaillé, listant chaque agneau et signalant explicitement ceux
-   qui ont déjà un mouvement de sortie enregistré (vendu/mort), dont
-   l'historique serait perdu aussi. La suppression reste autorisée dans
-   tous les cas : ce message informe, il ne bloque rien. */
-function messageSuppressionAgnelage(agnelage) {
-  if (!agnelage) return 'Supprimer cet élément ? Cette action est irréversible.';
-  const vivants = (agnelage.lambs || []).filter(l => l.sexe !== 'Mort-né');
-  if (vivants.length === 0) {
-    return 'Supprimer cet agnelage du ' + formatDateFr(agnelage.date) + ' (aucun agneau bouclé) ? Cette action est irréversible.';
-  }
-  const lignes = vivants.map(l => {
-    const num = numeroAgneauTexte(l);
-    if (agneauSorti(l)) {
-      const mvts = (l.mouvements || []).slice().reverse();
-      const dateSortie = mvts[0] && mvts[0].date ? ' le ' + formatDateFr(mvts[0].date) : '';
-      const label = (l.statutFinal === 'vendu' ? 'déjà vendu' : l.statutFinal === 'mort' ? 'déjà mort' : 'déjà sorti (mise à jour inventaire)') + dateSortie;
-      return num + ' (' + l.sexe + ', ' + label + ' — cet historique sera perdu aussi)';
-    }
-    return num + ' (' + l.sexe + ')';
-  });
-  return 'Supprimer cet agnelage du ' + formatDateFr(agnelage.date) + ' ? ' + vivants.length + ' agneau(x) seront supprimés avec : ' + lignes.join(', ') + '. Cette action est irréversible.';
-}
-
 function deleteItem(kind, idx) {
   if (kind.startsWith('belier-')) return deleteBelierItem(kind.slice(7), idx);
   if (kind.startsWith('agnelle-')) return deleteAgnelleItem(kind.slice(8), idx);
   if (kind.startsWith('agneau-')) return deleteAgneauItem(kind.slice(7), idx);
   const sheep = findSheep(currentSheepId);
   if (!sheep) return;
-  const message = kind === 'agnelages' ? messageSuppressionAgnelage((sheep.agnelages || [])[idx]) : 'Supprimer cet élément ? Cette action est irréversible.';
-  if (!confirm(message)) return;
-  sheep[kind] = sheep[kind] || [];
-  const retire = sheep[kind].splice(idx, 1)[0];
-  if (kind === 'sanitaire') retirerMembreCollectifSoin(retire, sheep);   // traitement collectif : l'historique suit (nombre d'animaux)
-  if (kind === 'mouvements') recalculerStatutBrebis(sheep);
-  saveData(DB);
-  render('detail', sheep.id);
+  // un geste, sans confirm() ; bandeau « … supprimé · Annuler » = fiche exacte d'avant (agneaux de la mise bas compris)
+  supprimerElementFiche('brebis', sheep, kind, idx, f => { if (kind === 'mouvements') recalculerStatutBrebis(f); }, () => render('detail', sheep.id));
 }
 
 function editItem(kind, idx, origine) {   // origine 'misebas-rapide' : Modifier l'agnelage ouvert depuis l'écran Mises bas (retour sur cet écran)
@@ -7366,15 +7438,9 @@ function editItem(kind, idx, origine) {   // origine 'misebas-rapide' : Modifier
 }
 
 function deleteBelierItem(kind, idx) {
-  if (!confirm('Supprimer cet élément ? Cette action est irréversible.')) return;
   const belier = DB.beliers.find(b => b.id === currentBelierId);
   if (!belier) return;
-  belier[kind] = belier[kind] || [];
-  const retire = belier[kind].splice(idx, 1)[0];
-  if (kind === 'sanitaire') retirerMembreCollectifSoin(retire, belier);
-  if (kind === 'mouvements') recalculerStatutBelier(belier);
-  saveData(DB);
-  render('belier-detail');
+  supprimerElementFiche('beliers', belier, kind, idx, f => { if (kind === 'mouvements') recalculerStatutBelier(f); }, () => render('belier-detail'));
 }
 
 function editBelierItem(kind, idx) {
@@ -7389,14 +7455,9 @@ function editBelierItem(kind, idx) {
 }
 
 function deleteAgnelleItem(kind, idx) {
-  if (!confirm('Supprimer cet élément ? Cette action est irréversible.')) return;
   const ag = DB.agnelles.find(a => a.id === currentAgnelleId);
   if (!ag) return;
-  ag[kind] = ag[kind] || [];
-  const retire = ag[kind].splice(idx, 1)[0];
-  if (kind === 'sanitaire') retirerMembreCollectifSoin(retire, ag);
-  saveData(DB);
-  render('agnelle-detail');
+  supprimerElementFiche('agnelles', ag, kind, idx, null, () => render('agnelle-detail'));
 }
 function editAgnelleItem(kind, idx) {
   if (kind === 'sanitaire') {
@@ -7410,9 +7471,11 @@ function editAgnelleItem(kind, idx) {
 }
 
 function deleteAgneauItem(kind, idx) {
-  if (!confirm('Supprimer cet élément ? Cette action est irréversible.')) return;
   const lamb = findLambByEid(currentAgneauEid);
   if (!lamb) return;
+  // l'agneau vit dans la mise bas de sa mère : c'est la fiche de la mère qui est gardée telle quelle pour « Annuler »
+  const mere = DB.brebis.find(s => (s.agnelages || []).some(a => (a.lambs || []).includes(lamb)));
+  const index = mere ? DB.brebis.indexOf(mere) : -1, avant = mere ? copieProfonde(mere) : null, g = instantaneSuppression();
   lamb[kind] = lamb[kind] || [];
   const retire = lamb[kind].splice(idx, 1)[0];
   if (kind === 'sanitaire') retirerMembreCollectifSoin(retire, lamb);
@@ -7424,6 +7487,7 @@ function deleteAgneauItem(kind, idx) {
   if (kind === 'mouvements') recalculerStatutFinalAgneau(lamb);
   saveData(DB);
   render('agneau-detail');
+  if (avant) afficherSnackAnnuler(libelleElementSupprime(kind, retire), () => { remettreFiche('brebis', avant, index); restaurerInstantaneSuppression(g); saveData(DB); render('agneau-detail'); });
 }
 function editAgneauItem(kind, idx) {
   if (kind === 'sanitaire') {
@@ -12769,7 +12833,7 @@ function renderDetail(id) {
     ${mereBlock}
     ${genealogieBlock}
     ${''/* ancienne carte « Agneaux adoptés » : désormais dans Repro & Écho (ligne gardée pour un rendu identique) */}
-    <button class="btn btn-secondary" id="btn-delete-sheep" style="color:var(--danger);border-color:var(--danger);">Supprimer cette brebis</button>
+    ${infosReproLaitAnimal(sheep).length ? suppressionImpossibleHtml(sheep, 'cette brebis') : '<button class="btn btn-secondary" id="btn-delete-sheep" style="color:var(--danger);border-color:var(--danger);">Supprimer cette brebis</button>'}
   `;
 
   const reproTabHtml = `
@@ -13028,19 +13092,15 @@ function renderDetail(id) {
   });
   const btnDeleteSheep = document.getElementById('btn-delete-sheep');
   if (btnDeleteSheep) btnDeleteSheep.onclick = () => {
-    if (!confirm('Supprimer la brebis ' + numeroAnimal(sheep.eid) + ' ? Son carnet sanitaire, ses mises bas et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
-    // Notes (chantier "Onglet Notes") : seule donnée explicitement archivée
-    // avant cette suppression sèche -- séparément de DB.registre (structure
-    // figée/réglementaire du Registre d'élevage, jamais touchée ici) pour
-    // qu'elles ne soient jamais perdues, sans pour autant réapparaître dans
-    // le Registre d'élevage ou le carnet sanitaire.
-    if (sheep.notes && sheep.notes.length) {
-      DB.notesArchiveesBrebis = DB.notesArchiveesBrebis || {};
-      DB.notesArchiveesBrebis[sheep.eid] = (DB.notesArchiveesBrebis[sheep.eid] || []).concat(sheep.notes);
-    }
-    DB.brebis = DB.brebis.filter(s => s.id !== sheep.id);
-    saveData(DB);
-    render('list');
+    demanderSuppressionCharte('Supprimer la brebis ' + numeroAnimal(sheep.eid) + ' ?', 'Son carnet sanitaire, ses mises bas et ses mouvements seront supprimés. « Annuler » pendant 6 secondes remet tout comme avant.', () => {
+      // Notes (chantier "Onglet Notes") : archivées avant la suppression (jamais perdues, jamais dans le Registre ni le carnet sanitaire)
+      supprimerAnimalEntier('brebis', sheep, 'brebis', 'Brebis ' + numeroAnimal(sheep.eid), s0 => {
+        if (s0.notes && s0.notes.length) {
+          DB.notesArchiveesBrebis = DB.notesArchiveesBrebis || {};
+          DB.notesArchiveesBrebis[s0.eid] = (DB.notesArchiveesBrebis[s0.eid] || []).concat(s0.notes);
+        }
+      }, () => render('list'));
+    });
   };
   activateSwipes(app);
 }
@@ -17623,7 +17683,7 @@ function renderAgnelleDetail(id) {
       <button class="btn btn-secondary" id="btn-edit-agnelle-fiche">Modifier</button>
       <button class="btn btn-secondary" id="btn-vendre-agnelle-fiche">Vendre</button>
     </div>
-    <button class="btn btn-secondary" id="btn-delete-agnelle-fiche" style="color:var(--danger);border-color:var(--danger);">Supprimer cette agnelle</button>
+    ${infosReproLaitAnimal(ag).length ? suppressionImpossibleHtml(ag, 'cette agnelle') : '<button class="btn btn-secondary" id="btn-delete-agnelle-fiche" style="color:var(--danger);border-color:var(--danger);">Supprimer cette agnelle</button>'}
   `;
   const genealogieTabHtml = `
     <div class="card">
@@ -17715,10 +17775,10 @@ function renderAgnelleDetail(id) {
   };
   const btnDeleteAgnelleFiche = document.getElementById('btn-delete-agnelle-fiche');
   if (btnDeleteAgnelleFiche) btnDeleteAgnelleFiche.onclick = () => {
-    if (!confirm('Supprimer l\'agnelle n°' + numeroVisuel(ag.eid) + ' de l\'inventaire ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
-    DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
-    saveData(DB);
-    render(agnelleDetailOrigin);
+    demanderSuppressionCharte('Supprimer l\'agnelle n°' + numeroVisuel(ag.eid) + ' ?', 'Son carnet sanitaire et ses mouvements seront supprimés. « Annuler » pendant 6 secondes remet tout comme avant.', () => {
+      const origine = agnelleDetailOrigin;
+      supprimerAnimalEntier('agnelles', ag, 'agnelle', 'Agnelle n°' + numeroVisuel(ag.eid), null, () => render(origine));
+    });
   };
 }
 
@@ -18354,10 +18414,9 @@ function renderBelierDetail() {
   });
   const btnDeleteBelier = document.getElementById('btn-delete-belier');
   if (btnDeleteBelier) btnDeleteBelier.onclick = () => {
-    if (!confirm('Supprimer le bélier ' + numeroAnimal(belier.eid) + ' ? Son carnet sanitaire et ses mouvements seront définitivement supprimés, y compris du registre d\'élevage. Cette action est irréversible.')) return;
-    DB.beliers = DB.beliers.filter(b => b.id !== belier.id);
-    saveData(DB);
-    render('beliers');
+    demanderSuppressionCharte('Supprimer le bélier ' + numeroAnimal(belier.eid) + ' ?', 'Son carnet sanitaire et ses mouvements seront supprimés. « Annuler » pendant 6 secondes remet tout comme avant.', () => {
+      supprimerAnimalEntier('beliers', belier, 'belier', 'Bélier ' + numeroAnimal(belier.eid), null, () => render('beliers'));
+    });
   };
   activateSwipes(app);
 }
