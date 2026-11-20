@@ -4807,6 +4807,40 @@ function legendeAnomaliesHtml(codes) {
   return 'Codes : ' + codes.map(c => { const n = parseInt(c, 10), l = libelleAnomalieControle(n); return codeAnomalieTexte(n) + ' = ' + (l === 'Code ' + codeAnomalieTexte(n) ? 'sans nom' : echapperHtml(l)); }).join(' · ');
 }
 // Fiche brebis : le code et son nom (« 03 · Boucle électronique manquante ») ; un code 01 à 05 sans nom réglé = le code seul
+/* ---------- Cellules par brebis (suivi CLS) ----------
+   Comptage cellulaire de chaque brebis, importé sur PC (Paramètres › Imports › Cellules · CLS). Stocké sur la fiche : sheep.cellules
+   [{ date, campagne, cellules (cellules/mL, entier), controle (n° du contrôle si pris pendant un contrôle, sinon absent), echantillon
+   (n° du papier, facultatif), source: 'import' }] ; jamais deux échantillons le même jour pour une brebis. Seuil d'alerte = réglage de
+   COMPTE `seuilCellules` (META_FIELDS, Règles d'élevage › Lait), 800 000 cellules/mL si absent. Au-dessus du seuil : pastille ambre. */
+const SEUIL_CELLULES_DEFAUT = 800000;
+function seuilCellules() {
+  const v = (typeof DB !== 'undefined' && DB) ? Number(DB.seuilCellules) : NaN;
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : SEUIL_CELLULES_DEFAUT;
+}
+function cellulesCampagne(sheep, campagne) {
+  return (sheep && Array.isArray(sheep.cellules) ? sheep.cellules : [])
+    .filter(e => e && e.campagne === campagne && Number.isFinite(e.cellules))
+    .slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+// Dernier échantillon de la campagne (colonne « Cellules » du Contrôle laitier, exports, filtre) ; null s'il n'y en a pas
+function dernierEchantillonCellules(sheep, campagne) {
+  const l = cellulesCampagne(sheep, campagne);
+  return l.length ? l[l.length - 1] : null;
+}
+const cellulesAuDessusSeuil = (v, seuil) => Number.isFinite(v) && v > (seuil === undefined ? seuilCellules() : seuil);
+// « 1 250 000 » (espaces insécables), affichage seul
+function texteCellules(v) { return Number.isFinite(v) ? String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') : '—'; }
+// Au moins un échantillon de cellules sur une brebis présente cette campagne : colonne « Cellules » et filtre du Contrôle laitier (écran et exports), sinon rien
+function cellulesPresentesCampagne(campagne) {
+  const N = campagne === undefined ? DB.campagneDebut : campagne;
+  return (DB.brebis || []).some(s => (s.statut || 'active') === 'active' && cellulesCampagne(s, N).length > 0);
+}
+// Valeur tapée par l'éleveur (« 800 000 », « 800000 ») → entier positif, sinon null
+function lireNombreCellules(txt) {
+  const n = parseInt(String(txt === undefined || txt === null ? '' : txt).replace(/[\s  .]/g, ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function texteAnomalieControle(code) {
   const n = typeof code === 'number' ? code : parseInt(code, 10);
   if (isNaN(n)) return null;
@@ -7086,7 +7120,7 @@ btnBack.onclick = () => {
   else if (currentView === 'maj-inventaire') render('inventaire-actifs');
   else if (currentView === 'maj-inventaire-validation') render('maj-inventaire');
   else if (currentView === 'import-controle-laitier-sieol') { parametresTab = 'imports'; render('parametres'); }
-  else if (currentView === 'import-controle-laitier-modele' || currentView === 'import-nouveaux-animaux' || currentView === 'import-inseminations' || currentView === 'import-lactation-modele' || currentView === 'confirmation-nouvelle-campagne') render('parametres');
+  else if (currentView === 'import-controle-laitier-modele' || currentView === 'import-nouveaux-animaux' || currentView === 'import-inseminations' || currentView === 'import-cellules' || currentView === 'import-lactation-modele' || currentView === 'confirmation-nouvelle-campagne') render('parametres');
   // Filet de sécurité (BUG "bouton retour intermittent") : cette chaîne
   // if/else est maintenue à la main, un écran par écran, et a fini par
   // désynchroniser de la liste réelle des vues (voir ROOT_VIEWS, qui décide
@@ -7379,6 +7413,7 @@ function render(view, sheepId) {
     else if (view === 'import-lactation-modele') renderImportLactationModele();
     else if (view === 'import-nouveaux-animaux') renderImportNouveauxAnimaux();
     else if (view === 'import-inseminations') renderImportInseminations();
+    else if (view === 'import-cellules') renderImportCellules();
     else if (view === 'import-controle-laitier-modele') renderImportControleLaitierModele();
     else if (view === 'parametres') renderParametres();
     else if (view === 'confirmation-nouvelle-campagne') renderConfirmationNouvelleCampagne();
@@ -12335,20 +12370,33 @@ function renderDetail(id) {
     <div class="content" style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;">
       <div>
         <div style="font-size:11.5px;color:var(--text-muted);">Contrôle n°${c.controle}</div>
-        <div class="date">${formatDateFr(c.date)}</div>
+        <div class="date">${formatDateFr(c.date)}${c.ech ? ' · cellules ' + texteCellules(c.ech.cellules) : ''}</div>
       </div>
       <div style="text-align:right;flex:0 1 auto;min-width:0;">
         <div style="font-weight:700;font-size:15px;white-space:nowrap;">${c.quantite === null || c.quantite === undefined ? "sans lait" : c.quantite + " mL"}</div>
         ${c.anomalie ? `<span class="compact-tag compact-tag-amber cl-ano-fiche" style="margin-top:4px;">${echapperHtml(texteAnomalieControle(c.anomalie))}</span>` : ''}
+        ${c.ech && cellulesAuDessusSeuil(c.ech.cellules) ? '<span class="compact-tag compact-tag-amber cl-cellules-hautes" style="margin-top:4px;">cellules hautes</span>' : ''}
       </div>
     </div>
   `;
-  const controleCourants = controleIndexes.filter(c => c.campagne === DB.campagneDebut).reverse();
+  // Cellules (suivi CLS) : un échantillon pris le jour d'un contrôle s'affiche sous ce contrôle ; un échantillon hors contrôle a sa propre ligne, à sa date
+  const echantillonsCellules = cellulesCampagne(sheep, DB.campagneDebut);
+  const controleCourants = controleIndexes.filter(c => c.campagne === DB.campagneDebut).reverse()
+    .map(c => Object.assign(c, { ech: echantillonsCellules.find(e => e.date && e.date === c.date) || null }));
+  const echantillonsSeuls = echantillonsCellules.filter(e => !controleCourants.some(c => c.ech === e));
+  const echantillonSeulHtml = e => `
+    <div class="history-item cl-echantillon-fiche">
+      ${iconCircle(ICON_LAIT, 'blue', 'sm')}
+      <div class="content" style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;">
+        <div><div style="font-size:11.5px;color:var(--text-muted);">Échantillon du ${formatDateFr(e.date)}</div><div class="date">${e.controle ? 'contrôle n°' + e.controle : 'hors contrôle'}${e.echantillon ? ' · n°' + echapperHtml(e.echantillon) : ''}</div></div>
+        <div style="text-align:right;flex:0 1 auto;min-width:0;"><div style="font-weight:700;font-size:15px;white-space:nowrap;">${texteCellules(e.cellules)} cell./mL</div>${cellulesAuDessusSeuil(e.cellules) ? '<span class="compact-tag compact-tag-amber cl-cellules-hautes" style="margin-top:4px;">cellules hautes</span>' : ''}</div>
+      </div>
+    </div>`;
   // Saisie manuelle masquée (voir SAISIE_MANUELLE_CONTROLE_LAITIER_ACTIVE) :
   // les entrées déjà là (saisies avant ce chantier ou importées, même
   // tableau sheep.controleLaitier pour les deux) restent affichées, mais en
   // lecture seule -- plus de swipe-wrap ni de zones modifier/supprimer.
-  const controleHtml = controleCourants.length === 0 ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun contrôle laitier enregistré cette campagne.</div>' : controleCourants.map(c => SAISIE_MANUELLE_CONTROLE_LAITIER_ACTIVE ? `
+  const controleHtml = (controleCourants.length === 0 && echantillonsSeuls.length === 0) ? '<div style="color:var(--text-muted);font-size:14px;padding:10px 0;">Aucun contrôle laitier enregistré cette campagne.</div>' : [...controleCourants.map(c => ({ date: c.date || '', html: (SAISIE_MANUELLE_CONTROLE_LAITIER_ACTIVE ? `
     <div class="swipe-wrap" data-kind="controleLaitier" data-idx="${c.idx}">
       <div class="swipe-bg"><span class="zone-delete">Supprimer</span><span class="zone-edit">Modifier</span></div>
       <div class="swipe-fg history-item">
@@ -12361,7 +12409,8 @@ function renderDetail(id) {
       ${iconCircle(ICON_LAIT, 'blue', 'sm')}
       ${controleItemHtml(c)}
     </div>
-  `).join('');
+  `) })), ...echantillonsSeuls.map(e => ({ date: e.date || '', html: echantillonSeulHtml(e) }))]
+    .sort((x, y) => y.date.localeCompare(x.date)).map(x => x.html).join('');   // le plus récent en haut, contrôles et échantillons hors contrôle mêlés par date
   // Cahier de contrôle SIEOL/UNOTEC (voir DB.cahierControleLaitier,
   // renderImportControleLaitierSieol) : une seule entrée par brebis +
   // campagne, jamais un historique par entrée -- scope à la campagne en
@@ -15948,6 +15997,7 @@ function controleLaitierPcHtml(c) {
         <button type="button" class="chip chip-anomalie-opt selected" data-val="">Toutes</button>
         ${c.anomaliesPresentes.map(code => `<button type="button" class="chip chip-anomalie-opt" data-val="${code}">${echapperHtml(texteAnomalieControle(code))}</button>`).join('')}
       </div>` : ''}
+      ${c.filtreCellulesHtml || ''}
     </div>
     <div class="pc-cols">
       <div class="card">
@@ -16007,9 +16057,13 @@ function renderControleLaitier() {
       courtSieol: s.numeroCourtTravailSieol || '',
       ...Object.fromEntries(NC.flatMap(k => [['c' + k, c[k]], ['a' + k, a[k]]])),
       dateMab: agnelage ? agnelage.date : null,
-      cumul: NC.reduce((t, k) => t + (c[k] || 0), 0)
+      cumul: NC.reduce((t, k) => t + (c[k] || 0), 0),
+      ...(() => { const e = dernierEchantillonCellules(s, DB.campagneDebut); return { cellules: e ? e.cellules : null, cellulesDate: e ? e.date : null }; })()
     };
   });
+  // Cellules par brebis (suivi CLS) : colonne et filtre seulement si la campagne a des échantillons ; filtre = dernier échantillon au-dessus d'une valeur
+  // (seuil des Règles d'élevage proposé, changeable pour ce tri seulement)
+  const avecCellules = rows.some(r => r.cellules !== null);
   // Codes d'anomalie réellement présents cette campagne (pas une liste figée) --
   // alimente les pastilles de filtre ci-dessous, voir passeFiltre.
   const anomaliesPresentes = Array.from(new Set(
@@ -16019,7 +16073,12 @@ function renderControleLaitier() {
   // État des filtres/tri, conservé en fermeture (pas dans le DOM) tant que
   // l'écran reste affiché — perdu en quittant, comme les autres écrans à
   // filtres de l'appli (ex: renderAddLot) qui ne persistent pas non plus.
-  const state = { controle: null, operateur: null, seuil: '', dateApres: '', anomalie: null, sortKey: 'numero', sortDir: 'asc' };
+  const state = { controle: null, operateur: null, seuil: '', dateApres: '', anomalie: null, sortKey: 'numero', sortDir: 'asc', cellules: false, seuilCel: seuilCellules() };
+  const filtreCellulesHtml = (pc) => !avecCellules ? '' : `<div class="cl-filtre-cellules" id="cl-filtre-cellules" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
+      <button type="button" class="${pc ? 'chip' : 'cl-pill'} cl-cellules-opt" id="btn-cl-filtre-cellules" aria-pressed="false">Cellules au-dessus de</button>
+      <input type="text" inputmode="numeric" id="f-seuil-cellules-cl" value="${texteCellules(state.seuilCel)}" aria-label="Seuil de cellules par mL" style="width:130px;margin:0;text-align:right;">
+      <span style="font-size:13px;color:var(--ch-texte2);">cellules/mL</span>
+    </div>`;
   // Sélection pour "Créer un lot de recherche" : volontairement indépendante
   // des filtres/tri (jamais recalculée ni vidée par un changement de filtre)
   // -- resserrer le filtre après avoir coché une brebis ne la décoche pas.
@@ -16039,6 +16098,7 @@ function renderControleLaitier() {
       if (!row.dateMab || row.dateMab <= state.dateApres) return false;
     }
     if (state.anomalie !== null && !NC.some(k => row['a' + k] === state.anomalie)) return false;
+    if (state.cellules && !cellulesAuDessusSeuil(row.cellules, state.seuilCel)) return false;
     return true;
   }
 
@@ -16147,7 +16207,7 @@ function renderControleLaitier() {
       </${ouvrable ? 'button' : 'div'}>
       ${ouvrable ? `<div id="cl-liste-sans" class="hidden">${carteSansControlePcHtml(sc, { lienRegulariser: 'btn-cl-voir-regulariser' })}</div>` : ''}`;
   };
-  app.innerHTML = desktopCL ? controleLaitierPcHtml({ rows, nc: NC, anomaliesPresentes, recapHtml: recapHtml() }) : `
+  app.innerHTML = desktopCL ? controleLaitierPcHtml({ rows, nc: NC, anomaliesPresentes, recapHtml: recapHtml(), filtreCellulesHtml: filtreCellulesHtml(true) }) : `
     <div class="reg-sous" id="cl-ligne-imports">${libelleControlesCampagne(NC)} · quantités en mL · import des résultats : Paramètres › Imports</div>
     ${mobileTuilesEtBande()}
     <div id="cl-recap-container">${recapHtml()}</div>
@@ -16163,6 +16223,7 @@ function renderControleLaitier() {
         <div><label for="f-seuil">Valeur seuil (mL)</label><input type="number" step="1" id="f-seuil" placeholder="ex : 1000"></div>
         <div><label for="f-date-apres">Mise bas après le</label><input type="date" id="f-date-apres"></div>
       </div>
+      ${filtreCellulesHtml(false)}
       ${anomaliesPresentes.length > 0 ? `<div class="cl-pills">
         <button type="button" class="cl-pill chip-anomalie-opt${state.anomalie === null ? ' selected' : ''}" data-val="">Toutes</button>
         ${anomaliesPresentes.map(code => `<button type="button" class="cl-pill chip-anomalie-opt${state.anomalie === code ? ' selected' : ''}" data-val="${code}">${echapperHtml(texteAnomalieControle(code))}</button>`).join('')}
@@ -16220,6 +16281,7 @@ function renderControleLaitier() {
     if (filtreValeur) actifs.push('C' + state.controle + ' ' + state.operateur + ' ' + state.seuil + ' mL');
     if (state.dateApres) actifs.push('mise bas après le ' + formatDateFr(state.dateApres));
     if (state.anomalie !== null) actifs.push('anomalie ' + echapperHtml(texteAnomalieControle(state.anomalie)));
+    if (state.cellules) actifs.push('cellules au-dessus de ' + texteCellules(state.seuilCel));
     document.getElementById('cl-filtre-actif').textContent = actifs.length ? 'Filtre actif : ' + actifs.join(' · ') : 'Aucun filtre actif';
     const fmt = v => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
     const cell = (k, r) => {
@@ -16230,9 +16292,11 @@ function renderControleLaitier() {
       return `<td>${sous ? `<span class="pc-lo">${fmt(v)}</span>` : fmt(v)}${badge}</td>`;
     };
     const th = (key, label, cls) => `<th class="sortable ${cls || ''} cl-th" data-key="${key}">${label}${arrow(key)}</th>`;
+    // Cellules : dernier échantillon de la campagne, pastille ambre au-dessus du seuil des Règles d'élevage ; « — » sans échantillon
+    const celluleCellules = r => r.cellules === null ? '<td class="cl-cellules">—</td>' : `<td class="cl-cellules" title="Échantillon du ${formatDateFr(r.cellulesDate)}">${cellulesAuDessusSeuil(r.cellules) ? `<span class="badge badge-amber cl-cellules-haut">${texteCellules(r.cellules)}</span>` : texteCellules(r.cellules)}</td>`;
     document.getElementById('cl-table').innerHTML = `
-      <tr><th class="cb"></th>${th('numero', 'N° de travail', 'l num-fixe')}${th('mab', 'MàB', 'l')}${NC.map(k => th('c' + k, 'C' + k + ' (mL)')).join('')}</tr>
-      ${filtered.map((r, i) => `<tr class="${i % 2 ? 'alt' : ''}"><td class="cb"><input type="checkbox" class="cl-check" data-eid="${r.eid}" style="width:16px;height:16px;margin:0;"${selection.has(r.eid) ? ' checked' : ''}></td><td class="l num-fixe">${r.courtSieol || 'n°' + r.numero}</td><td class="l">${r.dateMab ? formatDateFr(r.dateMab) : ''}</td>${NC.map(k => cell(k, r)).join('')}</tr>`).join('') || '<tr><td colspan="' + (NC.length + 3) + '" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucune brebis ne correspond aux filtres.</td></tr>'}`;
+      <tr><th class="cb"></th>${th('numero', 'N° de travail', 'l num-fixe')}${th('mab', 'MàB', 'l')}${NC.map(k => th('c' + k, 'C' + k + ' (mL)')).join('')}${avecCellules ? th('cellules', 'Cellules') : ''}</tr>
+      ${filtered.map((r, i) => `<tr class="${i % 2 ? 'alt' : ''}"><td class="cb"><input type="checkbox" class="cl-check" data-eid="${r.eid}" style="width:16px;height:16px;margin:0;"${selection.has(r.eid) ? ' checked' : ''}></td><td class="l num-fixe">${r.courtSieol || 'n°' + r.numero}</td><td class="l">${r.dateMab ? formatDateFr(r.dateMab) : ''}</td>${NC.map(k => cell(k, r)).join('')}${avecCellules ? celluleCellules(r) : ''}</tr>`).join('') || '<tr><td colspan="' + (NC.length + 3 + (avecCellules ? 1 : 0)) + '" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucune brebis ne correspond aux filtres.</td></tr>'}`;
     document.querySelectorAll('#cl-table .cl-th').forEach(h => {
       h.onclick = () => {
         const key = h.dataset.key;
@@ -16265,6 +16329,7 @@ function renderControleLaitier() {
     if (filtreValeur) actifs.push('C' + state.controle + ' ' + state.operateur + ' ' + state.seuil + ' mL');
     if (state.dateApres) actifs.push('mise bas après le ' + formatDateFr(state.dateApres));
     if (state.anomalie !== null) actifs.push('anomalie ' + echapperHtml(texteAnomalieControle(state.anomalie)));
+    if (state.cellules) actifs.push('cellules au-dessus de ' + texteCellules(state.seuilCel));
     document.getElementById('cl-filtre-actif').textContent = (actifs.length ? 'Filtre actif : ' + actifs.join(' · ') : 'Aucun filtre actif') + ' · tri : N° de travail';
     const fmt = v => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
     const valeur = (k, r) => {
@@ -16279,6 +16344,7 @@ function renderControleLaitier() {
         <div class="cl-carte-corps">
           <div class="cl-carte-tete"><span class="cl-num">${r.courtSieol}</span><span class="cl-mab">Mise bas ${r.dateMab ? formatDateFr(r.dateMab) : '—'}</span></div>
           ${aucun ? '<div class="cl-aucun">Pas encore de contrôle</div>' : `<div class="cl-vals" style="grid-template-columns:repeat(${Math.min(Math.max(NC.length, 3), 4)},minmax(0,1fr));">${NC.map(k => valeur(k, r)).join('')}</div>`}
+          ${avecCellules && r.cellules !== null ? `<div class="cl-cellules" style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;font-size:13px;"><span style="color:var(--ch-texte2);">Cellules · ${formatDateFr(r.cellulesDate)}</span>${cellulesAuDessusSeuil(r.cellules) ? `<span class="badge badge-amber cl-cellules-haut">${texteCellules(r.cellules)}</span>` : `<b>${texteCellules(r.cellules)}</b>`}</div>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -16310,13 +16376,13 @@ function renderControleLaitier() {
     const btn = document.getElementById('btn-cl-export-pdf');
     const original = btn.textContent;
     btn.disabled = true; btn.textContent = 'Export...';
-    Promise.resolve(exportControleLaitierPdf(currentFiltered())).finally(() => { btn.disabled = false; btn.textContent = original; });
+    Promise.resolve(exportControleLaitierPdf(currentFiltered(), { cellules: avecCellules, seuilFiltre: state.cellules ? state.seuilCel : null })).finally(() => { btn.disabled = false; btn.textContent = original; });
   };
   document.getElementById('btn-cl-export-xlsx').onclick = () => {
     const btn = document.getElementById('btn-cl-export-xlsx');
     const original = btn.textContent;
     btn.disabled = true; btn.textContent = 'Export...';
-    exportControleLaitierXlsx(currentFiltered()).finally(() => { btn.disabled = false; btn.textContent = original; });
+    exportControleLaitierXlsx(currentFiltered(), { cellules: avecCellules }).finally(() => { btn.disabled = false; btn.textContent = original; });
   };
 
   document.querySelectorAll('.ctrl-filtre-opt').forEach(btn => {
@@ -16342,6 +16408,19 @@ function renderControleLaitier() {
     state.dateApres = e.target.value;
     drawTable();
   });
+  const btnFiltreCel = document.getElementById('btn-cl-filtre-cellules');
+  if (btnFiltreCel) {
+    btnFiltreCel.onclick = () => {
+      state.cellules = !state.cellules;
+      btnFiltreCel.classList.toggle('selected', state.cellules);
+      btnFiltreCel.setAttribute('aria-pressed', String(state.cellules));
+      drawTable();
+    };
+    document.getElementById('f-seuil-cellules-cl').addEventListener('input', (e) => {
+      state.seuilCel = lireNombreCellules(e.target.value) || seuilCellules();   // pour ce tri seulement : le réglage du compte ne change pas
+      if (state.cellules) drawTable();
+    });
+  }
   document.querySelectorAll('.chip-anomalie-opt').forEach(btn => {
     btn.onclick = () => {
       const raw = btn.dataset.val;
@@ -16366,7 +16445,9 @@ function renderControleLaitier() {
   {
     // Réinitialiser : remet les FILTRES à zéro (la sélection cochée n'est jamais touchée), PC et mobile
     document.getElementById('btn-cl-reset').onclick = () => {
-      state.controle = null; state.operateur = null; state.seuil = ''; state.dateApres = ''; state.anomalie = null;
+      state.controle = null; state.operateur = null; state.seuil = ''; state.dateApres = ''; state.anomalie = null; state.cellules = false; state.seuilCel = seuilCellules();
+      const fc = document.getElementById('btn-cl-filtre-cellules');
+      if (fc) { fc.classList.remove('selected'); fc.setAttribute('aria-pressed', 'false'); document.getElementById('f-seuil-cellules-cl').value = texteCellules(state.seuilCel); }
       document.getElementById('f-seuil').value = ''; document.getElementById('f-date-apres').value = '';
       document.querySelectorAll('.ctrl-filtre-opt, .op-filtre-opt').forEach(b => b.classList.remove('selected'));
       document.querySelectorAll('.chip-anomalie-opt').forEach(b => b.classList.toggle('selected', b.dataset.val === ''));
@@ -19222,7 +19303,7 @@ function restaurerDefilementsLots(d) {
 }
 function filtresLotsVides() {
   return { q: '', millesime: '', statut: '', dansLot: '',
-    ctrlCampagne: '', anomalieAny: false, anomalie: Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8].map(n => [n, ''])), lait: Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8].map(n => [n, ['', '']])),
+    ctrlCampagne: '', anomalieAny: false, celMin: '', anomalie: Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8].map(n => [n, ''])), lait: Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8].map(n => [n, ['', '']])),
     lactMin: '', lactMax: '', classes: [], age: '',
     ia: {}, sansDeuxEchecs: false,
     mbMode: '', mbDu: '', mbAu: '',
@@ -19330,6 +19411,7 @@ function lignesLotsPc(lot) {
     const ctr = n => (s.controleLaitier || []).find(c => c && c.campagne === ctrlC && c.controle === n) || null;
     const ia = {}; colsIA.forEach(c => { ia[c] = resultatIAPourCampagne(s, c); });
     return { eid: s.eid, id: s.id, obj: s, numero: numeroVisuel(s.eid), court: s.numeroCourtTravailSieol || s.numeroTravailSieol || '', age: age(s.eid), millesime: anneeNaissance(s.eid), statut: statutReproductionCampagne(s),
+      cellules: (e => e ? e.cellules : null)(dernierEchantillonCellules(s, ctrlC)),   // dernier échantillon de cellules de la campagne des contrôles (suivi CLS)
       lait: ncLot.map(n => ctr(n) ? ctr(n).quantite : null), anomalie: ncLot.map(n => ctr(n) ? (ctr(n).anomalie || null) : null), ctrlPresent: ncLot.map(n => !!ctr(n)),
       echo: derniereEchoCampagne(s, campEcho), lactN1: cl.lactation, classe: cl.classe, ia, deuxEchecs: deuxEchecsIADeSuite(s), derniereMB: dmb, delaiMB: dateRef ? moisEntre(dmb, dateRef) : null,
       lots: (lots.get(k) || []).map(l => l.nom), dansCeLot: membres.has(k), dansUnAutreLot: (lots.get(k) || []).some(l => l.id !== lot.id) };
@@ -19371,6 +19453,8 @@ function filtrerLignesLotsPc(lignes, onglet, lot) {
     if (E0.cas.length) tags.push(['Cas particuliers : ' + E0.cas.map(v => echoHtml(echoLibelleCas(v))).join(' ou '), f => { f.echo.cas = []; }]);
   } else if (onglet === 'controles') {
     if (F.anomalieAny) { out = out.filter(r => r.anomalie.some(a => !!a)); tags.push(['Une anomalie sur au moins un contrôle', f => { f.anomalieAny = false; }]); }
+    const celMin = lireNombreCellules(F.celMin);
+    if (celMin !== null) { out = out.filter(r => cellulesAuDessusSeuil(r.cellules, celMin)); tags.push(['Cellules au-dessus de ' + texteCellules(celMin), f => { f.celMin = ''; }]); }
     numerosControles(F.ctrlCampagne !== '' ? parseInt(F.ctrlCampagne, 10) : (campagnesControlesDisponibles()[0] != null ? campagnesControlesDisponibles()[0] : DB.campagneDebut)).forEach(n => {
       const a = F.anomalie[n];
       if (a !== '') {
@@ -19408,6 +19492,7 @@ function cleTriLotsPc(r, col) {
   if (col.startsWith('ia')) return r.ia ? r.ia[col.slice(2)] : null;
   let k = /^lait(\d)$/.exec(col); if (k) return r.lait ? r.lait[k[1] - 1] : null;   // C1 à Cn
   k = /^an(\d)$/.exec(col); if (k) return r.anomalie ? r.anomalie[k[1] - 1] : null;
+  if (col === 'cellules') return r.cellules === undefined ? null : r.cellules;
   return m[col];
 }
 function trierLignesLotsPc(lignes) {
@@ -19665,8 +19750,10 @@ function renderLotsPc() {
       cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + th('echoDate', 'Dernière écho') + th('echoType', 'Type', true) + th('echoStade', 'Stade', true) + th('echoAgn', 'Agneaux') + `<th style="text-align:left;">Cas particuliers</th>`;
       cellules = r => `<td class="l num-fixe"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td><td>${dash(r.echo && r.echo.date ? formatDateFr(r.echo.date) : null)}</td><td class="l">${dash(r.echo ? echoTypeLibelle(r.echo) : null)}</td><td class="l">${dash(r.echo ? echoStadeCle(r.echo) : null)}</td><td>${r.echo && echoAgneauxLibelle(r.echo) ? pcPill('ok', echoAgneauxLibelle(r.echo)) : dash(null)}</td><td class="l">${r.echo && echoCasLibelles(r.echo).length ? echoCasLibelles(r.echo).map(c => pcPill(c === 'PARASIT.' ? 'warn' : 'info', echoHtml(c))).join(' ') : '—'}</td>`;
     } else if (E.onglet === 'controles') {
-      cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + ncPanneau.map(n => th('lait' + n, 'Lait C' + n + ' (mL)') + th('an' + n, 'Anomalie C' + n)).join('');
-      cellules = r => `<td class="l num-fixe"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td>` + ncPanneau.map((n, i) => `<td>${dash(r.lait[i])}</td><td>${r.anomalie[i] ? pcPill('warn', r.anomalie[i]) : (r.ctrlPresent[i] ? '—' : dash(null))}</td>`).join('');
+      const avecCel = toutes.some(r => r.cellules !== null && r.cellules !== undefined);   // colonne « Cellules » seulement si la campagne des contrôles a des échantillons
+      cols = th('numero', 'N°', true) + th('age', 'Millésime · âge') + ncPanneau.map(n => th('lait' + n, 'Lait C' + n + ' (mL)') + th('an' + n, 'Anomalie C' + n)).join('') + (avecCel ? th('cellules', 'Cellules') : '');
+      cellules = r => `<td class="l num-fixe"><b>${r.court || r.numero}</b></td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td>` + ncPanneau.map((n, i) => `<td>${dash(r.lait[i])}</td><td>${r.anomalie[i] ? pcPill('warn', r.anomalie[i]) : (r.ctrlPresent[i] ? '—' : dash(null))}</td>`).join('')
+        + (avecCel ? `<td class="lt-cellules">${r.cellules === null || r.cellules === undefined ? dash(null) : cellulesAuDessusSeuil(r.cellules) ? pcPill('warn', texteCellules(r.cellules)) : texteCellules(r.cellules)}</td>` : '');
     } else if (E.onglet === 'lactations') {
       cols = th('numero', 'N°', true) + th('lactN1', 'Lactation N-1 (' + libCampagneAffichee(DB.campagneDebut - 1) + ')') + th('classe', 'Classe') + th('age', 'Millésime · âge');
       cellules = r => `<td class="l num-fixe"><b>${r.court || r.numero}</b></td><td>${dash(r.lactN1 === null ? null : fmtDecimal(r.lactN1, 1) + ' L')}</td><td>${dash(r.classe)}</td><td>${dash(r.millesime === null ? null : r.millesime + ' · ' + r.age + ' ans')}</td>`;
@@ -19714,6 +19801,7 @@ function renderLotsPc() {
     if (agn) specifiques = champ('Âge (ans)', selectHtml('lt-age', F.age, [['', 'Tous'], ...[...new Set(toutes.map(r => r.age).filter(a => a !== null))].sort((a, b) => a - b).map(a => [String(a), String(a)])]));
     else if (E.onglet === 'echos') { /* construit ci-dessus */ }
     else if (E.onglet === 'controles') specifiques = `<div style="flex:1 1 230px;"><label style="display:flex;gap:8px;align-items:center;margin-top:20px;"><input type="checkbox" id="lt-anomalie-any" style="width:auto;"${F.anomalieAny ? ' checked' : ''}> Au moins une anomalie</label></div>` + champ('Campagne des contrôles', selectHtml('lt-ctrl-campagne', F.ctrlCampagne, [['', 'Dernière avec contrôles (' + libCampagneAffichee(ctrlC) + ')'], ...ctrlCamps.map(c => [String(c), 'Campagne ' + libCampagneAffichee(c)])]))
+      + (toutes.some(r => r.cellules !== null && r.cellules !== undefined) ? champ('Cellules au-dessus de (cellules/mL)', `<input type="text" inputmode="numeric" id="lt-cel-min" value="${echapperHtml(F.celMin)}" placeholder="${texteCellules(seuilCellules())}">`) : '')
       + ncPanneau.map(n => champ('Anomalie C' + n, selectHtml('lt-an' + n, F.anomalie[n], [['', 'Toutes'], ['toutes', 'Une anomalie'], ['aucune', 'Aucune'], ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(x => [String(x), 'Code ' + x])])) + champ('Lait C' + n + ' (mL) min – max', `<div style="display:flex;gap:4px;"><input type="number" id="lt-lait${n}-min" value="${F.lait[n][0]}" placeholder="min" style="min-width:70px;"><input type="number" id="lt-lait${n}-max" value="${F.lait[n][1]}" placeholder="max" style="min-width:70px;"></div>`)).join('');
     else if (E.onglet === 'lactations') specifiques = champ('Lactation N-1 (L) min – max', `<div style="display:flex;gap:4px;"><input type="number" id="lt-lact-min" value="${F.lactMin}" placeholder="min"><input type="number" id="lt-lact-max" value="${F.lactMax}" placeholder="max"></div>`)
       + champ('Classe', `<div style="display:flex;gap:6px;">${[1, 2, 3, 4].map(c => `<button type="button" class="pc-gc lt-classe${F.classes.includes(String(c)) ? ' on' : ''}" data-c="${c}">${c}</button>`).join('')}</div>`)
@@ -19840,7 +19928,7 @@ function renderLotsPc() {
     const champ = $('lt-q'); if (champ) champ.focus();
   });
   lie('lt-millesime', t => { F.millesime = t.value; }); lie('lt-statut', t => { F.statut = t.value; }); lie('lt-dans-lot', t => { F.dansLot = t.value; }); lie('lt-age', t => { F.age = t.value; });
-  lie('lt-ctrl-campagne', t => { F.ctrlCampagne = t.value; }); lie('lt-anomalie-any', t => { F.anomalieAny = t.checked; });
+  lie('lt-ctrl-campagne', t => { F.ctrlCampagne = t.value; }); lie('lt-anomalie-any', t => { F.anomalieAny = t.checked; }); lie('lt-cel-min', t => { F.celMin = t.value; });
   [1, 2, 3, 4, 5, 6, 7, 8].forEach(n => { lie('lt-an' + n, t => { F.anomalie[n] = t.value; }); lie('lt-lait' + n + '-min', t => { F.lait[n][0] = t.value; }); lie('lt-lait' + n + '-max', t => { F.lait[n][1] = t.value; }); });
   lie('lt-lact-min', t => { F.lactMin = t.value; }); lie('lt-lact-max', t => { F.lactMax = t.value; });
   document.querySelectorAll('.lt-classe').forEach(b => { b.onclick = () => { const c = b.dataset.c; F.classes = F.classes.includes(c) ? F.classes.filter(x => x !== c) : F.classes.concat(c); redessiner(); }; });
@@ -26109,28 +26197,40 @@ async function exportBilanLactationXlsx(campagne) {
    ignorés, car il y a plusieurs onglets distincts à combiner), Contrôle
    laitier n'a qu'une seule vue -- les deux exports respectent donc le tri
    et les filtres actifs, comme demandé. */
-async function exportControleLaitierPdf(filtered) {
+async function exportControleLaitierPdf(filtered, opts) {
   const nc = numerosControles();   // mêmes colonnes C1 à Cn que l'écran
-  const columns = [{ label: 'N° de travail' }, { label: 'Date de mise bas' }, ...nc.map(k => ({ label: 'C' + k + ' (mL)' }))];
+  const cel = !!(opts && opts.cellules), seuilFiltre = opts && opts.seuilFiltre ? opts.seuilFiltre : null, seuil = seuilCellules();
+  // Cellules (suivi CLS) : colonne en fin de tableau seulement si la campagne a des échantillons ; tuile des brebis au-dessus du seuil
+  const columns = [{ label: 'N° de travail' }, { label: 'Date de mise bas' }, ...nc.map(k => ({ label: 'C' + k + ' (mL)' })), ...(cel ? [{ label: 'Cellules' }] : [])];
   const rows = filtered.map(r => [
     r.courtSieol,
     r.dateMab ? formatDateFr(r.dateMab) : '',
-    ...nc.map(k => r['c' + k] !== null && r['c' + k] !== undefined ? String(r['c' + k]) : '')
+    ...nc.map(k => r['c' + k] !== null && r['c' + k] !== undefined ? String(r['c' + k]) : ''),
+    ...(cel ? [r.cellules === null || r.cellules === undefined ? '—' : texteCellules(r.cellules).replace(/\u00a0/g, ' ')] : [])
   ]);
-  const bytes = buildPdfTableCharte({ title: 'Contrôle laitier', columns, rows, landscape: true });
+  const nHaut = cel ? filtered.filter(r => cellulesAuDessusSeuil(r.cellules, seuil)).length : 0;
+  const s = t => t.replace(/\u00a0/g, ' ');
+  const bytes = buildPdfTableCharte({
+    title: seuilFiltre ? 'Contrôle laitier · cellules au-dessus de ' + s(texteCellules(seuilFiltre)) : 'Contrôle laitier', columns, rows, landscape: true,
+    subtitle: cel ? 'Quantités en mL · Cellules = dernier échantillon de la campagne (cellules/mL) · seuil d\'alerte ' + s(texteCellules(seuil)) : undefined,
+    tuiles: cel ? [pdfTuile('ambre', 'Cellules au-dessus de ' + s(texteCellules(seuil)), nHaut, undefined, true), pdfTuile('vert', 'Brebis', filtered.length)] : undefined,
+    pied: seuilFiltre ? pdfPied('Contrôle laitier') : undefined
+  });
   const filename = 'controle-laitier_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');
 }
 
-async function exportControleLaitierXlsx(filtered) {
+async function exportControleLaitierXlsx(filtered, opts) {
+  const cel = !!(opts && opts.cellules);   // colonne « Cellules » (cellules/mL, dernier échantillon de la campagne) en fin, seulement s'il y a des échantillons
   const sheets = [{
     name: 'Contrôle laitier',
     rows: [
-      ['N° de travail', 'Date de mise bas', ...numerosControles().map(k => 'C' + k + ' (mL)')],
+      ['N° de travail', 'Date de mise bas', ...numerosControles().map(k => 'C' + k + ' (mL)'), ...(cel ? ['Cellules'] : [])],
       ...filtered.map(r => [
         r.courtSieol,
         r.dateMab ? formatDateFr(r.dateMab) : '',
-        ...numerosControles().map(k => r['c' + k] !== null && r['c' + k] !== undefined ? r['c' + k] : '')
+        ...numerosControles().map(k => r['c' + k] !== null && r['c' + k] !== undefined ? r['c' + k] : ''),
+        ...(cel ? [r.cellules === null || r.cellules === undefined ? '' : r.cellules] : [])
       ])
     ]
   }];
@@ -28931,6 +29031,197 @@ function renderImportInseminations() {
   document.getElementById('import-ia-lot').addEventListener('change', () => err.classList.add('hidden'));
 }
 
+/* ---------- Import « Cellules par brebis » (suivi CLS, PC : Paramètres › Imports) ----------
+   Modèle Excel Ovilog, onglet « Cellules » : N° brebis, N° d'échantillon (facultatif), Cellules ; colonnes repérées par leur titre.
+   Date de l'échantillon : « Pendant un contrôle » (date de ce contrôle de la campagne en cours) ou « Hors contrôle » (date tapée).
+   Unité du fichier choisie à CHAQUE import, sans choix d'office : cellules, ou milliers de cellules (« 5 » = 5 000 cellules/mL).
+   Brebis retrouvée par la recherche commune des imports (retrouverAnimalImport ; carte « Brebis à retrouver » : n° tapé, Associer).
+   Rien n'est écrit avant « Importer » ; une brebis qui a déjà un échantillon CE JOUR-LÀ n'est remplacée que si sa case « Remplacer » est cochée ;
+   une ligne mal remplie est montrée en ambre et laissée de côté. Écriture : sheep.cellules (voir cellulesCampagne). */
+const CELLULES_FEUILLE = 'Cellules';
+async function telechargerModeleCellules() {
+  const bytes = await buildXlsxWorkbook([{ name: CELLULES_FEUILLE, colWidths: [16, 18, 14], rows: [['N° brebis', 'N° d\'échantillon', 'Cellules']] }]);
+  await saveOrShareBinaryFile('Modele_Cellules.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+// Brebis présentes : seules bêtes qui reçoivent un échantillon
+function poolCellules() { return DB.brebis.filter(s => (s.statut || 'active') === 'active'); }
+// Contrôles de la campagne et leur date (la plus fréquente sur les fiches) : choix « Pendant un contrôle »
+function datesControlesCampagne(N) {
+  const par = new Map();
+  (DB.brebis || []).forEach(s => (s.controleLaitier || []).forEach(c => {
+    if (!c || c.campagne !== N || !c.controle || !c.date) return;
+    const m = par.get(c.controle) || new Map(); m.set(c.date, (m.get(c.date) || 0) + 1); par.set(c.controle, m);
+  }));
+  return [...par.entries()].map(([n, m]) => ({ controle: n, date: [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0] })).sort((a, b) => a.controle - b.controle);
+}
+// Repère la ligne de titres et les colonnes (« brebis », « échantillon », « cellules »), dans les 15 premières lignes
+function reperageColonnesCellules(rows) {
+  const norm = v => String(v == null ? '' : v).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+    const r = (rows[i] || []).map(norm);
+    const numero = r.findIndex(c => /brebis/.test(c)), cellules = r.findIndex(c => /cellule/.test(c)), echantillon = r.findIndex(c => /chantillon/.test(c));
+    if (numero >= 0 && cellules >= 0) return { ligneEntete: i, cols: { numero, cellules, echantillon } };
+  }
+  return null;
+}
+// Valeur du fichier → cellules/mL (entier) selon l'unité choisie ; null si la case n'est pas un nombre positif
+function valeurCellulesImport(brut, unite) {
+  const t = String(brut == null ? '' : brut).trim().replace(/[\s  ]/g, '').replace(',', '.');
+  if (!/^\d+(\.\d+)?$/.test(t)) return null;
+  const n = parseFloat(t) * (unite === 'milliers' ? 1000 : 1);
+  return n > 0 ? Math.round(n) : null;
+}
+/* Classement de l'aperçu (fonction pure, rien n'est écrit) : une ligne par ligne remplie du fichier, état
+   nouveau | aJour | conflit | remplace | invalide | aChoisir | aRetrouver | doublon. opts { date, unite, remplacer: Set d'EID, choix: Map cle → animal }. */
+function classerCellulesImport(rows, opts) {
+  const rep = reperageColonnesCellules(rows || []);
+  if (!rep) return { erreur: 'Colonnes « N° brebis » et « Cellules » introuvables. Utilisez le modèle Excel Ovilog (onglet « ' + CELLULES_FEUILLE + ' »).' };
+  const pool = poolCellules(), lignes = [], vus = new Map();
+  for (let i = rep.ligneEntete + 1; i < rows.length; i++) {
+    const row = rows[i] || [], cel = k => k >= 0 && row[k] !== undefined && row[k] !== null ? String(row[k]).trim() : '';
+    const numero = cel(rep.cols.numero), brut = cel(rep.cols.cellules), echantillon = cel(rep.cols.echantillon);
+    if (!numero && !brut) continue;
+    const l = { ligne: i + 1, cle: 'c' + (i + 1), numero, brut, echantillon, valeur: opts.unite ? valeurCellulesImport(brut, opts.unite) : null, etat: null, message: '' };
+    lignes.push(l);
+    if (!numero) { l.etat = 'invalide'; l.message = 'pas de n° de brebis sur cette ligne'; l.resolution = { type: 'vide' }; continue; }
+    l.resolution = retrouverAnimalImport(numero, pool);   // recherche commune des imports
+    l.choisi = (opts.choix && opts.choix.get(l.cle)) || null;
+    if (!brut || valeurCellulesImport(brut, 'cellules') === null) { l.etat = 'invalide'; l.message = brut ? 'valeur « ' + brut + ' » : pas un nombre de cellules' : 'case Cellules vide'; continue; }
+    const animal = animalRetenuImport(l);
+    if (!animal) { l.etat = l.resolution.type === 'choix' ? 'aChoisir' : 'aRetrouver'; continue; }
+    l.animal = animal;
+    if (vus.has(animal.eid)) { l.etat = 'doublon'; l.message = 'brebis déjà sur la ligne ' + vus.get(animal.eid).ligne + ' du fichier : ligne laissée de côté'; continue; }
+    vus.set(animal.eid, l);
+    if (!opts.unite || !opts.date) { l.etat = 'nouveau'; continue; }
+    const existant = (animal.cellules || []).find(e => e && e.date === opts.date);
+    if (!existant) l.etat = 'nouveau';
+    else if (existant.cellules === l.valeur) { l.etat = 'aJour'; l.existant = existant; }
+    else { l.existant = existant; l.etat = opts.remplacer && opts.remplacer.has(animal.eid) ? 'remplace' : 'conflit'; }
+  }
+  const aEcrire = lignes.filter(l => l.etat === 'nouveau' || l.etat === 'remplace');
+  return { lignes, aEcrire, aRetrouver: lignes.filter(l => l.resolution && l.resolution.type !== 'vide' && l.etat !== 'invalide'), invalides: lignes.filter(l => l.etat === 'invalide' || l.etat === 'doublon'), conflits: lignes.filter(l => l.etat === 'conflit' || l.etat === 'remplace') };
+}
+// Écriture (après « Importer ») : un échantillon par brebis et par jour ; retourne le nombre d'échantillons écrits
+function appliquerCellulesImport(classement, opts) {
+  let n = 0;
+  classement.aEcrire.forEach(l => {
+    const s = l.animal;
+    s.cellules = (Array.isArray(s.cellules) ? s.cellules : []).filter(e => !(e && e.date === opts.date));
+    const e = { date: opts.date, campagne: opts.campagne, cellules: l.valeur, source: 'import' };
+    if (opts.controle) e.controle = opts.controle;
+    if (l.echantillon) e.echantillon = l.echantillon;
+    s.cellules.push(e);
+    n++;
+  });
+  return n;
+}
+const ETATS_IMPORT_CELLULES = { nouveau: ['ok', 'À importer'], remplace: ['ok', 'Remplacé'], aJour: ['neutral', 'Déjà à jour'], conflit: ['warn', 'Déjà ce jour'], invalide: ['warn', 'À corriger'],
+  aChoisir: ['warn', 'À choisir'], aRetrouver: ['warn', 'À retrouver'], doublon: ['warn', 'En double'] };
+function renderImportCellules() {
+  pageTitle.textContent = 'Import Cellules par brebis';
+  const N = DB.campagneDebut, controles = datesControlesCampagne(N);
+  const etat = { mode: controles.length ? 'controle' : 'hors', controle: controles.length ? controles[controles.length - 1].controle : null, dateHors: jourAujourdhuiISO(), unite: null,
+    rows: null, nomFichier: '', remplacer: new Set(), choix: new Map(), saisies: new Map(), message: '' };
+  let classement = null;
+  const dateEchantillon = () => etat.mode === 'controle' ? ((controles.find(c => c.controle === etat.controle) || {}).date || null) : (etat.dateHors && etat.dateHors <= jourAujourdhuiISO() ? etat.dateHors : null);
+  const seg = (id, val, choix) => `<div class="pc-seg2" id="${id}" style="display:inline-flex;width:auto;">${choix.map(([v, l]) => `<button type="button" class="opt-btn${val === v ? ' selected' : ''}" data-val="${v}" style="flex:none;width:auto;white-space:nowrap;padding-left:16px;padding-right:16px;">${l}</button>`).join('')}</div>`;
+  app.innerHTML = `
+    <div class="card" id="import-cel-reglages">
+      <div class="brd-note" style="margin:0 0 6px;">Comptage cellulaire de chaque brebis, d'après le papier du contrôle (suivi CLS). Campagne ${campagneLabel(N)}. Plusieurs échantillons possibles par campagne, jamais deux le même jour pour une brebis.</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+        <div><label>Date de l'échantillon</label>${seg('import-cel-mode', etat.mode, [['controle', 'Pendant un contrôle'], ['hors', 'Hors contrôle']])}</div>
+        <div id="import-cel-date-zone"></div>
+      </div>
+      <div style="margin-top:6px;">
+        <label>Valeurs du fichier en</label>${seg('import-cel-unite', etat.unite, [['cellules', 'Cellules'], ['milliers', 'Milliers de cellules']])}
+        <div class="brd-note" style="margin:6px 0 0;">À choisir à chaque import · en milliers, « 5 » sur le papier = 5 000 cellules/mL</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;"><button type="button" class="btn btn-secondary" id="btn-modele-cellules" style="width:auto;">Télécharger le modèle Excel</button></div>
+      <label for="import-cel-file" style="margin-top:12px;">Fichier <span class="pc-opt">(modèle Ovilog, onglet « ${CELLULES_FEUILLE} »)</span></label>
+      <input type="file" id="import-cel-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <div id="import-cel-err" class="error-box hidden"></div>
+    </div>
+    <div id="import-cel-message"></div>
+    <div id="import-cel-preview"></div>`;
+  const err = document.getElementById('import-cel-err');
+  function dessinerDate() {
+    const z = document.getElementById('import-cel-date-zone');
+    if (etat.mode === 'controle') z.innerHTML = controles.length ? `<label for="import-cel-controle">Contrôle</label><select id="import-cel-controle">${controles.map(c => `<option value="${c.controle}"${c.controle === etat.controle ? ' selected' : ''}>C${c.controle} · ${formatDateFr(c.date)}</option>`).join('')}</select>`
+      : '<div class="brd-note" style="margin:0 0 12px;">Aucun contrôle importé cette campagne : choisissez « Hors contrôle ».</div>';
+    else z.innerHTML = `<label for="import-cel-date">Date</label><input type="date" id="import-cel-date" value="${etat.dateHors}" max="${jourAujourdhuiISO()}">`;
+    const sc = document.getElementById('import-cel-controle'); if (sc) sc.onchange = e => { etat.controle = parseInt(e.target.value, 10); etat.remplacer.clear(); renderPreview(); };
+    const sd = document.getElementById('import-cel-date'); if (sd) sd.onchange = e => { etat.dateHors = e.target.value; etat.remplacer.clear(); renderPreview(); };
+  }
+  const num = l => l.animal ? numeroAnimal(l.animal) : (l.numero || '—');
+  function renderPreview() {
+    const zone = document.getElementById('import-cel-preview');
+    document.getElementById('import-cel-message').innerHTML = etat.message ? `<div class="card" id="import-cel-ok" style="margin-top:14px;background:var(--green-bg);color:var(--green-fg);">${echapperHtml(etat.message)}</div>` : '';
+    if (classement && classement.aRetrouver) classement.aRetrouver.forEach(x => etat.saisies.set(x.cle, x.saisie || ''));   // garde ce qui est tapé d'un dessin à l'autre
+    const date = dateEchantillon();
+    classement = etat.rows ? classerCellulesImport(etat.rows, { date, unite: etat.unite, remplacer: etat.remplacer, choix: etat.choix }) : null;
+    if (classement && classement.aRetrouver) classement.aRetrouver.forEach(x => { x.saisie = etat.saisies.get(x.cle) || ''; });
+    if (!classement) { zone.innerHTML = ''; return; }
+    if (classement.erreur) { zone.innerHTML = `<div class="error-box" style="margin-top:14px;">${echapperHtml(classement.erreur)}</div>`; return; }
+    const c = classement, seuil = seuilCellules();
+    const manque = !etat.unite ? 'Choisissez l\'unité du fichier (cellules ou milliers de cellules) pour voir les valeurs et importer.' : !date ? (etat.mode === 'controle' ? 'Choisissez le contrôle.' : 'Choisissez une date qui n\'est pas dans le futur.') : '';
+    const valeurTxt = l => l.valeur === null ? '—' : texteCellules(l.valeur);
+    zone.innerHTML = `<div class="card" style="margin-top:14px;">
+      <div class="brd-note" style="margin:0 0 10px;">${echapperHtml(etat.nomFichier)} · ${c.lignes.length} ligne${c.lignes.length > 1 ? 's' : ''}${date ? ' · échantillon du ' + formatDateFr(date) : ''}</div>
+      <div id="import-cel-tuiles">${tuilesRetrouverImportHtml(c.aRetrouver)}</div>
+      ${manque ? `<div class="msg-charte alerte" id="import-cel-manque" style="margin-top:10px;"><span>${manque}</span></div>` : ''}
+    </div>
+    ${carteRetrouverImportHtml(c.aRetrouver, { colonne: 'N° brebis', pool: poolCellules() })}
+    <div class="card" style="margin-top:10px;">
+      ${c.invalides.length ? `<div id="import-cel-invalides" style="display:grid;gap:6px;margin:0 0 12px;">${c.invalides.map(l => `<div class="msg-charte alerte"><b>Ligne ${l.ligne}${l.numero ? ' · ' + echapperHtml(l.numero) : ''}</b><span>${echapperHtml(l.message)} : ligne laissée de côté.</span></div>`).join('')}</div>` : ''}
+      ${c.conflits.length ? `<div id="import-cel-conflits" style="display:grid;gap:6px;margin:0 0 12px;">${c.conflits.map(l => `<div class="msg-charte alerte"><b>Déjà un échantillon ce jour-là · ${echapperHtml(num(l))}</b><span>${texteCellules(l.existant.cellules)} cellules/mL dans Ovilog, ${valeurTxt(l)} dans le fichier. <label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 0 6px;"><input type="checkbox" class="import-cel-remplacer" data-eid="${echapperHtml(l.animal.eid)}"${etat.remplacer.has(l.animal.eid) ? ' checked' : ''} style="width:auto;margin:0;"> Remplacer</label></span></div>`).join('')}</div>` : ''}
+      <div style="overflow-x:auto;"><table class="brd-t" id="import-cel-table"><thead><tr><th>Brebis</th><th>N° d'échantillon</th><th>Valeur du fichier</th><th>Cellules/mL</th><th>Seuil ${texteCellules(seuil)}</th><th>État</th></tr></thead><tbody>
+        ${c.lignes.map(l => { const [ton, lib] = ETATS_IMPORT_CELLULES[l.etat]; return `<tr data-etat="${l.etat}"><td>${echapperHtml(num(l))}</td><td>${echapperHtml(l.echantillon || '—')}</td><td>${echapperHtml(l.brut || '—')}</td><td>${valeurTxt(l)}</td><td>${cellulesAuDessusSeuil(l.valeur, seuil) ? pcPill('warn', 'au-dessus') : ''}</td><td>${pcPill(ton, lib)}</td></tr>`; }).join('')}
+      </tbody></table></div>
+      <div class="brd-note" style="margin:8px 0 0;">Rien n'est écrit avant « Importer ». Une ligne mal remplie est montrée en ambre et laissée de côté.</div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px;"><button type="button" class="btn btn-secondary" id="btn-annuler-import-cel" style="width:auto;">Annuler</button><button type="button" class="btn btn-primary" id="btn-confirm-import-cel" style="width:auto;"${manque || !c.aEcrire.length ? ' disabled' : ''}>Importer ${c.aEcrire.length} échantillon${c.aEcrire.length > 1 ? 's' : ''}</button></div>
+    </div>`;
+    brancherCarteRetrouverImport(zone, c.aRetrouver, poolCellules(), () => { c.aRetrouver.forEach(x => { if (x.choisi) etat.choix.set(x.cle, x.choisi); else etat.choix.delete(x.cle); etat.saisies.set(x.cle, x.saisie || ''); }); etat.message = ''; renderPreview(); });
+    zone.querySelectorAll('.import-cel-remplacer').forEach(cb => { cb.onchange = () => { if (cb.checked) etat.remplacer.add(cb.dataset.eid); else etat.remplacer.delete(cb.dataset.eid); etat.message = ''; renderPreview(); }; });
+    const vider = () => { etat.rows = null; etat.remplacer.clear(); etat.choix.clear(); etat.saisies.clear(); classement = null; document.getElementById('import-cel-file').value = ''; };
+    document.getElementById('btn-annuler-import-cel').onclick = () => { vider(); etat.message = ''; renderPreview(); };
+    document.getElementById('btn-confirm-import-cel').onclick = () => {
+      const d = dateEchantillon();
+      if (!classement || !classement.aEcrire.length || !etat.unite || !d) return;
+      const n = appliquerCellulesImport(classement, { date: d, campagne: N, controle: etat.mode === 'controle' ? etat.controle : null });
+      classement.aEcrire.forEach(l => { if (l.choisi) retenirNumeroImport(l.choisi, l.numero, poolCellules(), true); });   // associée à la main : n° retenu pour les prochains imports
+      saveData(DB);
+      noterDernierImport('cellules', N, n);
+      etat.message = n + ' échantillon' + (n > 1 ? 's' : '') + ' de cellules importé' + (n > 1 ? 's' : '') + ' (' + formatDateFr(d) + ').';
+      vider();
+      renderPreview();
+    };
+  }
+  const brancherSeg = (id, fn) => document.querySelectorAll('#' + id + ' .opt-btn').forEach(b => { b.onclick = () => { document.querySelectorAll('#' + id + ' .opt-btn').forEach(x => x.classList.toggle('selected', x === b)); fn(b.dataset.val); }; });
+  brancherSeg('import-cel-mode', v => { etat.mode = v; etat.remplacer.clear(); dessinerDate(); renderPreview(); });
+  brancherSeg('import-cel-unite', v => { etat.unite = v; etat.message = ''; renderPreview(); });
+  dessinerDate();
+  document.getElementById('btn-modele-cellules').onclick = () => telechargerModeleCellules().catch(ex => afficherErreurExport(ex && ex.message ? ex.message : String(ex)));
+  document.getElementById('import-cel-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    err.classList.add('hidden'); etat.message = ''; etat.remplacer.clear(); etat.choix.clear(); etat.saisies.clear(); classement = null;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        etat.rows = await readXlsxRows(reader.result, CELLULES_FEUILLE);
+        etat.nomFichier = file.name;
+        renderPreview();
+      } catch (ex) {
+        etat.rows = null; renderPreview();
+        err.textContent = 'Impossible de lire ce fichier : ' + (ex && ex.message ? ex.message : 'format non reconnu.');
+        err.classList.remove('hidden');
+      }
+    };
+    reader.onerror = () => { err.textContent = 'Erreur de lecture du fichier.'; err.classList.remove('hidden'); };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 /* ---------- Import "Contrôle laitier" (mode fichier modèle Ovilog) ----------
    REPRISE COMPLÈTE (remplace intégralement les versions précédentes de ce
    chantier) -- distinct de l'import "Cahier de contrôle laitier SIEOL" déjà
@@ -30546,6 +30837,9 @@ function renderParametresRegles(content) {
   const carteEco = `
     <div class="card" id="card-lait">
       <div class="prm-titre">Lait</div>
+      <div class="prm-sous-titre">Seuil d'alerte cellules</div>
+      <div class="prm-champs2" id="prm-seuil-cellules"><div><label for="f-seuil-cellules">Cellules/mL</label><input type="text" inputmode="numeric" id="f-seuil-cellules" value="${texteCellules(seuilCellules())}"></div><div style="align-self:end;"><button type="button" class="btn btn-secondary" id="btn-save-seuil-cellules" style="margin:0;">Enregistrer le seuil</button></div></div>
+      <div class="prm-note">Au-dessus : pastille ambre sur la fiche et dans le Contrôle laitier (cellules par brebis, suivi CLS). 800 000 au départ.</div>
       <div class="prm-sous-titre">Codes d'anomalie du contrôle</div>
       <div class="prm-note">Codes 01 à 05 : leur sens dépend de votre technicien ; toujours avec du lait. Le nom s'affiche sur la fiche de la brebis et en légende des tableaux du contrôle laitier ; les codes déjà enregistrés ne changent pas.</div>
       <div class="prm-codes-anomalie">${CODES_ANOMALIE_REGLABLES.map(n => { const l = libelleAnomalieControle(n); return `<div class="prm-code-ligne"><label for="f-code-anomalie-${n}" class="prm-code">${codeAnomalieTexte(n)}</label><input type="text" id="f-code-anomalie-${n}" maxlength="60" value="${echapperHtml(l === 'Code ' + codeAnomalieTexte(n) ? '' : l)}" placeholder="Sens du code ${codeAnomalieTexte(n)} (à compléter)"></div>`; }).join('')}</div>
@@ -30557,6 +30851,14 @@ function renderParametresRegles(content) {
       </div>`}
     </div>`;
   content.innerHTML = prmColonnesHtml(carteRepro, carteBoucles + carteEco);
+  document.getElementById('btn-save-seuil-cellules').onclick = () => {
+    const v = lireNombreCellules(document.getElementById('f-seuil-cellules').value);
+    if (v === null) { alert('Saisissez un seuil en cellules/mL (ex. 800 000).'); return; }
+    DB.seuilCellules = v;
+    saveData(DB);
+    alert('Seuil d\'alerte cellules enregistré : ' + texteCellules(v).replace(/\u00a0/g, ' ') + ' cellules/mL.');
+    render('parametres');
+  };
   document.getElementById('btn-save-codes-anomalie').onclick = () => {
     const L = {};
     CODES_ANOMALIE_REGLABLES.forEach(n => { L[n] = document.getElementById('f-code-anomalie-' + n).value.trim(); });
@@ -30898,7 +31200,8 @@ const IMPORTS_PC = [
   { key: 'sieol-cl', titre: 'Contrôle laitier · fichiers SIEOL', desc: 'Fichier résumé (les moyennes SIEOL) et fichier cahier de contrôle SIEOL brut, par campagne et par contrôle C1, C2, C3.', csv: true, vue: 'import-controle-laitier-sieol', btn: 'btn-import-controle-laitier-sieol', avecCampagne: true },
   { key: 'lactation', titre: 'Lactation', desc: 'Lactation totale et indicateurs de la campagne en cours (suivi CLS ou CLO).', modele: null, feuille: 'Lactation', ligneEntete: 4, vue: 'import-lactation-modele', btn: 'btn-import-lactation-modele', avecCampagne: true },
   { key: 'nouveaux-animaux', titre: 'Nouveaux animaux', desc: 'Crée les fiches manquantes et complète les fiches existantes. Trois feuilles : Brebis, Béliers, Agnelles.', modele: 'nouveaux-animaux', feuille: 'Brebis', ligneEntete: 4, vue: 'import-nouveaux-animaux', btn: 'btn-import-nouveaux-animaux', avecCampagne: false },
-  { key: 'inseminations', titre: 'Inséminations', desc: 'Papier de l\'inséminateur (CLS) : un fichier, deux onglets, les béliers (code IA, n° officiel, ISOL) et les brebis inséminées (n°, code IA), relié au lot IA choisi.', genere: true, vue: 'import-inseminations', btn: 'btn-import-inseminations', avecCampagne: false }
+  { key: 'inseminations', titre: 'Inséminations', desc: 'Papier de l\'inséminateur (CLS) : un fichier, deux onglets, les béliers (code IA, n° officiel, ISOL) et les brebis inséminées (n°, code IA), relié au lot IA choisi.', genere: true, vue: 'import-inseminations', btn: 'btn-import-inseminations', avecCampagne: false },
+  { key: 'cellules', titre: 'Cellules par brebis · CLS', desc: 'Comptage cellulaire de chaque brebis (papier du contrôle) : pendant un contrôle ou hors contrôle, en cellules ou en milliers de cellules. Plusieurs échantillons par campagne, jamais deux le même jour pour une brebis.', genere: true, vue: 'import-cellules', btn: 'btn-import-cellules', avecCampagne: true }
 ];
 // Modèle réellement utilisé par une carte : la Lactation dépend du type de suivi laitier (CLS ou CLO)
 function modeleImportPour(cfg) { return cfg.modele || (DB.exploitation.typeSuivi === 'clo' ? 'lactation-clo' : 'lactation-cls'); }
@@ -30962,6 +31265,10 @@ function contenuModeEmploi(cle) {
     { titre: 'À quoi sert ce fichier', textes: ['Entrer beaucoup d\'animaux d\'un coup : démarrage avec le troupeau existant, ou gros achat. Un onglet par catégorie : Brebis, Béliers, Agnelles (les agnelles restent à part des brebis jusqu\'au changement de campagne).'] },
     colonnes([['Origine', '« née » (ici) ou « achetée », liste déroulante'], ['EID', '11 ou 15 chiffres : obligatoire'], ['Date d\'entrée', 'JJ-MM-AAAA (agnelles : date du tri ou d\'entrée)'], ['Statut', '« actif » (« mort », « vendu » rarement) ; pas pour les agnelles'], ['Père / Mère', 'Facultatif, toujours l\'EID (jamais le n° d\'ordre)'], ['N° de travail', 'Brebis, agnelles : n° ou n° complet, l\'un suffit'], ['Béliers', 'Un seul n° de travail, écrit librement']]),
     { titre: 'À l\'import dans Ovilog', textes: ['Une ligne sans EID n\'est pas lue. Un EID déjà dans Ovilog n\'est jamais créé en double : la ligne peut seulement compléter le n° de travail ou les parents de la fiche (un n° déjà rempli n\'est jamais remplacé). Si un parent est déjà dans Ovilog, les fiches sont reliées.', 'Rien n\'est enregistré avant la confirmation de l\'import.'] }] };
+  if (cle === 'cellules') return { titre: 'Cellules par brebis', fichier: 'Modele_Cellules.xlsx', sections: [
+    { titre: 'À quoi sert ce fichier', textes: ['Recopier le comptage cellulaire de chaque brebis (papier du contrôle, suivi CLS). Plusieurs échantillons par campagne sont possibles, jamais deux le même jour pour une brebis.'] },
+    colonnes([['N° brebis', 'N° de travail, n° de travail complet, n° d\'ordre ou EID'], ['N° d\'échantillon', 'Facultatif : le n° du papier'], ['Cellules', 'Le chiffre du papier, tel quel']]),
+    { titre: 'À l\'import dans Ovilog', textes: ['Vous choisissez d\'abord la date : « Pendant un contrôle » (la date de ce contrôle) ou « Hors contrôle » (une date). Puis l\'unité du papier, à chaque import : en cellules, ou en milliers de cellules (« 5 » = 5 000 cellules/mL).', MODE_EMPLOI_RETROUVER, 'Rien n\'est enregistré avant « Importer ». Une brebis qui a déjà un échantillon ce jour-là n\'est remplacée que si vous cochez « Remplacer ». Une ligne sans n° ou sans chiffre de cellules est montrée et laissée de côté.', 'Au-dessus du seuil d\'alerte (Paramètres › Règles d\'élevage › Lait, 800 000 au départ), la brebis prend une pastille ambre sur sa fiche et dans le Contrôle laitier.'] }] };
   if (cle === 'inseminations') return { titre: 'Inséminations', fichier: 'Modele_Inseminations.xlsx', sections: [
     { titre: 'À quoi sert ce fichier', textes: ['Recopier le papier de l\'inséminateur (CLS) : le père de chaque brebis inséminée, qui suivra ensuite ses agneaux. Créez d\'abord le lot IA dans Ovilog, puis choisissez-le à l\'import.'] },
     { titre: 'Onglet « Béliers »', tableau: { colonnes: [['Colonne', 150], ['Ce qu\'on y met', 373]], lignes: [['Code IA', 'Le code du bélier sur le papier'], ['N° officiel', 'Le n° officiel du bélier (avec ou sans « FR »)'], ['ISOL', 'Son index, facultatif']] } },
@@ -31055,7 +31362,8 @@ function renderParametresImports(content) {
   cartes.filter(c => c.genere).forEach(cfg => {
     const zone = document.getElementById('apercu-' + cfg.key);
     const t = (titre, h, ex) => `<div class="prm-note" style="margin:6px 0 2px;">Onglet « ${titre} »</div><table class="brd-t prm-apercu-t"><thead><tr>${h.map(x => `<th>${x}</th>`).join('')}</tr></thead><tbody><tr>${ex.map(v => `<td>${v}</td>`).join('')}</tr></tbody></table>`;
-    if (zone) zone.innerHTML = t(IA_FEUILLE_BELIERS, ['Code IA', 'N° officiel', 'ISOL'], ['40518', '000012 40518', '112,5']) + t(IA_FEUILLE_BREBIS, ['N° brebis', 'Code IA'], ['21045', '40518']);
+    if (zone) zone.innerHTML = cfg.key === 'cellules' ? t(CELLULES_FEUILLE, ['N° brebis', 'N° d\'échantillon', 'Cellules'], ['590', '112', '1 250'])
+      : t(IA_FEUILLE_BELIERS, ['Code IA', 'N° officiel', 'ISOL'], ['40518', '000012 40518', '112,5']) + t(IA_FEUILLE_BREBIS, ['N° brebis', 'Code IA'], ['21045', '40518']);
   });
   cartes.filter(c => !c.csv && !c.genere).forEach(cfg => {
     const cle = modeleImportPour(cfg);
@@ -31066,10 +31374,10 @@ function renderParametresImports(content) {
     }).catch(e => { const zone = document.getElementById('apercu-' + cfg.key); if (zone) zone.innerHTML = `<div class="prm-note" style="color:var(--danger);">Impossible de lire le modèle (${xlsxEscape(e && e.message ? e.message : 'erreur')}).</div>`; });
   });
   document.querySelectorAll('.btn-mode-emploi').forEach(btn => {
-    btn.onclick = () => { const cfg = IMPORTS_PC.find(c => c.key === btn.dataset.cle); lancerExportAvecBouton(btn, () => telechargerModeEmploi(cfg.genere ? 'inseminations' : modeleImportPour(cfg))); };
+    btn.onclick = () => { const cfg = IMPORTS_PC.find(c => c.key === btn.dataset.cle); lancerExportAvecBouton(btn, () => telechargerModeEmploi(cfg.genere ? cfg.key : modeleImportPour(cfg))); };
   });
   document.querySelectorAll('.btn-modele-import').forEach(btn => {
-    btn.onclick = () => { const cfg = IMPORTS_PC.find(c => c.key === btn.dataset.cle); lancerExportAvecBouton(btn, () => cfg.genere ? telechargerModeleInseminations() : telechargerModeleImport(modeleImportPour(cfg))); };
+    btn.onclick = () => { const cfg = IMPORTS_PC.find(c => c.key === btn.dataset.cle); lancerExportAvecBouton(btn, () => cfg.key === 'cellules' ? telechargerModeleCellules() : cfg.genere ? telechargerModeleInseminations() : telechargerModeleImport(modeleImportPour(cfg))); };
   });
   cartes.concat(sieolCl ? [sieolCl] : []).forEach(cfg => { const b = document.getElementById(cfg.btn); if (b) b.onclick = () => render(cfg.vue); });
 }
@@ -33798,7 +34106,7 @@ const META_FIELDS = ['libellesAnomaliesControle', 'exploitation', 'campagneDebut
   // Réglage de compte « Bilan économique » (voir bilanEconomiqueActif) : absent = déduit des données de lait ; un compte neuf reçoit « faux »
   'bilanEconomiqueActif',
   // Interrupteur du Bilan économique disponible sur ce compte (voir bilanEconomiqueDisponible) : faux pour un compte neuf
-  'bilanEconomiqueDisponible', 'boucleSuivanteAuto',
+  'bilanEconomiqueDisponible', 'boucleSuivanteAuto', 'seuilCellules',
   // Drapeau de migration CÔTÉ CLOUD (jamais localStorage seul) -- voir
   // migrerRegistreVersCollection : doit être visible de tous les appareils
   // du compte, sinon un appareil qui vient de se réinstaller relancerait la

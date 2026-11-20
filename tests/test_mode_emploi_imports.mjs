@@ -31,7 +31,7 @@ await p.waitForTimeout(600);
 const texte = mots => mots.join(' ');
 
 // 1. un bouton par carte, à côté de « Télécharger le modèle »
-eq(await p.$$eval('.btn-mode-emploi', bs => bs.map(b => b.dataset.cle + ':' + b.textContent)), ['correspondance-sieol:Mode d\'emploi', 'controle-laitier:Mode d\'emploi', 'lactation:Mode d\'emploi', 'nouveaux-animaux:Mode d\'emploi', 'inseminations:Mode d\'emploi'], 'boutons « Mode d\'emploi »');
+eq(await p.$$eval('.btn-mode-emploi', bs => bs.map(b => b.dataset.cle + ':' + b.textContent)), ['correspondance-sieol:Mode d\'emploi', 'controle-laitier:Mode d\'emploi', 'lactation:Mode d\'emploi', 'nouveaux-animaux:Mode d\'emploi', 'inseminations:Mode d\'emploi', 'cellules:Mode d\'emploi'], 'boutons « Mode d\'emploi »');
 check(await p.$$eval('.btn-mode-emploi', bs => bs.every(b => b.previousElementSibling && b.previousElementSibling.classList.contains('btn-modele-import'))), 'à côté de « Télécharger le modèle »');
 
 // 2. chaque PDF : une page A4 portrait, charte, bon contenu
@@ -40,7 +40,8 @@ const attendus = {
   'controle-laitier': ['Mode_emploi_Controle_Laitier.pdf', ['Codes de votre technicien', 'Vide définitive', 'jamais (0/09)', 'Allaitante et traite', 'Garder Ovilog']],
   'lactation': ['Mode_emploi_Lactation_CLS.pdf', ['Classe par quart', 'Lactation totale']],
   'nouveaux-animaux': ['Mode_emploi_Nouveaux_Animaux.pdf', ['Origine', 'Père / Mère']],
-  'inseminations': ['Mode_emploi_Inseminations.pdf', ['Onglet « Béliers »', 'Code IA', 'Remplacer']]
+  'inseminations': ['Mode_emploi_Inseminations.pdf', ['Onglet « Béliers »', 'Code IA', 'Remplacer']],
+  'cellules': ['Mode_emploi_Cellules.pdf', ['N° d\'échantillon', 'milliers de cellules', 'Remplacer']]
 };
 for (const [cle, [nom, phrases]] of Object.entries(attendus)) {
   await p.evaluate(() => { window.__f = []; });
