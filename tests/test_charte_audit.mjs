@@ -170,7 +170,8 @@ console.log('G OK');
   const ROUGE = 'rgb(163, 58, 49)', VERT = 'rgb(53, 127, 75)';
   const couleur = (page, sel) => page.evaluate(sel => [...document.querySelectorAll(sel)].filter(b => b.offsetParent).map(b => { const c = getComputedStyle(b); return b.textContent.trim().slice(0, 30) + '|' + c.color + '|' + c.borderTopColor + '|' + c.backgroundColor; }), sel);
   const pasRouge = (l, nom) => check(l.length > 0 && l.every(x => !x.includes(ROUGE)), 'I. ' + nom + ' : sans rouge : ' + JSON.stringify(l));
-  await ecran(mob, "currentAgnelleId = 'ag1'; render('agnelle-detail')");
+  // agnelle sans saisie (créée par erreur) : seul cas où « Supprimer » existe (une agnelle traitée, sortie ou avec IA ne se supprime jamais)
+  await ecran(mob, "currentAgnelleId = 'ag1'; Object.assign(DB.agnelles.find(x => x.id === 'ag1'), { sanitaire: [], modesRepro: [], echographies: [], mouvements: [] }); render('agnelle-detail')");
   pasRouge(await couleur(mob, '#btn-vendre-agnelle-fiche'), 'fiche agnelle « Vendre »');
   check((await couleur(mob, '#btn-delete-agnelle-fiche'))[0].includes(ROUGE), 'I. « Supprimer cette agnelle » garde le rouge (secondaire)');
   await ecran(pc, "render('agneaux')"); pasRouge(await couleur(pc, '.btn-agneau-vendu, .btn-agneau-mort'), 'Agneaux (PC) « Vendu » / « Mort »');

@@ -3128,8 +3128,9 @@ function afficherSnackCorrectionEid(texte, changements, redessiner) {
    Un élément de fiche (mise bas, soin, mouvement, écho, note…) se supprime en UN geste, sans confirm() ; un animal entier passe par
    un message de la charte. Ensuite, bandeau 6 s « … supprimé · Annuler » = données EXACTES d'avant (fiche, lots, traitements collectifs,
    notes archivées). Le n° d'un animal supprimé est retiré des lots (n° orphelins), avec le nombre de lots dans le bandeau ; il n'est pas
-   gardé ensuite (décision de l'éleveur : après « Annuler », un n° supprimé peut resservir). Une brebis ou une agnelle qui a déjà des
-   infos de repro ou de lait ne se supprime JAMAIS (infosReproLaitAnimal) : elle sort par un mouvement (vente, mort). */
+   gardé dans une liste (décision de l'éleveur). Un animal (brebis, agnelle, bélier) qui a des soins, une sortie ou des infos de repro ou
+   de lait ne se supprime JAMAIS (infosBloquantSuppression) : il sort par un mouvement (vente, mort) et reste au registre. Une mise bas
+   dont un agneau est bouclé ou a des saisies ne se supprime jamais non plus (raisonsMiseBasNonSupprimable) : ses n° ne resservent pas. */
 let supSnackMinuterie = null;
 function afficherSnackAnnuler(texte, annuler) {
   document.querySelectorAll('.sup-snack').forEach(el => el.remove());
@@ -3165,11 +3166,14 @@ function retirerEidDesLots(eid) {
   });
   return n;
 }
-// Infos de repro ou de lait d'une brebis ou d'une agnelle (mises bas, échos, lots IA / éponge, vide définitive, contrôles, cellules, lactation) :
-// libellés de ce qui existe ; vide = l'animal peut être supprimé (erreur de saisie)
-function infosReproLaitAnimal(a) {
+// Infos qui interdisent de supprimer un animal (brebis, agnelle, bélier) : soins (registre sanitaire), sorties, mises bas, échos, lots IA / éponge,
+// vide définitive, contrôles, cellules, situation de traite, lactation ; libellés de ce qui existe ; vide = animal créé par erreur, supprimable
+function infosBloquantSuppression(a) {
   if (!a) return [];
   const e = cleanEid(a.eid || ''), l = [];
+  // registre sanitaire et mouvements : un animal traité ou sorti ne disparaît jamais du registre (contrôle)
+  if ((a.sanitaire || []).length) l.push('soins');
+  if ((a.mouvements || []).some(m => m && /vend|vente|mort|sorti|inventaire|autocons|réforme/i.test(String(m.type || '') + ' ' + String(m.cause || '')))) l.push('mouvements de sortie');
   if ((a.agnelages || []).length) l.push('mises bas');
   if ((a.echographies || []).length) l.push('échographies');
   if ((a.modesRepro || []).length) l.push('IA / éponge');
@@ -3181,8 +3185,35 @@ function infosReproLaitAnimal(a) {
   return l;
 }
 function suppressionImpossibleHtml(a, qui) {
-  const l = infosReproLaitAnimal(a);
-  return `<div class="sup-impossible" style="margin-top:4px;font-size:12.5px;color:var(--ch-texte2);">Suppression impossible : ${qui} a déjà des infos de repro ou de lait (${echapperHtml(l.join(', '))}). Pour la retirer du troupeau, enregistrez une sortie (vente, mort).</div>`;
+  const l = infosBloquantSuppression(a);
+  return `<div class="sup-impossible" style="margin-top:4px;font-size:12.5px;color:var(--ch-texte2);">Suppression impossible : ${qui} a déjà des saisies (${echapperHtml(l.join(', '))}) qui doivent rester au registre. Pour ${qui === 'ce bélier' ? 'le' : 'la'} retirer du troupeau, enregistrez une sortie (vente, mort).</div>`;
+}
+// Mise bas qui ne se supprime pas : agneau bouclé (son n° ne doit jamais resservir, même vendu ou mort) ou agneau avec des saisies (soins,
+// mouvements, notes : registre). Texte de la raison, ou null si la mise bas peut être supprimée (saisie sur la mauvaise brebis, sans agneau bouclé).
+function raisonsMiseBasNonSupprimable(ag) {
+  if (!ag) return null;
+  const lambs = (ag.lambs || []).filter(l => l && l.sexe !== 'Mort-né');
+  const boucles = lambs.filter(l => l.eid), saisis = lambs.filter(l => (l.sanitaire || []).length || (l.mouvements || []).some(m => m && !/naissance/i.test(String(m.cause || '') + String(m.type || ''))) || (l.notes || []).length);
+  if (!boucles.length && !saisis.length) return null;
+  const parts = [];
+  if (boucles.length) parts.push(boucles.length + ' agneau' + (boucles.length > 1 ? 'x' : '') + ' bouclé' + (boucles.length > 1 ? 's' : '') + ' (' + boucles.map(l => numeroAgneauTexte(l)).join(', ') + ')');
+  if (saisis.length) parts.push(saisis.length + ' agneau' + (saisis.length > 1 ? 'x' : '') + ' avec des soins ou des mouvements');
+  return 'Cette mise bas a ' + parts.join(' et ') + ' : leurs n° et leurs saisies doivent rester au registre.';
+}
+// Message de la charte qui informe (un seul bouton), jamais alert()
+function messageCharte(titre, texte) {
+  document.getElementById('message-charte')?.remove();
+  const ov = document.createElement('div');
+  ov.className = 'sheet-overlay'; ov.id = 'message-charte';
+  ov.innerHTML = `<div class="sheet-card" role="dialog" aria-labelledby="mc-titre">
+      <div id="mc-titre" style="font-weight:700;font-size:16px;margin-bottom:6px;">${echapperHtml(titre)}</div>
+      <div style="font-size:14px;color:var(--ch-texte2);margin-bottom:14px;">${echapperHtml(texte)}</div>
+      <button type="button" class="btn btn-primary" id="mc-ok">Compris</button>
+    </div>`;
+  document.body.appendChild(ov);
+  const fermer = () => ov.remove();
+  ov.querySelector('#mc-ok').onclick = fermer;
+  ov.addEventListener('click', e => { if (e.target === ov) fermer(); });
 }
 // Message de la charte avant de supprimer un animal entier (jamais confirm())
 function demanderSuppressionCharte(titre, texte, onOk) {
@@ -3220,7 +3251,7 @@ function supprimerElementFiche(liste, fiche, kind, idx, apres, redessiner) {
 /* Supprimer un animal entier (brebis, bélier, agnelle) : message de la charte, puis bandeau Annuler (fiche remise à sa place, lots,
    notes archivées exacts d'avant) */
 function supprimerAnimalEntier(liste, animal, categorie, libelle, avantSuppression, apres) {
-  if (categorie !== 'belier' && infosReproLaitAnimal(animal).length) return;   // jamais : infos de repro ou de lait (sortie par un mouvement)
+  if (infosBloquantSuppression(animal).length) return;   // jamais : soins, sorties, infos de repro ou de lait (sortie par un mouvement)
   const index = (DB[liste] || []).indexOf(animal), avant = copieProfonde(animal), g = instantaneSuppression();
   if (avantSuppression) avantSuppression(animal);
   DB[liste] = (DB[liste] || []).filter(x => x.id !== animal.id);
@@ -7442,6 +7473,11 @@ function deleteItem(kind, idx) {
   if (kind.startsWith('agneau-')) return deleteAgneauItem(kind.slice(7), idx);
   const sheep = findSheep(currentSheepId);
   if (!sheep) return;
+  // mise bas dont un agneau est bouclé (vendu, mort ou présent) ou a des saisies : jamais supprimée (n° libérés, registre) ; on la corrige
+  if (kind === 'agnelages') {
+    const raisons = raisonsMiseBasNonSupprimable((sheep.agnelages || [])[idx]);
+    if (raisons) { messageCharte('Suppression impossible', raisons + ' Corrigez-la par « Modifier l\'agnelage » (sexe, n°, mort-né).'); return; }
+  }
   // un geste, sans confirm() ; bandeau « … supprimé · Annuler » = fiche exacte d'avant (agneaux de la mise bas compris)
   supprimerElementFiche('brebis', sheep, kind, idx, f => { if (kind === 'mouvements') recalculerStatutBrebis(f); }, () => render('detail', sheep.id));
 }
@@ -12857,7 +12893,7 @@ function renderDetail(id) {
     ${mereBlock}
     ${genealogieBlock}
     ${''/* ancienne carte « Agneaux adoptés » : désormais dans Repro & Écho (ligne gardée pour un rendu identique) */}
-    ${infosReproLaitAnimal(sheep).length ? suppressionImpossibleHtml(sheep, 'cette brebis') : '<button class="btn btn-secondary" id="btn-delete-sheep" style="color:var(--danger);border-color:var(--danger);">Supprimer cette brebis</button>'}
+    ${infosBloquantSuppression(sheep).length ? suppressionImpossibleHtml(sheep, 'cette brebis') : '<button class="btn btn-secondary" id="btn-delete-sheep" style="color:var(--danger);border-color:var(--danger);">Supprimer cette brebis</button>'}
   `;
 
   const reproTabHtml = `
@@ -17712,7 +17748,7 @@ function renderAgnelleDetail(id) {
       <button class="btn btn-secondary" id="btn-edit-agnelle-fiche">Modifier</button>
       <button class="btn btn-secondary" id="btn-vendre-agnelle-fiche">Vendre</button>
     </div>
-    ${infosReproLaitAnimal(ag).length ? suppressionImpossibleHtml(ag, 'cette agnelle') : '<button class="btn btn-secondary" id="btn-delete-agnelle-fiche" style="color:var(--danger);border-color:var(--danger);">Supprimer cette agnelle</button>'}
+    ${infosBloquantSuppression(ag).length ? suppressionImpossibleHtml(ag, 'cette agnelle') : '<button class="btn btn-secondary" id="btn-delete-agnelle-fiche" style="color:var(--danger);border-color:var(--danger);">Supprimer cette agnelle</button>'}
   `;
   const genealogieTabHtml = `
     <div class="card">
@@ -18388,7 +18424,7 @@ function renderBelierDetail() {
     </div>
     ${(belier.pere || belier.mere) ? `<div class="card">${sectionHeaderHtml(ICON_RAM, 'gray', 'Généalogie')}${ligneGenealogieHtml('Père', belier.pere, belier.pereLien)}${ligneGenealogieHtml('Mère', belier.mere, belier.mereLien)}</div>` : ''}
     ${desktop ? '' : statutBadge}
-    <button class="btn btn-secondary" id="btn-delete-belier" style="color:var(--danger);border-color:var(--danger);">Supprimer ce bélier</button>
+    ${infosBloquantSuppression(belier).length ? suppressionImpossibleHtml(belier, 'ce bélier') : '<button class="btn btn-secondary" id="btn-delete-belier" style="color:var(--danger);border-color:var(--danger);">Supprimer ce bélier</button>'}
   `;
   const sanitTabHtml = `
     <button class="btn btn-primary" id="btn-add-sanitaire-belier" style="margin-bottom:16px;">+ Carnet sanitaire</button>
