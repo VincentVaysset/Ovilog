@@ -144,15 +144,15 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
   eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await page.evaluate(() => __bt.essais.length), (await pastille(page)).visible], [true, 0, false], 'appui long sur l\'ambre : écran Lecteur ouvert, aucune connexion lancée, pastille masquée derrière');
   eq(await page.evaluate(() => [document.querySelector('#ecran-lecteur h2').textContent, document.getElementById('scan-misebas').value, document.getElementById('scan-misebas').isConnected, currentView]), ['Lecteur', '09152', true, 'misebas-rapide'], 'l\'écran dessous n\'a pas bougé : même champ, même saisie');
   // bouton Retour d'Android : ferme et rétablit la cible de scan
-  eq(await page.evaluate(() => typeof __app.ecouteurs.backButton), 'function', 'Retour Android : écouteur posé pendant l\'écran Lecteur');
+  eq(await page.evaluate(() => typeof __app.ecouteurs.backButton), 'function', 'Retour Android : l\'écouteur unique (gererRetourAndroid) est en place');
   await page.evaluate(() => __app.ecouteurs.backButton({ canGoBack: false }));
-  eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await page.evaluate(() => typeof __app.ecouteurs.backButton), await saisie(), (await pastille(page)).visible], [false, 'undefined', mm(), true], 'Retour Android : écran Lecteur fermé, écouteur retiré, saisie et cible de scan rétablies, pastille de retour');
+  eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await page.evaluate(() => typeof __app.ecouteurs.backButton), await saisie(), (await pastille(page)).visible], [false, 'function', mm(), true], 'Retour Android : écran Lecteur fermé (écouteur unique gardé), saisie et cible de scan rétablies, pastille de retour');
   // toucher sur la verte : écran Lecteur, jamais de déconnexion
   await page.evaluate(async () => { __bt.connectOk = true; await btConnect('AA:01'); __bt.essais = []; __bt.deconnexions = 0; });
   await page.click('#btn-lecteur-lpr');
   eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await page.evaluate(() => [__bt.essais.length, __bt.deconnexions])], [true, [0, 0]], 'toucher sur la verte : écran Lecteur, sans déconnexion ni nouvelle connexion');
   await page.click('#btn-lecteur-retour');
-  eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await saisie(), await page.evaluate(() => typeof __app.ecouteurs.backButton)], [false, mm(), 'undefined'], 'flèche de retour : écran de scan retrouvé à l\'identique (saisie et cible de scan)');
+  eq([await page.evaluate(() => !!document.getElementById('ecran-lecteur')), await saisie(), await page.evaluate(() => typeof __app.ecouteurs.backButton)], [false, mm(), 'function'], 'flèche de retour : écran de scan retrouvé à l\'identique (saisie et cible de scan)');
   // appui long sur la verte
   await appuiLong();
   check(await page.evaluate(() => !!document.getElementById('ecran-lecteur')), 'appui long sur la verte : écran Lecteur');

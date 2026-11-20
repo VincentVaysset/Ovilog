@@ -390,6 +390,7 @@
     cursor: pointer;
   }
   .hidden { display: none !important; }
+  button.un-appui { pointer-events: none; opacity: .75; }   /* double appui : bouton bloqué le temps que l'écran se redessine */
   .chip-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
   .chip {
     padding: 8px 12px;
@@ -7208,6 +7209,93 @@ btnBack.onclick = () => {
   // bouton mort.
   else render('home');
 };
+
+/* ---------- Quitter une saisie commencée (flèche retour de l'en-tête et retour Android) ----------
+   Sur un écran de saisie (vueDeSaisieEnCours, Carnet sanitaire), un champ tapé ou un choix touché par l'éleveur (évènement réel, jamais un
+   remplissage de l'appli : n° proposé, bip) rend la saisie « commencée » ; quitter demande alors, par un message de la charte (jamais confirm()),
+   « Quitter sans enregistrer ? ». Un écran redessiné (après « Enregistrer et suivante ») repart de zéro. Les champs de recherche / scan ne comptent pas. */
+const champsSaisieTouches = new Set();
+const vueAvecSaisie = v => /^(add|edit)-/.test(v || '') || v === 'misebas-rapide' || v === 'identifier-agneaux' || v === 'echo-rapide' || v === 'sanitaire';   // mêmes écrans que vueDeSaisieEnCours (bloc de synchro), plus le Carnet
+function champRechercheSaisie(el) { return /^scan-/.test(el.id || '') || CLAVIER_RECHERCHES.has(el.id) || /scann|recherch|filtr/i.test(el.getAttribute('placeholder') || ''); }
+function noterChampSaisie(el) {
+  if (!el || !vueAvecSaisie(currentView) || !app.contains(el) || champRechercheSaisie(el)) return;
+  champsSaisieTouches.add(el);
+}
+document.addEventListener('input', e => { if (e.isTrusted) noterChampSaisie(e.target); }, true);
+document.addEventListener('change', e => { if (e.isTrusted) noterChampSaisie(e.target); }, true);
+document.addEventListener('click', e => {
+  if (!e.isTrusted || !e.target.closest) return;
+  if (e.target.closest('#clavier-ovilog .k') && clavierOvilog && clavierOvilog.el) { noterChampSaisie(clavierOvilog.el); return; }   // touche du clavier Ovilog : le champ servi est touché
+  const choix = e.target.closest('.opt-btn, .tab-btn, .sexe-opt, .sexe-opt-rapide, .seg button');
+  if (choix) noterChampSaisie(choix);
+}, true);
+function saisieCommencee() {
+  if (!vueAvecSaisie(currentView)) return false;
+  for (const el of champsSaisieTouches) { if (el.isConnected && app.contains(el)) return true; }
+  return false;
+}
+function demanderQuitterSaisie(quitter) {
+  if (document.getElementById('quitter-saisie')) return;
+  const ov = document.createElement('div');
+  ov.className = 'sheet-overlay'; ov.id = 'quitter-saisie';
+  ov.innerHTML = `<div class="sheet-card" role="dialog" aria-labelledby="qs-titre">
+      <div id="qs-titre" style="font-weight:700;font-size:16px;margin-bottom:6px;">Quitter sans enregistrer ?</div>
+      <div style="font-size:14px;color:var(--ch-texte2);margin-bottom:14px;">Ce que vous avez saisi sur cet écran ne sera pas enregistré.</div>
+      <button type="button" class="btn btn-primary" id="qs-continuer">Continuer la saisie</button>
+      <button type="button" class="btn btn-secondary" id="qs-quitter" style="margin-top:8px;">Quitter sans enregistrer</button>
+    </div>`;
+  document.body.appendChild(ov);
+  const fermer = () => ov.remove();
+  ov.querySelector('#qs-continuer').onclick = fermer;
+  ov.querySelector('#qs-quitter').onclick = () => { fermer(); champsSaisieTouches.clear(); quitter(); };
+  ov.addEventListener('click', e => { if (e.target === ov) fermer(); });
+}
+const retourEcranSansControle = btnBack.onclick;
+btnBack.onclick = () => { if (saisieCommencee()) { demanderQuitterSaisie(retourEcranSansControle); return; } retourEcranSansControle(); };
+
+/* ---------- Retour Android (bouton précédent ou geste de retour) : même logique que la flèche de l'en-tête ----------
+   Dans l'ordre : clavier Ovilog, écran Lecteur, panneau de contact, fenêtre ouverte (son bouton Annuler / Fermer / ✕, sinon retirée), menu ;
+   puis la flèche retour (avec « Quitter sans enregistrer ? ») ; sur un écran de tête, l'Accueil ; sur l'Accueil, un deuxième appui (2,5 s) pour quitter. */
+let dernierRetourAccueil = 0;
+function fermerFenetreOuverte(fen) {
+  const bouton = [...fen.querySelectorAll('button')].find(b => b.classList.contains('sheet-close-btn') || /^(Annuler|Fermer|✕|×|Continuer la saisie)$/.test(b.textContent.trim()));
+  if (bouton) bouton.click(); else fen.remove();
+}
+function gererRetourAndroid() {
+  if (clavierOvilog) { fermerClavierOvilog(); return 'clavier'; }
+  if (surcoucheLecteur) { surcoucheLecteur.fermer(); return 'lecteur'; }
+  if (panneauContact) { fermerPanneauContact(); return 'contact'; }
+  const fen = [...document.querySelectorAll('.sheet-overlay:not(.hidden), .modal-overlay:not(.hidden)')].pop();
+  if (fen) { fermerFenetreOuverte(fen); return 'fenetre'; }
+  if (!navDrawerOverlay.classList.contains('hidden')) { closeNavDrawer(); return 'menu'; }
+  if (!btnBack.classList.contains('hidden')) { btnBack.onclick(); return 'retour'; }
+  if (currentView !== 'home' && !document.body.classList.contains('porte-auth')) { render('home'); return 'accueil'; }
+  const t = Date.now();
+  if (t - dernierRetourAccueil < 2500) {
+    const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if (AppPlugin && AppPlugin.exitApp) AppPlugin.exitApp();
+    return 'quitter';
+  }
+  dernierRetourAccueil = t;
+  showToast('Appuyez encore sur Retour pour quitter Ovilog');
+  return 'avertir';
+}
+(function brancherRetourAndroid() {
+  const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (AppPlugin && AppPlugin.addListener) { try { AppPlugin.addListener('backButton', () => gererRetourAndroid()); } catch (e) {} }
+})();
+
+/* ---------- Double appui sur un bouton principal (Enregistrer, Valider, Importer…) : UN seul helper ----------
+   Dès le premier appui réel, le bouton est bloqué (classe « un-appui ») le temps que l'écran se redessine ; il redevient utilisable 800 ms après
+   s'il est encore affiché (ex. message d'erreur). Un second appui pendant ce temps est ignoré : jamais deux enregistrements. */
+document.addEventListener('click', e => {
+  if (!e.isTrusted || !e.target.closest) return;
+  const b = e.target.closest('button.btn-primary');
+  if (!b) return;
+  if (b.classList.contains('un-appui')) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+  b.classList.add('un-appui');
+  setTimeout(() => b.classList.remove('un-appui'), 800);
+}, true);
 fabAdd.onclick = () => render('add-sheep');
 
 let editContext = null; // { kind, idx }
@@ -7379,6 +7467,7 @@ function activateSwipes(container) {
 const scrollPositions = {};
 
 function render(view, sheepId) {
+  champsSaisieTouches.clear();   // nouvel écran : aucune saisie commencée
   // PC : la page « Mouvements d'animaux » remplace l'écran de choix de catégorie, la saisie collective et l'écran Gérer / annuler
   if (view === 'mouvements-collectifs' || (isDesktopMode() && view === 'mouvement-groupe')) view = 'inventaire';   // l'annulation d'un lot passe par sa carte dans la liste (mobile) ou la page PC
   // PC : le Chantier de tri a UNE page « Lots » (créer, affecter, lots existants) ; les anciens écrans de création / modification y renvoient
@@ -32274,7 +32363,7 @@ function ouvrirClavierOvilog(el) {
   document.documentElement.style.setProperty('--clavier-h', zone.offsetHeight + 'px');
   if (!dejaOuvert) {
     const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
-    if (AppPlugin && AppPlugin.addListener) { try { clavierOvilog.retour = Promise.resolve(AppPlugin.addListener('backButton', () => fermerClavierOvilog())); } catch (e) {} }
+    // retour Android : géré à un seul endroit (gererRetourAndroid ferme d'abord le clavier)
   }
   if (typeof majBulleContact === 'function') majBulleContact();
   requestAnimationFrame(() => { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {} });
@@ -32993,7 +33082,7 @@ function ouvrirSurcoucheLecteur() {
   renderParametresLecteur(document.getElementById('ecran-lecteur-contenu'));
   document.getElementById('btn-lecteur-retour').onclick = () => surcoucheLecteur && surcoucheLecteur.fermer();
   const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
-  if (AppPlugin && AppPlugin.addListener) { try { ecouteurRetour = Promise.resolve(AppPlugin.addListener('backButton', () => surcoucheLecteur && surcoucheLecteur.fermer())); } catch (e) {} }
+  // retour Android : géré à un seul endroit (gererRetourAndroid ferme d'abord l'écran Lecteur)
   updateHeaderReaderButton();
 }
 function resumeLecteurParametres() {
@@ -33947,7 +34036,7 @@ function ouvrirPanneauContact(onglet) {
   ov.addEventListener('click', e => { if (e.target === ov) fermerPanneauContact(); });
   document.getElementById('contact-fermer').onclick = fermerPanneauContact;
   const AppPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
-  if (AppPlugin && AppPlugin.addListener) { try { panneauContact.ecouteurRetour = Promise.resolve(AppPlugin.addListener('backButton', fermerPanneauContact)); } catch (e) {} }
+  // retour Android : géré à un seul endroit (gererRetourAndroid ferme d'abord le panneau)
   majBulleContact();
   dessinerPanneauContact();
   if (panneauContact.onglet === 'mes') window.OvilogSync.marquerReponsesLuesContact();
