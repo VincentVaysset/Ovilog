@@ -89,9 +89,9 @@ await p.evaluate(() => { currentSheepId = 'b51071'; ficheBrebisTab = 'ctrl'; ren
 check(!!(await p.$('.cl-cellules-hautes')), 'fiche : au-dessus du nouveau seuil, pastille « cellules hautes »');
 await p.evaluate(() => render('controle-laitier'));
 const valsPc = () => p.evaluate(() => [...document.querySelectorAll('#cl-table tr')].slice(1).map(tr => [tr.cells[1].textContent, tr.querySelector('.cl-cellules') ? tr.querySelector('.cl-cellules').textContent.replace(/ /g, ' ') : null]));
-eq((await valsPc()).filter(r => r[1] !== '—'), [['571', '540 000'], ['574', '1 850 000'], ['6087', '1 250 000'], ['588', '610 000'], ['590', '420 000']], 'Contrôle laitier PC : colonne « Cellules » = dernier échantillon de la campagne');
+eq((await valsPc()).filter(r => r[1] !== '—'), [['571', '540 000'], ['574', '1 850 000'], ['588', '610 000'], ['590', '420 000'], ['6087', '1 250 000']], 'Contrôle laitier PC : colonne « Cellules » = dernier échantillon de la campagne (ordre : âge puis n° de travail, 6087 après 590)');
 await p.click('#btn-cl-filtre-cellules');
-eq((await valsPc()).map(r => r[0]), ['571', '574', '6087', '588'], 'filtre « Cellules au-dessus de » : seuil du compte proposé (500 000)');
+eq((await valsPc()).map(r => r[0]), ['571', '574', '588', '6087'], 'filtre « Cellules au-dessus de » : seuil du compte proposé (500 000)');
 await p.fill('#f-seuil-cellules-cl', '1 000 000');
 eq((await valsPc()).map(r => r[0]), ['574', '6087'], 'seuil changé pour ce tri seulement');
 eq(await p.evaluate(() => DB.seuilCellules), 500000, 'le réglage du compte ne change pas');

@@ -37,7 +37,7 @@ for (const bureau of [false, true]) {
   await p.evaluate(() => { resetMisebasRapideSession(); render('misebas-rapide'); });
   await p.clock.runFor(300);
   if (!bureau) eq(await p.evaluate(() => [...document.querySelectorAll('#mb-dernieres .mb-der .a')].map(e => e.textContent.replace('n°', ''))), attendu, 'mobile : toutes les mises bas (plus de limite à 5), même ordre');
-  else eq(await p.evaluate(() => [...document.querySelectorAll('#mb-table-campagne tr td:first-child')].slice(0, 9).map(e => e.textContent)), attendu, 'PC : tableau dans le même ordre');
+  else eq(await p.evaluate(() => [...document.querySelectorAll('#mb-table-campagne tr td:first-child')].slice(0, 9).map(e => e.textContent)), attendu.map(n => 'n°' + n), 'PC : tableau dans le même ordre (brebis sans n° de travail : « n° » + n° d\'ordre, numeroAnimal)');
   // modifier une mise bas (fiche brebis) ne change pas son rang
   await p.evaluate(() => { currentSheepId = 'b3'; editContext = { kind: 'agnelages', idx: 0 }; render('add-agnelage', 'b3'); });
   await p.click('#btn-save-agnelage'); await p.clock.runFor(300);
