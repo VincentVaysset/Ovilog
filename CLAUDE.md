@@ -8,6 +8,7 @@ Décisions communes à tous les PDF :
 - Pied de page unique : « Ovilog — [export] · [campagne] » à gauche, « Page X/Y » à droite (`pdfPied`) ; « Année » à la place de la campagne pour la Déclaration.
 - Le nom de l'exploitation est lu par une seule fonction, `pdfExploitationNom` (repli « Ovilog » si vide) : aucun PDF ne le lit autrement.
 - En-têtes de tableau jamais coupés : la police diminue avant toute coupure, puis un libellé trop long passe sur deux lignes (`buildPdfTableCharte`, `entete` d'une colonne de `tableauCharte`).
+- Lisibilité : AUCUN texte sous 7 pt dans un PDF (`buildPdfTableCharte` et les tableaux du Bilan complet ne descendent jamais plus bas : l'en-tête passe sur deux lignes, un libellé de tuile trop long aussi). Orientation : Lot IA et Lot éponge en PAYSAGE tous les deux ; Contrôle laitier en portrait jusqu'à 7 colonnes, paysage au-delà ; Registre en paysage ; une page peut avoir sa propre orientation (`doc.page(…, { paysage })`, `buildMultiPagePdfBytes` par page). Une case peut être colorée d'après sa valeur (`cellule` de `tableauCharte` / `buildPdfTableCharte`) : Contrôle laitier, case « Cellules » au-dessus du seuil en pastille ambre. Contrôle : `test_pdf_coherence` (partie lisibilité).
 - Contrôle laitier (PDF et Excel, comme l'écran) : colonnes N° de travail (`numeroAnimal` : n° de travail, sinon « n° » + n° d'ordre, jamais de case vide), Date de mise bas, C1 à Cn (nombre de contrôles de la campagne, `numerosControles`), dans cet ordre, sans colonne cumul (le champ `cumul` reste dans le modèle).
 
 ## Charte graphique

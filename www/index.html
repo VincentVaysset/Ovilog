@@ -25374,7 +25374,7 @@ function periodeBacterioLabel(p) {
    Mise en page commune : bandeau OVILOG, titre, campagne et ses dates, exploitation, date d'édition, filet vert ; chiffres clés ; tableau des 12 mois (tirets pour un mois sans
    donnée) avec ligne de total ; pied de page numéroté « Page n/N ». Taille de police fixe et lisible : un contenu long continue sur la page suivante, il n'est jamais rétréci. */
 // Couleurs de la charte pour les PDF (mêmes valeurs que les variables --ch-* du :root) : seul endroit du code JS où elles sont écrites ; PDF_PL_COUL et PDF_COULEURS en dérivent (source unique)
-const PDF_CHARTE = { vert: '#357f4b', vertFonce: '#2f6e44', vertPastel: '#e3f3e6', bleu: '#1f5a8a', bleuPastel: '#e6f0fa', ambre: '#b5701c', ambrePastel: '#fbeed7', rouge: '#a33a31', rougePastel: '#fbe3e0', ligneAlt: '#f6f1e4', texte: '#2b261c', texte2: '#5e5b47', icone: '#8a8670', bord: '#e6ddc9' };
+const PDF_CHARTE = { vert: '#357f4b', vertFonce: '#2f6e44', vertPastel: '#e3f3e6', bleu: '#1f5a8a', bleuPastel: '#e6f0fa', ambre: '#b5701c', ambrePastel: '#fbeed7', ambreTexte: '#8a5413', rouge: '#a33a31', rougePastel: '#fbe3e0', ligneAlt: '#f6f1e4', texte: '#2b261c', texte2: '#5e5b47', icone: '#8a8670', bord: '#e6ddc9' };
 // Teinte plus claire d'une couleur de la charte : `part` de la couleur mélangée à du blanc (séries de graphiques, barres secondaires)
 function pdfMelangeBlanc(hex, part) { return pdfHexCouleur(hex).map(v => Math.round((v * part + (1 - part)) * 1000) / 1000); }
 const PDF_PL = { M: 36, L: 36, R: 595 - 36, LARG: 595 - 72, TOP: 842 - 36, BAS: 56 };
@@ -25390,9 +25390,14 @@ function pdfPied(nomExport, contexte) {
 }
 function pdfProdDoc(opts) {
   // opts.paysage : page A4 en paysage (mêmes marges) ; sinon portrait comme tous les PDF de production laitière
-  const paysage = !!(opts && opts.paysage);
-  const PL = paysage ? { M: 36, L: 36, R: 842 - 36, LARG: 842 - 72, TOP: 595 - 36, BAS: 56 } : PDF_PL;
-  const C = PDF_COULEURS, X = PDF_PL_COUL, L = PL.L, R = PL.R, LARG = PL.LARG;
+  // Orientation PAR PAGE : doc.page(…, { paysage }) change l'orientation de la page qui commence (et de ses pages « suite ») ;
+  // sans précision, la page garde l'orientation du document (opts.paysage)
+  const paysageDoc = !!(opts && opts.paysage);
+  const PL_PAYSAGE = { M: 36, L: 36, R: 842 - 36, LARG: 842 - 72, TOP: 595 - 36, BAS: 56 };
+  let paysage = paysageDoc, PL = paysage ? PL_PAYSAGE : PDF_PL;
+  const C = PDF_COULEURS, X = PDF_PL_COUL;
+  let L = PL.L, R = PL.R, LARG = PL.LARG;
+  const orienter = p => { paysage = !!p; PL = paysage ? PL_PAYSAGE : PDF_PL; L = PL.L; R = PL.R; LARG = PL.LARG; };
   const exploitationNom = pdfExploitationNom();
   const edite = 'Édité le ' + formatDateFr(jourAujourdhuiISO());
   const pages = [];     // { contenu, pied }
@@ -25401,8 +25406,11 @@ function pdfProdDoc(opts) {
   const txtD = (xd, yy, t, font, size, col) => { c += pdfTextColorOp(xd - pdfTextWidth(t, size, font === 'FB'), yy, t, font, size, col || X.sombre); };
   const doc = {
     get y() { return y; }, set y(v) { y = v; },
-    page(titre, sousTitre, piedTexte) {
-      if (c) pages.push({ contenu: c, pied });
+    get largeur() { return LARG; },
+    get paysage() { return paysage; },
+    page(titre, sousTitre, piedTexte, optsPage) {
+      if (c) pages.push({ contenu: c, pied, paysage });
+      orienter(optsPage && optsPage.paysage !== undefined ? optsPage.paysage : paysageDoc);
       c = ''; pied = piedTexte; titreDoc = titre;
       y = PL.TOP;
       txt(L, y - 8, 'OVILOG', 'FB', 8.5, X.vertTitre);
@@ -25415,7 +25423,7 @@ function pdfProdDoc(opts) {
       y -= 16;
     },
     suite() {
-      pages.push({ contenu: c, pied }); c = '';
+      pages.push({ contenu: c, pied, paysage }); c = '';
       y = PL.TOP;
       txt(L, y - 8, 'OVILOG', 'FB', 8.5, X.vertTitre);
       txt(L + 52, y - 8, titreDoc + ' (suite)', 'F1', 9, X.gris);
@@ -25514,7 +25522,8 @@ function pdfProdDoc(opts) {
     },
     /* Tableau « charte Inventaire » (méthode à part : ne change pas doc.tableau des autres PDF) : coins arrondis, en-tête plein { fond, texte }, lignes alternées [a, b],
        contour fin ; chaque page de tableau est arrondie et contournée séparément. colonnes : [{ l, w }] ; lignes : [[texte, ...]] ; options.premiere : { col, gras } pour la 1re colonne. */
-    tableauCharte({ colonnes, lignes, entete: st, alterne, premiere, hLigne = 17, hEntete = 20, rayon = 5, taille = 9.5, vide = '—' }) {
+    tableauCharte({ colonnes, lignes, entete: st, alterne, premiere, hLigne = 17, hEntete = 20, rayon = 5, taille = 9.5, vide = '—', cellule }) {
+      // cellule(valeur, colonne, ligne) : { fond, texte } pour colorer UNE case (pastille pastel, ex. cellules au-dessus du seuil) ; lu sur la valeur, donc juste après un tri
       // Tri des exports : essai à blanc = relevé du tableau ; export réel = lignes dans l'ordre choisi (contenu inchangé)
       const libellesCol = colonnes.map(k => k.l2 || k.l);
       if (exportCapture) exportCapture.tables.push({ labels: libellesCol, lignes });
@@ -25555,6 +25564,9 @@ function pdfProdDoc(opts) {
           const v = ln[j] === null || ln[j] === undefined || ln[j] === '' ? vide : String(ln[j]);
           const estVide = v === vide;
           const prem = j === 0 && premiere && !estVide;
+          const st2 = cellule && !estVide ? cellule(v, j, ln) : null;
+          if (st2 && st2.fond) c += pdfRectArrondiOp(x + 4, yb + 2.5, Math.min(k.w - 8, pdfTextWidth(pdfFit(v, taille, false, k.w - 12), taille, !!st2.gras) + 8), hLigne - 5, 3, 3, st2.fond);
+          if (st2) { txt(x + 8, hLigne > 18 ? yb + (hLigne - taille * 0.7) / 2 : yb + 5.2, pdfFit(v, taille, !!st2.gras, k.w - 12), st2.gras ? 'FB' : 'F1', taille, st2.texte || X.sombre); x += k.w; return; }
           txt(x + 8, hLigne > 18 ? yb + (hLigne - taille * 0.7) / 2 : yb + 5.2, pdfFit(v, taille, !!prem, k.w - 12), prem ? 'FB' : 'F1', taille, estVide ? X.gris2 : (prem ? premiere.col : X.sombre));   // ligne haute (feuille à remplir) : texte centré comme les cases
           x += k.w;
         });
@@ -25604,9 +25616,10 @@ function pdfProdDoc(opts) {
     },
     libre(fn) { fn({ txt, txtD, ajouter: s => { c += s; }, get y() { return y; }, set y(v) { y = v; } }); },
     fin() {
-      pages.push({ contenu: c, pied });
+      pages.push({ contenu: c, pied, paysage });
       const N = pages.length;
       const contenus = pages.map((p, i) => {
+        orienter(p.paysage);   // pied de page à la largeur de SA page
         let s = p.contenu;
         s += pdfFillRectOp(L, 40, LARG, 0.5, C.trait);
         s += pdfTextColorOp(L, 28, pdfFit(p.pied, 8, false, LARG - 70), 'F1', 8, X.gris);
@@ -25614,7 +25627,7 @@ function pdfProdDoc(opts) {
         s += pdfTextColorOp(R - pdfTextWidth(num, 8, false), 28, num, 'F1', 8, X.gris);
         return s;
       });
-      return buildMultiPagePdfBytes(contenus, paysage);
+      return buildMultiPagePdfBytes(contenus, pages.map(p => p.paysage));
     }
   };
   return doc;
@@ -25629,7 +25642,7 @@ function pdfTuile(teinte, label, valeur, sous, neutreAZero) {
    cellules telles quelles -- une cellule vide reste vide --, « Page n/N »), seule la mise en forme change : logo OVILOG, titre, filet vert, tuiles d'effectifs facultatives (`tuiles`),
    tableau arrondi à en-tête vert, lignes alternées, N° (1re colonne) en vert gras, pied de page. Les largeurs de colonnes sont calculées d'après le texte (la police diminue plutôt que de
    couper un texte) ; les positions x de `columns` ne servent plus qu'à garder l'ordre des colonnes. */
-function buildPdfTableCharte({ title, subtitle, columns, rows, landscape, fontSize, tuiles, pied, premiereCol = true, hLigne: hLigneImposee }) {
+function buildPdfTableCharte({ title, subtitle, columns, rows, landscape, fontSize, tuiles, pied, premiereCol = true, hLigne: hLigneImposee, cellule }) {
   // Colonnes décochées sur la page d'export (triExportActif.masquer, listes qui le permettent) : retirées du tableau, lignes comprises
   const masquer = triExportActif && triExportActif.masquer && triExportActif.masquer.length ? triExportActif.masquer : null;
   if (masquer) {
@@ -25655,12 +25668,12 @@ function buildPdfTableCharte({ title, subtitle, columns, rows, landscape, fontSi
     return Math.max(wEntete, c.minW || 0, ...(c.case ? [10] : cellules(i).map(v => pdfTextWidth(v, tl, false)))) + 16;
   });
   const tient = l => l.reduce((s, v) => s + v, 0) <= LARG;
-  // 1) en-têtes sur une ligne, la police diminue (jusqu'à 6,5) ; 2) sinon en-têtes trop longs sur deux lignes, en repartant de la taille d'origine
+  // 1) en-têtes sur une ligne, la police diminue (jusqu’à 7 pt, jamais moins) ; 2) sinon en-têtes trop longs sur deux lignes, en repartant de la taille d'origine
   let taille = fontSize || 9.5, deuxLignes = false, larg = naturelles(taille, false);
-  while (!tient(larg) && taille > 6.5) { taille -= 0.5; larg = naturelles(taille, false); }
+  while (!tient(larg) && taille > 7) { taille -= 0.5; larg = naturelles(taille, false); }
   if (!tient(larg)) {
     deuxLignes = true; taille = fontSize || 9.5; larg = naturelles(taille, true);
-    while (!tient(larg) && taille > 6.5) { taille -= 0.5; larg = naturelles(taille, true); }
+    while (!tient(larg) && taille > 7) { taille -= 0.5; larg = naturelles(taille, true); }
   }
   const somme = larg.reduce((s, v) => s + v, 0), facteur = LARG / somme;
   larg = larg.map(v => v * facteur);      // trop large : on répartit le surplus ; trop étroit (cas extrême) : on comprime, pdfFit coupe alors le texte
@@ -25672,7 +25685,7 @@ function buildPdfTableCharte({ title, subtitle, columns, rows, landscape, fontSi
   if (rows.length) {
     const cols = columns.map((c, i) => ({ l: c.label, w: larg[i], case: !!c.case, entete: entete(c, i) || undefined }));
     doc.tableauCharte({
-      colonnes: cols, lignes: rows, vide: '', taille, hLigne: hLigneImposee || Math.max(13, Math.round(taille * 1.8 * 10) / 10), hEntete: Math.max(17, taille * 2.1),
+      colonnes: cols, lignes: rows, vide: '', taille, cellule: cellule ? (v, j, ln) => cellule(v, cols[j].l, ln) : undefined, hLigne: hLigneImposee || Math.max(13, Math.round(taille * 1.8 * 10) / 10), hEntete: Math.max(17, taille * 2.1),
       entete: { fond: pdfHexCouleur(PDF_CHARTE.vert), texte: PDF_COULEURS.blanc }, alterne: [pdfHexCouleur(PDF_CHARTE.ligneAlt), PDF_COULEURS.blanc], premiere: premiereCol ? { col: pdfHexCouleur(PDF_CHARTE.vertFonce) } : null
     });
   }
@@ -25911,17 +25924,18 @@ async function exportLotIaPdf(lot) {
    Portrait (5 colonnes seulement dans le détail par millésime, contrairement
    au lot IA qui en a 11 et reste donc en paysage). */
 function buildLotEpongePdfBytes(lot) {
-  // Charte colorée commune (pdfProdDoc) : MÊMES textes, colonnes, lignes et notes que l'ancien PDF noir et blanc ; seule la mise en forme change.
+  // Charte colorée commune (pdfProdDoc, PAYSAGE comme le lot IA : même orientation pour les deux exports de lot) : MÊMES textes, colonnes, lignes et notes que l'ancien PDF noir et blanc ; seule la mise en forme change.
   const stats = statsLotEponge(lot);
   const pctTxt = v => v !== null ? fmtDecimal(v, 1) + ' %' : '—';
   const ratTxt = v => v !== null ? fmtDecimal(v, 2) : '—';
   const entete = { fond: pdfHexCouleur(PDF_CHARTE.vert), texte: PDF_COULEURS.blanc }, alterne = [pdfHexCouleur(PDF_CHARTE.ligneAlt), PDF_COULEURS.blanc];
-  const doc = pdfProdDoc();
+  const doc = pdfProdDoc({ paysage: true });
+  const k = doc.largeur / 523;   // largeurs de colonnes d'origine (portrait) étirées à la page paysage
   doc.page('Lot de reproduction Éponge', 'Éponge — ' + (lot.nom || formatDateFr(lot.dateEvenement || lot.dateCreation)) + ' · ' + stats.effectif + ' ' + (lot.cible === 'Agnelles' ? 'antenaise(s)' : 'brebis'), pdfPied('Lot de reproduction Éponge'));
   doc.tuiles([pdfTuile('vert', 'Effectif du lot', stats.effectif), pdfTuile('bleu', 'Mises bas', stats.misesBas), pdfTuile('ambre', 'Fertilité', pctTxt(stats.fertilite))]);
   doc.section('RÉSULTATS DU LOT');
   doc.tableauCharte({
-    colonnes: [{ l: '', w: 300 }, { l: 'Global', w: 223 }], vide: '', premiere: null, entete, alterne,
+    colonnes: [{ l: '', w: 300 * k }, { l: 'Global', w: 223 * k }], vide: '', premiere: null, entete, alterne,
     lignes: [['Mises bas', String(stats.misesBas)], ['Fertilité', pctTxt(stats.fertilite)], ['Prolificité', ratTxt(stats.prolificite)]]
   });
   doc.note("Pas de distinction IA/1er retour pour une éponge (pas de fenêtre de saillie précise, contrairement à l'IA) : mises bas ÷ effectif du lot (" + stats.effectif + ").", 8);
@@ -25930,11 +25944,11 @@ function buildLotEpongePdfBytes(lot) {
     const parAge = statsLotEpongeParAgeExact(lot);
     doc.section('DÉTAIL PAR MILLÉSIME, AU SEIN DE CE LOT');
     if (parAge.length === 0) {
-      doc.tableauCharte({ colonnes: [{ l: 'Millésime', w: 523 }], lignes: [["Aucune mise bas enregistrée pour ce lot pour l'instant."]], vide: '', premiere: null, entete, alterne });
+      doc.tableauCharte({ colonnes: [{ l: 'Millésime', w: 523 * k }], lignes: [["Aucune mise bas enregistrée pour ce lot pour l'instant."]], vide: '', premiere: null, entete, alterne });
     } else {
       doc.tableauCharte({
         taille: 8.5, vide: '', premiere: { col: pdfHexCouleur(PDF_CHARTE.vertFonce) }, entete, alterne,
-        colonnes: [{ l: 'Millésime', w: 130 }, { l: 'Effectif', w: 90 }, { l: 'Mises bas', w: 100 }, { l: 'Fertilité', w: 100 }, { l: 'Prolificité', w: 103 }],
+        colonnes: [{ l: 'Millésime', w: 130 * k }, { l: 'Effectif', w: 90 * k }, { l: 'Mises bas', w: 100 * k }, { l: 'Fertilité', w: 100 * k }, { l: 'Prolificité', w: 103 * k }],
         lignes: parAge.map(g => ['Millésime ' + g.millesime, String(g.effectif), String(g.misesBas), pctTxt(g.fertilite), ratTxt(g.prolificite)])
       });
     }
@@ -26059,14 +26073,15 @@ function pdfFit(text, size, bold, maxW) {
   return t + '...';
 }
 // Plusieurs pages de contenu -> un seul PDF (polices F1/FB)
-function buildMultiPagePdfBytes(contents, paysage) {
-  const pageW = paysage ? PDF_PAGE_H : PDF_PAGE_W, pageH = paysage ? PDF_PAGE_W : PDF_PAGE_H;
+function buildMultiPagePdfBytes(contents, paysage) {   // paysage : un booléen pour tout le document, ou un tableau (une orientation par page)
   const objects = [];
   let nextNum = 1;
   const alloc = () => nextNum++;
   const catalogNum = alloc(), pagesNum = alloc(), fontNum = alloc(), fontBoldNum = alloc();
   const pageNums = [];
-  contents.forEach(content => {
+  contents.forEach((content, i) => {
+    const p = Array.isArray(paysage) ? !!paysage[i] : !!paysage;
+    const pageW = p ? PDF_PAGE_H : PDF_PAGE_W, pageH = p ? PDF_PAGE_W : PDF_PAGE_H;
     const pageNum = alloc(), contentNum = alloc();
     pageNums.push(pageNum);
     objects.push({ num: contentNum, body: '<< /Length ' + content.length + ' >>\nstream\n' + content + 'endstream' });
@@ -26136,7 +26151,7 @@ function buildBilanCompletPdfBytes(N) {
     let cx = x;
     // en-têtes toujours complets : la police de l'en-tête diminue (jusqu'à 5,5 pt) plutôt que de couper un libellé
     let te = tailleEntete;
-    while (te > 5.5 && entete.some((t, i) => pdfTextWidth(String(t).toUpperCase(), te, true) > largeurs[i] - 8)) te -= 0.25;
+    while (te > 7 && entete.some((t, i) => pdfTextWidth(String(t).toUpperCase(), te, true) > largeurs[i] - 8)) te -= 0.25;   // jamais sous 7 pt
     entete.forEach((t, i) => {
       const txt = pdfFit(String(t).toUpperCase(), te, true, largeurs[i] - 8);
       c += i === 0 ? pdfTextColorOp(cx + 4, y - 4.5, txt, 'FB', te, C.blanc) : pdfTextColorOp(cx + largeurs[i] - 4 - pdfTextWidth(txt, te, true), y - 4.5, txt, 'FB', te, C.blanc);
@@ -26191,7 +26206,9 @@ function buildBilanCompletPdfBytes(N) {
     const kx = L + i * (kw + 8);
     const [fondK, coulK] = PDF_TUILE_TEINTES[tonTuile(k.v, ['vert', 'bleu', 'ambre', 'ambre'][i], i === 3)];   // mortalité après naissance : ambre (comme l'écran), neutre à 0
     c += pdfFillRectOp(kx, y - kh, kw, kh, pdfHexCouleur(fondK)) + pdfFillRectOp(kx, y - kh, 4, kh, pdfHexCouleur(coulK));
-    c += pdfTextColorOp(kx + 13, y - 12, pdfFit(k.l, 6, true, kw - 18), 'FB', 6, C.gris);
+    // libellé : 7 pt minimum ; trop long pour la tuile = deux lignes (jamais coupé)
+    if (pdfTextWidth(k.l, 7, true) <= kw - 18) c += pdfTextColorOp(kx + 13, y - 12, k.l, 'FB', 7, C.gris);
+    else { const m = k.l.split(' '), h = Math.ceil(m.length / 2); c += pdfTextColorOp(kx + 13, y - 9, m.slice(0, h).join(' '), 'FB', 7, C.gris) + pdfTextColorOp(kx + 13, y - 17, m.slice(h).join(' '), 'FB', 7, C.gris); }
     c += pdfTextColorOp(kx + 13, y - 32, k.v, 'FB', 20, pdfHexCouleur(coulK));
     c += pdfTextColorOp(kx + 13, y - 42, pdfFit(k.s, 7.5, false, kw - 18), 'F1', 7.5, C.gris);
     if (k.d && k.d.a !== null && k.d.a !== undefined && k.d.p !== null && k.d.p !== undefined) {
@@ -26239,7 +26256,7 @@ function buildBilanCompletPdfBytes(N) {
     for (let v = 0; v <= yMax; v += pas) {
       const yy = yB + (v / yMax) * hC;
       c += pdfLineColorOp(x0, yy, x0 + wC, yy, C.trait, v === 0 ? 0.8 : 0.4, v !== 0);
-      c += pdfTextColorOp(x0 - 4 - pdfTextWidth(String(v), 6.5, false), yy - 2, String(v), 'F1', 6.5, C.gris);
+      c += pdfTextColorOp(x0 - 4 - pdfTextWidth(String(v), 7, false), yy - 2, String(v), 'F1', 7, C.gris);
     }
     const bw = wC / sem.length, barW = Math.min(bw * 0.66, 26);
     const pasX = sem.length <= 14 ? 1 : Math.ceil(sem.length / 12);
@@ -26247,9 +26264,9 @@ function buildBilanCompletPdfBytes(N) {
       const cx = x0 + bw * i + bw / 2, h = (w.misesBas / yMax) * hC;
       if (w.misesBas > 0) {
         c += pdfFillRectOp(cx - barW / 2, yB, barW, h, w === pic ? C.vertFonce : C.vert);   // barres vert de la charte, pic en vert foncé
-        if (sem.length <= 18 || w === pic || i % 2 === 0) { const t = String(w.misesBas); c += pdfTextColorOp(cx - pdfTextWidth(t, 6.5, w === pic) / 2, yB + h + 2.5, t, w === pic ? 'FB' : 'F1', 6.5, C.texte); }
+        if (sem.length <= 18 || w === pic || i % 2 === 0) { const t = String(w.misesBas); c += pdfTextColorOp(cx - pdfTextWidth(t, 7, w === pic) / 2, yB + h + 2.5, t, w === pic ? 'FB' : 'F1', 7, C.texte); }
       }
-      if (i % pasX === 0 || i === sem.length - 1) { c += pdfTextColorOp(cx - pdfTextWidth(w.semaine, 6.5, false) / 2, yB - 9, w.semaine, 'F1', 6.5, C.gris); }
+      if (i % pasX === 0 || i === sem.length - 1) { c += pdfTextColorOp(cx - pdfTextWidth(w.semaine, 7, false) / 2, yB - 9, w.semaine, 'F1', 7, C.gris); }
     });
     y = yB - 20;
   } else y -= 14;
@@ -26310,7 +26327,7 @@ function buildBilanCompletPdfBytes(N) {
   const pertesV = v4(x => x.pertes || 0);   // sortis en « Mise à jour inventaire » (ligne seulement s'il y en a)
   assurer(120);
   titre(L, 'Mouvements des agneaux', 'Agneaux nés pendant la campagne (toute date de sortie) · renouvelés = femelles gardées' + (T.nes.mortNes ? ' · ' + T.nes.mortNes + ' mort(s)-né(s) hors nés vivants' : ''));
-  tableau({ x: L, largeurs: [150, 66, 66, 66, 66, 101], tailleEntete: 6.5, entete: ['Agneaux', 'Adultes F', 'Adultes M', 'Antenaises F', 'Antenaises M', 'Total'],
+  tableau({ x: L, largeurs: [150, 66, 66, 66, 66, 101], tailleEntete: 7, entete: ['Agneaux', 'Adultes F', 'Adultes M', 'Antenaises F', 'Antenaises M', 'Total'],
     lignes: [ligne4('b', 'Nés vivants', nesV), ligne4('b', 'Sortis', nesV.map((_, i) => mortsV[i] + vendusV[i] + gardesV[i] + pertesV[i])), ligne4('i', 'Morts', mortsV), ligne4('i', 'Vendus', vendusV), ligne4('i', 'Renouvelés', gardesV)].concat(pertesV.some(v => v) ? [ligne4('i', 'Pertes (inventaire)', pertesV)] : [], [ligne4('b', 'Actifs', presV)]) });
   y -= 14;
 
@@ -26492,10 +26509,12 @@ async function exportControleLaitierPdf(filtered, opts) {
   const nHaut = cel ? filtered.filter(r => cellulesAuDessusSeuil(r.cellules, seuil)).length : 0;
   const s = t => t.replace(/\u00a0/g, ' ');
   const bytes = buildPdfTableCharte({
-    title: seuilFiltre ? 'Contrôle laitier · cellules au-dessus de ' + s(texteCellules(seuilFiltre)) : 'Contrôle laitier', columns, rows, landscape: true,
+    title: seuilFiltre ? 'Contrôle laitier · cellules au-dessus de ' + s(texteCellules(seuilFiltre)) : 'Contrôle laitier', columns, rows, landscape: columns.length > 7,   // portrait jusqu'à 7 colonnes, paysage au-delà
     subtitle: cel ? 'Quantités en mL · Cellules = dernier échantillon de la campagne (cellules/mL) · seuil d\'alerte ' + s(texteCellules(seuil)) : undefined,
     tuiles: cel ? [pdfTuile('ambre', 'Cellules au-dessus de ' + s(texteCellules(seuil)), nHaut, undefined, true), pdfTuile('vert', 'Brebis', filtered.length)] : undefined,
-    pied: seuilFiltre ? pdfPied('Contrôle laitier') : undefined
+    pied: seuilFiltre ? pdfPied('Contrôle laitier') : undefined,
+    // case « Cellules » au-dessus du seuil d'alerte : pastille ambre (même règle que l'écran)
+    cellule: cel ? (v, label) => label === 'Cellules' && cellulesAuDessusSeuil(parseInt(String(v).replace(/\D/g, ''), 10), seuil) ? { fond: pdfHexCouleur(PDF_CHARTE.ambrePastel), texte: pdfHexCouleur(PDF_CHARTE.ambreTexte), gras: true } : null : undefined
   });
   const filename = 'controle-laitier_' + jourAujourdhuiISO() + '.pdf';
   await saveOrShareBinaryFile(filename, bytes, 'application/pdf');

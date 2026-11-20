@@ -84,5 +84,25 @@ for (const nom of ['calendrier', 'rapport']) {
   check(!r.spans.some(s => /\.\.\.|…/.test(s[3])), nom + ' : aucun texte coupé (« ... ») : ' + JSON.stringify(r.spans.filter(s => /\.\.\.|…/.test(s[3])).map(s => s[3])));
 }
 console.log('OK Production laitière (Calendrier du tank, Rapport de campagne) : tuiles colorées à liseré, en-tête de tableau vert, lignes alternées.');
+// (6) lisibilité (lot 3) : jamais de texte sous 7 pt ; Lot IA et Lot éponge en paysage ; Contrôle laitier en portrait jusqu'à 7 colonnes
+for (const nom of noms) {
+  const petit = resultats[nom].spans.filter(s => s[3].trim() && s[4] < 7);
+  check(!petit.length, nom + ' : aucun texte sous 7 pt : ' + JSON.stringify(petit.slice(0, 4).map(s => [s[3], s[4]])));
+}
+check(resultats.lot_ia.largeur === 842 && resultats.lot_eponge.largeur === 842, 'Lot IA et Lot éponge : même orientation, paysage');
+check(resultats.controle_laitier.largeur === 595, 'Contrôle laitier (moins de 8 colonnes) : portrait');
+// (7) case « Cellules » au-dessus du seuil : pastille ambre pastel dans le tableau (une seule, celle au-dessus)
+{
+  const b64 = await pc.evaluate(async () => {
+    let bytes = null; const save = saveOrShareBinaryFile; saveOrShareBinaryFile = async (n, b) => { bytes = b; };
+    await exportControleLaitierPdf([{ courtSieol: '601', dateMab: '2026-01-10', c1: 1200, c2: null, c3: null, cellules: 1250000 }, { courtSieol: '602', dateMab: '2026-01-11', c1: 1100, c2: null, c3: null, cellules: 300000 }], { cellules: true });
+    saveOrShareBinaryFile = save; let s = ''; for (const v of bytes) s += String.fromCharCode(v); return btoa(s);
+  });
+  const r = lire(b64, 'cl_cellules');
+  const AMBRE_PASTEL = '#fbeed7', pastilles = r.fills.filter(f => proche(f, AMBRE_PASTEL, 2) && f[4] < 20);
+  check(pastilles.length === 1, 'Contrôle laitier : une pastille ambre sur la seule case au-dessus du seuil : ' + pastilles.length);
+  check(r.spans.some(s => s[3].includes('1 250 000') && proche(s, '#8a5413', 3)), 'texte de la case au-dessus du seuil en ambre foncé');
+}
+console.log('OK lisibilité : 7 pt minimum partout, lots en paysage, Contrôle laitier portrait jusqu\'à 7 colonnes, cellules au-dessus du seuil colorées.');
 await browser.close();
 console.log('\nTOUS LES TESTS « COHÉRENCE DES PDF » SONT PASSÉS.');

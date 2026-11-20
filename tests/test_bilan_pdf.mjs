@@ -65,7 +65,7 @@ let r = await page.evaluate(() => { const p = lirePdf(buildBilanCompletPdfBytes(
 check(r.ok && r.pages === 2, 'structure PDF valide (xref, en-tête), 2 pages : ' + JSON.stringify({ ok: r.ok, pages: r.pages }));
 const txt = r.t;
 const a = (...v) => v.forEach(x => check(txt.includes(x), 'le PDF doit contenir « ' + x + ' »'));
-a('Bilan de reproduction', 'Campagne 2026 · du 01/10/2025 au 30/09/2026 · troupeau entier', 'MISES BAS', 'PROLIFICITÉ', 'MORTINATALITÉ', 'MORTALITÉ APRÈS NAISSANCE');
+a('Bilan de reproduction', 'Campagne 2026 · du 01/10/2025 au 30/09/2026 · troupeau entier', 'MISES BAS', 'PROLIFICITÉ', 'MORTINATALITÉ', 'MORTALITÉ APRÈS', 'NAISSANCE');   // libellé de tuile en 7 pt minimum : sur deux lignes, jamais réduit
 a('363', '1,18', '3,3 %', '9,2 %', '427 agneaux nés', '14 mort(s)-né(s)', '38 sur 413 nés vivants');
 // tableau par groupe : lignes lues dans l'ordre d'écriture (libellé, brebis, antenaises, total)
 const ligne = (lib) => { const i = txt.indexOf(lib); return txt.slice(i + 1, i + 4); };
