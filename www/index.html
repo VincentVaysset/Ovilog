@@ -3061,11 +3061,71 @@ function belierSansHistorique(belier) {
     && (belier.mouvements || []).every(m => m.type === 'Entrée');
 }
 
-/* Fiche "Corriger l'EID" (sheet-overlay, même gabarit que openQualiteSheet)
-   -- réservée aux brebis/béliers sans historique (voir brebisSansHistorique/
-   belierSansHistorique ci-dessus). `animal` est directement l'objet sheep
-   ou belier (mutable, on le modifie en place) ; `onSaved()` referme la
-   fiche et laisse l'appelant décider comment se ré-afficher. */
+/* ---------- Correction d'un EID : tous les liens mis à jour ensemble, en une action annulable ----------
+   Un EID est cité ailleurs que sur la fiche : lots (membres, évènements), mère / mère adoptive / père d'autres animaux, registre d'élevage (clé),
+   traitements et mouvements collectifs, imports du lait, listes de vérification… `liensEidDansBase` parcourt TOUTE la base (sauf l'EID de la fiche
+   elle-même) et relève chaque valeur ou clé qui désigne cet animal (même EID, ou même n° national sous l'autre forme 11 / 15 chiffres) ; rien n'est
+   écrit. `appliquerCorrectionEid` remplace tout d'un coup et rend la liste exacte des changements, que `annulerCorrectionEid` défait (bandeau 6 s). */
+const LIBELLES_LIENS_EID = { lots: 'Lots', evenementsLots: 'Évènements de lots', registre: "Registre d'élevage", traitementsCollectifs: 'Traitements collectifs',
+  mouvementsCollectifs: 'Mouvements collectifs', brebis: "Fiches d'autres brebis (mère, mère adoptive, père…)", beliers: 'Fiches de béliers', agnelles: "Fiches d'agnelles (mère, père…)",
+  bilanLactation: 'Bilan de lactation', lactationModele: 'Lactation importée', cahierControleLaitier: 'Cahier du contrôle laitier', sieolSansMiseBas: 'Imports SIEOL',
+  listeSerieVerif: 'Liste « Vérifier mères et agneaux »', notesArchiveesBrebis: 'Notes archivées', journal: 'Calendrier' };
+function libelleLienEid(racine) { return LIBELLES_LIENS_EID[racine] || racine; }
+function liensEidDansBase(ancien, animal) {
+  const c = cleanEid(String(ancien || '')), nat = c.length >= 11 ? c.slice(-11) : null;
+  const designe = v => { if (typeof v !== 'string' && typeof v !== 'number') return false; const x = cleanEid(String(v)); return x.length >= 11 && (x === c || (nat !== null && x.slice(-11) === nat)); };
+  const liens = [];
+  const parcourir = (obj, racine) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) { obj.forEach((v, k) => { if (v === animal) return; if (designe(v)) liens.push({ racine, parent: obj, cle: k, type: 'valeur' }); else parcourir(v, racine); }); return; }
+    Object.keys(obj).forEach(k => {
+      const v = obj[k];
+      if (obj === animal && k === 'eid') return;   // l'EID de la fiche elle-même : changé à part
+      if (designe(k)) liens.push({ racine, parent: obj, cle: k, type: 'cle' });
+      if (v === animal) return;
+      if (designe(v)) liens.push({ racine, parent: obj, cle: k, type: 'valeur' });
+      else parcourir(v, racine);
+    });
+  };
+  Object.keys(DB || {}).forEach(r => parcourir(DB[r], r));
+  return liens;
+}
+// Résumé lisible : [{ libelle, n }] par endroit de la base
+function resumeLiensEid(liens) {
+  const par = new Map();
+  liens.forEach(l => { const lib = libelleLienEid(l.racine); par.set(lib, (par.get(lib) || 0) + 1); });
+  return [...par].map(([libelle, n]) => ({ libelle, n }));
+}
+function appliquerCorrectionEid(animal, nouvel, liens) {
+  const changements = [{ parent: animal, cle: 'eid', type: 'valeur', avant: animal.eid }];
+  animal.eid = nouvel;
+  liens.forEach(l => {
+    if (l.type === 'valeur') { changements.push({ parent: l.parent, cle: l.cle, type: 'valeur', avant: l.parent[l.cle] }); l.parent[l.cle] = nouvel; }
+    else if (!(nouvel in l.parent)) { changements.push({ parent: l.parent, cle: l.cle, type: 'cle', nouvelle: nouvel }); l.parent[nouvel] = l.parent[l.cle]; delete l.parent[l.cle]; }
+  });
+  return changements;
+}
+function annulerCorrectionEid(changements) {
+  changements.slice().reverse().forEach(ch => {
+    if (ch.type === 'valeur') ch.parent[ch.cle] = ch.avant;
+    else { ch.parent[ch.cle] = ch.parent[ch.nouvelle]; delete ch.parent[ch.nouvelle]; }
+  });
+}
+let ceSnackMinuterie = null;
+function afficherSnackCorrectionEid(texte, changements, redessiner) {
+  document.querySelectorAll('.ce-snack').forEach(el => el.remove());
+  clearTimeout(ceSnackMinuterie);
+  const el = document.createElement('div');
+  el.className = 'tri-snack ce-snack'; el.setAttribute('role', 'status');
+  el.innerHTML = `<span>${echapperHtml(texte)}</span><button type="button" id="ce-snack-annuler">Annuler</button>`;
+  document.body.appendChild(el);
+  const fermer = () => { clearTimeout(ceSnackMinuterie); el.remove(); };
+  el.querySelector('#ce-snack-annuler').onclick = () => { annulerCorrectionEid(changements); saveData(DB); fermer(); redessiner(); };
+  ceSnackMinuterie = setTimeout(fermer, 6000);
+}
+/* Fiche "Corriger l'EID" (sheet-overlay) -- réservée aux brebis/béliers sans historique (brebisSansHistorique/belierSansHistorique).
+   EID normalisé sur 15 chiffres (n° national de 11 chiffres accepté), contrôle d'unicité sous toutes les formes (conflitEidToutesFormes),
+   liste des liens qui seront mis à jour AVANT d'enregistrer, puis un seul geste (sans confirm) et le bandeau « EID corrigé · Annuler ». */
 function openCorrigerEidSheet(animal, onSaved) {
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
@@ -3073,39 +3133,50 @@ function openCorrigerEidSheet(animal, onSaved) {
     <div class="sheet-card">
       <button type="button" class="sheet-close-btn" id="ce-close">✕</button>
       <div style="font-weight:700;font-size:15px;margin-bottom:4px;">Corriger l'EID</div>
-      <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">EID actuel : n°${numeroVisuel(animal.eid)} (${animal.eid})</div>
-      <label>${isDesktopMode() ? 'Nouvel EID — saisir' : 'Nouvel EID — scanner ou saisir'}</label>
-      <input type="text" id="ce-eid" placeholder="ex: 250 000000 000000">
+      <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">EID actuel : n°${numeroVisuel(animal.eid)} (${echapperHtml(animal.eid)})</div>
+      <label for="ce-eid">${isDesktopMode() ? 'Nouvel EID — saisir' : 'Nouvel EID — scanner ou saisir'}</label>
+      <input type="text" id="ce-eid" placeholder="ex: 250 000000 000000" inputmode="numeric" autocomplete="off">
       <div id="ce-preview" style="font-size:12px;color:var(--text-muted);margin-bottom:12px;"></div>
+      <div id="ce-liens" class="hidden" style="margin-bottom:12px;"></div>
       <div id="ce-err" class="error-box hidden"></div>
-      <button type="button" class="btn btn-primary" id="ce-save">Enregistrer le nouvel EID</button>
+      <button type="button" class="btn btn-primary" id="ce-save">Corriger l'EID</button>
     </div>
   `;
   document.body.appendChild(overlay);
-  overlay.querySelector('#ce-close').onclick = () => document.body.removeChild(overlay);
-
+  overlay.querySelector('#ce-close').onclick = () => overlay.remove();
   const eidInput = overlay.querySelector('#ce-eid');
   setActiveScanTarget(eidInput);
   attachEidBeep(eidInput);
-  const preview = overlay.querySelector('#ce-preview');
-  eidInput.addEventListener('input', () => {
-    const v = eidInput.value;
-    preview.textContent = cleanEid(v).length >= 11 ? `N° d'ordre : n°${numeroVisuel(v)} — Âge estimé : ${age(v)} an(s)` : '';
-  });
-
+  const preview = overlay.querySelector('#ce-preview'), zoneLiens = overlay.querySelector('#ce-liens'), err = overlay.querySelector('#ce-err');
+  const liens = liensEidDansBase(animal.eid, animal);
+  const verifier = () => {
+    const n = normaliserEidImport(eidInput.value);
+    if (n.vide) return { erreur: '' };
+    if (!n.valide) return { erreur: 'EID sur 15 chiffres (ou n° national sur 11 chiffres).' };
+    if (cleanEid(n.eid) === cleanEid(animal.eid)) return { erreur: "C'est déjà l'EID actuel." };
+    const conflit = conflitEidToutesFormes(n.eid, animal.id);
+    if (conflit) return { erreur: messageEidDejaUtilise(conflit) };
+    return { eid: n.eid };
+  };
+  const dessiner = () => {
+    const r = verifier();
+    preview.textContent = r.eid ? `N° d'ordre : n°${numeroVisuel(r.eid)} — Âge estimé : ${age(r.eid)} an(s)` : '';
+    err.textContent = r.erreur || ''; err.classList.toggle('hidden', !r.erreur);
+    const res = resumeLiensEid(liens);
+    zoneLiens.innerHTML = !r.eid ? '' : `<div class="msg-charte" id="ce-liens-liste"><b>${res.length ? 'Seront aussi mis à jour' : 'Aucun autre endroit ne cite cet EID'}</b>${res.map(x => `<span>${echapperHtml(x.libelle)} : ${x.n}</span>`).join('')}<span>« Annuler » pendant quelques secondes après l'enregistrement remet tout comme avant.</span></div>`;
+    zoneLiens.classList.toggle('hidden', !r.eid);
+    return r;
+  };
+  eidInput.addEventListener('input', dessiner);
   overlay.querySelector('#ce-save').onclick = () => {
-    const err = overlay.querySelector('#ce-err');
-    const nouvel = eidInput.value.trim();
-    if (cleanEid(nouvel).length < 11) { err.textContent = 'Numéro EID incomplet.'; err.classList.remove('hidden'); return; }
-    if (cleanEid(nouvel) === cleanEid(animal.eid)) { err.textContent = "C'est déjà l'EID actuel."; err.classList.remove('hidden'); return; }
-    const conflit = verifierEidUnique(nouvel, animal.id);
-    if (conflit) { err.textContent = messageEidDejaUtilise(conflit); err.classList.remove('hidden'); return; }
-    err.classList.add('hidden');
-    if (!confirm('Remplacer l\'EID n°' + numeroVisuel(animal.eid) + ' par le n°' + numeroVisuel(nouvel) + ' ?')) return;
-    animal.eid = nouvel;
-    if (!saveData(DB)) return; // échec d'enregistrement déjà signalé par saveData (alerte bloquante) -- on reste sur la fiche, rien n'est perdu
-    document.body.removeChild(overlay);
+    const r = dessiner();
+    if (!r.eid) { if (!r.erreur) { err.textContent = 'Numéro EID incomplet.'; err.classList.remove('hidden'); } return; }
+    const avant = animal.eid;
+    const changements = appliquerCorrectionEid(animal, r.eid, liensEidDansBase(avant, animal));
+    if (!saveData(DB)) { annulerCorrectionEid(changements); return; }   // échec d'enregistrement déjà signalé par saveData : tout est remis comme avant
+    overlay.remove();
     onSaved();
+    afficherSnackCorrectionEid('EID corrigé : n°' + numeroVisuel(avant) + ' → n°' + numeroVisuel(r.eid), changements, onSaved);
   };
 }
 
