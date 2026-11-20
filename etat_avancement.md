@@ -135,7 +135,7 @@ Rapport d'audit et script de diagnostic : hors dépôt (envoyés au propriétair
   4. Correction d'EID : écran qui liste tous les liens touchés (lots, évènements repro, mère, mère adoptive, agnelles, registre, traitements collectifs) et les met à jour ensemble, en une action annulable ; EID normalisé ; contrôle `conflitEidToutesFormes`.
   5. `conflitEidToutesFormes` sur tous les points de création (brebis, bélier, agnelle, écho, mise bas, inventaire, bascule agnelle → brebis).
   Tests : `test_eid_unicite_tous_points`, `test_correction_eid_liens`, `test_retour_android`.
-- **Lot 2 — calculs et numéros** :
+- **Lot 2 — calculs et numéros : FAIT** (+ n° de travail comparé exactement, « 0117 » ≠ « 117 » ; tests test_numero_travail_zero, test_controle_laitier_numeros, test_prolificite_unique, test_lots_campagne_visee, test_vide_definitive_et_mise_bas). Détail d'origine :
   6. Vide définitive + mise bas : la mise bas fait foi partout (fonction partagée) ; l'alerte « incohérente » reste ; aucune correction automatique.
   7. Bilans et PDF des lots IA / éponge : campagne visée par le lot (`campagneMisesBasDuLot`).
   8. Prolificité : une seule fonction partagée, `null` (« — ») sans mise bas.
