@@ -2844,13 +2844,15 @@ function numeroBoucleSuivant(dejaSaisis) {
 /* Un numéro déjà enregistré l'est peut-être sous une AUTRE forme (anciennes fiches : EID sur 11 chiffres, avec ou sans espaces). Aucun numéro enregistré n'est jamais modifié ni converti ;
    pour savoir si un nouveau numéro est libre, on compare donc aussi par le numéro national (11 derniers chiffres, `eidAffichageCourt`) toutes les catégories. Retourne le même conflit que
    verifierEidUnique (de l'animal déjà enregistré), ou null si le numéro est libre sous toutes ses formes. */
-function conflitEidToutesFormes(eid) {
+// exclureId : l'animal en cours de modification (fiche d'agnelle, bascule agnelle → brebis, correction d'EID) ne se signale pas lui-même.
+// SEUL contrôle d'unicité de tous les points de création, d'import et de correction (test_eid_unicite_tous_points).
+function conflitEidToutesFormes(eid, exclureId) {
   const v = cleanEid(String(eid || ''));
   if (!v) return null;
-  const direct = verifierEidUnique(v);
+  const direct = verifierEidUnique(v, exclureId === undefined ? null : exclureId);
   if (direct) return direct;
   const existant = resoudreDoublonNouvelAnimal(v);
-  if (existant) return verifierEidUnique(existant.item.eid) || null;
+  if (existant && !(exclureId && existant.item.id === exclureId)) return verifierEidUnique(existant.item.eid, exclureId === undefined ? null : exclureId) || null;
   return verifierDoublonHorsPerimetreNouvelAnimal(v);
 }
 // Message d'aperçu sous le champ EID d'un agneau : { texte, ton: 'normal' | 'alerte' | 'danger' } ; texte vide si le champ est vide
@@ -11127,18 +11129,22 @@ const MOTIF_MAJ_INVENTAIRE = SORTIE_INVENTAIRE;   // motif des anciennes sorties
    logique de recherche. */
 function calculerRapprochementInventaire(eidsScannees) {
   const activesBrebis = DB.brebis.filter(s => (s.statut || 'active') === 'active');
-  const activesEids = new Set(activesBrebis.map(s => cleanEid(s.eid)));
-  const confirmees = activesBrebis.filter(s => eidsScannees.includes(cleanEid(s.eid)));
-  const enMoins = activesBrebis.filter(s => !eidsScannees.includes(cleanEid(s.eid)));
+  // Comparaison par le n° national (11 derniers chiffres) : une brebis enregistrée sur 11 chiffres et bipée sur 15 (ou l'inverse) est la MÊME
+  // brebis, jamais « en moins » (sortie inventaire) ni « en plus » (conflitEidToutesFormes, test_eid_unicite_tous_points)
+  const nat = e => { const c = cleanEid(e || ''); return c.length >= 11 ? c.slice(-11) : c; };
+  const scanneesNat = new Set(eidsScannees.map(nat));
+  const activesEids = new Set(activesBrebis.map(s => nat(s.eid)));
+  const confirmees = activesBrebis.filter(s => scanneesNat.has(nat(s.eid)));
+  const enMoins = activesBrebis.filter(s => !scanneesNat.has(nat(s.eid)));
 
   const enPlus = [];
   eidsScannees.forEach(eid => {
-    if (activesEids.has(eid)) return; // déjà comptée en "confirmées"
-    const conflit = verifierEidUnique(eid);
+    if (activesEids.has(nat(eid))) return; // déjà comptée en "confirmées"
+    const conflit = conflitEidToutesFormes(eid);
     if (!conflit) { enPlus.push({ eid, type: 'inconnue', conflit: null, sheep: null }); return; }
     if (conflit.categorie === 'brebis') {
       // Forcément inactive : une brebis active aurait été filtrée ci-dessus.
-      enPlus.push({ eid, type: 'reactivable', conflit, sheep: DB.brebis.find(s => cleanEid(s.eid) === eid) });
+      enPlus.push({ eid, type: 'reactivable', conflit, sheep: DB.brebis.find(s => nat(s.eid) === nat(eid)) });
       return;
     }
     enPlus.push({ eid, type: 'autre', conflit, sheep: null }); // bélier/agnelle/agneau/registre -- informatif seulement
@@ -11343,7 +11349,7 @@ function renderAddSheep() {
       err.classList.remove('hidden');
       return;
     }
-    const conflit = verifierEidUnique(eid);
+    const conflit = conflitEidToutesFormes(eid);
     if (conflit) {
       err.textContent = messageEidDejaUtilise(conflit);
       err.classList.remove('hidden');
@@ -14049,7 +14055,7 @@ function renderEchoRapide() {
         }
         if (r.statut === 'absent') {
           resetResult();
-          const conflit = verifierEidUnique(val);
+          const conflit = conflitEidToutesFormes(val);
           if (conflit) {
             playBeepRate();
             conflitEid = conflit;
@@ -14740,7 +14746,7 @@ function controlesMiseBas(sheep, dateISO) {
 function chercherBrebisMiseBas(val) {
   const r = trouverUnParEidOuNumero(DB.brebis, val);
   if (r.statut === 'ambigu') return { statut: 'ambigu', candidats: r.candidats };
-  if (r.statut === 'absent') { const conflit = verifierEidUnique(val); return conflit ? { statut: 'conflit', eid: val, conflit } : { statut: 'inconnue', eid: val }; }
+  if (r.statut === 'absent') { const conflit = conflitEidToutesFormes(val); return conflit ? { statut: 'conflit', eid: val, conflit } : { statut: 'inconnue', eid: val }; }
   return { statut: 'trouvee', sheep: r.item };
 }
 /* Cause (facultative) d'un mort-né, saisie à la mise bas (fiche brebis, saisie rapide mobile, saisie PC), et d'un agneau déclaré mort
@@ -17213,7 +17219,7 @@ function renderAddAgnelle() {
       err.classList.remove('hidden');
       return;
     }
-    const conflit = verifierEidUnique(eid, editingAgnelleId);
+    const conflit = conflitEidToutesFormes(eid, editingAgnelleId);
     if (conflit) {
       err.textContent = messageEidDejaUtilise(conflit);
       err.classList.remove('hidden');
@@ -17977,7 +17983,7 @@ function renderAddBelier() {
     const eid = inputEid.value.trim();
     const err = document.getElementById('err');
     if (cleanEid(eid).length < 11) { err.textContent = "Numéro EID incomplet."; err.classList.remove('hidden'); return; }
-    const conflit = verifierEidUnique(eid);
+    const conflit = conflitEidToutesFormes(eid);
     if (conflit) { err.textContent = messageEidDejaUtilise(conflit); err.classList.remove('hidden'); return; }
     err.classList.add('hidden');
     const dateEntree = document.getElementById('input-date-entree').value || null;
@@ -30185,7 +30191,7 @@ async function executerChangementCampagne(dates) {   // dates : { debut, fin } A
       // sa définition), et cette agnelle s'y trouve encore elle-même à cet
       // instant -- sans l'exclure, chaque agnelle se signalerait comme "en
       // conflit avec elle-même" et aucune ne serait jamais convertie.
-      const conflit = verifierEidUnique(ag.eid, ag.id);
+      const conflit = conflitEidToutesFormes(ag.eid, ag.id);
       if (conflit) { agnellesEnConflit.push({ eid: ag.eid, conflit }); return; }
       DB.brebis.push({
         id: Date.now().toString() + Math.random().toString(36).slice(2,6), eid: ag.eid, mereEid: ag.motherEid || null,
