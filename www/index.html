@@ -4494,6 +4494,9 @@ function numOrNull(el) { const v = parseFloat(el.value); return isNaN(v) ? null 
 // FIXE (toujours `dec` chiffres, jamais de zéro de fin supprimé -- ex.
 // fmtDecimal(38.2, 2) -> "38,20", pas "38,2"), "—" si absent. Utilisé par le
 // suivi qualité du lait (TB/TP/MSU/Cellules).
+/* Prolificité, UNE règle partout (Accueil, Bilan de campagne, lots IA / éponge, millésimes, groupes d'âge, Mises bas, PDF) :
+   agneaux nés (mort-nés et avortons compris) ÷ mises bas, arrondie au centième ; null (« — ») sans mise bas, jamais 0. */
+function calculProlificite(nes, misesBas) { return misesBas > 0 ? Math.round((nes / misesBas) * 100) / 100 : null; }
 function fmtDecimal(n, dec) {
   if (n === null || n === undefined || isNaN(n)) return '—';
   return n.toFixed(dec).replace('.', ',');
@@ -5331,7 +5334,7 @@ function statsDetailleesParGroupeAge(cohort, classement) {
     const g = groupes[key];
     const nesTotal = g.mortNes + g.males + g.femelles;
     const pctMisesBas = div(g.misesBas, g.presentes);
-    const prolificite = div(nesTotal, g.misesBas);
+    const prolificite = calculProlificite(nesTotal, g.misesBas);
     const pctMortalite = div(g.morts, nesTotal);
     return {
       label: key === 'antenaises' ? 'Antenaises' : 'Brebis',
@@ -5984,7 +5987,7 @@ function statsReproductionParCode(cohort) {
       code, label: libelleModeRepro(code),
       misesBas: st.misesBas, vides: st.vides,
       taux: total > 0 ? Math.round((st.misesBas / total) * 1000) / 10 : null,
-      prolificite: st.misesBas > 0 ? Math.round((st.nesTotal / st.misesBas) * 100) / 100 : null
+      prolificite: calculProlificite(st.nesTotal, st.misesBas)
     };
   });
 }
@@ -6062,15 +6065,14 @@ function statsLotIA(lot) {
 function statsLotIAColonnes(effectif, misesBasIA, misesBasRetour, agneauxIA, agneauxRetour) {
   const resteApresIA = effectif - misesBasIA;
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
-  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
   return {
     effectif,
-    ia: { misesBas: misesBasIA, fertilite: pct(misesBasIA, effectif), prolificite: rat(agneauxIA, misesBasIA) },
-    retour: { misesBas: misesBasRetour, fertilite: pct(misesBasRetour, resteApresIA), prolificite: rat(agneauxRetour, misesBasRetour) },
+    ia: { misesBas: misesBasIA, fertilite: pct(misesBasIA, effectif), prolificite: calculProlificite(agneauxIA, misesBasIA) },
+    retour: { misesBas: misesBasRetour, fertilite: pct(misesBasRetour, resteApresIA), prolificite: calculProlificite(agneauxRetour, misesBasRetour) },
     global: {
       misesBas: misesBasIA + misesBasRetour,
       fertilite: pct(misesBasIA + misesBasRetour, effectif),
-      prolificite: rat(agneauxIA + agneauxRetour, misesBasIA + misesBasRetour)
+      prolificite: calculProlificite(agneauxIA + agneauxRetour, misesBasIA + misesBasRetour)
     }
   };
 }
@@ -6185,13 +6187,12 @@ function statsLotEpongeParAgeExact(lot) {
     g.agneaux += (ag.lambs || []).length;
   });
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
-  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
   return Object.keys(groupes).map(Number).sort((a, b) => a - b).map(millesime => {
     const g = groupes[millesime];
     // agneaux (brut) exposé au même titre que misesBas, pour permettre à
     // resumeLotParGroupeAge d'agréger plusieurs millésimes sans jamais
     // reconstruire un total depuis une prolificité déjà arrondie.
-    return { millesime, effectif: g.effectif, misesBas: g.misesBas, agneaux: g.agneaux, fertilite: pct(g.misesBas, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
+    return { millesime, effectif: g.effectif, misesBas: g.misesBas, agneaux: g.agneaux, fertilite: pct(g.misesBas, g.effectif), prolificite: calculProlificite(g.agneaux, g.misesBas) };
   });
 }
 
@@ -6213,8 +6214,7 @@ function statsLotEponge(lot) {
     agneaux += (ag.lambs || []).length;
   });
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
-  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
-  return { effectif, misesBas, fertilite: pct(misesBas, effectif), prolificite: rat(agneaux, misesBas), sorties, sortiesDetail };
+  return { effectif, misesBas, fertilite: pct(misesBas, effectif), prolificite: calculProlificite(agneaux, misesBas), sorties, sortiesDetail };
 }
 
 /* Résumé PAR GROUPE (antenaises / brebis, même règle que
@@ -6242,10 +6242,9 @@ function resumeLotParGroupeAge(lot, parAgeExact, classement) {
     g.agneaux += agneaux;
   });
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
-  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
   return Object.keys(groupes).map(key => {
     const g = groupes[key];
-    return { label: key === 'antenaises' ? 'Antenaises' + (classement.millesimeAntenaise !== null ? ' (millésime ' + classement.millesimeAntenaise + ')' : '') : 'Brebis (autres millésimes)', effectif: g.effectif, fertilite: pct(g.misesBas, g.effectif), prolificite: rat(g.agneaux, g.misesBas) };
+    return { label: key === 'antenaises' ? 'Antenaises' + (classement.millesimeAntenaise !== null ? ' (millésime ' + classement.millesimeAntenaise + ')' : '') : 'Brebis (autres millésimes)', effectif: g.effectif, fertilite: pct(g.misesBas, g.effectif), prolificite: calculProlificite(g.agneaux, g.misesBas) };
   });
 }
 
@@ -6274,7 +6273,6 @@ function statsParAgeExactTroupeau(cohort, classement, campagne) {
     if (ag.date) g.dates.push(ag.date);
   });
   const pct = (num, den) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
-  const rat = (num, den) => den > 0 ? Math.round((num / den) * 100) / 100 : null;
   const cles = Object.keys(groupes).filter(k => k !== 'inconnu').map(Number).sort((a, b) => a - b);
   if (groupes.inconnu) cles.push('inconnu');
   return cles.map(cle => {
@@ -6288,7 +6286,7 @@ function statsParAgeExactTroupeau(cohort, classement, campagne) {
       millesime, antenaises: millesime !== null && millesime === classement.millesimeAntenaise,
       presentes: g.presentes, misesBas: g.misesBas,
       fertilite: pct(g.misesBas, g.presentes),
-      prolificite: rat(g.nesTotal, g.misesBas),
+      prolificite: calculProlificite(g.nesTotal, g.misesBas),
       dureeMiseBas
     };
   });
@@ -6352,7 +6350,7 @@ function grpFinaliser(g) {
   return Object.assign({}, g, {
     nes: Object.assign({}, g.nes, { vivants }),
     fertilite: g.presentes === null || g.presentes === undefined ? null : div(g.misesBasCohorte, g.presentes),
-    prolificite: div(g.nes.total, g.misesBas),
+    prolificite: calculProlificite(g.nes.total, g.misesBas),
     pctDoubles: div(g.portees.doubles, g.misesBas),
     mortinatalite: div(g.nes.mortNes, g.nes.total),
     mortaliteApresNaissance: div(g.mortsApres, vivants),
@@ -7700,7 +7698,7 @@ function dashboardStatsData() {
       });
     });
   });
-  const prolificite = totalMisesBas > 0 ? Math.round((totalAgneaux / totalMisesBas) * 100) / 100 : 0;
+  const prolificite = calculProlificite(totalAgneaux, totalMisesBas);   // null (« — ») sans mise bas, jamais 0
 
   // Troupeau à mettre bas / Mises bas restantes attendues : voir
   // campagneBilanChiffres — même formule qu'au Bilan de campagne, où le
@@ -15053,7 +15051,7 @@ function miseBasRapideStats(campagneRows) {
   const nes = somme('total');
   const nees = campagneRows.filter(r => !r.avortement);   // un avortement n'est pas une portée (simple, double…)
   const portees = { simples: nees.filter(r => r.total === 1).length, doubles: nees.filter(r => r.total === 2).length, triplesEtPlus: nees.filter(r => r.total >= 3).length };
-  return { cb, misesBas: campagneRows.length, nes, males: somme('male'), femelles: somme('femelle'), mortNes: somme('mortNe'), avortons: somme('avortons'), prolificite: campagneRows.length > 0 ? nes / campagneRows.length : null, portees };
+  return { cb, misesBas: campagneRows.length, nes, males: somme('male'), femelles: somme('femelle'), mortNes: somme('mortNe'), avortons: somme('avortons'), prolificite: calculProlificite(nes, campagneRows.length), portees };
 }
 /* ---------- Identifier les agneaux (MOBILE seulement) ----------
    Agneaux nés sans n° (ni mort-nés, ni sortis) : on retrouve la portée par le n° de la MÈRE (5 derniers chiffres, n° de travail ou EID ; bip possible, jamais obligatoire),
