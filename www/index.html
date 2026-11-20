@@ -2574,6 +2574,12 @@ function canonJson(v) {
   }
   return JSON.stringify(v === undefined ? null : v);
 }
+// Contenu d'un élément de liste SANS son identifiant technique (lot 4) : « même élément » au sens des doublons et de l'archivage = même contenu,
+// quel que soit l'id (deux doublons identiques ont des id différents : h…, h…-2)
+function canonContenuElement(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x) || x.id === undefined) return canonJson(x);
+  const c = Object.assign({}, x); delete c.id; return canonJson(c);
+}
 /* Fusion « par comptage d'occurrences » utilisée par l'archivage : on
    n'ajoute à `existants` que ce que `source` contient EN PLUS de ce qu'ils
    contiennent déjà, élément identique par élément identique.
@@ -2585,10 +2591,10 @@ function canonJson(v) {
 function fusionnerElementsRegistre(existants, source) {
   const res = (existants || []).slice();
   const deja = {};
-  res.forEach(x => { const c = canonJson(x); deja[c] = (deja[c] || 0) + 1; });
+  res.forEach(x => { const c = canonContenuElement(x); deja[c] = (deja[c] || 0) + 1; });
   const vus = {};
   (source || []).forEach(x => {
-    const c = canonJson(x);
+    const c = canonContenuElement(x);
     vus[c] = (vus[c] || 0) + 1;
     if (vus[c] > (deja[c] || 0)) res.push(x);
   });
@@ -6721,7 +6727,7 @@ function bilanReproductionCampagne(N) {
   let doublonsIgnores = 0;
   const sansDoublons = mv => {
     const vus = new Set();
-    return (mv || []).filter(m => { const c = canonJson(m); if (vus.has(c)) { doublonsIgnores++; return false; } vus.add(c); return true; });
+    return (mv || []).filter(m => { const c = canonContenuElement(m); if (vus.has(c)) { doublonsIgnores++; return false; } vus.add(c); return true; });
   };
   const mvVide = () => ({ entrees: { total: 0, renouvellement: 0, achat: 0, autres: 0, naissance: 0 }, sorties: { total: 0, ventes: 0, ventesReproduction: 0, mortes: 0, pertes: 0, autoconsommation: 0 } });
   const mvBrebis = { adultes: mvVide(), antenaises: mvVide() };
@@ -30399,7 +30405,7 @@ function analyserDoublonsRegistre() {
         if (!Array.isArray(arr) || arr.length < 2) return;
         const groupes = new Map();
         arr.forEach(el => {
-          const c = canonJson(el);
+          const c = canonContenuElement(el);
           const g = groupes.get(c);
           if (g) g.avant++; else groupes.set(c, { element: el, avant: 1 });
         });
@@ -30448,7 +30454,7 @@ async function appliquerDedoublonnageRegistre(lignesChoisies) {
     let attendu = 0;
     let incoherente = null;
     lignes.forEach(l => {
-      const actuel = (avantEntree[l.champ] || []).filter(el => canonJson(el) === l.canon).length;
+      const actuel = (avantEntree[l.champ] || []).filter(el => canonContenuElement(el) === l.canon).length;
       if (actuel !== l.avant) incoherente = 'le registre a changé depuis l\'aperçu (' + l.champ + ' : ' + actuel + ' occurrence(s) au lieu de ' + l.avant + ')';
       (cibles[l.champ] = cibles[l.champ] || {})[l.canon] = l.apres;
       attendu += l.avant - l.apres;
@@ -30458,14 +30464,14 @@ async function appliquerDedoublonnageRegistre(lignesChoisies) {
     Object.keys(cibles).forEach(champ => {
       const gardes = {};
       nouvelle[champ] = (avantEntree[champ] || []).filter(el => {
-        const c = canonJson(el);
+        const c = canonContenuElement(el);
         if (!(c in cibles[champ])) return true;
         gardes[c] = (gardes[c] || 0) + 1;
         if (gardes[c] <= cibles[champ][c]) return true;
         retiresEntree++;
         return false;
       });
-      const distinct = arr => Array.from(new Set((arr || []).map(canonJson))).sort().join('|');
+      const distinct = arr => Array.from(new Set((arr || []).map(canonContenuElement))).sort().join('|');
       if (distinct(avantEntree[champ]) !== distinct(nouvelle[champ])) incoherente = 'contrôle interne : un élément distinct aurait disparu (' + champ + ')';
     });
     if (!incoherente && retiresEntree !== attendu) incoherente = 'contrôle interne : ' + retiresEntree + ' élément(s) à retirer au lieu de ' + attendu;
@@ -35511,7 +35517,9 @@ async function startListeners(dejaAppairePrecedemment) {
         let fusion = fusionnerInstantaneDistant(colName, arr, ancienneRef);
         if (premiereFusion && (colName === 'brebis' || colName === 'beliers' || colName === 'agnelles')) fusion = ecarterCollisionsPremiereLecture(colName, fusion, arr);
         setRecordsArrayForSync(colName, fusion);
-        poserIdsElements(DB, 'contenu');   // lot 4 : élément reçu sans id (appareil pas encore à jour) = id d'après son contenu, le même partout
+        // lot 4 : élément reçu sans id (appareil pas encore à jour) = id d'après son contenu, le même partout ; renvoyé tout de suite pour que
+        // le compte et l'appareil restent identiques (une seule fois : ces id sont déterministes, l'instantané suivant n'en ajoute plus)
+        if (poserIdsElements(DB, 'contenu') > 0) setTimeout(() => { if (sync.uid && !sync.applyingRemote) saveData(DB); }, 0);
       });
       persisterSyncLastSynced();
       if (duServeur) lectureServeurTerminee(colName);
