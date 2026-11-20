@@ -92,9 +92,11 @@ async function saisieRapide(p, n, j, reponse) {
   await p.evaluate(() => { const c = document.querySelector('.mortne-check-rapide'); if (c && !c.checked) c.click(); });
   const avant = await p.evaluate(() => ({ boutons: [...document.querySelectorAll('#repro-question-rapide .repro-question-btn')].map(b => b.dataset.code), choisi: [...document.querySelectorAll('.repro-code-opt-rapide.active, .repro-code-opt-rapide.selected')].length }));
   const n0 = await p.evaluate(n => DB.brebis.find(b => b.id === 'b' + n).agnelages.length, n);
-  await p.click('#btn-valider-misebas');
+  // date encore future pour l'horloge du test : question de la charte « Date à vérifier » → « Enregistrer avec cette date »
+  const valider = async () => { await p.click('#btn-valider-misebas'); if (await p.$('#question-charte')) await p.click('#qc-oui'); };
+  await valider();
   const bloque = await p.evaluate(([n, n0]) => DB.brebis.find(b => b.id === 'b' + n).agnelages.length === n0 && /Choisissez le code Repro/.test(document.getElementById('err').textContent), [n, n0]);
-  if (reponse) { await p.click(`#repro-question-rapide .repro-question-btn[data-code="${reponse}"]`); await p.click('#btn-valider-misebas'); await p.waitForTimeout(100); }
+  if (reponse) { await p.click(`#repro-question-rapide .repro-question-btn[data-code="${reponse}"]`); await valider(); await p.waitForTimeout(100); }
   const code = await p.evaluate(n => { const a = DB.brebis.find(b => b.id === 'b' + n).agnelages.slice(-1)[0]; return a ? a.codeRepro : null; }, n);
   return { avant, bloque, code };
 }
