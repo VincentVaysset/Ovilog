@@ -128,7 +128,7 @@ Reprises aussi dans `CLAUDE.md`, section « Méthode de travail ».
 
 ## Suites de l'audit global (20/11/2026, plan du propriétaire, dans cet ordre)
 Rapport d'audit et script de diagnostic : hors dépôt (envoyés au propriétaire). Diagnostic de sa sauvegarde du 20/11 : données saines (aucun EID en double, aucun statut incohérent) ; 4 n° de travail partagés par deux brebis de millésimes différents (règle SIEOL, choix à la saisie, rien à corriger).
-- **Lot 1 (critique, en cours)** :
+- **Lot 1 (critique) : FAIT** (retour Android commun, « Quitter sans enregistrer ? », double appui, unicité EID toutes formes partout, correction d'EID avec liens annulable ; tests test_retour_android, test_eid_unicite_tous_points, test_correction_eid_liens). Détail d'origine :
   1. Retour Android (bouton précédent et geste de retour) = même logique que la flèche retour de l'en-tête ; fenêtres ouvertes fermées d'abord ; sur l'Accueil, un deuxième appui pour quitter.
   2. Quitter un formulaire rempli : message de la charte « Quitter sans enregistrer ? » (jamais `confirm()`).
   3. Double appui sur « Enregistrer » : bouton désactivé dès le premier appui, helper commun.
