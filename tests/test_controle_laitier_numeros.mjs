@@ -49,7 +49,17 @@ for (const mobile of [true, false]) {
     const mb = await p.evaluate(() => [...document.querySelectorAll('#mb-table-campagne tr td:first-child')].map(e => e.textContent.trim()));
     check(mb.includes('n°20104') && mb.includes('6100') && !mb.includes(''), nom + ' : Mises bas PC = même n° (numeroAnimal) : ' + JSON.stringify(mb));
   }
-  console.log('OK ' + nom + ' : n° et ordre du Contrôle laitier (écran, PDF, Excel)' + (mobile ? '' : ', Mises bas PC') + '.');
+  // moyenne d'un contrôle = toutes les brebis contrôlées ce jour-là : une vendue depuis (fiche gardée) et une du registre restent comptées
+  if (mobile) {
+    eq(await p.evaluate(() => { const d = controleLaitierPcData([], [1]); return [d.moyennes[1].n, d.moyennes[1].moyenne]; }), [4, 1501.5], 'moyenne C1 : 4 brebis présentes');
+    eq(await p.evaluate(() => {
+      DB.brebis[0].statut = 'vendue';
+      DB.registre.brebis['250000045629999'] = { controleLaitier: [{ controle: 1, quantite: 1000, campagne: 2027 }, { controle: 1, quantite: 700, campagne: 2026 }] };
+      DB.brebis.push({ id: 'x', eid: '250000045629998', statut: 'active', controleLaitier: [{ controle: 1, quantite: null, anomalie: 9, campagne: 2027 }] });
+      const d = controleLaitierPcData([], [1]); return [d.moyennes[1].n, d.moyennes[1].moyenne];
+    }), [5, 1401.2], 'moyenne C1 : la vendue et la brebis du registre restent ; un code sans lait et une autre campagne ne comptent pas');
+  }
+  console.log('OK ' + nom + ' : n° et ordre du Contrôle laitier (écran, PDF, Excel)' + (mobile ? ', moyennes' : ', Mises bas PC') + '.');
   await ctx.close();
 }
 await browser.close();
