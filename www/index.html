@@ -6904,9 +6904,33 @@ function attacherCampagneEchoOptions(onChange) {
 // Ne demande confirmation que pour le choix "à venir" -- le seul qui sorte
 // de l'usage courant et où une erreur de saisie a un vrai coût (voir
 // gestion stricte du module demandée par l'éleveur).
-function confirmerCampagneEcho(campagneChoisie) {
+// Message de la charte (jamais confirm()) : rend vrai si rien n'est à confirmer ou si la réponse vient d'être donnée ; sinon pose la question
+// et relance le geste (relancer) après « Oui ».
+let campagneEchoConfirmee = null;
+function confirmerCampagneEcho(campagneChoisie, relancer) {
   if (campagneChoisie !== DB.campagneDebut + 1) return true;
-  return confirm('Confirmer : cette échographie concerne bien la Campagne ' + campagneLabel(campagneChoisie) + ' (à venir), pas la Campagne ' + campagneLabel(DB.campagneDebut) + ' en cours ?');
+  if (campagneEchoConfirmee === campagneChoisie) { campagneEchoConfirmee = null; return true; }
+  questionCharte('Campagne ' + campagneLabel(campagneChoisie) + ' (à venir) ?', 'Cette échographie concerne bien la Campagne ' + campagneLabel(campagneChoisie) + ' (à venir), pas la Campagne ' + campagneLabel(DB.campagneDebut) + ' en cours ?',
+    'Oui, campagne ' + campagneLabel(campagneChoisie), 'Non, revenir', () => { campagneEchoConfirmee = campagneChoisie; relancer(); });
+  return false;
+}
+/* Question de la charte (fenêtre du bas, deux boutons : oui en vert, non en blanc) à la place d'une boîte confirm() dans une saisie */
+function questionCharte(titre, texte, libOui, libNon, onOui, onNon) {
+  document.getElementById('question-charte')?.remove();
+  const ov = document.createElement('div');
+  ov.className = 'sheet-overlay'; ov.id = 'question-charte';
+  ov.innerHTML = `<div class="sheet-card" role="dialog" aria-labelledby="qc-titre">
+      <div id="qc-titre" style="font-weight:700;font-size:16px;margin-bottom:6px;">${echapperHtml(titre)}</div>
+      <div style="font-size:14px;color:var(--ch-texte2);margin-bottom:14px;">${echapperHtml(texte)}</div>
+      <button type="button" class="btn btn-primary" id="qc-oui">${echapperHtml(libOui)}</button>
+      <button type="button" class="btn btn-secondary" id="qc-non" style="margin-top:8px;">${echapperHtml(libNon)}</button>
+    </div>`;
+  document.body.appendChild(ov);
+  // la réponse donnée, le bouton du geste redevient utilisable tout de suite (le blocage du double appui ne concerne que deux appuis à la suite)
+  const fermer = () => { ov.remove(); document.querySelectorAll('button.un-appui').forEach(b => b.classList.remove('un-appui')); };
+  ov.querySelector('#qc-oui').onclick = () => { fermer(); onOui(); };
+  ov.querySelector('#qc-non').onclick = () => { fermer(); if (onNon) onNon(); };
+  ov.addEventListener('click', e => { if (e.target === ov) { fermer(); if (onNon) onNon(); } });
 }
 
 /* ---------- Bip sonore de confirmation de scan ---------- */
@@ -13380,7 +13404,7 @@ function renderAddEcho(sheepId) {
       err.classList.remove('hidden');
       return;
     }
-    if (!confirmerCampagneEcho(campagneChoisie)) return;
+    if (!confirmerCampagneEcho(campagneChoisie, () => document.getElementById('btn-save-echo').click())) return;
     err.classList.add('hidden');
     const echo = {
       type: resultMethod,
@@ -14049,7 +14073,7 @@ function renderEchoRapide() {
     document.getElementById('f-dernier-echo').checked = echoRapideSession.dernierEcho;
     document.getElementById('f-dernier-echo').onchange = (e) => { echoRapideSession.dernierEcho = e.target.checked; };
     document.getElementById('btn-start-echo-session').onclick = () => {
-      if (!confirmerCampagneEcho(echoRapideSession.campagne)) return;
+      if (!confirmerCampagneEcho(echoRapideSession.campagne, () => document.getElementById('btn-start-echo-session').click())) return;
       echoRapideSession.demarree = true;
       screenLoop();
     };
@@ -14298,9 +14322,9 @@ function renderEchoRapide() {
         draw();
       });
       document.getElementById('btn-fin-session-echo').onclick = () => {
-        if (count > 0 && !confirm('Terminer cette session d\'échographies (' + count + ' saisie(s)) ? Tu pourras en commencer une nouvelle à tout moment.')) return;
-        resetEchoRapideSession();
-        render('home');
+        const terminer = () => { resetEchoRapideSession(); render('home'); };
+        if (count > 0) questionCharte('Terminer la session ?', 'Session d\'échographies : ' + count + ' saisie' + (count > 1 ? 's' : '') + ' enregistrée' + (count > 1 ? 's' : '') + '. Vous pourrez en commencer une nouvelle à tout moment.', 'Terminer la session', 'Continuer la session', terminer);
+        else terminer();
       };
       document.getElementById('btn-historique-echo-loop').onclick = () => render('historique-echo');
 
@@ -15639,9 +15663,9 @@ function renderMiseBasRapide() {
     });
     document.getElementById('btn-fin-session-mb').onclick = () => {
       const count = misebasRapideCount;
-      if (count > 0 && !confirm('Terminer cette session de mises bas (' + count + ' saisie(s)) ? Tu pourras en commencer une nouvelle à tout moment.')) return;
-      resetMisebasRapideSession();
-      render('home');
+      const terminer = () => { resetMisebasRapideSession(); render('home'); };
+      if (count > 0) questionCharte('Terminer la session ?', 'Session de mises bas : ' + count + ' saisie' + (count > 1 ? 's' : '') + ' enregistrée' + (count > 1 ? 's' : '') + '. Vous pourrez en commencer une nouvelle à tout moment.', 'Terminer la session', 'Continuer la session', terminer);
+      else terminer();
     };
     const btnAnnulerDerniere = document.getElementById('btn-annuler-derniere');
     if (btnAnnulerDerniere) btnAnnulerDerniere.onclick = () => {
@@ -15734,11 +15758,16 @@ function renderMiseBasRapide() {
         document.querySelectorAll('.eid-input-rapide').forEach(i => i.dispatchEvent(new Event('input')));   // l'alerte « chiffre d'année » suit la date
       });
       const btnValider = document.getElementById('btn-valider-misebas');
+      let dateFutureConfirmee = false;
       btnValider.onclick = () => {
         const err = document.getElementById('err');
         // une date postérieure à aujourd'hui est une alerte à confirmer (jamais corrigée seule)
         const alerteDate = controlesMiseBas(currentSheep, form.date).alertes.find(x => x.code === 'date-future');
-        if (alerteDate && !confirm(alerteDate.message + ' Enregistrer la mise bas avec cette date ?')) return;
+        if (alerteDate && !dateFutureConfirmee) {   // question de la charte, puis le même geste est rejoué (jamais confirm())
+          questionCharte('Date à vérifier', alerteDate.message, 'Enregistrer avec cette date', 'Corriger la date', () => { dateFutureConfirmee = true; btnValider.click(); });
+          return;
+        }
+        dateFutureConfirmee = false;
         const saisie = { date: form.date, codeRepro: form.codeRepro, lambs: form.lambs.map(l => ({ sexe: l.mortNe ? 'Mort-né' : l.sexe, sexeMortNe: l.mortNe ? (l.sexe || undefined) : undefined, cause: l.mortNe ? l.cause : undefined, eid: l.eid, adopte: l.adopte, adoptNum: l.adoptNum })) };
         const r = form.avortement ? construireAvortement(currentSheep, { date: form.date, nbAvortons: form.nbAvortons, traite: form.traite }) : construireAgnelageMiseBas(currentSheep, saisie);
         if (r.erreur) { err.textContent = r.erreur; err.classList.remove('hidden'); err.scrollIntoView && err.scrollIntoView({ block: 'center' }); return; }
