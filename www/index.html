@@ -4560,6 +4560,13 @@ function estVideDefinitiveCampagneN(sheep, campagne) {
   const list = Array.isArray(sheep.videesDefinitives) ? sheep.videesDefinitives : [];
   return list.some(v => v && v.campagne === campagne);
 }
+/* Vide définitive RETENUE dans les chiffres (Accueil, Bilan de campagne, taux de réussite, bilans) : marquée pour la campagne ET sans mise
+   bas cette campagne — la mise bas fait TOUJOURS foi (la marque est alors une erreur de saisie à régulariser, signalée par l'alerte
+   « incohérente », jamais corrigée seule). UNE règle partout. campagne : par défaut celle en cours. */
+function videDefinitiveRetenue(sheep, campagne) {
+  const c = (campagne !== undefined && campagne !== null) ? campagne : DB.campagneDebut;
+  return estVideDefinitiveCampagneN(sheep, c) && !agnelageDeCampagne(sheep, c);
+}
 /* campagne (optionnel) : campagne à marquer, par défaut celle en cours.
    Utilisée avec une valeur explicite par Écho rapide quand l'échographie de
    la session est elle-même tagée sur la campagne suivante (voir
@@ -4994,11 +5001,11 @@ function libelleSortieAgneau(l) { return !l ? null : l.statutFinal === 'vendu' ?
    - Brebis attendues (troupeauAMettreBas) = brebis PRÉSENTES − vides définitives PRÉSENTES (une vide définitive sortie n'est plus dans les présentes : on ne la retire pas deux fois)
    - Brebis ayant mis bas (misesBasActives) = brebis présentes, non vides définitives, avec une mise bas cette campagne
    - Restantes = attendues − brebis ayant mis bas
-   Une brebis à la fois « mise bas » et « vide définitive » (incohérence, voir l'alerte du Bilan de campagne) compte comme vide définitive UNIQUEMENT : « fait » ne dépasse ainsi jamais « attendues »
+   Une brebis à la fois « mise bas » et « vide définitive » (incohérence, voir l'alerte du Bilan de campagne) compte comme MISE BAS uniquement (videDefinitiveRetenue : la mise bas fait foi) ; avant, vide définitive : « fait » ne dépasse ainsi jamais « attendues »
    (Math.max(0, …) protège en plus). */
 function campagneBilanChiffres(activeList) {
-  const videsDefinitivesActives = activeList.filter(s => estVideDefinitiveCampagne(s)).length;
-  const misesBasActives = activeList.filter(s => !estVideDefinitiveCampagne(s) && agnelageCampagneActuelleIdx(s) !== -1).length;
+  const videsDefinitivesActives = activeList.filter(s => videDefinitiveRetenue(s)).length;   // la mise bas fait foi
+  const misesBasActives = activeList.filter(s => agnelageCampagneActuelleIdx(s) !== -1).length;
   const troupeauAMettreBas = activeList.length - videsDefinitivesActives;
   const misesBasRestantes = Math.max(0, troupeauAMettreBas - misesBasActives);
   return { misesBasActives, videsDefinitivesActives, troupeauAMettreBas, misesBasRestantes };
@@ -5013,7 +5020,7 @@ function campagneBilanChiffres(activeList) {
    intermédiaires — celle-ci reflète le résultat réel de la campagne. */
 function tauxReussiteGlobal(cohort) {
   const misesBas = cohort.filter(s => agnelageCampagneActuelleIdx(s) !== -1).length;
-  const videsDefinitives = cohort.filter(s => estVideDefinitiveCampagne(s) && agnelageCampagneActuelleIdx(s) === -1).length;
+  const videsDefinitives = cohort.filter(s => videDefinitiveRetenue(s)).length;   // la mise bas fait foi (même règle que campagneBilanChiffres)
   const total = misesBas + videsDefinitives;
   return { misesBas, videsDefinitives, taux: total > 0 ? Math.round((misesBas / total) * 1000) / 10 : 0 };
 }
@@ -8268,7 +8275,7 @@ function accueilDesktopHtml() {
 /* Accueil PC : toutes les valeurs affichées, calculées ICI à partir des fonctions déjà partagées avec le mobile (dashboardStatsData, repartitionEchoAccueil, mortaliteSanitaireData, controleLaitierCompareData...), jamais un second calcul. Fonction pure (lecture seule) : testée telle quelle. */
 function accueilPcData() {
   const s = dashboardStatsData(), R = repartitionEchoAccueil(), mort = mortaliteSanitaireData(), cmp = controleLaitierCompareData(), sexe = agneauxCampagneRestants();
-  const vdPresentes = s.active.filter(x => estVideDefinitiveCampagne(x)).length;
+  const vdPresentes = s.active.filter(x => videDefinitiveRetenue(x)).length;
   const attendues = attendueTraiteListe();
   const motifs = attendues.map(b => Object.assign({ numero: numeroVisuel(b.eid), affiche: numeroAnimal(b), eid: b.eid }, attendueTraiteMotif(b)));
   motifs.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
