@@ -229,7 +229,11 @@ const server = http.createServer(async (req, res) => {
           continue;
         }
         if (!cols[colName]) cols[colName] = {};
-        if (op.type === 'set') {
+        if (op.type === 'set' && op.merge) {
+          // set(…, { merge: true }) du vrai SDK : les maps imbriquées sont fusionnées, rien d'autre n'est retiré
+          const fus = (a, b) => (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) ? Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map(k => [k, k in b ? fus(a[k], b[k]) : a[k]])) : b;
+          cols[colName][id] = fus(cols[colName][id] || {}, resoudreProfond(op.data));
+        } else if (op.type === 'set') {
           cols[colName][id] = resoudreProfond(op.data);
         } else if (op.type === 'update') {
           cols[colName][id] = appliquerMiseAJour(cols[colName][id] || {}, op.data);

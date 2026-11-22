@@ -185,7 +185,7 @@ export function writeBatch(db) {
   const ops = [];
   let uid = null;
   return {
-    set(ref, data) { uid = uid || parsePath(ref.path).uid; ops.push({ type: 'set', path: ref.path, data }); },
+    set(ref, data, opts) { uid = uid || parsePath(ref.path).uid; ops.push(Object.assign({ type: 'set', path: ref.path, data }, opts && opts.merge ? { merge: true } : {})); },
     update(ref, data) { uid = uid || parsePath(ref.path).uid; ops.push({ type: 'update', path: ref.path, data }); },
     delete(ref) { uid = uid || parsePath(ref.path).uid; ops.push({ type: 'delete', path: ref.path }); },
     async commit() {

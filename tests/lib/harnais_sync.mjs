@@ -76,7 +76,7 @@ export async function demarrerHarnais() {
   // Fiches du serveur telles que l'appli les lit (rangement par versions : champ el reconstitué en listes), via une page ouverte
   h.fiches = async (uid, col) => {
     const r = await h.serveur(uid, col);
-    const page = h.appareils[0].page;
+    const page = h.appareils.find(d => !d.page.isClosed()).page;
     return { docs: await page.evaluate(docs => Object.fromEntries(Object.entries(docs).map(([k, v]) => [k, materialiserFicheV(v)])), r.docs || {}) };
   };
   h.journal = async uid => (await fetch('http://127.0.0.1:' + port + '/journal?uid=' + uid)).json();
@@ -103,7 +103,8 @@ export async function peuplerCompte(h, dev) {
     saveData(DB);
   });
   const uid = dev.uid;
-  await h.attendreServeur(uid, 'meta', r => r.exists && r.data && (r.data.lots || []).some(l => l.id === 'LC') && (r.data.acheteurs || []).includes('Acheteur C') && r.data.registreCollectionMigree20260930 === true, 'meta (lot LC, acheteurs, migration du registre terminée)');
+  await h.attendreServeur(uid, 'meta', r => r.exists && r.data && (r.data.lots || []).some(l => l.id === 'LC') && r.data.registreCollectionMigree20260930 === true, 'meta (lot LC, migration du registre terminée)');
+  await h.attendreServeur(uid, 'listesCompte', r => r.docs && r.docs.acheteurs && JSON.stringify(r.docs.acheteurs).includes('Acheteur C'), 'liste des acheteurs (listes du compte)');
   await h.attendreServeur(uid, 'brebis', r => Object.keys(r.docs).length === 3, '3 brebis sur le serveur');
   await h.attendreServeur(uid, 'evenementsLots', r => Object.keys(r.docs).length >= 1, 'journal du lot sur le serveur');
   await h.attendreCalme(uid);
