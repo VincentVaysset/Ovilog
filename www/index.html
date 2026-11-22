@@ -1680,6 +1680,26 @@
   body.desktop-shell .pc-t td, body.desktop-shell .table-desktop td, body.desktop-shell table.inv-table td, body.desktop-shell table.ep-table td { height: 48px; }
   body.desktop-shell .brd-t td, body.desktop-shell .rs-t td, body.desktop-shell table.ep-sm td { height: 40px; }
   body.desktop-shell .pc-sec { font-size: 12px; font-weight: 500; letter-spacing: 0.05em; color: var(--ch-texte2); }
+/* Conflits de synchro (lot 4, livraison 2) : pastille ambre de l'Accueil, écran des versions côte à côte */
+.pastille-conflits { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; margin: 0 0 12px; border-radius: 999px; border: 1px solid var(--ch-ambre); background: var(--ch-ambre-pastel); color: var(--ch-ambre-texte); font: inherit; font-weight: 700; cursor: pointer; }
+.pastille-conflits.statique { min-height: 32px; margin: 0; cursor: default; }
+.prm-conflits { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+.cf-carte { margin-bottom: 12px; }
+.cf-titre { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.cf-titre b { color: var(--ch-vert-fonce); font-size: 17px; }
+.cf-titre span { color: var(--ch-texte); font-weight: 500; }
+.cf-ligne-grise { color: var(--ch-texte2); font-size: 13px; margin: 4px 0 10px; }
+.cf-versions { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.cf-version { border: 1px solid var(--ch-bord); border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 4px; background: var(--ch-carte); min-width: 0; }
+.cf-version.cf-affichee { border-color: var(--ch-vert); background: var(--ch-vert-pastel); }
+.cf-entete { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.cf-pastille { border-radius: 999px; padding: 2px 8px; font-size: 12px; font-weight: 700; background: var(--ch-carte); color: var(--ch-vert-texte); border: 1px solid var(--ch-vert); }
+.cf-quand { font-size: 12px; color: var(--ch-icone); }
+.cf-ligne { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; border-top: 1px solid var(--ch-separateur); padding-top: 4px; overflow-wrap: anywhere; }
+.cf-ligne span { color: var(--ch-icone); }
+.cf-ligne.cf-diff b { color: var(--ch-ambre-texte); }
+.cf-supprime { font-size: 13px; font-weight: 700; color: var(--ch-ambre-texte); padding: 6px 0; }
+.cf-version .cf-garder { margin-top: auto; min-height: 44px; }
 </style>
 </head>
 <body>
@@ -2355,8 +2375,398 @@ function poserIdsElements(db, mode) {
 /* Garde-fou du FORMAT des données du compte (lot 4) : `meta.schemaDonnees` dit quel rangement le compte utilise ; un appareil dont l'appli
    ne connaît pas ce rangement (version plus ancienne) n'envoie PLUS RIEN vers le cloud (ses saisies restent sur l'appareil) et affiche
    « Mettre à jour l'application ». Cette version connaît le format 1 (listes d'origine) ; le rangement élément par élément sera le 2. */
-function schemaDonneesVersionCourante() { return 1; }
+function schemaDonneesVersionCourante() { return 2; }   // 2 = fiches rangées par versions (lot 4, livraison 2)
 function donneesVerrouillees() { return ((typeof DB !== 'undefined' && DB && DB.schemaDonnees) || 0) > schemaDonneesVersionCourante(); }
+
+/* ---------- Rangement des fiches par VERSIONS (lot 4, livraison 2) ----------
+   Fiches brebis, béliers, agnelles : chaque élément de liste (mise bas, agneau, soin d'agneau, écho, soin, mouvement, contrôle, note, évènement
+   de repro, vide définitive, cellules, marques de traite) est rangé à part dans le champ `el` du document, sous une clé tirée de son chemin
+   (`k` + empreinte), avec ses VERSIONS : el[k] = { c: chemin, pa: chemin du parent, l: liste, v: { vid: { d, p, t, n, o, s, res } } }.
+   - d = contenu (listes imbriquées vidées, remplies à la lecture) ; p = versions sur lesquelles celle-ci a été écrite ; t = heure du SERVEUR ;
+     n = compteur de l'élément ; o = rang dans la liste (posé à la création, jamais l'ordre d'arrivée au serveur) ; s = supprimé (le contenu
+     reste) ; res = écrite par le choix de l'éleveur dans un conflit.
+   - Têtes = versions qu'aucune autre ne cite en parent. Deux appareils qui modifient des éléments différents écrivent des clés différentes :
+     tout est gardé. Même élément modifié des deux côtés : deux têtes ; la plus récente à l'heure du SERVEUR gagne (puis le compteur), jamais
+     l'horloge de l'appareil ; l'autre est GARDÉE et le conflit est signalé. Supprimé d'un côté, modifié de l'autre : la modification gagne,
+     conflit signalé ; un élément vivant sous un parent supprimé rétablit le parent (conflit).
+   - Scalaires de la fiche (n°, statut…) : au premier niveau du document, fusion champ par champ comme avant.
+   - `gel` = copie figée des listes « à l'ancienne » au moment du rangement : un appareil d'avant la livraison 1 qui réécrit ces listes est
+     repéré (listes ≠ gel) et ses changements sont repris s'ils ne contredisent rien, sinon ils deviennent un conflit (jamais de fusion muette).
+   Fonctions pures (aucun accès à Firestore) ; la synchro (script module) s'en sert. Contrôles : test_versions_moteur, test_sync_* . */
+function schemaVersionsFiches() { return 2; }
+function collectionsVersionnees() { return ['brebis', 'beliers', 'agnelles']; }
+function champsTechniquesVersions() { return ['el', 'gel', 'lp']; }
+function listesEnfantsElement(liste) { return liste === 'agnelages' ? ['lambs'] : liste === 'lambs' ? listesElementsAgneau() : []; }
+// Copie sans `undefined` (comme ce que Firestore garde) : les comparaisons de contenu se font toujours sur cette forme
+function copieNetteV(v) {
+  if (v === undefined) return null;
+  if (v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) return v.map(copieNetteV);
+  const o = {};
+  Object.keys(v).forEach(k => { o[k] = copieNetteV(v[k]); });
+  return o;
+}
+function memeContenuV(a, b) { return texteStableElement(copieNetteV(a), false) === texteStableElement(copieNetteV(b), false); }
+function cleElementV(K) { return 'k' + empreinteTexte(K); }
+function estObjetV(x) { return !!x && typeof x === 'object' && !Array.isArray(x); }
+// Heure serveur d'une version : Timestamp du SDK, { ms } du faux serveur des tests, nombre ; null = écriture pas encore reçue par le serveur
+function msServeurV(t) {
+  if (t === null || t === undefined) return null;
+  if (typeof t === 'number') return t;
+  if (typeof t.toMillis === 'function') return t.toMillis();
+  if (typeof t.ms === 'number') return t.ms;
+  if (typeof t.seconds === 'number') return t.seconds * 1000 + Math.floor((t.nanoseconds || 0) / 1e6);
+  return null;
+}
+
+/* Fiche -> éléments à plat. K = chemin lisible (« sanitaire:h1a2 », « agnelages:e9>lambs:h3>sanitaire:S-1 ») ; d = contenu de l'élément, ses
+   listes imbriquées remplacées par [] (présence gardée) ; un élément qui n'est pas un objet est enveloppé ({ __v: valeur }). */
+function aplatirFicheV(rec) {
+  const els = new Map(), ordre = new Map();
+  const visiter = (obj, pa, listes) => listes.forEach(l => {
+    const arr = obj[l];
+    if (!Array.isArray(arr)) return;
+    const ks = [], rangs = {};
+    arr.forEach(e => {
+      let id, d, objet = estObjetV(e) && e.id !== undefined && e.id !== null && e.id !== '';
+      if (objet) { id = String(e.id); d = copieNetteV(e); }
+      else {
+        const base = 'w' + empreinteTexte(texteStableElement(copieNetteV(e), false));
+        rangs[base] = (rangs[base] || 0) + 1;
+        id = rangs[base] === 1 ? base : base + '-' + rangs[base];
+        d = { __v: copieNetteV(e) };
+      }
+      let K = (pa ? pa + '>' : '') + l + ':' + id, r = 2;
+      while (els.has(K)) K = (pa ? pa + '>' : '') + l + ':' + id + '#' + (r++);
+      if (objet) listesEnfantsElement(l).forEach(sl => { if (Array.isArray(d[sl])) d[sl] = []; });
+      els.set(K, { K, pa, l, d });
+      ks.push(K);
+      if (objet) visiter(e, K, listesEnfantsElement(l));
+    });
+    ordre.set((pa || '') + '|' + l, ks);
+  });
+  visiter(rec || {}, null, listesElementsFiche());
+  const scal = {};
+  Object.keys(rec || {}).forEach(k => { if (champsTechniquesVersions().includes(k)) return; if (listesElementsFiche().includes(k) && Array.isArray(rec[k])) return; scal[k] = rec[k]; });
+  const lp = listesElementsFiche().filter(l => Array.isArray((rec || {})[l]));
+  return { scal, els, ordre, lp };
+}
+function dateTriV(d) { return String((d && (d.date || d.dateAgnelage)) || ''); }
+function comparerOrdreV(a, b) {
+  const oa = typeof a.o === 'number' ? a.o : 0, ob = typeof b.o === 'number' ? b.o : 0;
+  if (oa !== ob) return oa - ob;
+  const da = dateTriV(a.d), db = dateTriV(b.d);
+  if (da !== db) return da < db ? -1 : 1;
+  return a.K < b.K ? -1 : a.K > b.K ? 1 : 0;
+}
+// Éléments vivants (Map K -> { K, pa, l, d, o }) -> fiche ; ordre de chaque liste = rang `o`, puis date, puis chemin (jamais l'ordre du serveur)
+function reconstruireFicheV(scal, lp, vivants) {
+  const enfants = new Map();
+  vivants.forEach(e => { const c = (e.pa || '') + '|' + e.l; if (!enfants.has(c)) enfants.set(c, []); enfants.get(c).push(e); });
+  enfants.forEach(l => l.sort(comparerOrdreV));
+  const construire = (pa, l) => (enfants.get((pa || '') + '|' + l) || []).map(e => {
+    if (estObjetV(e.d) && Object.keys(e.d).length === 1 && '__v' in e.d) return copieNetteV(e.d.__v);
+    const o = copieNetteV(e.d);
+    listesEnfantsElement(l).forEach(sl => { if (Array.isArray(o[sl]) || enfants.has(e.K + '|' + sl)) o[sl] = construire(e.K, sl); });
+    return o;
+  });
+  const rec = Object.assign({}, scal);
+  const listes = new Set(lp || []);
+  vivants.forEach(e => { if (!e.pa) listes.add(e.l); });
+  listesElementsFiche().forEach(l => { if (listes.has(l)) rec[l] = construire(null, l); });
+  return rec;
+}
+function vraiesVersionsV(ent) {
+  return Object.keys((ent && ent.v) || {}).filter(vid => estObjetV(ent.v[vid])).map(vid => Object.assign({ vid }, ent.v[vid]));
+}
+function comparerVersionsV(a, b) {
+  const ta = msServeurV(a.t), tb = msServeurV(b.t);
+  const A = ta === null ? Infinity : ta, B = tb === null ? Infinity : tb;      // pas encore au serveur = la plus récente (c'est la dernière écrite ici)
+  if (A !== B) return A < B ? -1 : 1;
+  if ((a.n || 0) !== (b.n || 0)) return (a.n || 0) - (b.n || 0);
+  return a.vid < b.vid ? -1 : a.vid > b.vid ? 1 : 0;
+}
+/* État de chaque élément d'après ses versions : têtes, gagnante, conflit. Map K -> { fk, K, pa, l, heads, gagnant, d, o, s, conflit, retabli, versions } */
+function etatVersionsV(el) {
+  const etat = new Map();
+  Object.keys(el || {}).forEach(fk => {
+    const ent = el[fk];
+    if (!estObjetV(ent) || !ent.c) return;
+    const vs = vraiesVersionsV(ent);
+    if (!vs.length) return;
+    const cites = new Set();
+    vs.forEach(v => (Array.isArray(v.p) ? v.p : []).forEach(x => cites.add(x)));
+    let heads = vs.filter(v => !cites.has(v.vid));
+    if (!heads.length) heads = vs;
+    heads.sort(comparerVersionsV);
+    const vivants = heads.filter(v => !v.s);
+    const pool = vivants.length ? vivants : heads;       // supprimé d'un côté, modifié de l'autre : la modification gagne
+    const gagnant = pool[pool.length - 1];
+    const contenus = new Set(heads.map(v => (v.s ? 'X' : '') + texteStableElement(copieNetteV(v.d), false)));
+    etat.set(ent.c, { fk, K: ent.c, pa: ent.pa || null, l: ent.l, heads, gagnant, d: gagnant.d, o: gagnant.o, s: !!gagnant.s,
+      conflit: vivants.length > 0 && contenus.size > 1, retabli: false, versions: vs, nMax: vs.reduce((m, v) => Math.max(m, v.n || 0), 0) });
+  });
+  // un élément vivant sous un parent supprimé : le parent est rétabli (son contenu reste dans la suppression) et le conflit est signalé
+  etat.forEach(st => {
+    if (st.s) return;
+    let pa = st.pa;
+    while (pa) { const a = etat.get(pa); if (!a) break; if (a.s) { a.s = false; a.retabli = true; a.conflit = true; } pa = a.pa; }
+  });
+  return etat;
+}
+/* Écritures d'un appareil d'avant la livraison 1 (listes « à l'ancienne » réécrites d'un bloc) : comparées à la copie figée `gel`. Un changement
+   qui ne contredit rien (l'élément n'a pas bougé depuis) est repris ; sinon il devient une autre version en conflit (parent vide), jamais une
+   fusion muette. Identifiants des nouvelles versions calculés d'après leur contenu : deux appareils à jour qui récupèrent la même écriture
+   écrivent la même clé. Rend { ajouts: [{ K, pa, l, vid, version }], gel } ou null s'il n'y a rien à reprendre. */
+function listesAnciennesV(raw) {
+  const leg = {};
+  listesElementsFiche().forEach(l => { if (Array.isArray(raw[l])) leg[l] = raw[l]; });
+  return leg;
+}
+function recupererEcrituresAnciennesV(raw) {
+  if (!raw || !estObjetV(raw.el) || !estObjetV(raw.gel)) return null;
+  const leg = listesAnciennesV(raw);
+  if (texteStableElement(copieNetteV(leg), false) === texteStableElement(copieNetteV(raw.gel), false)) return null;
+  const avecIds = lst => { const f = copieNetteV(lst); poserIdsFiche(f, 'contenu'); return f; };
+  const G = aplatirFicheV(avecIds(raw.gel)), N = aplatirFicheV(avecIds(leg));
+  const etat = etatVersionsV(raw.el);
+  const ajouts = [];
+  const oPour = (K, l, pa) => {
+    const st = etat.get(K);
+    if (st && typeof st.o === 'number') return st.o;
+    const ks = N.ordre.get((pa || '') + '|' + l) || [];
+    let o = 0;
+    ks.forEach(k => { const s2 = etat.get(k); if (s2 && typeof s2.o === 'number') o = Math.max(o, s2.o); });
+    return o + 1 + ks.indexOf(K) / 1000;
+  };
+  N.els.forEach((n, K) => {
+    const g = G.els.get(K), st = etat.get(K);
+    if (g && memeContenuV(g.d, n.d)) return;                       // inchangé par l'ancien appareil
+    if (st && !st.s && memeContenuV(st.d, n.d)) return;           // déjà pareil
+    const accord = g ? !!(st && !st.s && memeContenuV(st.d, g.d)) : !st;
+    ajouts.push({ K, pa: n.pa, l: n.l, vid: 'r' + empreinteTexte(K + '\u0001' + texteStableElement(n.d, false)),
+      version: { d: n.d, p: accord && st ? [st.gagnant.vid] : [], n: (st ? st.nMax : 0) + 1, o: oPour(K, n.l, n.pa) } });
+  });
+  G.els.forEach((g, K) => {
+    if (N.els.has(K)) return;
+    const st = etat.get(K);
+    if (!st || st.s) return;                                        // déjà supprimé ou inconnu
+    const accord = memeContenuV(st.d, g.d);
+    ajouts.push({ K, pa: g.pa, l: g.l, vid: 'r' + empreinteTexte(K + '\u0002supprime'),
+      version: { d: st.d, s: 1, p: accord ? [st.gagnant.vid] : [], n: st.nMax + 1, o: st.o } });
+  });
+  return { ajouts, gel: copieNetteV(leg) };
+}
+// Versions récupérées ajoutées (en mémoire) au champ el, comme si elles étaient écrites (heure serveur encore inconnue)
+function elAvecRecuperationV(raw, recup) {
+  if (!recup || !recup.ajouts.length) return raw.el;
+  const el = Object.assign({}, raw.el);
+  recup.ajouts.forEach(a => {
+    const fk = cleElementV(a.K);
+    const ent = el[fk] ? Object.assign({}, el[fk], { v: Object.assign({}, el[fk].v) }) : { c: a.K, pa: a.pa, l: a.l, v: {} };
+    if (!ent.v[a.vid]) ent.v[a.vid] = Object.assign({ t: null }, a.version);
+    el[fk] = ent;
+  });
+  return el;
+}
+/* Document Firestore -> fiche telle que l'appli la connaît. Un document sans `el` (rangement pas encore fait) est rendu tel quel. */
+function materialiserFicheV(raw) {
+  if (!raw || !estObjetV(raw.el)) return raw;
+  const el = elAvecRecuperationV(raw, recupererEcrituresAnciennesV(raw));
+  const etat = etatVersionsV(el);
+  const vivants = new Map();
+  etat.forEach(st => { if (!st.s) vivants.set(st.K, { K: st.K, pa: st.pa, l: st.l, d: st.d, o: st.o }); });
+  vivants.forEach((e, K) => { let pa = e.pa; while (pa) { if (!vivants.has(pa)) { vivants.delete(K); break; } pa = vivants.get(pa).pa; } });
+  const scal = {};
+  Object.keys(raw).forEach(k => { if (champsTechniquesVersions().includes(k)) return; if (listesElementsFiche().includes(k) && Array.isArray(raw[k])) return; scal[k] = raw[k]; });
+  return reconstruireFicheV(scal, raw.lp || [], vivants);
+}
+/* Rangement d'UN document (passage) : el complet (une version par élément, identifiant calculé d'après le chemin et le contenu : deux appareils
+   qui rangent le même document écrivent exactement la même chose), gel = listes telles qu'elles sont, lp = listes présentes. `ts` = heure serveur. */
+function rangementFicheV(raw, ts) {
+  const leg = listesAnciennesV(raw || {});
+  const f = copieNetteV(raw || {});
+  poserIdsFiche(f, 'contenu');
+  const a = aplatirFicheV(f);
+  const el = {};
+  a.ordre.forEach(ks => ks.forEach((K, i) => {
+    const e = a.els.get(K);
+    const vid = 'p' + empreinteTexte(K + '\u0001' + texteStableElement(e.d, false));
+    el[cleElementV(K)] = { c: K, pa: e.pa, l: e.l, v: { [vid]: { d: e.d, p: [], n: 1, o: i, t: ts } } };
+  }));
+  return { el, gel: copieNetteV(leg), lp: a.lp };
+}
+// Le rangement d'un document est juste : mêmes listes (ids compris) que la forme « à l'ancienne »
+function rangementVerifieV(raw) {
+  if (!raw || !estObjetV(raw.el)) return false;
+  const f = copieNetteV(listesAnciennesV(raw));
+  poserIdsFiche(f, 'contenu');
+  const m = materialiserFicheV(raw), lm = {};
+  listesElementsFiche().forEach(l => { if (Array.isArray(m[l])) lm[l] = m[l]; });
+  return texteStableElement(lm, false) === texteStableElement(f, false);
+}
+function nombreElementsFicheV(rec) { return aplatirFicheV(rec).els.size; }
+
+/* Rang `o` d'un élément nouveau : entre le précédent et le suivant de la liste locale dont le rang est connu (un ajout en fin = dernier + 1) */
+function rangsNouveauxV(ks, etat, deja) {
+  const res = new Map();
+  let dernier = null;
+  ks.forEach((K, i) => {
+    const st = etat.get(K);
+    const connu = deja && deja.has(K) ? deja.get(K) : (st && typeof st.o === 'number' ? st.o : null);
+    if (connu !== null) { dernier = connu; return; }
+    let suivant = null;
+    for (let j = i + 1; j < ks.length; j++) { const s2 = etat.get(ks[j]); if (s2 && typeof s2.o === 'number' && (dernier === null || s2.o > dernier)) { suivant = s2.o; break; } }
+    const o = dernier === null ? (suivant === null ? 0 : suivant - 1) : (suivant === null ? dernier + 1 : (dernier + suivant) / 2);
+    res.set(K, o); dernier = o;
+  });
+  return res;
+}
+/* Ce qu'il faut écrire pour qu'une fiche locale passe dans le document versionné `rawEff` (état du serveur + écritures de cet appareil pas
+   encore confirmées). Rend { maj: { 'el.k….v.vid': version, … }, versionsEcrites: [{ fk, vid }] } avec des marqueurs { __v2: 'ts' } (heure
+   serveur) et { __v2: 'del' } (champ effacé), traduits par la synchro. Jamais de liste « à l'ancienne » écrite ici.
+   opts.parents : K -> vid (base vue par l'appareil quand l'autre côté a changé en même temps) ; opts.resolutions : K -> { heads, s } (choix de
+   l'éleveur : version écrite sur TOUTES les têtes) ; opts.sansPurge : ne rien effacer (choix annulable) ; opts.maintenant : heure locale (purge). */
+function nouvelIdVersionV() { return 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+function opsVersionsFicheV(local, rawEff, opts) {
+  opts = opts || {};
+  const maj = {}, ecrites = [];
+  const raw = rawEff || {};
+  const recup = recupererEcrituresAnciennesV(raw);
+  const elBase = raw.el || {};
+  const posees = new Set(Object.keys(elBase));
+  const poser = (K, pa, l, vid, version) => {
+    const fk = cleElementV(K);
+    if (!posees.has(fk)) { maj['el.' + fk + '.c'] = K; maj['el.' + fk + '.pa'] = pa || null; maj['el.' + fk + '.l'] = l; posees.add(fk); }
+    maj['el.' + fk + '.v.' + vid] = Object.assign({}, version, opts.toutRes ? { res: 1 } : {}, { t: { __v2: 'ts' } });
+    ecrites.push({ fk, vid });
+  };
+  if (recup) {
+    recup.ajouts.forEach(a => { const fk = cleElementV(a.K); if (!(elBase[fk] && elBase[fk].v && elBase[fk].v[a.vid])) poser(a.K, a.pa, a.l, a.vid, a.version); });
+    maj.gel = recup.gel;
+  }
+  const etat = etatVersionsV(elAvecRecuperationV(raw, recup));
+  const loc = aplatirFicheV(local);
+  const rangs = new Map();
+  loc.ordre.forEach(ks => rangsNouveauxV(ks, etat, null).forEach((o, K) => rangs.set(K, o)));
+  const remplaces = [];   // versions gagnantes remplacées par une version écrite ici : effacées dans la même écriture
+  const resolutions = opts.resolutions || {}, parents = opts.parents || {};
+  loc.els.forEach((e, K) => {
+    const st = etat.get(K);
+    const r = resolutions[K];
+    if (r) { poser(K, e.pa, e.l, nouvelIdVersionV(), { d: e.d, p: r.heads.slice(), n: (st ? st.nMax : 0) + 1, o: st && typeof st.o === 'number' ? st.o : rangs.get(K), res: 1 }); return; }
+    if (st && !st.s && memeContenuV(st.d, e.d)) return;                                       // inchangé
+    if (st && st.heads.some(h => !h.s && memeContenuV(h.d, e.d))) return;                     // c'est une version déjà écrite (conflit en cours)
+    const p = parents[K] ? [parents[K]] : (st ? [st.gagnant.vid] : []);
+    poser(K, e.pa, e.l, nouvelIdVersionV(), { d: e.d, p, n: (st ? st.nMax : 0) + 1, o: st && typeof st.o === 'number' ? st.o : rangs.get(K) });
+    if (st && !parents[K]) remplaces.push({ fk: st.fk, vid: st.gagnant.vid });
+  });
+  etat.forEach((st, K) => {
+    if (st.s || loc.els.has(K)) return;
+    const r = resolutions[K];
+    if (r) { poser(K, st.pa, st.l, nouvelIdVersionV(), { d: st.d, s: 1, p: r.heads.slice(), n: st.nMax + 1, o: st.o, res: 1 }); return; }
+    const p = parents[K] ? [parents[K]] : [st.gagnant.vid];
+    poser(K, st.pa, st.l, nouvelIdVersionV(), { d: st.d, s: 1, p, n: st.nMax + 1, o: st.o });
+    if (!parents[K] && !st.retabli) remplaces.push({ fk: st.fk, vid: st.gagnant.vid });
+  });
+  // ménage : versions qui ne sont plus des têtes (gardées 10 min si elles viennent d'être départagées par l'éleveur : son choix reste annulable)
+  if (!opts.sansPurge) {
+    const maintenant = opts.maintenant || Date.now();
+    const efface = (fk, vid) => { const k = 'el.' + fk + '.v.' + vid; if (!(k in maj)) maj[k] = { __v2: 'del' }; };
+    remplaces.forEach(x => { const stx = [...etat.values()].find(s => s.fk === x.fk); if (stx && stx.heads.some(h => h.res)) return; efface(x.fk, x.vid); });
+    etat.forEach(st => {
+      const tetes = new Set(st.heads.map(h => h.vid));
+      st.versions.forEach(v => {
+        if (tetes.has(v.vid)) return;
+        const enfantsRes = st.versions.filter(w => w.res && (w.p || []).includes(v.vid));
+        if (enfantsRes.some(w => { const ms = msServeurV(w.t); return ms === null || maintenant - ms < 600000; })) return;
+        efface(st.fk, v.vid);
+      });
+    });
+  }
+  return { maj, versionsEcrites: ecrites };
+}
+// Contenu entier d'un document neuf (fiche créée ici, compte déjà rangé) : scalaires + lp + el
+function documentNeufV(local) {
+  const a = aplatirFicheV(local);
+  const el = {};
+  a.ordre.forEach(ks => ks.forEach((K, i) => {
+    const e = a.els.get(K);
+    el[cleElementV(K)] = { c: K, pa: e.pa, l: e.l, v: { [nouvelIdVersionV()]: { d: e.d, p: [], n: 1, o: i, t: { __v2: 'ts' } } } };
+  }));
+  return Object.assign(copieNetteV(a.scal), { lp: a.lp, el });
+}
+// Applique une écriture (forme à marqueurs) à un document en mémoire : chemins « a.b.c », effacement, heure serveur encore inconnue (null)
+function appliquerEcritureLocaleV(raw, ecriture) {
+  if (ecriture.type === 'set') return remplacerMarqueursV(copieNetteV(ecriture.data), true);
+  const out = copieNetteV(raw || {});
+  Object.keys(ecriture.data || {}).forEach(k => {
+    if (k !== 'el' && k !== 'gel' && k.indexOf('el.') !== 0) return;   // seules les versions comptent ici (les scalaires suivent la synchro d'avant)
+    const chemin = k.split('.');
+    let c = out;
+    for (let i = 0; i < chemin.length - 1; i++) { if (!estObjetV(c[chemin[i]])) c[chemin[i]] = {}; c = c[chemin[i]]; }
+    const v = ecriture.data[k], f = chemin[chemin.length - 1];
+    if (estObjetV(v) && v.__v2 === 'del') delete c[f]; else c[f] = remplacerMarqueursV(copieNetteV(v), true);
+  });
+  return out;
+}
+function remplacerMarqueursV(v, enMemoire, sdk) {
+  if (estObjetV(v)) {
+    if (v.__v2 === 'ts') return enMemoire ? null : sdk.ts();
+    if (v.__v2 === 'del') return enMemoire ? undefined : sdk.del();
+    const o = {};
+    Object.keys(v).forEach(k => { o[k] = remplacerMarqueursV(v[k], enMemoire, sdk); });
+    return o;
+  }
+  if (Array.isArray(v)) return v.map(x => remplacerMarqueursV(x, enMemoire, sdk));
+  return v;
+}
+/* Fusion d'une fiche reçue, ÉLÉMENT par élément (3 états : local, distant, base vue la dernière fois) : un élément changé ici et pas encore
+   envoyé est gardé ; sinon le distant fait foi (suppression distante comprise). Quand l'élément local est une des versions déjà écrites
+   (conflit en cours), c'est la gagnante qui s'affiche. `noterParent(K)` : l'autre côté a changé l'élément en même temps qu'un changement
+   local pas encore parti -> la version locale sera écrite sur la base qu'elle connaissait (le conflit apparaîtra au lieu d'un écrasement). */
+function fusionnerFicheElementsV(local, remote, base, etatDistant, noterParent) {
+  if (!local || base === undefined || !remote) return remote;
+  const L = aplatirFicheV(copieNetteV(local)), R = aplatirFicheV(remote), B = aplatirFicheV(base);
+  const scal = {};
+  new Set([...Object.keys(L.scal), ...Object.keys(R.scal), ...Object.keys(B.scal)]).forEach(k => {
+    const change = JSON.stringify(copieNetteV(L.scal[k])) !== JSON.stringify(copieNetteV(B.scal[k]));
+    const v = change ? local[k] : R.scal[k];
+    if (v !== undefined) scal[k] = v;
+  });
+  const lp = JSON.stringify(L.lp) !== JSON.stringify(B.lp) ? [...new Set([...L.lp, ...R.lp])] : R.lp;
+  const garde = new Map();
+  const cles = new Set([...L.els.keys(), ...R.els.keys(), ...B.els.keys()]);
+  const ordreLocal = new Map(), ordreDistant = new Map();
+  L.ordre.forEach(ks => ks.forEach((K, i) => ordreLocal.set(K, i)));
+  R.ordre.forEach(ks => ks.forEach((K, i) => ordreDistant.set(K, i)));
+  cles.forEach(K => {
+    const l = L.els.get(K), r = R.els.get(K), b = B.els.get(K);
+    const memeLB = (!l && !b) || (l && b && memeContenuV(l.d, b.d));
+    if (memeLB) { if (r) garde.set(K, r); return; }
+    if (l && r && memeContenuV(l.d, r.d)) { garde.set(K, r); return; }
+    const st = etatDistant && etatDistant.get(K);
+    const dejaEcrit = st && (l ? st.heads.some(h => !h.s && memeContenuV(h.d, l.d)) : st.heads.some(h => h.s));
+    if (dejaEcrit) { if (r) garde.set(K, r); return; }
+    if (l) garde.set(K, l);
+    if (b && (!r || !memeContenuV(r.d, b.d)) && noterParent) noterParent(K);
+  });
+  // ordre : celui du distant pour ce qu'il connaît, les ajouts locaux après leur voisin local
+  const vivants = new Map();
+  const etatO = etatDistant || new Map();
+  garde.forEach((e, K) => {
+    let o = (etatO.get(K) && typeof etatO.get(K).o === 'number') ? etatO.get(K).o : null;
+    vivants.set(K, { K, pa: e.pa, l: e.l, d: e.d, o });
+  });
+  L.ordre.forEach(ks => {
+    const sans = ks.filter(K => vivants.has(K));
+    const rangsLoc = rangsNouveauxV(sans, etatO, null);
+    rangsLoc.forEach((o, K) => { const v = vivants.get(K); if (v && v.o === null) v.o = o; });
+  });
+  vivants.forEach(v => { if (v.o === null) v.o = ordreDistant.has(v.K) ? ordreDistant.get(v.K) : 0; });
+  vivants.forEach((e, K) => { let pa = e.pa; while (pa) { if (!vivants.has(pa)) { vivants.delete(K); break; } pa = vivants.get(pa).pa; } });
+  return reconstruireFicheV(scal, lp, vivants);
+}
 
 function loadData() {
   const raw = localStorage.getItem(DB_KEY);
@@ -7395,6 +7805,7 @@ navDrawer.querySelectorAll('.nav-item').forEach(btn => {
 });
 
 btnBack.onclick = () => {
+  if (currentView === 'conflits-synchro') { render(conflitsOrigine || 'home'); return; }
   // Paramètres mobile : depuis une rubrique, retour à l'écran d'arrivée des rubriques
   if (currentView === 'parametres' && !isDesktopMode() && parametresRubrique) { parametresRubrique = null; render('parametres'); return; }
   if (currentView === 'detail') {
@@ -7777,6 +8188,7 @@ function render(view, sheepId) {
     else if (view === 'mouvement-groupe') renderMouvementGroupe();
     else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
     else if (view === 'sous-delai') { renderSousDelai(); poserOngletsCarnet(view); }
+    else if (view === 'conflits-synchro') renderConflitsSynchro();
     else if (view === 'controle-lot-delai') renderControleLotDelai();
     else if (view === 'ordonnances') { renderOrdonnances(); poserOngletsCarnet(view); }
     else if (view === 'add-ordonnance') renderAddOrdonnance();
@@ -8565,10 +8977,132 @@ function accueilPcGraphiqueLait(lait) {
   return `<svg class="apc-graph" viewBox="0 0 520 190" role="img" aria-label="Moyenne de lait par brebis, par contrôle">${svg}</svg>`;
 }
 
+/* ---------- Conflits de synchro (lot 4, livraison 2) ----------
+   Même élément d'une fiche changé sur deux appareils, ou supprimé d'un côté et modifié de l'autre : rien n'est perdu, la version la plus récente
+   (heure du serveur) s'affiche et l'autre est gardée. Jamais de message pendant une saisie : une pastille ambre « Conflits de synchro : N » sur
+   l'Accueil (mobile et PC) et une ligne dans Paramètres › Synchro et sauvegarde ouvrent l'écran « Conflits de synchro » : les versions côte à côte,
+   l'éleveur garde celle qu'il veut (« Garder celle-ci ») ; bandeau 6 s « Choix enregistré · Annuler ». Contrôle : test_sync_conflits. */
+let conflitsOrigine = 'home';
+function conflitsSynchro() {
+  try { return (window.OvilogSync && typeof window.OvilogSync.conflits === 'function') ? window.OvilogSync.conflits() : []; } catch (e) { console.error('Conflits de synchro : lecture', e); return []; }
+}
+function pastilleConflitsHtml() {
+  const n = conflitsSynchro().length;
+  return n ? `<button type="button" class="pastille-conflits" id="pastille-conflits">Conflits de synchro : ${n}</button>` : '';
+}
+function brancherPastilleConflits(racine) {
+  const b = (racine || document).querySelector('#pastille-conflits');
+  if (b) b.onclick = () => { conflitsOrigine = currentView === 'parametres' ? 'parametres' : 'home'; render('conflits-synchro'); };
+}
+function ligneConflitsParametresHtml() {
+  const n = conflitsSynchro().length;
+  if (!n) return '<div class="prm-note" id="prm-conflits" style="margin:0 0 10px;">Aucun conflit de synchro.</div>';
+  return `<div id="prm-conflits" class="prm-conflits"><span class="pastille-conflits statique">Conflits de synchro : ${n}</span><button type="button" class="btn btn-secondary btn-petit" id="btn-voir-conflits">Voir</button></div>`;
+}
+// Rafraîchit la pastille et la ligne de Paramètres après une réception (jamais l'écran d'une saisie)
+window.majPastilleConflits = function () {
+  if (currentView === 'conflits-synchro') { if (!document.querySelector('.sup-snack')) render('conflits-synchro'); return; }
+  if (currentView === 'home') {
+    const ancienne = document.getElementById('pastille-conflits'), html = pastilleConflitsHtml();
+    if (ancienne) { if (html) ancienne.outerHTML = html; else ancienne.remove(); }
+    else if (html) { const d = document.createElement('div'); d.innerHTML = html; app.insertBefore(d.firstElementChild, app.firstChild); }
+    brancherPastilleConflits(app);
+  } else if (currentView === 'parametres') {
+    const l = document.getElementById('prm-conflits');
+    if (l) { l.outerHTML = ligneConflitsParametresHtml(); brancherLigneConflits(); }
+  }
+};
+function brancherLigneConflits() {
+  const b = document.getElementById('btn-voir-conflits');
+  if (b) b.onclick = () => { conflitsOrigine = 'parametres'; render('conflits-synchro'); };
+}
+const LIBELLES_LISTES_CONFLIT = { agnelages: 'Mise bas', lambs: 'Agneau', echographies: 'Échographie', sanitaire: 'Soin', mouvements: 'Mouvement', controleLaitier: 'Contrôle laitier',
+  notes: 'Note', modesRepro: 'IA / éponge', videesDefinitives: 'Vide définitive', cellules: 'Cellules', nonTraite: 'Pas traite', miseTraite: 'Mise à la traite' };
+const LIBELLES_CHAMPS_CONFLIT = { date: 'Date', produit: 'Produit', dose: 'Dose', type: 'Type', voie: 'Voie', quantite: 'Quantité (mL)', controle: 'Contrôle', anomalie: 'Code',
+  sexe: 'Sexe', eid: 'N°', texte: 'Texte', cause: 'Cause', resultat: 'Résultat', nbAgneaux: 'Agneaux', campagne: 'Campagne', motif: 'Motif', cellules: 'Cellules',
+  intervenant: 'Intervenant', ordonnance: 'Ordonnance', codeRepro: 'Code repro', mode: 'Mode', statutFinal: 'Devenir', stade: 'Stade' };
+function ficheDuConflit(c) { return (DB[c.col] || []).find(f => f && f.id === c.id) || null; }
+function titreConflit(c) {
+  const f = ficheDuConflit(c);
+  const animal = c.col === 'beliers' ? 'Bélier ' : c.col === 'agnelles' ? 'Agnelle ' : 'Brebis ';
+  const num = f ? numeroAnimal(f) : '';
+  const v = c.versions.find(x => !x.s) || c.versions[0];
+  const d = (v && v.d) || {};
+  const quoi = (LIBELLES_LISTES_CONFLIT[c.l] || 'Élément') + (d.date ? ' du ' + formatDateFr(d.date) : '') + (c.l === 'lambs' && d.eid ? ' n°' + String(d.eid).slice(-5) : '');
+  return { animal: animal + num, quoi };
+}
+function valeurConflitTexte(k, v) {
+  if (v === null || v === undefined || v === '') return '—';
+  if (k === 'date' || /^date/.test(k)) { try { return formatDateFr(v); } catch (e) { return String(v); } }
+  if (Array.isArray(v)) return v.length ? v.map(x => typeof x === 'object' ? (x.produit || x.nom || x.texte || '…') : String(x)).join(', ') : '—';
+  if (typeof v === 'object') return '…';
+  return String(v);
+}
+function champsConflit(c) {
+  const cles = new Set();
+  c.versions.forEach(v => Object.keys(v.d || {}).forEach(k => {
+    if (k === 'id' || k === '__v') return;
+    if (Array.isArray(v.d[k]) && listesEnfantsElement(c.l).includes(k)) return;
+    cles.add(k);
+  }));
+  return [...cles];
+}
+function versionConflitHtml(c, v, i, champs) {
+  const autres = c.versions.filter(x => x !== v);
+  const differe = k => autres.some(x => JSON.stringify((x.d || {})[k]) !== JSON.stringify((v.d || {})[k]) || x.s !== v.s);
+  const quand = v.enAttente ? 'pas encore envoyée' : (v.t ? 'reçue le ' + formatDateFr(new Date(v.t).toISOString().slice(0, 10)) + ' à ' + new Date(v.t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '');
+  const lignes = v.s && !c.retabli
+    ? '<div class="cf-supprime">Supprimé sur un appareil</div>'
+    : champs.map(k => `<div class="cf-ligne${differe(k) ? ' cf-diff' : ''}"><span>${echapperHtml(LIBELLES_CHAMPS_CONFLIT[k] || k)}</span><b>${echapperHtml(valeurConflitTexte(k, (v.d || {})[k]))}</b></div>`).join('');
+  return `<div class="cf-version${v.vid === c.gagnant ? ' cf-affichee' : ''}">
+    <div class="cf-entete"><b>Version ${String.fromCharCode(65 + i)}</b>${v.vid === c.gagnant ? '<span class="cf-pastille">Affichée</span>' : ''}</div>
+    <div class="cf-quand">${echapperHtml(quand)}</div>
+    ${lignes}
+    <button type="button" class="btn btn-primary cf-garder" data-k="${echapperHtml(c.K)}" data-id="${echapperHtml(c.id)}" data-col="${echapperHtml(c.col)}" data-vid="${echapperHtml(v.vid)}">Garder celle-ci</button>
+  </div>`;
+}
+function carteConflitHtml(c) {
+  const t = titreConflit(c);
+  const champs = champsConflit(c);
+  let versions;
+  if (c.retabli) {
+    // parent supprimé sur un appareil, mais un élément dessous modifié sur l'autre : le garder (affiché) ou le supprimer avec ce qu'il contient
+    const v = c.versions[0];
+    versions = `<div class="cf-version cf-affichee"><div class="cf-entete"><b>Gardé</b><span class="cf-pastille">Affiché</span></div><div class="cf-quand">modifié sur un appareil</div>
+        ${champs.map(k => `<div class="cf-ligne"><span>${echapperHtml(LIBELLES_CHAMPS_CONFLIT[k] || k)}</span><b>${echapperHtml(valeurConflitTexte(k, (v.d || {})[k]))}</b></div>`).join('')}
+        <button type="button" class="btn btn-primary cf-garder" data-k="${echapperHtml(c.K)}" data-id="${echapperHtml(c.id)}" data-col="${echapperHtml(c.col)}" data-vid="garder">Garder celle-ci</button></div>
+      <div class="cf-version"><div class="cf-entete"><b>Supprimé</b></div><div class="cf-quand">sur l'autre appareil</div><div class="cf-supprime">Supprimé avec ce qu'il contient</div>
+        <button type="button" class="btn btn-primary cf-garder" data-k="${echapperHtml(c.K)}" data-id="${echapperHtml(c.id)}" data-col="${echapperHtml(c.col)}" data-vid="supprimer">Garder celle-ci</button></div>`;
+  } else versions = c.versions.map((v, i) => versionConflitHtml(c, v, i, champs)).join('');
+  return `<div class="card cf-carte" data-k="${echapperHtml(c.K)}">
+    <div class="cf-titre"><b>${echapperHtml(t.animal)}</b><span>${echapperHtml(t.quoi)}</span></div>
+    <div class="cf-ligne-grise">${c.retabli ? "Supprimé sur un appareil alors qu'un élément dessous a été modifié sur l'autre : il est gardé en attendant votre choix." : 'Modifié sur deux appareils : la version la plus récente est affichée, l\'autre est gardée.'}</div>
+    <div class="cf-versions">${versions}</div>
+  </div>`;
+}
+function renderConflitsSynchro() {
+  pageTitle.textContent = 'Conflits de synchro';
+  const liste = conflitsSynchro();
+  const bloc = document.createElement('div');
+  bloc.className = 'cf-ecran';
+  bloc.innerHTML = liste.length
+    ? `<div class="cf-ligne-grise" style="margin:0 0 12px;">Rien n'est perdu : choisissez la version à garder. L'autre reste dans la sauvegarde automatique.</div>` + liste.map(carteConflitHtml).join('')
+    : `<div class="card"><div class="prm-note" style="margin:0;">Aucun conflit de synchro : tout est à jour.</div></div>`;
+  app.appendChild(bloc);
+  bloc.querySelectorAll('.cf-garder').forEach(b => b.onclick = () => {
+    const jeton = window.OvilogSync && window.OvilogSync.resoudreConflit(b.dataset.col, b.dataset.id, b.dataset.k, b.dataset.vid);
+    if (!jeton) { messageCharte('Choix impossible pour le moment', 'Ce conflit vient de changer (réception d\'un autre appareil). Réessayez.'); render('conflits-synchro'); return; }
+    render('conflits-synchro');
+    afficherSnackAnnuler('Choix enregistré', () => { window.OvilogSync.annulerResolution(jeton); if (currentView === 'conflits-synchro') render('conflits-synchro'); });
+  });
+}
+
 function renderHome() {
   pageTitle.textContent = isDesktopMode() ? 'Accueil' : 'Mon troupeau';
   const alerteMeta = alerteTailleMetaHtml();   // document principal du compte proche du plafond Firestore (voir etatTailleMeta)
   if (alerteMeta) { const d = document.createElement('div'); d.innerHTML = alerteMeta; app.appendChild(d.firstElementChild); }
+  const pastilleConflits = pastilleConflitsHtml();   // conflits de synchro : pastille ambre (jamais de message pendant une saisie)
+  if (pastilleConflits) { const d = document.createElement('div'); d.innerHTML = pastilleConflits; app.appendChild(d.firstElementChild); brancherPastilleConflits(app); }
 
   if (isDesktopMode()) {
     const dashboard = document.createElement('div');
@@ -31005,7 +31539,8 @@ function tailleMetaAdminHtml() {
   const e = etatTailleMeta(true);
   if (!e) return '';
   const ton = e.niveau === 'rouge' ? 'var(--ch-rouge)' : (e.niveau === 'ambre' ? 'var(--ch-ambre-texte)' : 'var(--ch-vert-fonce)');
-  const lignes = e.rubriques.slice(0, 5).map(r => `<li><span>${echapperHtml(r.libelle || r.cle)}</span><span>${formatOctets(r.octets)}</span></li>`).join('');
+  const lignes = e.rubriques.slice(0, 5).map(r => `<li><span>${echapperHtml(r.libelle || r.cle)}</span><span>${formatOctets(r.octets)}</span></li>`).join('')
+    + (e.ficheMax ? `<li><span>Plus grosse fiche (versions comprises)</span><span>${formatOctets(e.ficheMax.octets)}</span></li>` : '');
   return `<div id="bloc-taille-meta" style="border-top:1px solid var(--ch-separateur);padding-top:10px;margin-top:4px;">
     <div class="prm-note" style="margin:0;">Document principal du compte</div>
     <div id="taille-meta-total" style="font-size:18px;font-weight:700;color:${ton};font-variant-numeric:tabular-nums;">${formatOctets(e.total)} sur 1 Mo · ${Math.round(e.ratio * 100)} %</div>
@@ -32199,6 +32734,7 @@ function renderParametresSauvegarde(content) {
     <div class="card" id="sync-card">
       <div class="prm-titre">Synchronisation</div>
       <div class="prm-etat sync-etat-ligne" id="sync-etat" style="margin-bottom:8px;">${syncEtatLigneHtml()}</div>
+      ${ligneConflitsParametresHtml()}
       <div class="prm-note" style="margin-bottom:12px;">Les données se synchronisent entre tes appareils, y compris après un passage hors ligne.</div>
       <div id="sync-status-detail" style="font-size:12px;margin-bottom:10px;display:none;"></div>
       <button type="button" class="btn btn-secondary" id="btn-voir-journal-synchro" style="margin-bottom:10px;display:none;">Voir le journal de synchro</button>
@@ -32241,6 +32777,7 @@ function renderParametresSauvegarde(content) {
     </div>`;
   const cardsHtml = prmColonnesHtml(carteSynchro + carteDonnees, carteApplication + carteContact);
   content.innerHTML = alerteTailleMetaHtml() + cardsHtml + `<details class="prm-maintenance" id="prm-maintenance"${prmMaintenanceOuvert ? ' open' : ''}><summary><b>Maintenance</b> · Rechercher les doublons du registre</summary><div class="prm-maintenance-corps">${maintenance.html}</div></details>`;
+  brancherLigneConflits();
   document.getElementById('f-bulle-contact').onchange = (ev) => {
     try { if (ev.target.checked) localStorage.removeItem(CLE_BULLE_MASQUEE); else localStorage.setItem(CLE_BULLE_MASQUEE, '1'); } catch (e) {}
     majBulleContact();
@@ -34481,7 +35018,7 @@ import {
   sendEmailVerification, onAuthStateChanged, signOut,
   initializeFirestore, persistentLocalCache, persistentSingleTabManager,
   collection, doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, onSnapshot, arrayUnion,
-  writeBatch, runTransaction, query, where, serverTimestamp
+  writeBatch, runTransaction, query, where, serverTimestamp, deleteField
 } from './vendor/firebase.bundle.js';
 
 const firebaseConfig = {
@@ -34512,7 +35049,7 @@ const fbDb = initializeFirestore(fbApp, {
 // téléphone alors qu'importé sur la tablette). lecteurBluetooth reste
 // volontairement exclu : propre à l'appareil (appairage physique), il n'a
 // pas de sens partagé entre deux téléphones.
-const META_FIELDS = ['libellesAnomaliesControle', 'exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
+const META_FIELDS = ['rangementVersionsDate', 'libellesAnomaliesControle', 'exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
   'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'categoriesSoinsAutres', 'categoriesTraitements', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
   'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
@@ -34618,6 +35155,7 @@ function reinitialiserEtatCompte() {
   sync.baselineMeta = null;
   sync.compteInitialiseIci = false;
   sync.lastSynced = { brebis: {}, beliers: {}, agnelles: {}, prelevementsQualite: {}, ordonnances: {}, registre: {}, evenementsLots: {}, meta: undefined };
+  sync.v2 = nouvelEtatV2();
   majEtatAttenteCompte();
 }
 // Appareil déjà appairé : les sources lues sur le serveur lors d'une session précédente (clé persistée) restent connues. Références d'avant cette notion
@@ -34752,6 +35290,76 @@ function setRecordsArrayForSync(colName, arr) {
    à l'origine du bug réel du 29/09 (29 doublons). Un writeBatch commité en
    un seul envoi élimine cette fenêtre : soit tout l'état d'une bascule
    arrive d'un coup côté Firestore, soit rien n'arrive encore. */
+/* ---------- Fiches rangées par versions (lot 4, livraison 2) : état de synchro ----------
+   serveur : dernier document BRUT reçu de chaque fiche (champ el compris) ; attente : écritures de versions envoyées par cet appareil et pas encore
+   vues revenir du serveur (rejouées par-dessus le document reçu : deux saisies hors réseau d'affilée s'enchaînent au lieu de se croiser) ;
+   vue : fiche telle qu'elle a été fusionnée la dernière fois (base de la fusion élément par élément) ; parents : base d'un changement local pas
+   encore parti quand l'autre côté a changé le même élément ; resolutions : choix de l'éleveur dans un conflit, écrits au prochain envoi. */
+function nouvelEtatV2() {
+  const parCol = () => ({ brebis: {}, beliers: {}, agnelles: {} });
+  return { serveur: parCol(), charge: {}, attente: parCol(), vue: parCol(), vueRaw: parCol(), parents: parCol(), resolutions: parCol(), sansPurge: parCol(), passageEnCours: false };
+}
+sync.v2 = nouvelEtatV2();
+function estVersionnee(colName) { return collectionsVersionnees().includes(colName); }
+function rawEffectifV2(colName, id) {
+  let raw = sync.v2.serveur[colName][id];
+  (sync.v2.attente[colName][id] || []).forEach(e => { raw = appliquerEcritureLocaleV(raw, e.ecriture); });
+  return raw;
+}
+function versSdkV2(data) { return remplacerMarqueursV(data, false, { ts: () => serverTimestamp(), del: () => deleteField() }); }
+function noterAttenteV2(colName, id, ecriture) {
+  const entree = { ecriture, acquitte: false };
+  (sync.v2.attente[colName][id] = sync.v2.attente[colName][id] || []).push(entree);
+  return entree;
+}
+function retirerAttenteV2(op) {
+  if (!op || !op.v2) return;
+  const l = sync.v2.attente[op.colName][op.id];
+  if (l) { const i = l.indexOf(op.v2); if (i >= 0) l.splice(i, 1); }
+}
+function compteRangeParVersions() { return ((DB && DB.schemaDonnees) || 0) >= schemaVersionsFiches(); }
+// Opérations d'UNE fiche d'une collection versionnée. Rend false si la fiche doit attendre (rien n'est écrit).
+function opsFicheVersionnee(colName, colRef, rec, old, ops) {
+  const id = rec.id;
+  const raw = rawEffectifV2(colName, id);
+  if (!raw) {
+    if (old !== undefined) return true;      // connue avant, plus sur le serveur (supprimée ailleurs) : la réception tranche, rien ici
+    if (compteRangeParVersions()) {
+      const data = documentNeufV(rec);
+      const entree = noterAttenteV2(colName, id, { type: 'set', data });
+      ops.push({ type: 'set', ref: doc(colRef, id), data: versSdkV2(data), colName, id, newValue: rec, v2: entree });
+    } else ops.push({ type: 'set', ref: doc(colRef, id), data: rec, colName, id, newValue: rec });
+    return true;
+  }
+  if (!raw.el) {
+    if (!compteRangeParVersions()) {               // compte pas encore rangé : comme avant
+      const payload = buildUpdatePayload(old, rec);
+      if (payload) ops.push({ type: 'update', ref: doc(colRef, id), data: payload, colName, id, newValue: rec });
+      return true;
+    }
+    // compte rangé, fiche encore à l'ancienne (créée par un appareil pas à jour) : rangement de cette fiche, puis ses changements
+    const r = rangementFicheV(raw, { __v2: 'ts' });
+    const ecr = { type: 'update', data: { el: r.el, gel: r.gel, lp: r.lp } };
+    const entree = noterAttenteV2(colName, id, ecr);
+    ops.push({ type: 'update', ref: doc(colRef, id), data: versSdkV2(ecr.data), colName, id, newValue: old !== undefined ? old : materialiserFicheV(raw), v2: entree });
+  }
+  const eff = rawEffectifV2(colName, id);
+  const opts = { parents: sync.v2.parents[colName][id] || {}, resolutions: sync.v2.resolutions[colName][id] || {}, sansPurge: !!sync.v2.sansPurge[colName][id] };
+  opts.toutRes = Object.keys(opts.resolutions).length > 0;     // tout ce qu'écrit un choix de l'éleveur reste annulable (jamais effacé avant 10 min)
+  const res = opsVersionsFicheV(rec, eff, opts);
+  const plat = aplatirFicheV(rec), platOld = aplatirFicheV(old || {});
+  const scalNew = Object.assign(deepClean(plat.scal), { lp: plat.lp }), scalOld = Object.assign(deepClean(platOld.scal), { lp: platOld.lp });
+  const scal = buildUpdatePayload(scalOld, scalNew) || {};
+  const maj = Object.assign({}, scal, res.maj);
+  delete sync.v2.parents[colName][id];
+  if (Object.keys(opts.resolutions).length) { sync.v2.dernieresVersionsResolution = { colName, id, versions: res.versionsEcrites }; delete sync.v2.resolutions[colName][id]; }
+  if (!Object.keys(maj).length) return true;
+  const ecr = { type: 'update', data: res.maj };
+  const entree = noterAttenteV2(colName, id, ecr);
+  ops.push({ type: 'update', ref: doc(colRef, id), data: Object.assign({}, scal, versSdkV2(res.maj)), colName, id, newValue: rec, v2: entree });
+  return true;
+}
+
 /* `sync.lastSynced` n'avance PLUS ici (voir marquerOpAppliquee) -- correctif
    de l'audit "Changement de campagne" (point 4 de la 2e demande) : avant ce
    correctif, `lastMap[rec.id] = rec` était posé ICI, pendant la CONSTRUCTION
@@ -34770,6 +35378,8 @@ function buildAnimalCollectionOps(colName, records, ops) {
   // Registre : tant que la migration vers la collection dédiée n'est pas terminée, c'est ELLE qui crée les documents (avec sa sauvegarde préalable) ; la synchro
   // normale ne doit pas les créer avant elle, sans sauvegarde.
   if (colName === 'registre' && DB.registreCollectionMigree20260930 !== true) { sync.ecrituresRetenues = true; return; }
+  // Fiches rangées par versions : jamais d'envoi pendant le rangement, ni avant d'avoir reçu au moins une fois les documents (versions connues)
+  if (estVersionnee(colName) && (sync.v2.passageEnCours || !sync.v2.charge[colName])) { sync.ecrituresRetenues = true; sync.v2.retenue = true; return; }
   const colRef = collection(fbDb, 'users', sync.uid, colName);
   const lastMap = sync.lastSynced[colName];
   const seenIds = new Set();
@@ -34778,6 +35388,7 @@ function buildAnimalCollectionOps(colName, records, ops) {
     const rec = deepClean(rawRec);
     seenIds.add(rec.id);
     const old = lastMap[rec.id];
+    if (estVersionnee(colName)) { opsFicheVersionnee(colName, colRef, rec, old, ops); continue; }
     if (old === undefined) {
       ops.push({ type: 'set', ref: doc(colRef, rec.id), data: rec, colName, id: rec.id, newValue: rec });
     } else {
@@ -34829,7 +35440,14 @@ function mesureMeta() {
   // vraie taille du document : champs envoyés par cette version + champs du serveur qu'elle n'envoie plus (copie meta.registre, temps 1)
   const rec = Object.assign({}, sync.lastSynced.meta || {}, metaRecordPourCloud(DB));
   const rubriques = Object.keys(rec).map(k => ({ cle: k, libelle: k === CHAMP_COPIE_REGISTRE && registreMigreDansCollection() ? 'registre (copie, plus utilisée)' : k, octets: new TextEncoder().encode(k).length + 1 + tailleFirestore(rec[k]) })).sort((x, y) => y.octets - x.octets);
-  return { total: 32 + rubriques.reduce((t, r) => t + r.octets, 0), max: META_TAILLE_MAX, rubriques, refusTaille: !!sync.metaRefuseeTaille };
+  // fiches rangées par versions : la plus grosse fiche (versions comprises) compte aussi, chaque document Firestore ayant le même plafond de 1 Mo
+  let fiche = null;
+  collectionsVersionnees().forEach(c => Object.keys(sync.v2.serveur[c] || {}).forEach(id => {
+    const o = 32 + tailleFirestore(rawEffectifV2(c, id));
+    if (!fiche || o > fiche.octets) fiche = { col: c, id, octets: o };
+  }));
+  const totalMeta = 32 + rubriques.reduce((t, r) => t + r.octets, 0);
+  return { total: Math.max(totalMeta, fiche ? fiche.octets : 0), totalMeta, ficheMax: fiche, max: META_TAILLE_MAX, rubriques, refusTaille: !!sync.metaRefuseeTaille };
 }
 // Écriture de meta refusée par Firestore pour la taille (« exceeds the maximum allowed size ») : signalée à l'écran (etatTailleMeta), plus seulement au journal technique
 function erreurTailleDocument(error) {
@@ -34867,6 +35485,7 @@ function marquerOpAppliquee(op) {
   const lastMap = sync.lastSynced[op.colName];
   if (op.type === 'delete') delete lastMap[op.id];
   else lastMap[op.id] = op.newValue;
+  if (op.v2) op.v2.acquitte = true;        // reste rejouée jusqu'au prochain document reçu du serveur (qui la contient)
   persisterSyncLastSynced();
 }
 
@@ -34951,6 +35570,7 @@ function viderJournalSynchro() {
 let compteurEchecsSynchro = 0;
 function journaliserEchecSynchro(op, error) {
   compteurEchecsSynchro++;
+  retirerAttenteV2(op);                    // écriture de versions refusée : elle ne compte plus (elle sera recalculée au prochain envoi)
   if (op && op.colName === 'meta' && erreurTailleDocument(error)) { sync.metaRefuseeTaille = true; if (window.majAlerteTailleMeta) window.majAlerteTailleMeta(); }
   try {
     const journal = lireJournalSynchro();
@@ -35270,6 +35890,138 @@ function fusionnerListeLots(locaux, distants, refs) {
    sync.lastSynced -- seule la lecture de DB[colName] (voir
    getRecordsArrayForSync) doit rester la plus FRAÎCHE possible, elle,
    lue au moment réel de l'application (immédiate ou différée). */
+/* Réception des documents bruts d'une collection versionnée (dans le mutateur : au moment où DB est réellement fusionné) : les écritures de cet
+   appareil déjà confirmées ET revenues du serveur ne sont plus rejouées. */
+function recevoirBrutsV2(colName, bruts) {
+  const serveur = {};
+  bruts.forEach((r, id) => { serveur[id] = r; });
+  sync.v2.serveur[colName] = serveur;
+  Object.keys(sync.v2.attente[colName]).forEach(id => {
+    sync.v2.attente[colName][id] = (sync.v2.attente[colName][id] || []).filter(e => !e.acquitte);
+    if (!sync.v2.attente[colName][id].length) delete sync.v2.attente[colName][id];
+  });
+}
+// Fiche reçue (versions) : fusion élément par élément contre ce qui a été vu la dernière fois ; la fiche distante tient compte des écritures de cet appareil en cours
+function fusionnerFicheVersionnee(colName, id, local, refConnue) {
+  const eff = rawEffectifV2(colName, id);
+  const distant = copieNetteV(materialiserFicheV(eff));
+  const base = sync.v2.vue[colName][id] !== undefined ? sync.v2.vue[colName][id] : refConnue;
+  const etatEff = etatVersionsV(elAvecRecuperationV(eff, recupererEcrituresAnciennesV(eff)));
+  const ancienRaw = sync.v2.vueRaw[colName][id];
+  const etatAncien = ancienRaw && ancienRaw.el ? etatVersionsV(ancienRaw.el) : null;
+  const fusion = fusionnerFicheElementsV(local, distant, base, etatEff, K => {
+    const st = etatAncien && etatAncien.get(K);
+    if (st) (sync.v2.parents[colName][id] = sync.v2.parents[colName][id] || {})[K] = st.gagnant.vid;
+  });
+  sync.v2.vue[colName][id] = distant;
+  sync.v2.vueRaw[colName][id] = eff;
+  return fusion;
+}
+/* Conflits de synchro en cours (fiches rangées par versions) : un par élément qui a plusieurs têtes au contenu différent, ou un parent rétabli
+   parce qu'un élément sous lui a été modifié ailleurs. Lecture seule. */
+/* Choix de l'éleveur dans un conflit : la version gardée est écrite sur TOUTES les têtes (le conflit est levé partout) ; les versions écartées
+   sont d'abord archivées sur cet appareil (ovilog_conflits_resolus, reprises dans chaque sauvegarde automatique ; sur Android, une sauvegarde
+   automatique est écrite tout de suite), puis effacées du serveur 10 min plus tard (ménage normal) : « Annuler » dans les 6 s retire le choix et
+   rend le conflit tel qu'il était. vid = version choisie ; 'garder' / 'supprimer' pour un parent rétabli. Rend un jeton d'annulation ou null. */
+const CLE_CONFLITS_RESOLUS = 'ovilog_conflits_resolus';
+function archiverConflitResolu(c, choix) {
+  try {
+    const l = JSON.parse(localStorage.getItem(CLE_CONFLITS_RESOLUS) || '[]');
+    l.unshift({ date: new Date().toISOString(), col: c.col, id: c.id, element: c.K, choix, versions: c.versions });
+    localStorage.setItem(CLE_CONFLITS_RESOLUS, JSON.stringify(l.slice(0, 200)));
+  } catch (e) { console.error('Conflit de synchro : archivage local impossible', e); }
+  const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (Filesystem && typeof writeAutoBackupFile === 'function') writeAutoBackupFile(nomFichierBackupAuto(new Date()), DB).catch(e => console.error('Conflit de synchro : sauvegarde automatique', e));
+}
+function remplacerElementFicheV2(rec, K, d, supprimer) {
+  const a = aplatirFicheV(rec);
+  const vivants = new Map();
+  a.ordre.forEach(ks => ks.forEach((k, i) => vivants.set(k, Object.assign({}, a.els.get(k), { o: i }))));
+  if (supprimer) [...vivants.keys()].forEach(k => { if (k === K || k.indexOf(K + '>') === 0) vivants.delete(k); });
+  else if (vivants.has(K)) {
+    const e = vivants.get(K), nd = copieNetteV(d);
+    listesEnfantsElement(e.l).forEach(sl => { if (Array.isArray(e.d[sl])) nd[sl] = []; });
+    e.d = nd;
+  } else return null;
+  return reconstruireFicheV(a.scal, a.lp, vivants);
+}
+function resoudreConflitV2(col, id, K, vid) {
+  if (!estVersionnee(col) || !sync.uid) return null;
+  const c = listerConflitsV2().find(x => x.col === col && x.id === id && x.K === K);
+  if (!c) return null;
+  const idx = (DB[col] || []).findIndex(f => f && f.id === id);
+  if (idx < 0) return null;
+  const avant = copieNetteV(DB[col][idx]);
+  let nouvelle;
+  if (c.retabli) {
+    if (vid !== 'garder' && vid !== 'supprimer') return null;
+    nouvelle = vid === 'supprimer' ? remplacerElementFicheV2(avant, K, null, true) : copieNetteV(avant);
+  } else {
+    const v = c.versions.find(x => x.vid === vid);
+    if (!v) return null;
+    nouvelle = v.s ? remplacerElementFicheV2(avant, K, null, true) : remplacerElementFicheV2(avant, K, v.d, false);
+  }
+  if (!nouvelle) return null;
+  archiverConflitResolu(c, vid);
+  (sync.v2.resolutions[col][id] = sync.v2.resolutions[col][id] || {})[K] = { heads: c.versions.map(x => x.vid) };
+  sync.v2.sansPurge[col][id] = true;                // choix annulable : rien n'est effacé dans cet envoi
+  sync.v2.dernieresVersionsResolution = null;
+  DB[col][idx] = nouvelle;
+  saveData(DB);
+  delete sync.v2.sansPurge[col][id];
+  const ecrites = sync.v2.dernieresVersionsResolution && sync.v2.dernieresVersionsResolution.id === id ? sync.v2.dernieresVersionsResolution.versions : [];
+  if (typeof window.majPastilleConflits === 'function') setTimeout(() => window.majPastilleConflits(), 0);
+  return { col, id, K, avant, ecrites };
+}
+// Annuler le choix : les versions écrites par le choix sont retirées (le conflit revient tel quel) et la fiche reprend exactement son état d'avant
+function annulerResolutionV2(jeton) {
+  if (!jeton || !sync.uid) return false;
+  const { col, id, avant, ecrites } = jeton;
+  if (ecrites && ecrites.length) {
+    const ecr = { type: 'update', data: {} };
+    ecrites.forEach(x => { ecr.data['el.' + x.fk + '.v.' + x.vid] = { __v2: 'del' }; });
+    const entree = noterAttenteV2(col, id, ecr);
+    const op = { type: 'update', ref: doc(collection(fbDb, 'users', sync.uid, col), id), data: versSdkV2(ecr.data), colName: col, id, newValue: avant, v2: entree };
+    commitOpsInBatches([op]).catch(e => console.error('Annulation du choix de conflit : erreur', e));
+  }
+  delete sync.v2.resolutions[col][id];
+  const idx = (DB[col] || []).findIndex(f => f && f.id === id);
+  if (idx >= 0) DB[col][idx] = avant;
+  sync.v2.sansPurge[col][id] = true;
+  saveData(DB);
+  delete sync.v2.sansPurge[col][id];
+  if (typeof window.majPastilleConflits === 'function') setTimeout(() => window.majPastilleConflits(), 0);
+  return true;
+}
+function listerConflitsV2() {
+  const out = [];
+  collectionsVersionnees().forEach(c => {
+    const ids = new Set([...Object.keys(sync.v2.serveur[c] || {}), ...Object.keys(sync.v2.attente[c] || {})]);
+    ids.forEach(id => {
+      const raw = rawEffectifV2(c, id);
+      if (!raw || !raw.el) return;
+      const etat = etatVersionsV(elAvecRecuperationV(raw, recupererEcrituresAnciennesV(raw)));
+      etat.forEach(st => {
+        if (!st.conflit) return;
+        out.push({ col: c, id, K: st.K, l: st.l, pa: st.pa, retabli: st.retabli, gagnant: st.gagnant.vid,
+          versions: st.heads.map(v => ({ vid: v.vid, d: copieNetteV(v.d), s: !!v.s, t: msServeurV(v.t), enAttente: msServeurV(v.t) === null })) });
+      });
+    });
+  });
+  return out;
+}
+function apresFusionV2(colName) {
+  const premiere = !sync.v2.charge[colName];
+  sync.v2.charge[colName] = true;
+  Object.keys(sync.v2.vue[colName]).forEach(id => { if (!sync.v2.serveur[colName][id]) { delete sync.v2.vue[colName][id]; delete sync.v2.vueRaw[colName][id]; } });
+  // des écritures attendaient les versions de cette collection, ou une fiche reçue appelle un envoi (reprise d'un ancien appareil, rangement d'une fiche) : envoi
+  const aEnvoyer = (premiere && sync.v2.retenue) || Object.keys(sync.v2.serveur[colName]).some(id => {
+    const r = sync.v2.serveur[colName][id];
+    return (r && r.el && recupererEcrituresAnciennesV(r)) || (r && !r.el && compteRangeParVersions());
+  });
+  if (aEnvoyer) setTimeout(() => { if (sync.uid && !sync.applyingRemote) syncAllToCloud(DB).catch(e => console.error('Synchro des versions : erreur', e)); }, 0);
+  if (typeof window.majPastilleConflits === 'function') setTimeout(() => window.majPastilleConflits(), 0);
+}
 function fusionnerInstantaneDistant(colName, arr, ancienneRef) {
   const localParId = new Map((getRecordsArrayForSync(colName, DB) || []).map(r => [r.id, r]));
   const idsDistants = new Set();
@@ -35277,6 +36029,10 @@ function fusionnerInstantaneDistant(colName, arr, ancienneRef) {
     idsDistants.add(remoteRec.id);
     const local = localParId.get(remoteRec.id);
     const refConnue = ancienneRef[remoteRec.id];
+    if (estVersionnee(colName) && sync.v2.serveur[colName][remoteRec.id] && sync.v2.serveur[colName][remoteRec.id].el) {
+      localParId.set(remoteRec.id, fusionnerFicheVersionnee(colName, remoteRec.id, local, refConnue));
+      return;
+    }
     localParId.set(remoteRec.id, fusionnerEnregistrementDistant(local, remoteRec, refConnue));
   });
   // Suppression distante : TOUJOURS honorée dès que l'id disparaît de
@@ -35418,6 +36174,7 @@ async function compteVideConfirme() {
     const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
     if (typeof DB.bilanEconomiqueActif !== 'boolean') DB.bilanEconomiqueActif = false;   // compte neuf : Bilan économique masqué
     if (typeof DB.bilanEconomiqueDisponible !== 'boolean') DB.bilanEconomiqueDisponible = false;   // … et son interrupteur absent de Paramètres : un compte neuf ne peut pas l'activer
+    if (!((DB.schemaDonnees || 0) >= schemaVersionsFiches())) DB.schemaDonnees = schemaVersionsFiches();   // compte neuf : fiches rangées par versions dès le départ (rien à ranger)
     const record = metaRecordPourCloud(DB);
     const cree = await runTransaction(fbDb, async tx => {
       const snap = await tx.get(metaRef);
@@ -35467,8 +36224,11 @@ async function startListeners(dejaAppairePrecedemment) {
     // prouve que l'état du compte est connu (voir marquerSourceConnue). Les rappels qui ne changent que les métadonnées sont écartés plus bas (dernierBrut).
     const unsub = onSnapshot(colRef, { includeMetadataChanges: true }, snap => {
       const duServeur = !(snap.metadata && snap.metadata.fromCache);
-      const arr = [];
+      let arr = [];
       snap.forEach(d => arr.push(d.data()));
+      // fiches rangées par versions : documents bruts gardés à part (versions), l'appli ne voit que la fiche lue (materialiserFicheV)
+      const bruts = estVersionnee(colName) ? new Map(arr.map(r => [r.id, r])) : null;
+      if (bruts) arr = arr.map(r => (r && r.el) ? copieNetteV(materialiserFicheV(r)) : r);
       // Un instantané distant peut arriver AVANT que le correctif fait par
       // migrateData au chargement (encore seulement en mémoire, jamais
       // repoussé) n'ait eu la moindre chance d'être synchronisé -- sans ce
@@ -35488,7 +36248,7 @@ async function startListeners(dejaAppairePrecedemment) {
         });
       }
       const premiereFusion = !sync.connu.has(colName);
-      const signatureBrute = JSON.stringify(arr);
+      const signatureBrute = bruts ? JSON.stringify([...bruts.values()]) : JSON.stringify(arr);
       if (sync.dernierBrut[colName] === signatureBrute) {            // métadonnées seules (confirmation serveur, état de cache) : rien à fusionner
         if (duServeur) lectureServeurTerminee(colName);
         return;
@@ -35514,7 +36274,9 @@ async function startListeners(dejaAppairePrecedemment) {
       // gardé la version locale.
       arr.forEach(r => { sync.lastSynced[colName][r.id] = deepClean(r); });
       applyOrQueueRemoteUpdate(colName, () => {
+        if (bruts) recevoirBrutsV2(colName, bruts);
         let fusion = fusionnerInstantaneDistant(colName, arr, ancienneRef);
+        if (bruts) apresFusionV2(colName);
         if (premiereFusion && (colName === 'brebis' || colName === 'beliers' || colName === 'agnelles')) fusion = ecarterCollisionsPremiereLecture(colName, fusion, arr);
         setRecordsArrayForSync(colName, fusion);
         // lot 4 : élément reçu sans id (appareil pas encore à jour) = id d'après son contenu, le même partout ; renvoyé tout de suite pour que
@@ -35735,6 +36497,85 @@ async function migrerRegistreVersCollectionEffective() {
   saveData(DB);
 }
 
+/* ---------- Rangement du compte par versions (lot 4, livraison 2) ----------
+   Fait UNE fois, par le premier appareil à jour, une fois le compte lu : sauvegarde complète, puis chaque fiche (brebis, béliers, agnelles)
+   reçoit son champ el (une version par élément, identifiants calculés : deux appareils qui rangent en même temps écrivent la même chose), sa
+   copie figée gel et lp ; les listes « à l'ancienne » restent lisibles telles quelles. Relecture au serveur : mêmes fiches, mêmes éléments, mêmes
+   effectifs ; alors seulement le marqueur meta.schemaDonnees = 2 prévient tous les appareils (ceux qui ne connaissent pas ce format n'écrivent
+   plus rien, bandeau « Mettre à jour l'application »). Un écart : rien n'est marqué, nouvelle tentative à la prochaine ouverture (le rangement est
+   réécrit en entier). Aucune donnée d'élevage modifiée. */
+let passageVersionsEnCours = null;
+function etapeRangement(t) { window.__etapeRangementVersions = t; }   // dernière étape du rangement (diagnostic, jamais affichée)
+function passerAuxVersions() {
+  if (!passageVersionsEnCours) passageVersionsEnCours = passerAuxVersionsEffectif().finally(() => { passageVersionsEnCours = null; });
+  return passageVersionsEnCours;
+}
+function effectifsPassageV2(docs) {
+  const n = { fiches: 0, elements: 0, actives: 0 };
+  docs.forEach(r => { n.fiches++; const f = copieNetteV(r); poserIdsFiche(f, 'contenu'); n.elements += nombreElementsFicheV(f); if (!['vendue', 'morte', 'vendu', 'mort', 'sortie'].includes(String(r.statut || '').toLowerCase())) n.actives++; });
+  return n;
+}
+async function lireCollectionServeurV2(colName) {
+  const snap = await getDocs(collection(fbDb, 'users', sync.uid, colName));
+  if (snap.metadata && snap.metadata.fromCache) throw new Error('lecture depuis le cache (hors réseau)');
+  const docs = [];
+  snap.forEach(d => docs.push(d.data()));
+  return docs;
+}
+async function passerAuxVersionsEffectif() {
+  if (!sync.uid) return;
+  const uidPassage = sync.uid;
+  await attendreSourceConnue('meta');
+  for (const c of collectionsVersionnees()) await attendreSourceConnue(c);
+  if (migrationRegistreEnCours) { try { await migrationRegistreEnCours; } catch (e) { /* déjà journalisé */ } }
+  if (sync.uid !== uidPassage || compteRangeParVersions() || donneesVerrouillees() || !ecritureCloudAutorisee()) { etapeRangement('inutile'); return; }
+  sync.v2.passageEnCours = true;
+  etapeRangement('lecture');
+  try {
+    const avant = {};
+    for (const c of collectionsVersionnees()) avant[c] = await lireCollectionServeurV2(c);
+    const ops = [];
+    collectionsVersionnees().forEach(c => avant[c].forEach(r => {
+      if (!r || !r.id || (r.el && rangementVerifieV(r))) return;
+      const g = rangementFicheV(r.el ? Object.assign({}, r, r.gel || {}) : r, serverTimestamp());
+      ops.push({ type: 'update', ref: doc(fbDb, 'users', sync.uid, c, r.id), data: { el: g.el, gel: g.gel, lp: g.lp }, colName: c, id: r.id, newValue: sync.lastSynced[c][r.id] !== undefined ? sync.lastSynced[c][r.id] : deepClean(r) });
+    }));
+    if (ops.length) {
+      // sauvegarde complète AVANT toute écriture (Android : copie interne relue et vérifiée ; ailleurs : fichier téléchargé). Rien à ranger = rien à sauvegarder.
+      const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+      const sauve = Filesystem ? await writeAutoBackupFile('ovilog_avant_versions_' + jourAujourdhuiISO() + '.json', DB) : await exportBackupFile(DB, 'avant-rangement-versions');
+      if (!sauve || sauve.ok === false) { etapeRangement('sauvegarde impossible'); console.error('Rangement par versions : sauvegarde préalable impossible, reporté', sauve && sauve.raison); return; }
+      etapeRangement('sauvegarde faite');
+      sync.sauvegardeFaite = true;
+    }
+    const echecsAvant = compteurEchecsSynchro;
+    if (ops.length) await commitOpsInBatches(ops);
+    if (compteurEchecsSynchro !== echecsAvant) { etapeRangement('écriture en échec'); console.error('Rangement par versions : au moins une fiche non écrite, nouvelle tentative à la prochaine ouverture'); return; }
+    // relecture : chaque fiche rangée redonne exactement ses listes, mêmes fiches, mêmes éléments, mêmes effectifs
+    for (const c of collectionsVersionnees()) {
+      const apres = await lireCollectionServeurV2(c);
+      const a = effectifsPassageV2(avant[c].map(r => r.el ? Object.assign({}, r, r.gel || {}) : r)), b = effectifsPassageV2(apres.map(r => copieNetteV(materialiserFicheV(r))));
+      const toutRange = apres.every(r => rangementVerifieV(r));
+      if (!toutRange || a.fiches !== b.fiches || a.elements !== b.elements || a.actives !== b.actives) {
+        etapeRangement('vérification en échec');
+        console.error('Rangement par versions : vérification en échec (' + c + ')', a, b, toutRange);
+        return;
+      }
+    }
+    DB.schemaDonnees = schemaVersionsFiches();
+    DB.rangementVersionsDate = new Date().toISOString();
+    etapeRangement('fait');
+    sync.v2.passageEnCours = false;
+    saveData(DB);
+  } catch (e) {
+    etapeRangement('interrompu : ' + ((e && e.message) || e));
+    console.error('Rangement par versions : interrompu (réseau ?), nouvelle tentative à la prochaine ouverture', e);
+  } finally {
+    sync.v2.passageEnCours = false;
+    setTimeout(() => { if (sync.uid) syncAllToCloud(DB).catch(e => console.error('Reprise après rangement : erreur', e)); }, 0);
+  }
+}
+
 /* Détermine si le compte a DÉJÀ des données connues -- soit localement
    (déjà bootstrappé au moins une fois sur cet appareil, ce qui implique
    forcément qu'un document meta cloud a été posé à ce moment-là), soit
@@ -35771,6 +36612,7 @@ async function onSignedIn(user) {
   }
   const migration = migrerRegistreVersCollection();
   if (sync.connu.has('meta')) await migration; else migration.catch(e => console.error('Migration du registre : erreur', e));
+  passerAuxVersions().catch(e => console.error('Rangement par versions : erreur', e));
   return hadDonneesExistantes;
 }
 
@@ -35938,6 +36780,9 @@ window.OvilogSync = {
   viderJournal() { viderJournalSynchro(); },
   // Bulle de contact (script classique : panneau, « Messages reçus ») -- voir demarrerContact
   mesureMeta() { return mesureMeta(); },
+  conflits() { return listerConflitsV2(); },
+  resoudreConflit(c, id, K, vid) { return resoudreConflitV2(c, id, K, vid); },
+  annulerResolution(jeton) { return annulerResolutionV2(jeton); },
   // Rapports d'erreurs automatiques (voir ecrireRapportErreur) : envoi (faux si aucun compte connecté), liste et suppression pour l'administrateur
   envoyerRapportErreur(r) { return ecrireRapportErreur(r); },
   erreursRecues() { return contact.estAdmin ? contact.erreurs.slice() : []; },

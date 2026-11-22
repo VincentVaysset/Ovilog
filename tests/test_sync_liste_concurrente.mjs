@@ -1,7 +1,7 @@
-/* Test 7 de l'audit (lot 4) : deux appareils HORS RÉSEAU sur la même brebis ; l'un SUPPRIME un soin, l'autre en AJOUTE un. Au retour du
-   réseau (l'appareil qui ajoute repart en premier), la liste des soins est réécrite d'un bloc par le second : c'est la PERTE constatée avant
-   la livraison 2 du lot 4 (rangement élément par élément). Ce test FIXE ce constat (l'ajout de l'autre appareil est perdu, sans message) ;
-   la livraison 2 le retournera en « aucune perte ». Faux backend Firestore local, comptes jetables, aucune donnée réelle. */
+/* Test 7 de l'audit (lot 4) : deux appareils HORS RÉSEAU sur la même brebis ; l'un SUPPRIME un soin, l'autre en AJOUTE un. Avant la livraison 2,
+   la liste des soins était réécrite d'un bloc par le second appareil revenu au réseau : l'ajout de l'autre était PERDU, sans message. Depuis le
+   rangement par versions (lot 4, livraison 2), chaque soin est rangé à part : la suppression ET l'ajout sont gardés, sur le serveur et sur les
+   deux appareils, sans conflit. Faux backend Firestore local, comptes jetables, aucune donnée réelle. */
 import { demarrerHarnais } from './lib/harnais_sync.mjs';
 
 const h = await demarrerHarnais();
@@ -22,7 +22,9 @@ await pc.page.evaluate(() => {
   saveData(DB);
 });
 const uid = pc.uid;
-await h.attendreServeur(uid, 'brebis', r => produits(r).join() === 'Produit A,Produit B', 'brebis b1 et ses 2 soins sur le serveur');
+const fiches = () => h.fiches(uid, 'brebis');
+const attendreFiches = async (pred, label) => { const d = Date.now(); while (Date.now() - d < 20000) { if (pred(await fiches())) return; await h.dormir(150); } throw new Error('TIMEOUT côté serveur : ' + label); };
+await attendreFiches(r => produits(r).join() === 'Produit A,Produit B', 'brebis b1 et ses 2 soins sur le serveur');
 await h.attendreCalme(uid);
 
 const tel = await h.ouvrir();
@@ -37,13 +39,16 @@ await tel.page.evaluate(() => { const b = DB.brebis.find(x => x.id === 'b1'); b.
 await h.dormir(500);
 // retour du réseau : le téléphone d'abord, puis le PC
 await h.reseau(tel, { coupe: false });
-await h.attendreServeur(uid, 'brebis', r => produits(r).includes('Produit C'), 'l\'ajout du téléphone arrive sur le serveur');
+await attendreFiches(r => produits(r).includes('Produit C'), 'l\'ajout du téléphone arrive sur le serveur');
 await h.reseau(pc, { coupe: false });
-await h.attendreServeur(uid, 'brebis', r => !produits(r).includes('Produit A'), 'la suppression du PC arrive sur le serveur');
+await attendreFiches(r => !produits(r).includes('Produit A'), 'la suppression du PC arrive sur le serveur');
 await h.attendreCalme(uid);
-const fin = produits(await h.serveur(uid, 'brebis'));
-// CONSTAT avant la livraison 2 : la suppression du PC a réécrit toute la liste ; l'ajout du téléphone (« Produit C ») est perdu, sans message.
-check(fin.join() === 'Produit B', 'constat (avant la livraison 2) : l\'ajout de l\'autre appareil est perdu : ' + JSON.stringify(fin));
-console.log('CONSTAT test 7 : un appareil supprime un soin, l\'autre en ajoute un hors réseau → serveur = ' + JSON.stringify(fin) + ' (« Produit C » perdu). À corriger par la livraison 2.');
+const fin = produits(await fiches());
+check(fin.join() === 'Produit B,Produit C', 'aucune perte : la suppression du PC et l\'ajout du téléphone sont gardés : ' + JSON.stringify(fin));
+const local = d => d.page.evaluate(() => DB.brebis.find(x => x.id === 'b1').sanitaire.map(x => x.produit).sort().join());
+await h.attendre(pc, () => DB.brebis.find(x => x.id === 'b1').sanitaire.map(x => x.produit).sort().join() === 'Produit B,Produit C', { label: 'le PC a les deux changements' });
+await h.attendre(tel, () => DB.brebis.find(x => x.id === 'b1').sanitaire.map(x => x.produit).sort().join() === 'Produit B,Produit C', { label: 'le téléphone a les deux changements' });
+check(await pc.page.evaluate(() => window.OvilogSync.conflits().length) === 0 && await tel.page.evaluate(() => window.OvilogSync.conflits().length) === 0, 'éléments différents : aucun conflit signalé');
+console.log('OK test 7 : un appareil supprime un soin, l\'autre en ajoute un hors réseau → serveur et appareils = ' + JSON.stringify(fin) + ' (' + await local(pc) + '), aucun conflit.');
 await h.fin();
-console.log('test_sync_liste_concurrente : OK (constat fixé)');
+console.log('test_sync_liste_concurrente : OK');
