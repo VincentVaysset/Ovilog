@@ -4,6 +4,7 @@
    rien d'écrit), écriture seulement après l'export, remplacement d'un résumé existant sur
    confirmation. Faux backend + faux plugins natifs, aucune donnée réelle. */
 import { chromium } from 'playwright';
+import { metaEtListes } from './lib/listes_compte.mjs';
 import { LAUNCH, URL_APP, LIB_DIR } from './lib/config.mjs';
 import { spawn } from 'child_process';
 import { readFileSync } from 'fs';
@@ -73,7 +74,8 @@ await page.evaluate(async ({ email, pw }) => { await window.OvilogSync.signup(em
 await waitFor(() => page.evaluate(() => window.OvilogSync.getState().loggedIn), { label: 'connexion' });
 await page.waitForTimeout(3000);   // synchro initiale stabilisée (voir BACKLOG.md)
 const uid = (await (await fetch(BACKEND + '/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })).json()).uid;
-const metaCloud = async () => (await (await fetch(BACKEND + '/getdoc?uid=' + uid + '&col=meta&id=main')).json()).data;
+// compte tel que l'appli le voit : meta + listes du compte (résumés de campagne : collection listesCompte, lot 4 livraison 3)
+const metaCloud = async () => metaEtListes(page, BACKEND, uid);
 
 // état de l'utilisateur après la bascule du 29/09 : campagne 2027 en cours (interne 2026), campagne 2026 (interne 2025) sans données
 await page.evaluate(() => { DB.campagneDebut = 2026; DB.campagneDateDemarrage = '2026-09-29'; DB.campagneInitialisee = true; DB.brebis = []; DB.beliers = []; DB.agnelles = []; DB.resumesCampagne = {}; saveData(DB); window.__saves = 0; const o = saveData; saveData = function (...a) { window.__saves++; return o.apply(this, a); }; });

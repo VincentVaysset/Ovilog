@@ -18,7 +18,7 @@ function jeu() {
     fiche('A1', { agnelages: mb('2026-11-02', 1) }), fiche('A2', { agnelages: mb('2026-11-03', 2) }), fiche('A3', { agnelages: mb('2026-11-04', 1) }),   // 3 ont mis bas
     fiche('A4'), fiche('A5'), fiche('A6'), fiche('A7'),                                                                                                       // 4 attendues pas encore mises bas
     fiche('V1', vd()), fiche('V2', vd()),                                                                                                                     // 2 vides définitives présentes
-    fiche('V3', Object.assign({ agnelages: mb('2026-11-05', 1) }, vd())),                                                                                     // vide définitive qui a mis bas : vide définitive seulement
+    fiche('V3', Object.assign({ agnelages: mb('2026-11-05', 1) }, vd())),                                                                                     // vide définitive qui a mis bas : la mise bas fait foi
     fiche('S1', Object.assign(vd(), vendue())),                                                                                                               // vide définitive vendue : pas dans les présentes, pas retirée
     fiche('S2', Object.assign({ agnelages: mb('2026-11-06', 1) }, vendue()))];                                                                                // vendue après mise bas : pas dans les présentes
   DB.beliers = []; DB.agnelles = []; DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} }; DB.mouvementsCollectifs = [];
@@ -35,20 +35,20 @@ async function ouvrir(bureau) {
   return page;
 }
 const pc = await ouvrir(true), mob = await ouvrir(false);
-// présentes : A1..A7 (7) + V1, V2, V3 (3) = 10 ; vides définitives présentes : V1, V2, V3 = 3 ; attendues = 7 ; ont mis bas (hors vides définitives) : A1, A2, A3 = 3 ; restantes = 4
+// présentes : A1..A7 (7) + V1, V2, V3 (3) = 10 ; V3 a mis bas : la mise bas fait foi (videDefinitiveRetenue) ; vides définitives retenues : V1, V2 = 2 ; attendues = 8 ; ont mis bas : A1, A2, A3, V3 = 4 ; restantes = 4
 const C = await pc.evaluate(() => campagneBilanChiffres(DB.brebis.filter(s => (s.statut || 'active') === 'active')));
-eq([C.troupeauAMettreBas, C.videsDefinitivesActives, C.misesBasActives, C.misesBasRestantes], [7, 3, 3, 4], 'attendues = 10 présentes − 3 vides définitives présentes ; fait = 3 (V3 compte comme vide définitive seulement) ; restantes = 4 ; S1 (vide définitive vendue) et S2 (vendue) ne comptent pas');
+eq([C.troupeauAMettreBas, C.videsDefinitivesActives, C.misesBasActives, C.misesBasRestantes], [8, 2, 4, 4], 'attendues = 10 présentes − 2 vides définitives retenues ; fait = 4 (V3 a mis bas : la mise bas fait foi) ; restantes = 4 ; S1 (vide définitive vendue) et S2 (vendue) ne comptent pas');
 console.log('OK 1 fonction commune : attendues, fait et restantes.');
 // Accueil mobile
 await mob.evaluate(() => render('home'));
 const m = await mob.evaluate(() => ({ gros: document.querySelector('.ac-big').textContent.trim(), sur: document.querySelector('.ac-sur').textContent.trim(), rest: [...document.querySelectorAll('.ac-stats div, .ac-3 div')].map(d => d.textContent.replace(/\s+/g, ' ').trim()).find(t => /Restantes/.test(t)) }));
-eq([m.gros, m.sur], ['3', 'sur 7 brebis'], 'Accueil mobile : 3 sur 7 attendues');
+eq([m.gros, m.sur], ['4', 'sur 8 brebis'], 'Accueil mobile : 4 sur 8 attendues');
 check(/4\s*Restantes/.test(m.rest || ''), 'Accueil mobile : 4 restantes : ' + JSON.stringify(m));
 console.log('OK 2 Accueil mobile.');
 // Saisie de mises bas (PC)
 await pc.evaluate(() => render('misebas-rapide'));
 const k = await pc.evaluate(() => Object.fromEntries([...document.querySelectorAll('.brd-kpi')].map(e => [e.querySelector('.brd-kpi-l').textContent.trim(), [e.querySelector('.brd-kpi-v').textContent.trim(), (e.querySelector('.brd-kpi-s') || { textContent: '' }).textContent.trim()]])));
-check(k['Restantes'] && k['Restantes'][0] === '4' && /42,9 % réalisé/.test(k['Restantes'][1]) && /sur 7 attendues/.test(k['Mises bas'][1]), 'Saisie de mises bas : 4 restantes, 3 mises bas sur 7 attendues (42,9 % réalisé) : ' + JSON.stringify(k));
+check(k['Restantes'] && k['Restantes'][0] === '4' && /50,0 % réalisé/.test(k['Restantes'][1]) && /sur 8 attendues/.test(k['Mises bas'][1]), 'Saisie de mises bas : 4 restantes, 4 mises bas sur 8 attendues (50 % réalisé) : ' + JSON.stringify(k));
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'aucune écriture');
 console.log('OK 3 Saisie de mises bas.');
 await browser.close();

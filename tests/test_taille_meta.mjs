@@ -61,7 +61,7 @@ try {
   await B.page.evaluate(() => { parametresRubrique = 'sauvegarde'; render('parametres'); const t = document.querySelector('.pc-onglets [data-key="sauvegarde"], [data-tab="sauvegarde"]'); if (t) t.click(); });
   await B.page.waitForTimeout(150);
   const detail = await B.page.evaluate(() => { const t = document.getElementById('taille-meta-total'); return t ? [/^\d+ Ko sur 1 Mo · \d+ %$/.test(t.textContent.trim()), document.querySelectorAll('#taille-meta-rubriques li').length] : null; });
-  eq(detail, [true, 5], 'administrateur (PC) : « … Ko sur 1 Mo · … % » et les 5 plus grosses rubriques');
+  eq(detail, [true, 6], 'administrateur (PC) : « … Ko sur 1 Mo · … % », les 5 plus grosses rubriques et la plus grosse fiche (versions comprises)');
   console.log('OK 2 compte léger : aucun message ; détail réservé à l\'administrateur dans Paramètres › Sauvegarde.');
 
   // ================================================================ 3. seuils : 70 % ambre, 90 % rouge

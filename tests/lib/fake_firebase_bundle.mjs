@@ -138,6 +138,7 @@ async function ecrireRacine(op) {
 export function query(colRef, ...filtres) { return { path: colRef.path, filtres }; }
 export function where(champ, op, valeur) { return { champ, op, valeur }; }
 export function serverTimestamp() { return { __op: 'serverTimestamp' }; }
+export function deleteField() { return { __op: 'deleteField' }; }
 
 export async function setDoc(ref, data) {
   const p = parsePath(ref.path);
@@ -184,7 +185,7 @@ export function writeBatch(db) {
   const ops = [];
   let uid = null;
   return {
-    set(ref, data) { uid = uid || parsePath(ref.path).uid; ops.push({ type: 'set', path: ref.path, data }); },
+    set(ref, data, opts) { uid = uid || parsePath(ref.path).uid; ops.push(Object.assign({ type: 'set', path: ref.path, data }, opts && opts.merge ? { merge: true } : {})); },
     update(ref, data) { uid = uid || parsePath(ref.path).uid; ops.push({ type: 'update', path: ref.path, data }); },
     delete(ref) { uid = uid || parsePath(ref.path).uid; ops.push({ type: 'delete', path: ref.path }); },
     async commit() {

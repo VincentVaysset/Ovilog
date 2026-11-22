@@ -68,8 +68,9 @@ for (const bureau of [false, true]) {
   check(!(await p.isVisible('#agnelage-boucle-proposee')), nom + ' : agneau déjà bouclé = pas de proposition');
   await p.evaluate(() => { DB.brebis[0].agnelages[0].lambs[0].eid = ''; DB.brebis[0].agnelages[0].lambs[0].mouvements = []; render('misebas-rapide'); });
   await ouvrirDepuisMisesBas(p);
-  await p.fill('.eid-input[data-id="1"]', '');
-  await p.click('#btn-save-agnelage');
+  // vider la case puis enregistrer dans le même geste (machine chargée : rien ne s'intercale entre les deux)
+  await p.evaluate(() => { const c = document.querySelector('.eid-input[data-id="1"]'); c.value = ''; c.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('btn-save-agnelage').click(); });
+  eq(await vue(p), 'misebas-rapide', nom + ' : case vidée, enregistré, retour sur Mises bas');
   eq(await p.evaluate(() => DB.brebis[0].agnelages[0].lambs[0].eid || ''), '', nom + ' : case vidée = aucun n° enregistré');
 
   // ============ 5. carte de la liste (mobile) : même retour

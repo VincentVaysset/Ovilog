@@ -22,7 +22,8 @@ const MIGRES = {
   // n°00018 et son « 6 » (jours restants du 1er soin) disparaissent, les colonnes « Produit » et « Date du soin » deviennent « Produits (soin, fin du délai) »
   sous_delai: { paysage: false, ajouts: ["Sous", "délai", "d'attente", 'lait', 'brebis', 'sous', 'Produits', '(soin,', 'fin', 'du', 'délai)', 'soin', ';', 'Brebis'],   // titre « Sous délai d'attente · Brebis » (onglet)
     ignorer: ['traitement(s)', 'Produit', 'Date'], tolerer: { 3: 1, 6: 1, 'n°00018': 1 } },
-  controle_laitier: { paysage: true, ajouts: ['Contrôle', 'laitier', 'de', 'travail'], ignorer: ['undefined'], tolerer: { 0: 1, 2550: 1, 2985: 1, '(mL)': 1, Cumul: 1, campagne: 1, court: 1 } },   // l'ancien PDF imprimait le mot « undefined » comme sous-titre (défaut) : retiré ; colonne « Cumul campagne (mL) » retirée à la demande (colonnes = écran : N° court, Date de mise bas, C1, C2, C3), son titre et ses 3 valeurs (0, 2550, 2985) disparaissent
+  controle_laitier: { paysage: false,   // portrait jusqu'à 7 colonnes (lot 3)
+  ajouts: ['Contrôle', 'laitier', 'de', 'travail'], ignorer: ['undefined'], tolerer: { 0: 1, 2550: 1, 2985: 1, '(mL)': 1, Cumul: 1, campagne: 1, court: 1 } },   // l'ancien PDF imprimait le mot « undefined » comme sous-titre (défaut) : retiré ; colonne « Cumul campagne (mL) » retirée à la demande (colonnes = écran : N° court, Date de mise bas, C1, C2, C3), son titre et ses 3 valeurs (0, 2550, 2985) disparaissent
   bilan_lactation: { paysage: false, ajouts: ['Litrage', 'total', 'produit', 'L', 'Brebis', 'passées', 'à', 'la', 'traite', '/', 'brebis',
     // deux histogrammes mensuels ajoutés au PDF (mêmes barres que la page PC)
     'de', 'par', 'mois', 'Tank', 'octobre', 'septembre', 'en', 'milliers', 'litres', 'Oct', 'Nov', 'Déc', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Bilan', 'lactation', 'présentes,', 'moyenne', 'mensuelle', 'Effectif', 'au', 'premier', 'jour', 'chaque', 'trait', 'pointillé', '='], ignorer: ['Ovilog', '—', '·'] },   // « Ovilog — » devant le titre et « · » entre exploitation et campagne : remplacés par le logo OVILOG et la mise en page de l'en-tête
@@ -30,7 +31,8 @@ const MIGRES = {
   bilan_complet: { paysage: false, ajouts: ['Bilan', 'de', 'reproduction', 'ANTENAISES'], ignorer: ['Ovilog', '—', '·', 'édité', 'page', 'ANTENAIS...'],   // « ANTENAIS... » : l'en-tête tronqué de la référence est désormais écrit en entier
     tolerer: { 1: 1, 2: 3, '/': 2, campagne: 2, bilan: 2 } },   // « Ovilog — », « · », « édité le » et « page i / N » : repris par le logo, l'en-tête et le pied « Page i/N » de la charte
   lot_ia: { paysage: true, ajouts: ['Lot', 'de', 'reproduction', 'IA', 'Éponge', 'Effectif', 'du', 'lot', 'Mises', 'bas', 'Fertilité', 'Prolificité', '%'], ignorer: ['Ovilog', '—', '·', 'édité'] },   // « Ovilog — », « · » et « édité le » : repris par le logo OVILOG et l'en-tête
-  lot_eponge: { paysage: false, ajouts: ['Lot', 'de', 'reproduction', 'IA', 'Éponge', 'Effectif', 'du', 'lot', 'Mises', 'bas', 'Fertilité', 'Prolificité', '%'], ignorer: ['Ovilog', '—', '·', 'édité'] },
+  lot_eponge: { paysage: true,   // même orientation que le lot IA (lot 3)
+  ajouts: ['Lot', 'de', 'reproduction', 'IA', 'Éponge', 'Effectif', 'du', 'lot', 'Mises', 'bas', 'Fertilité', 'Prolificité', '%'], ignorer: ['Ovilog', '—', '·', 'édité'] },
   registre_sanitaire_filtre: { paysage: true, ajouts: ['Registre', "d'élevage", 'Sanitaire', 'Soins', 'enregistrés', 'Traitements', 'Vaccins', 'Autres'] }
 };
 const browser = await chromium.launch(LAUNCH);

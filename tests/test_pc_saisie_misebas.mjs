@@ -99,10 +99,12 @@ console.log('OK 2 brebis trouvée par son n° ; tableau des agneaux (sexe, mort-
 const futur = '2099-01-15';
 await page.fill('#f-date-rapide', futur);
 await page.dispatchEvent('#f-date-rapide', 'change');
-reponseConfirm = false; confirms.length = 0;
+confirms.length = 0;
 await page.click('#btn-valider-misebas');
-await page.waitForTimeout(200);
-check(confirms.length === 1 && /postérieure à aujourd'hui/.test(confirms[0]) && await page.evaluate(() => window.__saves) === 0 && await page.evaluate(() => DB.brebis.find(b => b.eid === E(3, 101)).agnelages.length) === 0, 'date future : confirmation demandée, refus = rien enregistré : ' + confirms[0]);
+await page.waitForSelector('#question-charte');
+check(confirms.length === 0 && /postérieure à aujourd'hui/.test(await page.textContent('#question-charte')), 'date future : question de la charte, jamais une boîte native');
+await page.click('#qc-non');
+check(confirms.length === 0 && await page.evaluate(() => window.__saves) === 0 && await page.evaluate(() => DB.brebis.find(b => b.eid === E(3, 101)).agnelages.length) === 0, 'date future : « Corriger la date » = rien enregistré');
 console.log('OK 3 date future : alerte à confirmer, refus = rien enregistré.');
 
 // ================================================================ 4. validation
@@ -111,6 +113,7 @@ await page.dispatchEvent('#f-date-rapide', 'change');
 await page.click('.repro-code-opt-rapide[data-val="IA"]');
 reponseConfirm = true; confirms.length = 0;
 await page.click('#btn-valider-misebas');
+if (await page.$('#question-charte')) await page.click('#qc-oui');   // date encore future pour l'horloge du test : « Enregistrer avec cette date »
 await page.waitForFunction(() => window.__saves >= 1 && !document.getElementById('f-date-rapide'));
 const ag = await page.evaluate(() => JSON.parse(JSON.stringify(DB.brebis.find(b => b.eid === E(3, 101)).agnelages)));
 check(ag.length === 1 && ag[0].campagne === 2026 && ag[0].date === '2026-11-15' && ag[0].codeRepro === 'IA' && ag[0].codeSieolRepro === 1, 'agnelage : campagne 2026, date, repro IA : ' + JSON.stringify(ag[0]).slice(0, 200));

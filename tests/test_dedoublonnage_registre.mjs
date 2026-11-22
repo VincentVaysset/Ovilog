@@ -269,7 +269,9 @@ check(reg.brebis['250000012930001'].mouvements.length === 4 && reg.brebis['25000
 check(reg.agnelles['250000012930012'].mouvements.length === 1 && reg.brebis['250000012930003'].mouvements.length === 3, 'entrées sans doublon : intactes');
 check(reg.brebis['250000012930001'].derniereMiseAJour === 1700000000000, 'derniereMiseAJour inchangée');
 for (const cat of ['brebis', 'beliers', 'agnelles']) for (const eid of Object.keys(reg[cat])) for (const c of CHAMPS) {
-  const distAvant = new Set((registreAvant[cat][eid][c] || []).map(canon)), distApres = new Set((reg[cat][eid][c] || []).map(canon));
+  // contenu sans l'identifiant technique (lot 4) : deux doublons identiques ont des id différents (h…, h…-2)
+  const contenu = x => { if (x && typeof x === 'object' && !Array.isArray(x)) { const c = Object.assign({}, x); delete c.id; return canon(c); } return canon(x); };
+  const distAvant = new Set((registreAvant[cat][eid][c] || []).map(contenu)), distApres = new Set((reg[cat][eid][c] || []).map(contenu));
   check(seq([...distAvant].sort()) === seq([...distApres].sort()), 'ensemble des éléments distincts inchangé : ' + cat + ' ' + eid + ' ' + c);
 }
 check(await page.evaluate(() => JSON.stringify([DB.brebis, DB.beliers, DB.agnelles])) === fichesAvant, 'fiches brebis / béliers / agnelles identiques octet pour octet');
