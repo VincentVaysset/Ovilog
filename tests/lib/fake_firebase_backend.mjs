@@ -82,6 +82,37 @@ function bumpVersion(uid, key) {
   const v = versions.get(uid);
   v[key] = (v[key] || 0) + 1;
 }
+// Sentinelles du vrai SDK, à n'importe quelle profondeur : serverTimestamp() -> heure du serveur ({ __serverTime, ms }, lue par le client comme un
+// Timestamp) ; deleteField() n'a de sens que comme valeur d'un champ mis à jour (retire ce champ).
+function resoudreProfond(v) {
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    if (v.__op === 'serverTimestamp') return { __serverTime: true, ms: Date.now() };
+    const o = {};
+    Object.keys(v).forEach(k => { const r = resoudreProfond(v[k]); if (!(r && r.__op === 'deleteField')) o[k] = r; });
+    return o;
+  }
+  if (Array.isArray(v)) return v.map(resoudreProfond);
+  return v;
+}
+// update() du vrai SDK : une clé « a.b.c » désigne un champ imbriqué (les maps manquantes sont créées, les autres champs de la map restent) ;
+// deleteField() retire le champ ; arrayUnion seulement au premier niveau (seul usage de l'appli).
+function appliquerMiseAJour(current, data) {
+  const merged = JSON.parse(JSON.stringify(current || {}));
+  Object.keys(data).forEach(k => {
+    const v = data[k];
+    const chemin = k.split('.');
+    let cible = merged;
+    for (let i = 0; i < chemin.length - 1; i++) {
+      if (!cible[chemin[i]] || typeof cible[chemin[i]] !== 'object' || Array.isArray(cible[chemin[i]])) cible[chemin[i]] = {};
+      cible = cible[chemin[i]];
+    }
+    const feuille = chemin[chemin.length - 1];
+    if (v && v.__op === 'deleteField') delete cible[feuille];
+    else if (v && v.__op === 'arrayUnion' && chemin.length === 1) cible[feuille] = applyArrayUnionIfNeeded(cible[feuille], v);
+    else cible[feuille] = resoudreProfond(v);
+  });
+  return merged;
+}
 function applyArrayUnionIfNeeded(existingVal, incomingVal) {
   if (incomingVal && typeof incomingVal === 'object' && incomingVal.__op === 'arrayUnion') {
     const base = Array.isArray(existingVal) ? existingVal.slice() : [];
@@ -192,23 +223,16 @@ const server = http.createServer(async (req, res) => {
         const { uid: u2, colName, id } = parsePath(op.path);
         if (colName === 'meta') {
           const current = metas.get(uid) || {};
-          if (op.type === 'set') { metas.set(uid, op.data); }
-          else if (op.type === 'update') {
-            const merged = Object.assign({}, current);
-            Object.keys(op.data).forEach(k => { merged[k] = applyArrayUnionIfNeeded(current[k], op.data[k]); });
-            metas.set(uid, merged);
-          } else if (op.type === 'delete') { metas.delete(uid); }
+          if (op.type === 'set') { metas.set(uid, resoudreProfond(op.data)); }
+          else if (op.type === 'update') metas.set(uid, appliquerMiseAJour(current, op.data)); else if (op.type === 'delete') { metas.delete(uid); }
           touched.add('meta');
           continue;
         }
         if (!cols[colName]) cols[colName] = {};
         if (op.type === 'set') {
-          cols[colName][id] = op.data;
+          cols[colName][id] = resoudreProfond(op.data);
         } else if (op.type === 'update') {
-          const current = cols[colName][id] || {};
-          const merged = Object.assign({}, current);
-          Object.keys(op.data).forEach(k => { merged[k] = applyArrayUnionIfNeeded(current[k], op.data[k]); });
-          cols[colName][id] = merged;
+          cols[colName][id] = appliquerMiseAJour(cols[colName][id] || {}, op.data);
         } else if (op.type === 'delete') {
           delete cols[colName][id];
         }

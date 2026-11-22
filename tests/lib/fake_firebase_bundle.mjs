@@ -138,6 +138,7 @@ async function ecrireRacine(op) {
 export function query(colRef, ...filtres) { return { path: colRef.path, filtres }; }
 export function where(champ, op, valeur) { return { champ, op, valeur }; }
 export function serverTimestamp() { return { __op: 'serverTimestamp' }; }
+export function deleteField() { return { __op: 'deleteField' }; }
 
 export async function setDoc(ref, data) {
   const p = parsePath(ref.path);

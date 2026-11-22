@@ -73,6 +73,12 @@ export async function demarrerHarnais() {
     }
   };
   h.serveur = async (uid, col) => (await fetch('http://127.0.0.1:' + port + '/snapshot?uid=' + uid + '&col=' + col)).json();
+  // Fiches du serveur telles que l'appli les lit (rangement par versions : champ el reconstitué en listes), via une page ouverte
+  h.fiches = async (uid, col) => {
+    const r = await h.serveur(uid, col);
+    const page = h.appareils[0].page;
+    return { docs: await page.evaluate(docs => Object.fromEntries(Object.entries(docs).map(([k, v]) => [k, materialiserFicheV(v)])), r.docs || {}) };
+  };
   h.journal = async uid => (await fetch('http://127.0.0.1:' + port + '/journal?uid=' + uid)).json();
   h.ecrireServeur = async (uid, ops) => { const r = await fetch('http://127.0.0.1:' + port + '/batch', { method: 'POST', body: JSON.stringify({ uid, ops, clientId: 'test-direct' }) }); if (!r.ok) throw new Error('écriture serveur directe refusée : ' + r.status); };
   h.clientId = dev => dev.page.evaluate(() => window.__fakeClientId);
