@@ -24,25 +24,30 @@ const nConflits = dev => dev.page.evaluate(() => window.OvilogSync.conflits().le
 
 // ---------- A. rangement d'un compte existant ----------
 {
-  const pc = await h.ouvrir({ desktop: true });
+  const pc0 = await h.ouvrir({ desktop: true });
   const m = mail('a');
-  await h.inscrire(pc, m, MDP);
-  await h.attendre(pc, () => window.OvilogSync.getState().loggedIn, { label: 'PC connecté' });
-  const uid = pc.uid;
+  await h.inscrire(pc0, m, MDP);
+  await h.attendre(pc0, () => window.OvilogSync.getState().loggedIn, { label: 'PC connecté' });
+  const uid = pc0.uid;
   await h.attendreServeur(uid, 'meta', r => r.exists, 'meta créé');
   await h.attendreCalme(uid);
+  await pc0.ctx.close();      // l'appareil qui a créé le compte s'en va (un compte ne repasse jamais à un format plus ancien en vrai)
   // le compte redevient « d'avant » : fiches à l'ancienne posées directement sur le serveur, marqueur absent (comme un compte existant)
   const soin = (p, d) => ({ date: d, produit: p, type: 'Traitement', dose: '2 cc' });
   const fiche = (id, eid, extra) => Object.assign({ id, eid, statut: 'active', createdAt: 1, echographies: [], agnelages: [], notes: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: [], sanitaire: [] }, extra);
   await h.ecrireServeur(uid, [
-    { type: 'update', path: 'users/' + uid + '/meta/main', data: { schemaDonnees: 1, campagneDebut: 2027, campagneInitialisee: true } },
+    { type: 'update', path: 'users/' + uid + '/meta/main', data: { schemaDonnees: 1, campagneDebut: 2027, campagneInitialisee: true,
+      laitTank: [{ date: '2026-11-01', quantite: 310 }, { date: '2026-11-02', quantite: 320 }], causesMortalite: ['Maladie', 'Accident'], journal: [{ type: 'Tonte', date: '2026-11-05', note: '' }],
+      produits: { vaccins: ['Vaccin A'], antibiotiques: [], antiparasitaires: [], antiinflammatoires: [], autres: [] }, resumesCampagne: { 2026: { misesBas: 12 } } } },
+    ...['laitTank', 'journal', 'traitementsCollectifs', 'causesMortalite', 'causesMortaliteAgneaux', 'categoriesSoinsAutres', 'categoriesTraitements', 'categoriesNotes', 'motifsNonTraite', 'acheteurs', 'intervenants', 'produits', 'produitsInfo', 'resumesCampagne']
+      .map(c => ({ type: 'delete', path: 'users/' + uid + '/listesCompte/' + c })),
     { type: 'set', path: 'users/' + uid + '/brebis/v1', data: fiche('v1', '250000045651001', { sanitaire: [soin('Produit A', '2026-11-01'), soin('Produit A', '2026-11-01')], notes: [{ date: '2026-11-02', texte: 'Même note' }, { date: '2026-11-02', texte: 'Même note' }],
       agnelages: [{ date: '2026-11-03', campagne: 2027, lambs: [{ sexe: 'Mâle', eid: '250000045661001', sanitaire: [soin('Produit B', '2026-11-04')] }, { sexe: 'Mort-né' }] }] }) },
     { type: 'set', path: 'users/' + uid + '/brebis/v2', data: fiche('v2', '250000045651002', { controleLaitier: [{ controle: 1, quantite: 900, campagne: 2027 }] }) }]);
   // un nouvel appareil se connecte au compte : il le lit, le range, vérifie, pose le marqueur
   const tel = await h.ouvrir();
   await h.connecter(tel, m, MDP);
-  try { await h.attendreServeur(uid, 'meta', r => r.data && r.data.schemaDonnees === 2, 'marqueur schemaDonnees = 2 posé après vérification', 40000); }
+  try { await h.attendreServeur(uid, 'meta', r => r.data && r.data.schemaDonnees === 3, 'marqueur schemaDonnees = 3 posé après vérification (fiches et listes du compte)', 40000); }
   catch (e) { console.log('étape du rangement (téléphone) :', await tel.page.evaluate(() => [window.__etapeRangementVersions, DB.schemaDonnees, window.OvilogSync.getState()])); throw e; }
   const brut = (await h.serveur(uid, 'brebis')).docs;
   check(brut.v1.el && brut.v1.gel && brut.v2.el, 'chaque fiche a reçu ses versions (el) et sa copie figée (gel)');
@@ -50,13 +55,21 @@ const nConflits = dev => dev.page.evaluate(() => window.OvilogSync.conflits().le
   const lu = await h.fiches(uid, 'brebis');
   eq([lu.docs.v1.sanitaire.length, lu.docs.v1.notes.length, lu.docs.v1.agnelages[0].lambs.length, lu.docs.v1.agnelages[0].lambs[0].sanitaire[0].produit, lu.docs.v2.controleLaitier[0].quantite],
     [2, 2, 2, 'Produit B', 900], 'relu après rangement : mêmes soins (2 identiques), mêmes notes (2 identiques), agneaux et soin d\'agneau, contrôle');
-  await h.attendre(tel, () => DB.schemaDonnees === 2 && DB.brebis.length === 2 && DB.brebis.find(b => b.id === 'v1').sanitaire.length === 2, { label: 'le téléphone voit le compte rangé, rien de perdu' });
+  const listes = (await h.serveur(uid, 'listesCompte')).docs;
+  check(listes.laitTank && listes.laitTank.el && listes.causesMortalite && listes.journal && listes.produits && listes.resumesCampagne, 'chaque liste du compte a son document rangé par versions');
+  const metaApres = (await h.serveur(uid, 'meta')).data;
+  eq([metaApres.laitTank.length, metaApres.causesMortalite], [2, ['Maladie', 'Accident']], 'les listes du document principal restent telles quelles (lisibles par un appareil pas à jour)');
+  await h.attendre(tel, () => DB.laitTank.length === 2 && DB.laitTank[1].quantite === 320 && DB.causesMortalite.join() === 'Maladie,Accident' && DB.journal.length === 1 && DB.produits.vaccins[0] === 'Vaccin A' && DB.resumesCampagne[2026].misesBas === 12, { label: 'le téléphone lit les listes du compte rangées, à l\'identique' });
+  await h.attendre(tel, () => DB.schemaDonnees === 3 && DB.brebis.length === 2 && DB.brebis.find(b => b.id === 'v1').sanitaire.length === 2, { label: 'le téléphone voit le compte rangé, rien de perdu' });
   // appareil qui ne connaît pas ce format (livraison 1) : plus aucune écriture, bandeau
   await h.attendreCalme(uid);
-  await pc.page.evaluate(() => { window.schemaDonneesVersionCourante = () => 1; });
+  const pc = await h.ouvrir({ desktop: true });
+  await pc.page.evaluate(() => { window.schemaDonneesVersionCourante = () => 2; });   // appli de la livraison 2 : ne connaît pas le format 3
+  await h.connecter(pc, m, MDP);
   const clientPc = await h.clientId(pc);
+  await h.attendre(pc, () => DB.schemaDonnees === 3 && (DB.brebis || []).length === 2, { timeout: 30000, label: 'le PC lit le compte et son marqueur' });
+  await h.dormir(800);
   const avant = (await h.journal(uid)).length;
-  await h.attendre(pc, () => DB.schemaDonnees === 2, { label: 'le PC reçoit le marqueur' });
   await pc.page.evaluate(() => { DB.brebis.find(b => b.id === 'v2').notes.push({ date: '2026-11-20', texte: 'Note PC' }); saveData(DB); });
   await h.dormir(1500);
   const apres = (await h.journal(uid)).slice(avant).filter(e => e.clientId === clientPc);
@@ -73,7 +86,12 @@ const nConflits = dev => dev.page.evaluate(() => window.OvilogSync.conflits().le
   await h.attendreServeur(uid, 'brebis', r => JSON.stringify(r.docs.v1.gel.sanitaire) === JSON.stringify(leg), 'copie figée mise à jour : plus rien à reprendre');
   await h.attendre(tel, () => DB.brebis.find(b => b.id === 'v1').sanitaire.some(s => s.produit === 'Produit Ancien'), { label: 'le téléphone voit le soin repris' });
   eq(await nConflits(tel), 0, 'ancien appareil sans contradiction : aucun conflit');
-  console.log('OK B : écriture d\'un appareil d\'avant la livraison 1 reprise (sans contradiction), aucune fusion muette.');
+  // liste du compte réécrite à l'ancienne dans meta par cet ancien appareil : la cause ajoutée est reprise
+  await h.ecrireServeur(uid, [{ type: 'update', path: 'users/' + uid + '/meta/main', data: { causesMortalite: ['Maladie', 'Accident', 'Cause ancienne'] } }]);
+  await h.attendre(tel, () => DB.causesMortalite.join() === 'Maladie,Accident,Cause ancienne', { label: 'cause ajoutée par l\'ancien appareil reprise' });
+  await h.attendreServeur(uid, 'listesCompte', r => r.docs.causesMortalite && JSON.stringify(r.docs.causesMortalite.gel.items) === JSON.stringify(['Maladie', 'Accident', 'Cause ancienne']), 'copie figée de la liste mise à jour');
+  eq(await nConflits(tel), 0, 'liste du compte reprise sans conflit');
+  console.log('OK B : écritures d\'un appareil d\'avant la livraison 1 reprises (fiche et liste du compte, sans contradiction), aucune fusion muette.');
 }
 
 // ---------- C et D : deux appareils à jour, hors réseau ----------

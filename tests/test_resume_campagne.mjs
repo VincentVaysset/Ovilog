@@ -6,6 +6,7 @@
       garde « 0 mise bas » (continuer sans résumé / interrompre, rien modifié).
    Faux backend + faux plugins natifs, aucune donnée réelle. */
 import { chromium } from 'playwright';
+import { metaEtListes } from './lib/listes_compte.mjs';
 import { LAUNCH, URL_APP, LIB_DIR } from './lib/config.mjs';
 import { spawn } from 'child_process';
 import { readFileSync } from 'fs';
@@ -77,7 +78,8 @@ async function connecter(page, creer) {
   await page.waitForTimeout(3000);   // synchro initiale stabilisée (voir BACKLOG.md)
 }
 const uidDe = async () => (await (await fetch(BACKEND + '/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })).json()).uid;
-const metaCloud = async (uid) => (await (await fetch(BACKEND + '/getdoc?uid=' + uid + '&col=meta&id=main')).json()).data;
+// compte tel que l'appli le voit : meta + listes du compte (résumés de campagne : collection listesCompte, lot 4 livraison 3)
+const metaCloud = async (uid) => metaEtListes(page, BACKEND, uid);
 
 // Pose un jeu de données puis attend que le cloud l'ait reçu ET que l'appareil l'ait toujours (un écho d'un ancien
 // instantané peut sinon écraser la campagne posée -- voir BACKLOG.md, synchro dans la seconde qui suit une écriture).

@@ -5,6 +5,7 @@
    E migration du registre (attend la lecture, sauvegarde avant d'écrire) · F modifications locales pendant la lecture (appareil déjà appairé) ·
    G fiches locales : collision avec le compte (le compte prime, message, sauvegarde) et fiches nouvelles envoyées. */
 import { demarrerHarnais, peuplerCompte } from './lib/harnais_sync.mjs';
+import { metaEtListes } from './lib/listes_compte.mjs';
 
 const h = await demarrerHarnais();
 const { check } = h;
@@ -13,8 +14,10 @@ const email = tag => 'pc-' + tag + '-' + Date.now() + '-' + Math.floor(Math.rand
 const eid = n => '25000001219' + String(n).padStart(5, '0');
 
 // Le compte ne doit rien avoir perdu : meta, brebis, lot LC. Aucune écriture reçue, à aucun moment, ne retire le lot LC de meta.lots.
+// compte tel que l'appli le voit : meta + listes du compte (acheteurs, causes : collection listesCompte, lot 4 livraison 3)
+const metaVue = async uid => { const page = h.appareils.find(d => !d.page.isClosed()).page; const data = await metaEtListes(page, 'http://127.0.0.1:' + h.port, uid); return { exists: !!data, data }; };
 async function compteIntact(uid, qui) {
-  const meta = await h.serveur(uid, 'meta');
+  const meta = await metaVue(uid);
   check(meta.exists && meta.data, qui + ' : le document meta du compte existe');
   check((meta.data.lots || []).some(l => l.id === 'LC'), qui + ' : le lot LC est toujours dans meta.lots du compte');
   check((meta.data.acheteurs || []).includes('Acheteur C'), qui + ' : acheteurs du compte intacts : ' + JSON.stringify(meta.data.acheteurs));
@@ -92,7 +95,8 @@ let pairePourB = null;
   await h.attendre(d3, () => currentView === 'home' && DB.lots.some(l => l.id === 'LC'), { timeout: 10000, label: 'B2 : appareil déjà appairé : l\'accueil s\'ouvre hors ligne avec ses données' });
   await d3.page.evaluate(() => { DB.acheteurs.push('Acheteur D'); saveData(DB); });
   await h.reseau(d3, { coupe: false });
-  await h.attendreServeur(uid, 'meta', r => (r.data.acheteurs || []).includes('Acheteur D') && (r.data.acheteurs || []).includes('Acheteur C'), 'B2 : la saisie hors ligne part au retour du réseau, sans rien écraser');
+  { const d = Date.now(); let ok = false; while (!ok && Date.now() - d < 20000) { const m = (await metaVue(uid)).data; ok = (m.acheteurs || []).includes('Acheteur D') && (m.acheteurs || []).includes('Acheteur C'); if (!ok) await h.dormir(150); }
+    check(ok, 'B2 : la saisie hors ligne part au retour du réseau, sans rien écraser'); }
   await compteIntact(uid, 'B2');
   console.log('OK B2 appareil déjà appairé : travail hors ligne possible, saisie envoyée au retour du réseau, rien écrasé.');
 }
@@ -129,9 +133,10 @@ let pairePourB = null;
   const j = await h.journal(uid);
   const initMeta = j.filter(e => e.ops.some(o => o.type === 'set' && o.path.endsWith('/meta/main')));
   check(initMeta.length === 1, 'C2 : une seule initialisation de meta (transaction « créer seulement si absent »), vue : ' + initMeta.length);
-  const meta = await h.serveur(uid, 'meta');
-  const [a6, a7] = await Promise.all([d6, d7].map(d => d.page.evaluate(() => JSON.stringify(DB.acheteurs))));
-  check(a6 === a7 && a6 === JSON.stringify(meta.data.acheteurs), 'C2 : les 2 appareils et le serveur ont la même meta (celle du gagnant) : ' + a6 + ' / ' + a7 + ' / ' + JSON.stringify(meta.data.acheteurs));
+  // listes du compte (acheteurs) : créées en fusion par les deux appareils, jamais l'une qui écrase l'autre ; les deux appareils et le serveur finissent identiques
+  let a6, a7, meta;
+  { const d = Date.now(); do { meta = await metaVue(uid); [a6, a7] = await Promise.all([d6, d7].map(x => x.page.evaluate(() => JSON.stringify(DB.acheteurs.slice().sort())))); if (a6 === a7 && a6 === JSON.stringify((meta.data.acheteurs || []).slice().sort())) break; await h.dormir(200); } while (Date.now() - d < 20000); }
+  check(a6 === a7 && a6 === JSON.stringify((meta.data.acheteurs || []).slice().sort()), 'C2 : les 2 appareils et le serveur ont les mêmes listes du compte : ' + a6 + ' / ' + a7 + ' / ' + JSON.stringify(meta.data.acheteurs));
   console.log('OK C2 deux appareils en même temps sur un compte vide : une seule initialisation de meta, les fiches des deux appareils sont réunies, états identiques.');
 }
 
@@ -146,7 +151,8 @@ let pairePourB = null;
   });
   await h.inscrire(d8, mail, MDP);
   const uid = (await h.attendre(d8, () => window.OvilogSync.getState().loggedIn, { label: 'D connecté' }), d8.uid);
-  await h.attendreServeur(uid, 'meta', r => r.exists && (r.data.acheteurs || []).includes('Acheteur C') && r.data.exploitation.nom === 'GAEC Neuf', 'D : meta initialisée par le premier appareil');
+  await h.attendreServeur(uid, 'meta', r => r.exists && r.data.exploitation.nom === 'GAEC Neuf', 'D : meta initialisée par le premier appareil');
+  await h.attendreServeur(uid, 'listesCompte', r => r.docs && r.docs.acheteurs && JSON.stringify(r.docs.acheteurs).includes('Acheteur C'), 'D : listes du compte envoyées par le premier appareil');
   await h.attendreServeur(uid, 'brebis', r => Object.keys(r.docs).length === 3, 'D : 3 brebis envoyées');
   const d9 = await h.ouvrir({});
   await h.connecter(d9, mail, MDP);

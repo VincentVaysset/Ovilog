@@ -6,6 +6,7 @@
    campagne" -- avant ce correctif, meta était réécrit en bloc, sans fusion).
    Faux backend Firestore local -- aucune donnée réelle. */
 import { chromium } from 'playwright';
+import { metaEtListes } from './lib/listes_compte.mjs';
 import { LAUNCH, URL_APP, LIB_DIR, EXPORT_ORIGINAL, EXPORT_CORRIGE, lireExport, exportPresent } from './lib/config.mjs';
 import { spawn } from 'child_process';
 import { readFileSync } from 'fs';
@@ -76,7 +77,8 @@ await d1.page.evaluate(() => {
   DB.laitTank = []; DB.acheteurs = ['Acheteur C']; DB.causesMortalite = ['Maladie']; DB.journal = [];
   saveData(DB);
 });
-await serveurAttend('meta', r => r.exists && r.data && Array.isArray(r.data.acheteurs) && r.data.acheteurs.length === 1 && r.data.causesMortalite && r.data.causesMortalite.length === 1, 'le serveur reçoit l\'état meta initial');
+{ const d = Date.now(); let ok = false; while (!ok && Date.now() - d < 20000) { const m = await metaEtListes(d1.page, 'http://127.0.0.1:' + fakePort, uidCompte); ok = !!(m && Array.isArray(m.acheteurs) && m.acheteurs.length === 1 && m.causesMortalite && m.causesMortalite.length === 1); if (!ok) await new Promise(r => setTimeout(r, 150)); }
+  if (!ok) throw new Error('TIMEOUT côté serveur en attendant : le serveur reçoit l\'état initial (meta et listes du compte)'); }
 
 const d2 = await newDevicePage();
 await d2.page.evaluate(async ({ email, pw }) => { await window.OvilogSync.login(email, pw); }, { email, pw: password });
