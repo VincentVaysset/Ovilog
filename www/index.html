@@ -7976,6 +7976,8 @@ navDrawer.querySelectorAll('.nav-item').forEach(btn => {
 btnBack.onclick = () => {
   if (currentView === 'conflits-synchro') { render(conflitsOrigine || 'home'); return; }
   if (currentView === 'doublons-synchro') { render(doublonsOrigine || 'home'); return; }
+  if (currentView === 'saisies-a-recuperer') { render(recupOrigine || 'home'); return; }
+  if (currentView === 'sauvegardes-conversion') { render(sauvegardesConversionOrigine || 'home'); return; }
   // Paramètres mobile : depuis une rubrique, retour à l'écran d'arrivée des rubriques
   if (currentView === 'parametres' && !isDesktopMode() && parametresRubrique) { parametresRubrique = null; render('parametres'); return; }
   if (currentView === 'detail') {
@@ -8360,6 +8362,8 @@ function render(view, sheepId) {
     else if (view === 'sous-delai') { renderSousDelai(); poserOngletsCarnet(view); }
     else if (view === 'conflits-synchro') renderConflitsSynchro();
     else if (view === 'doublons-synchro') renderDoublonsSynchro();
+    else if (view === 'saisies-a-recuperer') renderSaisiesARecuperer();
+    else if (view === 'sauvegardes-conversion') renderSauvegardesConversion();
     else if (view === 'controle-lot-delai') renderControleLotDelai();
     else if (view === 'ordonnances') { renderOrdonnances(); poserOngletsCarnet(view); }
     else if (view === 'add-ordonnance') renderAddOrdonnance();
@@ -9464,6 +9468,234 @@ function renderDoublonsSynchro() {
   });
 }
 
+/* ---------- Sauvegardes d'avant conversion et saisies à récupérer (correctif de la perte du 23/11) ----------
+   Le rangement par versions fait, sur Android, une sauvegarde complète dans le dossier interne de l'appli AVANT d'écrire (ovilog_avant_versions_…,
+   nom horodaté à la seconde depuis ce correctif : jamais écrasée, jamais purgée). Ces fichiers sont lus au démarrage : (1) l'appli propose de les
+   COPIER hors de l'appli (Téléchargements, Drive… : exporterFichierVisible) ; (2) ce qu'ils contiennent et que le troupeau n'a plus est proposé dans
+   « Saisies à récupérer ». Comparaison par CONTENU, jamais par identifiant (ils viennent de changer) : une mise bas = brebis + campagne + date +
+   agneaux (sexe et n°) ; déjà là = rien ; une AUTRE mise bas de la même brebis la même campagne = conflit montré, jamais remise. Soins, notes, échos
+   et mouvements des 7 jours avant la sauvegarde : contenu identique déjà présent = rien. Rien n'est remis sans le geste de l'éleveur ; « Annuler »
+   6 s = fiches exactes d'avant. Fiches entières absentes : jamais proposées. Mobile (Android) seulement : sur PC la sauvegarde est un téléchargement. */
+const PREFIXE_AVANT_CONVERSION = 'ovilog_avant_';
+const CLE_AVANT_EXPORTEES = 'ovilog_avant_exportees';
+const CLE_RECUP_IGNORES = 'ovilog_recup_ignores';
+const LISTES_RECUP = ['sanitaire', 'notes', 'echographies', 'mouvements'];
+const LIBELLES_LISTES_RECUP = { sanitaire: 'Soin', notes: 'Note', echographies: 'Échographie', mouvements: 'Mouvement' };
+let sauvegardesConversion = [];          // [{ nom, data }] lues du dossier interne
+let recupOrigine = 'home', sauvegardesConversionOrigine = 'home';
+function fsOvilog() { return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem) || null; }
+async function listerSauvegardesAvantConversion() {
+  const Filesystem = fsOvilog();
+  if (!Filesystem) return [];
+  try {
+    const res = await Filesystem.readdir({ path: '', directory: BACKUP_AUTO_DIRECTORY });
+    return (res.files || []).map(f => (typeof f === 'string' ? f : f && f.name)).filter(n => n && n.startsWith(PREFIXE_AVANT_CONVERSION) && n.endsWith('.json')).sort().reverse();
+  } catch (e) { console.error('Sauvegardes avant conversion : lecture du dossier impossible', e); return []; }
+}
+function nomFichierAvantConversion(date) { return nomFichierBackupAuto(date).replace('ovilog_backup_', 'ovilog_avant_versions_'); }
+// Nom horodaté à la seconde, jamais celui d'un fichier existant (une conversion relancée n'écrase jamais la sauvegarde d'avant)
+async function nomLibreAvantConversion() {
+  const pris = await listerSauvegardesAvantConversion();
+  const base = nomFichierAvantConversion(new Date()).replace(/\.json$/, '');
+  let nom = base + '.json', i = 2;
+  while (pris.includes(nom)) nom = base + '_' + (i++) + '.json';
+  return nom;
+}
+// Android : la conversion attend une sauvegarde enregistrée HORS de l'appli (sélecteur système) ; « Plus tard » ou échec = rien n'est changé
+function demanderSauvegardeAvantConversion(nom) {
+  if (vueDeSaisieEnCours(currentView)) return Promise.resolve({ ok: false, raison: 'saisie en cours' });
+  return new Promise(resolve => questionCharte('Mise à jour du format des données',
+    "Avant de ranger vos données dans le nouveau format, enregistrez une sauvegarde hors de l'appli (Téléchargements, Drive…). Sans cette sauvegarde, rien n'est changé.",
+    'Enregistrer la sauvegarde', 'Plus tard',
+    () => { sauvegardeVisibleAvantMutation(nom, DB).then(resolve, e => resolve({ ok: false, raison: (e && e.message) || String(e) })); },
+    () => resolve({ ok: false, cancelled: true, raison: "reporté par l'éleveur" })));
+}
+function lireListeLocale(cle) { try { const v = JSON.parse(localStorage.getItem(cle) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function ajouterListeLocale(cle, valeurs) { try { localStorage.setItem(cle, JSON.stringify(Array.from(new Set(lireListeLocale(cle).concat(valeurs))))); } catch (e) { /* ignoré */ } }
+function sauvegardesConversionAExporter() { const faites = lireListeLocale(CLE_AVANT_EXPORTEES); return sauvegardesConversion.filter(s => s.data && !faites.includes(s.nom)); }
+async function chargerSauvegardesAvantConversion() {
+  const Filesystem = fsOvilog();
+  if (!Filesystem) { sauvegardesConversion = []; return sauvegardesConversion; }
+  const lues = [];
+  for (const nom of await listerSauvegardesAvantConversion()) {
+    try { const r = await Filesystem.readFile({ path: nom, directory: BACKUP_AUTO_DIRECTORY, encoding: 'utf8' }); lues.push({ nom, data: JSON.parse(r.data) }); }
+    catch (e) { console.error('Sauvegarde avant conversion illisible : ' + nom, e); lues.push({ nom, data: null }); }
+  }
+  sauvegardesConversion = lues;
+  return lues;
+}
+// Démarrage : lecture des sauvegardes, puis proposition de les copier hors de l'appli (jamais pendant une saisie)
+async function demarrerSauvegardesConversion() {
+  await chargerSauvegardesAvantConversion();
+  if (!sauvegardesConversion.length) return;
+  if (currentView === 'home') render('home');
+  const n = sauvegardesConversionAExporter().length;
+  if (!n || vueDeSaisieEnCours(currentView) || document.getElementById('question-charte')) return;
+  questionCharte('Mettre vos sauvegardes à l\'abri',
+    (n > 1 ? n + ' sauvegardes faites' : 'Une sauvegarde faite') + " avant la mise à jour du format des données " + (n > 1 ? 'sont' : 'est') + " dans le dossier interne de l'appli. Copiez-les dans Téléchargements (ou sur Drive) pour en garder une copie hors de l'appli.",
+    'Copier les sauvegardes', 'Plus tard',
+    () => { sauvegardesConversionOrigine = currentView === 'parametres' ? 'parametres' : 'home'; render('sauvegardes-conversion'); });
+}
+window.addEventListener('load', () => { setTimeout(() => { demarrerSauvegardesConversion().catch(e => console.error('Sauvegardes avant conversion', e)); }, 1500); });
+function cleAnimalRecup(f) { const e = cleanEid((f && f.eid) || ''); return e ? 'e' + e : 'i' + ((f && f.id) || ''); }
+function signatureAgneauxRecup(a) { return ((a && a.lambs) || []).map(l => ((l && l.sexe) || '') + ':' + cleanEid((l && l.eid) || '')).sort().join('|'); }
+// Ce que les sauvegardes d'avant conversion contiennent et que le troupeau n'a plus : { items, conflits }
+function saisiesARecuperer(sauvegardes) {
+  const res = { items: [], conflits: [] };
+  const vus = new Set(), ign = lireListeLocale(CLE_RECUP_IGNORES);
+  const actuels = new Map();
+  ['brebis', 'agnelles', 'beliers'].forEach(col => (DB[col] || []).forEach(f => { if (f) actuels.set(cleAnimalRecup(f), { col, f }); }));
+  (sauvegardes || sauvegardesConversion).forEach(s => {
+    if (!s || !s.data) return;
+    const t0 = s.data.exportedAt ? Date.parse(s.data.exportedAt) : NaN;
+    const depuis = isNaN(t0) ? '' : formatISOLocal(new Date(t0 - 7 * 86400000));
+    ['brebis', 'agnelles', 'beliers'].forEach(col => (s.data[col] || []).forEach(fs => {
+      if (!fs) return;
+      const cle = cleAnimalRecup(fs), cur = actuels.get(cle);
+      if (!cur) return;
+      (fs.agnelages || []).forEach(a => {
+        if (!a) return;
+        const sig = signatureAgneauxRecup(a);
+        const k = 'mb|' + cle + '|' + a.campagne + '|' + (a.date || '') + '|' + sig;
+        if (vus.has(k) || ign.includes(k)) return;
+        vus.add(k);
+        const memeCampagne = (cur.f.agnelages || []).filter(x => x && String(x.campagne) === String(a.campagne));
+        if (memeCampagne.some(x => (x.date || '') === (a.date || '') && signatureAgneauxRecup(x) === sig)) return;   // déjà là
+        (memeCampagne.length ? res.conflits : res.items).push({ k, col: cur.col, id: cur.f.id, type: 'misebas', el: a, actuelles: memeCampagne, source: s.nom });
+      });
+      LISTES_RECUP.forEach(l => (fs[l] || []).forEach(e => {
+        if (!e || (depuis && String(e.date || '') < depuis)) return;
+        const t = texteIdentiteElement(e);
+        const k = l + '|' + cle + '|' + empreinteTexte(t);
+        if (vus.has(k) || ign.includes(k)) return;
+        vus.add(k);
+        if ((cur.f[l] || []).some(x => x && texteIdentiteElement(x) === t)) return;
+        res.items.push({ k, col: cur.col, id: cur.f.id, type: l, el: e, source: s.nom });
+      }));
+    }));
+  });
+  return res;
+}
+function nbSaisiesARecuperer() { if (!sauvegardesConversion.length) return 0; const r = saisiesARecuperer(); return r.items.length + r.conflits.length; }
+function sansIdsRecup(x) {
+  if (Array.isArray(x)) return x.map(sansIdsRecup);
+  if (x && typeof x === 'object') { const o = {}; Object.keys(x).forEach(k => { if (k !== 'id') o[k] = sansIdsRecup(x[k]); }); return o; }
+  return x;
+}
+// Remet les éléments choisis (relus au moment du geste : seuls ceux encore à récupérer) ; rend les fiches d'avant pour « Annuler »
+function recupererSaisies(cles) {
+  const encore = saisiesARecuperer().items.filter(it => cles.includes(it.k));
+  const avant = new Map();
+  encore.forEach(it => {
+    const f = (DB[it.col] || []).find(x => x && x.id === it.id);
+    if (!f) return;
+    if (!avant.has(it.col + '/' + it.id)) avant.set(it.col + '/' + it.id, { col: it.col, id: it.id, fiche: copieProfonde(f) });
+    const liste = it.type === 'misebas' ? 'agnelages' : it.type;
+    if (!Array.isArray(f[liste])) f[liste] = [];
+    f[liste].push(sansIdsRecup(copieProfonde(it.el)));   // nouvel élément : identifiant neuf à l'enregistrement
+  });
+  return { n: encore.length, avant: Array.from(avant.values()) };
+}
+function animalRecupTexte(it) { const f = (DB[it.col] || []).find(x => x && x.id === it.id); return (it.col === 'beliers' ? 'Bélier ' : it.col === 'agnelles' ? 'Agnelle ' : 'Brebis ') + (f ? numeroAnimal(f) : ''); }
+function texteMiseBasRecup(a) {
+  const ag = (a.lambs || []).map(l => texteAgneauDoublon(l)).join(' ; ');
+  return formatDateFr(a.date || '') + ' · campagne ' + campagneLabel(a.campagne) + (a.avortement ? ' · avortement' : '') + ' · ' + (ag || 'aucun agneau');
+}
+function texteElementRecup(it) {
+  if (it.type === 'misebas') return texteMiseBasRecup(it.el);
+  const e = it.el;
+  const bouts = [formatDateFr(e.date || '')];
+  ['produit', 'type', 'resultat', 'texte', 'cause', 'dose'].forEach(k => { if (!valeurVideIdentite(e[k]) && typeof e[k] !== 'object') bouts.push(String(e[k])); });
+  return bouts.filter(Boolean).join(' · ');
+}
+function pastillesRecuperationHtml() {
+  let h = '';
+  const nExp = sauvegardesConversionAExporter().length;
+  if (nExp) h += `<button type="button" class="pastille-conflits" id="pastille-sauvegardes-conversion">Sauvegardes à mettre à l'abri : ${nExp}</button>`;
+  const n = nbSaisiesARecuperer();
+  if (n) h += `<button type="button" class="pastille-conflits" id="pastille-recuperation">Saisies à récupérer : ${n}</button>`;
+  return h;
+}
+function brancherPastillesRecuperation(racine) {
+  const o = () => (currentView === 'parametres' ? 'parametres' : 'home');
+  const a = (racine || document).querySelector('#pastille-sauvegardes-conversion');
+  if (a) a.onclick = () => { sauvegardesConversionOrigine = o(); render('sauvegardes-conversion'); };
+  const b = (racine || document).querySelector('#pastille-recuperation');
+  if (b) b.onclick = () => { recupOrigine = o(); render('saisies-a-recuperer'); };
+}
+function ligneRecuperationParametresHtml() {
+  if (!sauvegardesConversion.length) return '';
+  const n = nbSaisiesARecuperer();
+  return `<div id="prm-recuperation" class="prm-conflits"><span class="pastille-conflits statique">Sauvegardes avant conversion : ${sauvegardesConversion.length}${n ? ' · saisies à récupérer : ' + n : ''}</span><button type="button" class="btn btn-secondary btn-petit" id="btn-voir-sauvegardes-conversion">Voir</button></div>`;
+}
+function brancherLigneRecuperation() {
+  const b = document.getElementById('btn-voir-sauvegardes-conversion');
+  if (b) b.onclick = () => { sauvegardesConversionOrigine = 'parametres'; render('sauvegardes-conversion'); };
+}
+function renderSauvegardesConversion() {
+  pageTitle.textContent = 'Sauvegardes avant conversion';
+  const faites = lireListeLocale(CLE_AVANT_EXPORTEES);
+  const n = nbSaisiesARecuperer();
+  const bloc = document.createElement('div');
+  bloc.innerHTML = `<div class="cf-ligne-grise" style="margin:0 0 12px;">Copies complètes du troupeau faites par l'appli juste avant la mise à jour du format des données. Elles restent dans le dossier interne de l'appli, jamais effacées ; copiez-les hors de l'appli pour les garder.</div>`
+    + (sauvegardesConversion.length ? sauvegardesConversion.map((s, i) => `<div class="card cf-carte">
+      <div class="cf-titre"><b>${echapperHtml(s.nom)}</b><span class="badge ${faites.includes(s.nom) ? 'badge-green' : 'badge-amber'}">${faites.includes(s.nom) ? 'Copiée hors de l\'appli' : 'Pas encore copiée'}</span></div>
+      <div class="cf-ligne-grise">${s.data ? echapperHtml(resumeContenuSauvegarde(s.data)) + (s.data.exportedAt ? ' · faite le ' + echapperHtml(new Date(s.data.exportedAt).toLocaleString('fr-FR')) : '') : 'Fichier illisible'}</div>
+      ${s.data ? `<div class="prm-actions"><button type="button" class="btn btn-secondary sc-copier" data-i="${i}">Copier dans Téléchargements</button></div>` : ''}
+    </div>`).join('') : `<div class="card"><div class="prm-note" style="margin:0;">Aucune sauvegarde avant conversion sur cet appareil.</div></div>`)
+    + (n ? `<div class="prm-actions"><button type="button" class="btn btn-primary" id="sc-voir-recup">Voir les saisies à récupérer (${n})</button></div>` : '');
+  app.appendChild(bloc);
+  bloc.querySelectorAll('.sc-copier').forEach(b => b.onclick = async () => {
+    const s = sauvegardesConversion[Number(b.dataset.i)];
+    const res = await exporterFichierVisible({ directory: BACKUP_AUTO_DIRECTORY, path: s.nom, fileName: s.nom, mimeType: 'application/json', verifierCompteurs: compteursSauvegarde(s.data) });
+    if (res && res.ok) { ajouterListeLocale(CLE_AVANT_EXPORTEES, [s.nom]); showToast('Sauvegarde copiée hors de l\'appli'); }
+    else if (res && res.cancelled) showToast('Copie annulée : rien n\'a été enregistré.');
+    else messageCharte('Copie non faite', (res && res.raison) || 'Erreur inconnue');
+    if (currentView === 'sauvegardes-conversion') render('sauvegardes-conversion');
+  });
+  const v = bloc.querySelector('#sc-voir-recup');
+  if (v) v.onclick = () => { recupOrigine = 'sauvegardes-conversion'; render('saisies-a-recuperer'); };
+}
+function renderSaisiesARecuperer() {
+  pageTitle.textContent = 'Saisies à récupérer';
+  const r = saisiesARecuperer();
+  const bloc = document.createElement('div');
+  const carte = (it, i) => `<div class="card cf-carte">
+      <div class="cf-titre"><b>${echapperHtml(animalRecupTexte(it))}</b><span>${echapperHtml(it.type === 'misebas' ? 'Mise bas' : LIBELLES_LISTES_RECUP[it.type])}</span></div>
+      <div class="cf-ligne"><span>Dans la sauvegarde</span><b>${echapperHtml(texteElementRecup(it))}</b></div>
+      <div class="prm-actions"><button type="button" class="btn btn-primary rc-recuperer" data-i="${i}">Récupérer</button><button type="button" class="btn btn-secondary rc-ignorer" data-k="${echapperHtml(it.k)}">Ignorer</button></div>
+    </div>`;
+  const carteConflit = it => `<div class="card cf-carte">
+      <div class="cf-titre"><b>${echapperHtml(animalRecupTexte(it))}</b><span class="badge badge-amber">À vérifier</span></div>
+      <div class="cf-ligne-grise">Cette brebis a déjà une mise bas cette campagne, différente de celle de la sauvegarde : rien n'est remis. Comparez et corrigez à la main si besoin (Modifier l'agnelage).</div>
+      <div class="cf-ligne"><span>Dans la sauvegarde</span><b>${echapperHtml(texteMiseBasRecup(it.el))}</b></div>
+      ${it.actuelles.map(a => `<div class="cf-ligne"><span>Dans le troupeau</span><b>${echapperHtml(texteMiseBasRecup(a))}</b></div>`).join('')}
+      <div class="prm-actions"><button type="button" class="btn btn-secondary rc-ignorer" data-k="${echapperHtml(it.k)}">Ne plus montrer</button></div>
+    </div>`;
+  bloc.innerHTML = (r.items.length || r.conflits.length)
+    ? `<div class="cf-ligne-grise" style="margin:0 0 12px;">Présent dans une sauvegarde d'avant la mise à jour du format, absent du troupeau. Rien n'est remis sans vous ; « Annuler » pendant 6 s remet les fiches telles quelles.</div>`
+      + (r.items.length > 1 ? `<div class="prm-actions" style="margin-bottom:12px;"><button type="button" class="btn btn-primary" id="rc-tout">Tout récupérer (${r.items.length})</button></div>` : '')
+      + r.items.map(carte).join('')
+      + (r.conflits.length ? `<div class="prm-titre" style="margin:16px 0 8px;">À vérifier (${r.conflits.length})</div>` + r.conflits.map(carteConflit).join('') : '')
+    : `<div class="card"><div class="prm-note" style="margin:0;">Rien à récupérer : tout ce que contiennent les sauvegardes est dans le troupeau.</div></div>`;
+  app.appendChild(bloc);
+  const appliquer = cles => {
+    const res = recupererSaisies(cles);
+    if (!res.n) { messageCharte('Rien à récupérer', 'Ces saisies viennent de changer (réception d\'un autre appareil).'); render('saisies-a-recuperer'); return; }
+    saveData(DB);
+    render('saisies-a-recuperer');
+    afficherSnackAnnuler(res.n > 1 ? res.n + ' saisies récupérées' : 'Saisie récupérée', () => {
+      res.avant.forEach(a => { const i = (DB[a.col] || []).findIndex(x => x && x.id === a.id); if (i >= 0) DB[a.col][i] = a.fiche; });
+      saveData(DB);
+      if (currentView === 'saisies-a-recuperer') render('saisies-a-recuperer');
+    });
+  };
+  bloc.querySelectorAll('.rc-recuperer').forEach(b => b.onclick = () => appliquer([r.items[Number(b.dataset.i)].k]));
+  const tout = bloc.querySelector('#rc-tout');
+  if (tout) tout.onclick = () => appliquer(r.items.map(it => it.k));
+  bloc.querySelectorAll('.rc-ignorer').forEach(b => b.onclick = () => { ajouterListeLocale(CLE_RECUP_IGNORES, [b.dataset.k]); render('saisies-a-recuperer'); });
+}
+
 function renderHome() {
   pageTitle.textContent = isDesktopMode() ? 'Accueil' : 'Mon troupeau';
   const alerteMeta = alerteTailleMetaHtml();   // document principal du compte proche du plafond Firestore (voir etatTailleMeta)
@@ -9472,6 +9704,8 @@ function renderHome() {
   if (pastilleConflits) { const d = document.createElement('div'); d.innerHTML = pastilleConflits; app.appendChild(d.firstElementChild); brancherPastilleConflits(app); }
   const pastilleDoublons = pastilleDoublonsHtml();   // doublons de synchro (v463) : pastille ambre, rien n'est réuni sans l'éleveur
   if (pastilleDoublons) { const d = document.createElement('div'); d.innerHTML = pastilleDoublons; app.appendChild(d.firstElementChild); brancherPastilleDoublons(app); }
+  const pastillesRecup = pastillesRecuperationHtml();   // sauvegardes d'avant conversion à copier, saisies à récupérer (correctif du 23/11)
+  if (pastillesRecup) { const d = document.createElement('div'); d.innerHTML = pastillesRecup; while (d.firstElementChild) app.appendChild(d.firstElementChild); brancherPastillesRecuperation(app); }
 
   if (isDesktopMode()) {
     const dashboard = document.createElement('div');
@@ -33105,6 +33339,7 @@ function renderParametresSauvegarde(content) {
       <div class="prm-etat sync-etat-ligne" id="sync-etat" style="margin-bottom:8px;">${syncEtatLigneHtml()}</div>
       ${ligneConflitsParametresHtml()}
       ${ligneDoublonsParametresHtml()}
+      ${ligneRecuperationParametresHtml()}
       <div class="prm-note" style="margin-bottom:12px;">Les données se synchronisent entre tes appareils, y compris après un passage hors ligne.</div>
       <div id="sync-status-detail" style="font-size:12px;margin-bottom:10px;display:none;"></div>
       <button type="button" class="btn btn-secondary" id="btn-voir-journal-synchro" style="margin-bottom:10px;display:none;">Voir le journal de synchro</button>
@@ -33149,6 +33384,7 @@ function renderParametresSauvegarde(content) {
   content.innerHTML = alerteTailleMetaHtml() + cardsHtml + `<details class="prm-maintenance" id="prm-maintenance"${prmMaintenanceOuvert ? ' open' : ''}><summary><b>Maintenance</b> · Rechercher les doublons du registre</summary><div class="prm-maintenance-corps">${maintenance.html}</div></details>`;
   brancherLigneConflits();
   brancherLigneDoublons();
+  brancherLigneRecuperation();
   document.getElementById('f-bulle-contact').onchange = (ev) => {
     try { if (ev.target.checked) localStorage.removeItem(CLE_BULLE_MASQUEE); else localStorage.setItem(CLE_BULLE_MASQUEE, '1'); } catch (e) {}
     majBulleContact();
@@ -36502,6 +36738,8 @@ function chargerSyncLastSyncedPersiste() {
     const raw = localStorage.getItem(cleSyncLastSyncedPersiste(sync.uid));
     if (!raw) return false;
     sync.lastSynced = JSON.parse(raw);
+    // persisté par une version qui ne connaissait pas toutes les collections (ex. 1.0.446 : pas de listesCompte) : collection absente = rien de connu
+    DOC_COLLECTIONS.forEach(c => { if (!sync.lastSynced[c] || typeof sync.lastSynced[c] !== 'object') sync.lastSynced[c] = {}; });
     return true;
   } catch (e) {
     console.error('Chargement de sync.lastSynced persisté : échec (repli sur les instantanés cloud pour l\'établir, sans perte -- juste une resynchronisation redondante)', e);
@@ -36966,13 +37204,22 @@ async function passerAuxVersionsEffectif() {
     // 1. ce qu'il faut écrire : fiches pas encore rangées (livraison 2), puis chaque liste du compte (livraison 3) d'après meta tel que le SERVEUR le garde
     const avant = {};
     const ops = [];
+    const rangeesIci = new Set();
     if (fichesARanger) {
       for (const c of collectionsVersionnees()) avant[c] = await lireCollectionServeurV2(c);
+      // Une fiche DÉJÀ rangée (champ el) n'est JAMAIS réécrite : ses versions portent les saisies faites depuis (perte du 23/11 : une fiche
+      // reconstruite d'après sa copie figée gel perdait les mises bas saisies entre deux essais de rangement). Seules les fiches sans el sont rangées.
+      let essaiOk = true;
       collectionsVersionnees().forEach(c => avant[c].forEach(r => {
-        if (!r || !r.id || (r.el && rangementVerifieV(r))) return;
-        const g = rangementFicheV(r.el ? Object.assign({}, r, r.gel || {}) : r, serverTimestamp());
+        if (!r || !r.id || r.el) return;
+        // essai à blanc sur une copie : le rangement doit redonner exactement la fiche, sinon rien n'est écrit
+        const essai = rangementFicheV(copieNetteV(r), null);
+        if (!rangementVerifieV(Object.assign(copieNetteV(r), { el: essai.el, gel: essai.gel, lp: essai.lp }))) { essaiOk = false; console.error('Rangement par versions : essai à blanc en échec (' + c + '/' + r.id + ')'); return; }
+        const g = rangementFicheV(r, serverTimestamp());
+        rangeesIci.add(c + '/' + r.id);
         ops.push({ type: 'update', ref: doc(fbDb, 'users', sync.uid, c, r.id), data: { el: g.el, gel: g.gel, lp: g.lp }, colName: c, id: r.id, newValue: sync.lastSynced[c][r.id] !== undefined ? sync.lastSynced[c][r.id] : deepClean(r) });
       }));
+      if (!essaiOk) { etapeRangement('essai à blanc en échec'); return; }
     }
     const snapMeta = await getDoc(doc(fbDb, 'users', sync.uid, 'meta', 'main'));
     if (snapMeta.metadata && snapMeta.metadata.fromCache) throw new Error('lecture de meta depuis le cache (hors réseau)');
@@ -36980,20 +37227,25 @@ async function passerAuxVersionsEffectif() {
     const listesAvant = {};
     (await lireCollectionServeurV2('listesCompte')).forEach(d => { if (d && d.id) listesAvant[d.id] = d; });
     const records = {};
+    let essaiListesOk = true;
     champsListesCompte().forEach(champ => {
       const rec = listeCompteVersRecord(champ, metaServeur[champ]);
       records[champ] = rec;
       const d = listesAvant[champ];
       if (d && d.el && listeRangeeConforme(d, champ, metaServeur[champ], rec)) return;
+      const essai = rangementFicheV(copieNetteV(rec), null);
+      if (!listeRangeeConforme(Object.assign({ id: champ, present: rec.present }, rec.cles ? { cles: rec.cles } : {}, { el: essai.el, gel: essai.gel, lp: essai.lp }), champ, metaServeur[champ], rec)) { essaiListesOk = false; console.error('Rangement par versions : essai à blanc en échec (liste ' + champ + ')'); return; }
       const g = rangementFicheV(rec, serverTimestamp());
       const data = Object.assign({ id: champ, present: rec.present }, rec.cles ? { cles: rec.cles } : {}, { el: g.el, gel: g.gel, lp: g.lp });
       ops.push({ type: 'set', ref: doc(fbDb, 'users', sync.uid, 'listesCompte', champ), data, colName: 'listesCompte', id: champ, newValue: deepClean(rec) });
     });
+    if (!essaiListesOk) { etapeRangement('essai à blanc en échec'); return; }
     if (ops.length) {
-      // sauvegarde complète AVANT toute écriture (Android : copie interne relue et vérifiée ; ailleurs : fichier téléchargé). Rien à ranger = rien à sauvegarder.
+      // sauvegarde complète AVANT toute écriture, HORS de l'appli. Android : copie interne au nom horodaté à la seconde (jamais écrasée) PUIS fichier enregistré
+      // par l'éleveur (Téléchargements, Drive…) ; refus ou échec = rien n'est changé (nouvel essai à la prochaine ouverture). Ailleurs : fichier téléchargé.
       const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
-      const sauve = Filesystem ? await writeAutoBackupFile('ovilog_avant_versions_' + jourAujourdhuiISO() + '.json', DB) : await exportBackupFile(DB, 'avant-rangement-versions');
-      if (!sauve || sauve.ok === false) { etapeRangement('sauvegarde impossible'); console.error('Rangement par versions : sauvegarde préalable impossible, reporté', sauve && sauve.raison); return; }
+      const sauve = Filesystem ? await demanderSauvegardeAvantConversion(await nomLibreAvantConversion()) : await exportBackupFile(DB, 'avant-rangement-versions');
+      if (!sauve || sauve.ok === false) { etapeRangement('sauvegarde impossible'); console.error('Rangement par versions : sauvegarde préalable impossible ou refusée, reporté', sauve && sauve.raison); return; }
       etapeRangement('sauvegarde faite');
       sync.sauvegardeFaite = true;
     }
@@ -37004,8 +37256,8 @@ async function passerAuxVersionsEffectif() {
     if (fichesARanger) {
       for (const c of collectionsVersionnees()) {
         const apres = await lireCollectionServeurV2(c);
-        const a = effectifsPassageV2(avant[c].map(r => r.el ? Object.assign({}, r, r.gel || {}) : r)), b = effectifsPassageV2(apres.map(r => copieNetteV(materialiserFicheV(r))));
-        const toutRange = apres.every(r => rangementVerifieV(r));
+        const a = effectifsPassageV2(avant[c].map(r => r.el ? copieNetteV(materialiserFicheV(r)) : r)), b = effectifsPassageV2(apres.map(r => copieNetteV(materialiserFicheV(r))));
+        const toutRange = apres.every(r => r && r.el && (!rangeesIci.has(c + '/' + r.id) || rangementVerifieV(r)));
         if (!toutRange || a.fiches !== b.fiches || a.elements !== b.elements || a.actives !== b.actives) {
           etapeRangement('vérification en échec');
           console.error('Rangement par versions : vérification en échec (' + c + ')', a, b, toutRange);
