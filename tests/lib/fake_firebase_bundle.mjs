@@ -140,10 +140,10 @@ export function where(champ, op, valeur) { return { champ, op, valeur }; }
 export function serverTimestamp() { return { __op: 'serverTimestamp' }; }
 export function deleteField() { return { __op: 'deleteField' }; }
 
-export async function setDoc(ref, data) {
+export async function setDoc(ref, data, opts) {
   const p = parsePath(ref.path);
   if (p.racine) return ecrireRacine({ type: 'set', path: ref.path, data });
-  await ecrire({ uid: p.uid, ops: [{ type: 'set', path: ref.path, data }] });
+  await ecrire({ uid: p.uid, ops: [Object.assign({ type: 'set', path: ref.path, data }, opts && opts.merge ? { merge: true } : {})] });   // { merge: true } comme le vrai SDK
 }
 export async function updateDoc(ref, data) {
   const p = parsePath(ref.path);
@@ -252,6 +252,7 @@ export function onSnapshot(ref, a, b, c) {
     const metadata = { fromCache, hasPendingWrites: false };
     if (estMeta && typeof window !== 'undefined') (window.__metaLog = window.__metaLog || []).push({ t: Math.round(performance.now()), cache: fromCache, existe: data.exists, drapeau: data.data && data.data.registreCollectionMigree20260930, nReg: data.data && data.data.registre ? Object.keys(data.data.registre.brebis || {}).length : null });
     if (estMeta) onNext({ exists: () => data.exists, data: () => data.data, metadata });
+    else if (id) { const d = (data.docs || {})[id]; onNext({ id, exists: () => d !== undefined, data: () => d, metadata }); }   // document d'une sous-collection (ex. reglagesAdmin/chantiers) : instantané de document, comme le vrai SDK
     else {
       const docs = Object.keys(data.docs || {}).map(k => data.docs[k]);
       onNext({ forEach(fn) { docs.forEach(d => fn({ data: () => d })); }, metadata });

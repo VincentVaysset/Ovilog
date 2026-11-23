@@ -73,6 +73,12 @@ await ok(deleteDoc(doc(db(ADMIN), 'erreurs', A + '_e1')), 'erreurs : l\'administ
 await ok(setDoc(doc(db(A, true), 'users', A, 'brebis', 'b1'), { eid: '250000000000001' }), 'compte vérifié : ses données users/A');
 await ko(setDoc(doc(db(A, false), 'users', A, 'brebis', 'b1'), { eid: '250000000000001' }), 'compte NON vérifié : users/A refusé (inchangé)');
 await ko(getDoc(doc(db(B, true), 'users', A, 'brebis', 'b1')), 'B ne lit pas users/A (inchangé)');
+await ok(setDoc(doc(db(A, true), 'users', A), { campagneDebut: 2027 }), 'compte vérifié : son document principal users/A');
+await ko(setDoc(doc(db(A, true), 'users', A, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'compte non administrateur : réglage administrateur refusé');
+await ok(getDoc(doc(db(A, true), 'users', A, 'reglagesAdmin', 'chantiers')), 'compte non administrateur : lit son réglage (désactivé)');
+await ok(setDoc(doc(db(ADMIN, true), 'users', ADMIN, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'administrateur : écrit son réglage');
+await ko(setDoc(doc(db(ADMIN, true), 'users', A, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'administrateur : jamais le réglage d\'un autre compte');
+await ko(setDoc(doc(db(ADMIN, false), 'users', ADMIN, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'administrateur NON vérifié : refusé');
 // anciennes collections Logisol (séparation, étape 5) : plus aucun accès, même pour un compte vérifié administrateur
 await ko(getDoc(doc(db(ADMIN, true), 'parcelles', 'p1')), 'Logisol retiré : parcelles refusée');
 await ko(setDoc(doc(db(ADMIN, true), 'lgs_stocks', 's1'), { x: 1 }), 'Logisol retiré : lgs_* refusée');

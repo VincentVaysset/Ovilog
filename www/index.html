@@ -8370,7 +8370,7 @@ function render(view, sheepId) {
     else if (view === 'add-ordonnance') renderAddOrdonnance();
     else if (view === 'sanitaire') renderSanitaire();
     else if (view === 'produits-delais') { renderProduitsDelais(); poserOngletsCarnet(view); }
-    else if (view === 'partenaires') renderPartenaires();
+    else if (view === 'partenaires') { if (chantierEdeActif()) renderPartenaires(); else { partenairesOrigine = null; parametresTab = 'listes'; parametresRubrique = 'listes'; render('parametres'); return; } }
     else if (view === 'soins-sans-bio') renderSoinsSansBio();
     else if (view === 'traitements-12-mois') renderTraitements12();
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
@@ -9204,7 +9204,7 @@ function libelleChampConflit(c, k) { return c.col === 'listesCompte' && c.id ===
 function ficheDuConflit(c) { return (DB[c.col] || []).find(f => f && f.id === c.id) || null; }
 const LIBELLES_LISTES_COMPTE = { laitTank: 'Relevé du tank', journal: 'Calendrier', traitementsCollectifs: 'Traitement collectif', causesMortalite: 'Causes de mortalité (adultes)',
   causesMortaliteAgneaux: 'Causes de mortalité (agneaux)', categoriesSoinsAutres: 'Catégories des soins « Autre »', categoriesTraitements: 'Catégories des traitements', categoriesNotes: 'Catégories des notes',
-  motifsNonTraite: 'Motifs « Pas traite »', acheteurs: 'Partenaires', partenairesInfo: 'Fiche partenaire', intervenants: 'Intervenants', produits: 'Produits sanitaires', produitsInfo: 'Fiche produit', resumesCampagne: 'Résumé de campagne' };
+  motifsNonTraite: 'Motifs « Pas traite »', acheteurs: 'Acheteurs', partenairesInfo: 'Fiche partenaire', intervenants: 'Intervenants', produits: 'Produits sanitaires', produitsInfo: 'Fiche produit', resumesCampagne: 'Résumé de campagne' };
 function titreConflit(c) {
   if (c.col === 'listesCompte') {
     const v = c.versions.find(x => !x.s) || c.versions[0];
@@ -32108,6 +32108,8 @@ const PARAMETRES_RUBRIQUE_LECTEUR = { key: 'lecteur', label: 'Lecteur' };
 const PARAMETRES_RUBRIQUES_MOBILE = ['exploitation', 'campagne', 'regles', 'listes', 'lecteur', 'sauvegarde'];
 // « Messages reçus » (bulle de contact) : rubrique mobile et onglet PC du SEUL administrateur (document admins/<uid>, voir demarrerContact)
 const PARAMETRES_RUBRIQUE_MESSAGES = { key: 'messages', label: 'Messages reçus', aide: 'Questions, bugs et idées envoyés depuis la bulle de contact' };
+// « Administration » : onglet PC du SEUL administrateur (chantiers en test, interrupteurs réservés)
+const PARAMETRES_RUBRIQUE_ADMIN = { key: 'administration', label: 'Administration', aide: 'Chantiers en test, réservés à l\'administrateur' };
 /* Taille du document principal (meta) du compte : mesure par OvilogSync.mesureMeta (plafond Firestore 1 Mo). Ambre dès 70 %, rouge dès 90 % ou si une
    écriture a été refusée pour la taille (vraie alerte : la synchro de ces données s'arrête). Message pour tous sur l'Accueil et dans Paramètres ›
    Sauvegarde ; détail des rubriques pour l'administrateur seulement. Mesure mise en cache 30 s (l'Accueil se redessine souvent). */
@@ -32155,8 +32157,8 @@ function tailleMetaAdminHtml() {
 }
 function contactAdministrateur() { const e = contactEtatCourant(); return !!(e && e.connecte && e.estAdmin); }
 function parametresRubriquesMobile() { return contactAdministrateur() ? [...PARAMETRES_RUBRIQUES_MOBILE, 'messages'] : PARAMETRES_RUBRIQUES_MOBILE; }
-function parametresTabsPc() { return contactAdministrateur() ? [...PARAMETRES_TABS, PARAMETRES_RUBRIQUE_MESSAGES] : PARAMETRES_TABS; }
-function parametresRubriqueInfo(cle) { return cle === 'messages' ? PARAMETRES_RUBRIQUE_MESSAGES : (PARAMETRES_TABS.find(x => x.key === cle) || PARAMETRES_RUBRIQUE_LECTEUR); }
+function parametresTabsPc() { return contactAdministrateur() ? [...PARAMETRES_TABS, PARAMETRES_RUBRIQUE_MESSAGES, PARAMETRES_RUBRIQUE_ADMIN] : PARAMETRES_TABS; }
+function parametresRubriqueInfo(cle) { return cle === 'messages' ? PARAMETRES_RUBRIQUE_MESSAGES : cle === 'administration' ? PARAMETRES_RUBRIQUE_ADMIN : (PARAMETRES_TABS.find(x => x.key === cle) || PARAMETRES_RUBRIQUE_LECTEUR); }
 // Mise en page commune des cartes : PC = grille de cartes pleine largeur ; mobile = cartes empilées sur une colonne (mêmes cartes, mêmes libellés).
 function prmGrilleHtml(cardsHtml) { return isDesktopMode() ? `<div class="prm-grid">${cardsHtml}</div>` : cardsHtml; }
 // Deux colonnes sur PC (gauche, droite), une seule colonne empilée sur mobile.
@@ -32211,6 +32213,7 @@ function appelerRenduParametres(cle, content) {
   else if (cle === 'sauvegarde') renderParametresSauvegarde(content);
   else if (cle === 'lecteur') renderParametresLecteur(content);
   else if (cle === 'messages') renderMessagesRecus(content);
+  else if (cle === 'administration') { if (contactAdministrateur() && isDesktopMode()) renderParametresAdministration(content); else content.innerHTML = ''; }
 }
 // Écran d'arrivée mobile : 4 rubriques en lignes cliquables, chacune avec un résumé ; état de synchro et version en pied.
 function renderParametresAccueilMobile() {
@@ -32334,6 +32337,7 @@ function etatNumeroEdeHtml(saisie, choix) {
   if (!String(saisie || '').trim()) return '';
   const n = normaliserNumeroEde(saisie);
   if (!n) return `<div class="prm-alerte" id="prm-ede-format" style="margin:6px 0 0;">Le n° EDE s'écrit FR suivi de 8 chiffres (ex. FR 12345678). Vous pouvez enregistrer quand même ; le document de circulation attendra un n° correct.</div>`;
+  if (!chantierEdeActif()) return '';   // chantier désactivé : seul le contrôle de format reste
   const possibles = basesLocalesEdePossibles(n), base = baseLocaleEde(n, choix);
   if (!possibles.length) return `<div class="prm-alerte" id="prm-ede-format" style="margin:6px 0 0;">Département ${echapperHtml(departementEde(n))} absent de la table des bases locales : à vérifier auprès de votre EDE.</div>`;
   if (possibles.length > 1) return `<div class="prm-note" id="prm-ede-base" style="margin-top:6px;">Votre département dépend de plusieurs bases locales : choisissez la vôtre.</div>
@@ -32365,6 +32369,61 @@ function carteDecoupageAdresseHtml(o) {
     <div>Rue ou lieu-dit : ${echapperHtml(d.rue)}<br>Code postal : ${echapperHtml(d.codePostal)}<br>Commune : ${echapperHtml(d.commune)}</div>
     <button type="button" class="btn btn-secondary btn-petit" id="btn-decouper-adresse" style="margin-top:8px;">Découper ainsi</button></div>`;
 }
+/* ---------- Interrupteur du chantier « Notification EDE » (réglage de COMPTE réservé à l'administrateur) ----------
+   UNE seule fonction décide partout : `chantierEdeActif()`. Valeur rangée dans un document à part du compte (users/{uid}/reglagesAdmin/chantiers,
+   champ `notificationEde`), que seul un administrateur (document admins/<uid>) peut écrire (règle Firestore) ; lue par la synchro
+   (`OvilogSync.reglagesAdmin`). Absente, inconnue (hors ligne, premier démarrage, pas connecté) = DÉSACTIVÉ. Désactivé : tout le chantier est masqué,
+   aucune donnée du chantier n'est écrite ; rien n'est jamais supprimé (activer = tout réapparaît tel quel). Toujours visibles pour tous : « N° EDE »
+   avec son contrôle de format et l'adresse en 3 champs. Date de référence (« Notifier à partir du », `notifierAPartirDu`) : par défaut le début de la
+   campagne en cours ; les mouvements d'avant sont « hors périmètre ». */
+function reglagesAdminCompte() {
+  const s = window.OvilogSync;
+  try { const r = s && typeof s.reglagesAdmin === 'function' ? s.reglagesAdmin() : null; return r && r.connu ? (r.data || {}) : null; } catch (e) { return null; }
+}
+function chantierEdeActif() { const r = reglagesAdminCompte(); return !!(r && r.notificationEde === true); }
+function dateReferenceEde() {
+  const r = reglagesAdminCompte();
+  if (r && /^\d{4}-\d{2}-\d{2}$/.test(String(r.notifierAPartirDu || ''))) return r.notifierAPartirDu;
+  return DB && DB.campagneDebut != null ? campagneDebutISO(DB.campagneDebut) : null;
+}
+function horsPerimetreEde(dateMouvement) { const ref = dateReferenceEde(); return !!(ref && String(dateMouvement || '') < ref); }
+// Paramètres › Administration (PC, administrateur seulement) : carte « Chantiers en test »
+function renderParametresAdministration(content) {
+  const r = reglagesAdminCompte();
+  const actif = chantierEdeActif();
+  const ref = dateReferenceEde();
+  content.innerHTML = prmGrilleHtml(`<div class="card" id="card-chantiers">
+    <div class="prm-titre" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">Chantiers en test <span class="badge badge-blue">Réservé à l'administrateur</span></div>
+    <div class="prm-note">Réglages de CE compte. Un chantier désactivé est entièrement masqué ; rien n'est supprimé.</div>
+    ${r === null ? `<div class="prm-alerte" id="adm-inconnu">Réglages du compte pas encore lus (hors ligne ?) : chantiers considérés comme désactivés.</div>` : ''}
+    ${prmInterrupteurHtml('f-adm-ede', 'Notification EDE', 'Documents de circulation, fiches partenaires, SIREN et base locale, sens Sortie / Entrée, mode bâton ou main.', actif, false)}
+    <div class="prm-note" id="adm-ede-etat">${actif ? 'Activé · mouvements d\'avant le ' + echapperHtml(formatDateFr(ref || '')) + ' : hors périmètre.' : 'Désactivé · rien du chantier n\'est écrit ni affiché sur ce compte.'}</div>
+    <label for="f-adm-ede-date">Notifier à partir du</label>
+    <input type="date" id="f-adm-ede-date" value="${echapperHtml(ref || '')}"${r === null ? ' disabled' : ''}>
+    <div class="prm-note">Début de la campagne en cours par défaut, le temps des essais ; la vraie date de mise en service viendra à l'envoi des notifications.</div>
+  </div>`);
+  const ecrire = (champs, texte, avant) => {
+    const s = window.OvilogSync;
+    if (!s || typeof s.ecrireReglagesAdmin !== 'function') return;
+    s.ecrireReglagesAdmin(champs).then(() => {
+      if (currentView === 'parametres') render('parametres');
+      if (avant) afficherSnackAnnuler(texte, () => { s.ecrireReglagesAdmin(avant).then(() => { if (currentView === 'parametres') render('parametres'); }).catch(e => messageCharte('Réglage non enregistré', String((e && e.message) || e))); });
+    }).catch(e => { messageCharte('Réglage non enregistré', 'Seul un compte administrateur peut changer ce réglage. ' + String((e && e.message) || '')); if (currentView === 'parametres') render('parametres'); });
+  };
+  const inter = document.getElementById('f-adm-ede');
+  if (inter) {
+    if (r === null) inter.disabled = true;
+    inter.onchange = () => {
+      const on = inter.checked === true;
+      const champs = { notificationEde: on };
+      if (on && !(r && r.notifierAPartirDu) && ref) champs.notifierAPartirDu = ref;
+      ecrire(champs, on ? 'Notification EDE activée' : 'Notification EDE désactivée', { notificationEde: !on });
+    };
+  }
+  const champDate = document.getElementById('f-adm-ede-date');
+  if (champDate) champDate.onchange = () => { if (/^\d{4}-\d{2}-\d{2}$/.test(champDate.value)) ecrire({ notifierAPartirDu: champDate.value }, 'Date enregistrée', { notifierAPartirDu: (r && r.notifierAPartirDu) || ref }); };
+}
+window.rafraichirChantierEde = function () { if (typeof currentView !== 'undefined' && ['parametres', 'partenaires', 'home'].includes(currentView)) render(currentView); };   // écrans de consultation seulement : jamais un écran de saisie
 /* ---------- Partenaires (Documents de circulation, étape 1, point 2) ----------
    La liste `acheteurs` (noms) reste telle quelle : c'est la clé. Chaque nom reçoit une fiche à côté, `partenairesInfo[nom]` (liste du compte, synchronisée
    comme les fiches produits) : { categorie (mots, jamais un code), numero (n° EDE « FR » + 8, ou n° d'agrément d'un abattoir), siren, adresse, codePostal,
@@ -32517,8 +32576,6 @@ function ouvrirFichePartenaire(nom) {
     else if (nv !== nom) {
       const r = renommerValeurListe('acheteurs', nom, nv);   // renomme aussi les mouvements actifs qui portent ce nom (registre archivé jamais touché)
       if (!r.ok) { err.textContent = 'Renommage impossible : ' + r.raison + '.'; err.classList.remove('hidden'); return; }
-      DB.partenairesInfo = Object.assign({}, DB.partenairesInfo || {});
-      delete DB.partenairesInfo[nom];
     }
     ecrirePartenaireInfo(nv, fiche);
     saveData(DB); fermer();
@@ -32553,8 +32610,8 @@ function renderParametresExploitation(content) {
         <div><label for="f-exp-commune">Commune</label><input type="text" id="f-exp-commune" value="${xlsxEscape(ex.commune || '')}"></div>
       </div>
       ${carteDecoupageAdresseHtml(ex)}
-      <label for="f-exp-siren">SIREN (facultatif)</label>
-      <input type="text" id="f-exp-siren" value="${xlsxEscape(ex.siren || '')}" placeholder="9 chiffres"><div id="prm-siren-etat">${etatSirenHtml(ex.siren)}</div>
+      ${chantierEdeActif() ? `<label for="f-exp-siren">SIREN (facultatif)</label>
+      <input type="text" id="f-exp-siren" value="${xlsxEscape(ex.siren || '')}" placeholder="9 chiffres"><div id="prm-siren-etat">${etatSirenHtml(ex.siren)}</div>` : ''}
       <label for="f-exp-type-suivi">Type de suivi laitier</label>
       <select id="f-exp-type-suivi">${options.map(([v, l]) => `<option value="${v}"${(ex.typeSuivi || '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
       <div class="prm-note">Détermine les données de contrôle laitier attendues (import, fiche brebis).</div>
@@ -32640,10 +32697,12 @@ function renderParametresExploitation(content) {
       prefixeEid: champPrefixe ? champPrefixe.value.trim() : marquage,
       typeSuivi: document.getElementById('f-exp-type-suivi').value || null,
       laiterie: document.getElementById('f-exp-laiterie').value.trim(),
-      siren: document.getElementById('f-exp-siren').value.trim(),
       codePostal: document.getElementById('f-exp-cp').value.trim(),
       commune: document.getElementById('f-exp-commune').value.trim()
     };
+    // SIREN : écrit seulement quand le champ est affiché (chantier actif) ; sinon la valeur enregistrée reste telle quelle
+    const champSirenSave = document.getElementById('f-exp-siren');
+    if (champSirenSave) DB.exploitation.siren = champSirenSave.value.trim();
     // base locale : écrite seulement quand le département en a plusieurs et qu'un choix est fait (sinon la valeur enregistrée reste telle quelle)
     const choixBase = document.getElementById('f-exp-base-ede');
     if (choixBase && choixBase.value) DB.exploitation.baseLocaleEde = choixBase.value;
@@ -32845,7 +32904,7 @@ function compterUsageCategorieNote(nom) {
 }
 // module = écran où la liste sert ; ajout = libellé de la fenêtre « Ajouter… » ; protegees = valeurs utilisées par le code (ni renommables ni retirables)
 const LISTES_GENERALES_CONFIG = [
-  { key: 'acheteurs', label: 'Partenaires', module: "Mouvements d'animaux · ventes", ajout: 'un acheteur', usage: compterUsageAcheteur, protegees: [] },
+  { key: 'acheteurs', label: 'Acheteurs', module: "Mouvements d'animaux · ventes", ajout: 'un acheteur', usage: compterUsageAcheteur, protegees: [] },
   { key: 'causesMortalite', label: 'Causes de mortalité – adultes', module: 'Brebis et béliers · morts', ajout: 'une cause de mortalité (adultes)', usage: compterUsageCauseMortalite, protegees: [MOTIF_MAJ_INVENTAIRE] },
   { key: 'causesMortaliteAgneaux', label: 'Causes de mortalité – agneaux', module: 'Agneaux, mort-nés et agnelles · morts', ajout: 'une cause de mortalité (agneaux)', usage: compterUsageCauseMortaliteAgneaux, protegees: [] },
   { key: 'motifsNonTraite', label: 'Motifs de non-traite', module: 'Pas traite cette campagne', ajout: 'un motif de non-traite', usage: compterUsageMotifNonTraite, protegees: [] },
@@ -32910,6 +32969,11 @@ function renommerValeurListe(key, ancien, nouveau) {
   let modifies = 0;
   objets.forEach(o => { if (o && o[champ] === ancien) { o[champ] = nouveau; modifies++; } });
   DB[key] = fusion ? liste.filter(v => v !== ancien) : liste.map(v => v === ancien ? nouveau : v);
+  if (key === 'acheteurs' && DB.partenairesInfo && Object.prototype.hasOwnProperty.call(DB.partenairesInfo, ancien)) {
+    DB.partenairesInfo = Object.assign({}, DB.partenairesInfo);
+    if (!Object.prototype.hasOwnProperty.call(DB.partenairesInfo, nouveau)) DB.partenairesInfo[nouveau] = DB.partenairesInfo[ancien];   // fusion : la fiche du nom gardé reste
+    delete DB.partenairesInfo[ancien];
+  }
   return { ok: true, modifies, fusion };
 }
 // Ajoute une valeur à une liste (sans doublon exact) ; retourne la valeur à sélectionner (celle déjà présente en cas de doublon, même casse près)
@@ -32962,7 +33026,7 @@ function renderParametresListes(content) {
         : `<div class="prm-val-actions"><span style="font-weight:500;">« ${xlsxEscape(prmListeSel.val)} »</span><button type="button" class="btn btn-secondary btn-petit prm-renommer" data-list="${cfg.key}">Renommer</button><button type="button" class="btn btn-secondary btn-petit prm-retirer" data-list="${cfg.key}" style="color:var(--danger);border-color:var(--danger);">Retirer</button></div>`;
     }
     return `<div class="card prm-liste" id="liste-${cfg.key}">
-      <div class="prm-titre" style="margin-bottom:2px;">${cfg.label}</div>
+      <div class="prm-titre" style="margin-bottom:2px;">${cfg.key === 'acheteurs' && chantierEdeActif() ? 'Partenaires' : cfg.label}</div>
       <div class="prm-note" style="margin:0 0 10px;">${cfg.module} · ${libNombreValeurs(items.length)}</div>
       ${chips}${actions}
       <div class="row" style="margin-top:10px;"><input type="text" class="input-add-liste" data-list="${cfg.key}" placeholder="Ajouter une valeur" aria-label="Ajouter une valeur à ${cfg.label}"><button type="button" class="btn btn-secondary btn-add-liste" data-list="${cfg.key}" style="width:auto;padding:0 18px;">Ajouter</button></div>
@@ -32978,7 +33042,7 @@ function renderParametresListes(content) {
     </div>`;
   content.innerHTML = prmGrilleHtml(carteProduits + LISTES_GENERALES_CONFIG.map(carteListe).join(''));
   // Partenaires (liste des noms, renommage et retrait comme avant) : bouton vers les fiches complètes (catégorie, n°, adresse, délégation)
-  const carteP = document.getElementById('liste-acheteurs');
+  const carteP = chantierEdeActif() ? document.getElementById('liste-acheteurs') : null;
   if (carteP) {
     const nb = partenairesACompleter().length;
     const d = document.createElement('div');
@@ -35955,7 +36019,7 @@ const fbDb = initializeFirestore(fbApp, {
 const META_FIELDS = ['rangementVersionsDate', 'libellesAnomaliesControle', 'exploitation', 'campagneDebut', 'campagneDateDemarrage', 'campagneDateDebut', 'campagneDateFin',
   'campagneInitialisee', 'produits', 'acheteurs', 'causesMortalite', 'causesMortaliteAgneaux', 'motifsNonTraite', 'categoriesSoinsAutres', 'categoriesTraitements', 'intervenants',
   'casParticuliers', 'categoriesNotes', 'notesArchiveesBrebis', 'typesJournal', 'lots', 'journal', 'laitTank', 'luttes',
-  'produitsInfo', 'partenairesInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
+  'produitsInfo', 'parametresPrixLait', 'bilanLactation', 'sieolSansMiseBas',
   // 'registre' reste ICI (champ meta.registre) volontairement, même après
   // l'introduction de la collection dédiée ci-dessous (voir DOC_COLLECTIONS)
   // -- chantier "Registre : collection dédiée" (1re étape, migration seule) :
@@ -36240,6 +36304,8 @@ function compteRangeParVersions() { return ((DB && DB.schemaDonnees) || 0) >= sc
 function opsFicheVersionnee(colName, colRef, rec, old, ops) {
   const id = rec.id;
   const raw = rawEffectifV2(colName, id);
+  // liste du compte absente de l'appareil et du serveur : aucun document créé vide (ex. fiches partenaires d'un compte qui n'a pas le chantier)
+  if (!raw && colName === 'listesCompte' && rec && rec.present === false && !(rec.items || []).length) return true;
   if (!raw) {
     if (old !== undefined) return true;      // connue avant, plus sur le serveur (supprimée ailleurs) : la réception tranche, rien ici
     if (colName === 'listesCompte' || compteRangeParVersions()) {
@@ -37337,6 +37403,20 @@ function stopListeners() {
 const CHAMPS_MESSAGE_CONTACT = ['uid', 'exploitation', 'texte', 'type', 'date', 'dateServeur', 'campagne', 'ecran', 'version', 'appareil', 'statut', 'reponse', 'reponseDate', 'reponseLue'];
 const CLE_ECHECS_CONTACT = 'ovilog_contact_echecs';   // messages refusés par le serveur (texte gardé sur l'appareil pour « Renvoyer »)
 const contact = { uid: null, estAdmin: false, mes: [], tous: [], erreurs: [], prets: false, unsubs: [] };
+// Réglages administrateur du compte (users/{uid}/reglagesAdmin/chantiers) : inconnus tant que rien n'est lu (= chantiers désactivés)
+const reglagesAdmin = { uid: null, connu: false, data: {}, unsub: null };
+function arreterReglagesAdmin() { if (reglagesAdmin.unsub) { try { reglagesAdmin.unsub(); } catch (e) {} } reglagesAdmin.unsub = null; reglagesAdmin.uid = null; reglagesAdmin.connu = false; reglagesAdmin.data = {}; }
+function demarrerReglagesAdmin(uid) {
+  if (reglagesAdmin.uid === uid) return;
+  arreterReglagesAdmin();
+  reglagesAdmin.uid = uid;
+  reglagesAdmin.unsub = onSnapshot(doc(fbDb, 'users', uid, 'reglagesAdmin', 'chantiers'), snap => {
+    if (reglagesAdmin.uid !== uid) return;
+    reglagesAdmin.connu = true;
+    reglagesAdmin.data = snap.exists() ? (snap.data() || {}) : {};
+    try { if (window.rafraichirChantierEde) window.rafraichirChantierEde(); } catch (e) { console.error('Réglages administrateur : rafraîchissement', e); }
+  }, e => { console.error('Réglages administrateur : lecture impossible', e); });
+}
 function lireEchecsContact() { try { return JSON.parse(localStorage.getItem(CLE_ECHECS_CONTACT) || '[]'); } catch (e) { return []; } }
 function ecrireEchecsContact(l) { try { localStorage.setItem(CLE_ECHECS_CONTACT, JSON.stringify(l)); } catch (e) {} }
 function signalerContact() { try { if (typeof window.rafraichirContact === 'function') window.rafraichirContact(); } catch (e) { console.error('Bulle de contact : rafraîchissement', e); } }
@@ -37547,6 +37627,7 @@ async function passerAuxVersionsEffectif() {
     const records = {};
     let essaiListesOk = true;
     champsListesCompte().forEach(champ => {
+      if (champ === 'partenairesInfo' && metaServeur[champ] == null) return;   // liste du chantier EDE jamais rangée vide (jamais dans meta)
       const rec = listeCompteVersRecord(champ, metaServeur[champ]);
       records[champ] = rec;
       const d = listesAvant[champ];
@@ -37586,6 +37667,7 @@ async function passerAuxVersionsEffectif() {
     const listesApres = {};
     (await lireCollectionServeurV2('listesCompte')).forEach(d => { if (d && d.id) listesApres[d.id] = d; });
     for (const champ of champsListesCompte()) {
+      if (!records[champ]) continue;     // liste non rangée (absente de meta, voir plus haut)
       const d = listesApres[champ], rec = records[champ];
       if (!d || !listeRangeeConforme(d, champ, metaServeur[champ], rec)) {
         etapeRangement('vérification en échec');
@@ -37648,6 +37730,7 @@ async function onSignedIn(user) {
   }
   await startListeners(alreadyBootstrapped);
   demarrerContact(user.uid).catch(e => console.error('Bulle de contact : démarrage', e));
+  demarrerReglagesAdmin(user.uid);
   if (!alreadyBootstrapped) {
     // Appareil jamais appairé : rien ne se fait avant que le SERVEUR ait répondu pour meta (écran « Lecture de votre compte… », voir decideEcranApresConnexion).
     await attendreSourceConnue('meta');
@@ -37663,6 +37746,7 @@ async function onSignedIn(user) {
 function onSignedOut() {
   stopListeners();
   arreterContact();
+  arreterReglagesAdmin();
   sync.uid = null;
   sync.email = null;
   reinitialiserEtatCompte();
@@ -37742,6 +37826,14 @@ function friendlyAuthError(e) {
 }
 
 window.OvilogSync = {
+  // réglages administrateur du compte (chantiers en test) : { connu, data } ; écriture réservée à l'administrateur (règle Firestore aussi)
+  reglagesAdmin() { return { connu: reglagesAdmin.connu && reglagesAdmin.uid === sync.uid, data: Object.assign({}, reglagesAdmin.data) }; },
+  async ecrireReglagesAdmin(champs) {
+    if (!sync.uid || !contact.estAdmin) throw new Error('compte non administrateur');
+    const ecrit = Object.assign({}, champs, { modifieLe: new Date().toISOString() });
+    await setDoc(doc(fbDb, 'users', sync.uid, 'reglagesAdmin', 'chantiers'), ecrit, { merge: true });
+    if (reglagesAdmin.uid === sync.uid && reglagesAdmin.connu) reglagesAdmin.data = Object.assign({}, reglagesAdmin.data, ecrit);   // écran à jour sans attendre l'écoute
+  },
   getState() {
     return { loggedIn: !!sync.uid, email: sync.email };
   },

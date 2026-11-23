@@ -17,6 +17,7 @@ for (const pc of [true, false]) {
   page.on('pageerror', e => erreurs.push(e.message));
   page.on('dialog', d => d.accept());
   await page.goto(URL_APP, { waitUntil: 'load' }); await page.waitForTimeout(300);
+  await page.evaluate(() => { window.OvilogSync = window.OvilogSync || {}; window.OvilogSync.reglagesAdmin = () => ({ connu: true, data: { notificationEde: true } }); }); // chantier EDE activé (interrupteur administrateur)
   await page.evaluate(() => {
     DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; return true; };
     DB.campagneDebut = 2027; DB.campagneInitialisee = true;

@@ -187,6 +187,8 @@ const server = http.createServer(async (req, res) => {
       // Règle Firestore « email_verified == true » : un jeton non vérifié ne peut rien écrire (permission-denied)
       if (exigerVerification && jetonVerifie === false) return json(res, 403, { error: 'permission-denied', message: 'email non vérifié dans le jeton' });
       ensureUser(uid);
+      // Règle Firestore : les réglages administrateur du compte (users/{uid}/reglagesAdmin) ne s'écrivent que par un compte administrateur (admins/<uid>)
+      if (clientId !== 'test-direct' && ops.some(op => /\/reglagesAdmin\//.test(op.path)) && !(authUid && racine('admins')[authUid])) return json(res, 403, { error: 'permission-denied', message: 'réglages administrateur : compte non administrateur' });
       const cols = collections.get(uid);
       // « Créer seulement si absent » (runTransaction du faux SDK) : refuse TOUT le batch si le document existe déjà -- 409, comme une transaction abandonnée.
       for (const op of ops) {
