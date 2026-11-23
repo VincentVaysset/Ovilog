@@ -28517,7 +28517,7 @@ function dessinerPremiereConfiguration() {
   const champ = (id, label, val, ph) => `<div><label for="${id}">${label}</label><input type="text" id="${id}" value="${xlsxEscape(val)}" placeholder="${ph || ''}" autocomplete="off"></div>`;
   let corps = '';
   if (E.etape === 1) {
-    corps = champ('f-premconf-nom', "Nom de l'exploitation", E.nom, 'ex : GAEC des Brebis Heureuses') + champ('f-premconf-cheptel', 'N° de cheptel', E.cheptel) + champ('f-premconf-marquage', 'Indicatif de marquage', E.marquage, 'ex : 000000')
+    corps = champ('f-premconf-nom', "Nom de l'exploitation", E.nom, 'ex : GAEC des Brebis Heureuses') + champ('f-premconf-cheptel', 'N° EDE', E.cheptel, 'ex : FR 12345678') + champ('f-premconf-marquage', 'Indicatif de marquage', E.marquage, 'ex : 000000')
       + champ('f-premconf-adresse', 'Adresse', E.adresse) + champ('f-premconf-tel', 'Téléphone', E.tel);
   } else if (E.etape === 2) {
     const options = PREMCONF_SOURCES.map(o => `<button type="button" class="assistant-option${E.source === o.cle ? ' on' : ''}" data-source="${o.cle}" role="radio" aria-checked="${E.source === o.cle}"><span class="rond"></span><span><b>${o.titre}</b><span class="d">${o.desc}</span></span></button>`).join('');
@@ -32274,6 +32274,74 @@ function optionsNbControlesHtml(typeSuivi, valeur) {
   const v = choix.includes(parseInt(valeur, 10)) ? parseInt(valeur, 10) : choix[choix.length - 1];
   return choix.map(n => `<option value="${n}"${n === v ? ' selected' : ''}>${n} contrôle${n > 1 ? 's' : ''}</option>`).join('');
 }
+/* ---------- N° EDE de l'exploitation, base locale et SIREN (Documents de circulation, étape 1, point 1) ----------
+   Le n° enregistré (`exploitation.numeroCheptel`) n'est JAMAIS réécrit : le n° EDE complet (« FR » + 8 caractères : département sur 2, ou 2A / 2B,
+   ou 97x pour l'outre-mer, puis la commune et le rang) est reconstitué à la lecture (`numeroEdeExploitation`). La base locale qui reçoit les
+   notifications est déduite du département par la table de référence de CONFOSIMOC (`TABLE_BASES_EDE`) ; le destinataire est l'IPG du
+   département. Un département rattaché à plusieurs bases : choix dans Paramètres › Exploitation (`exploitation.baseLocaleEde`), jamais deviné. */
+const TABLE_BASES_EDE = {
+  '001IPG': '001IPG', '003IPG': '003IPG', '004IPG': '004IPG,083IPG', '005IPG': '005IPG', '006IPG': '006IPG', '007IPG': '007IPG', '013IPG': '013IPG,084IPG',
+  '013ARS': '004IPG,005IPG,006IPG,013IPG,083IPG,084IPG', '014ARS': '014IPG,027IPG,050IPG,053IPG,061IPG,076IPG,028IPG,041IPG', '018IPG': '018IPG',
+  '020ARS': '02AIPG,02BIPG', '021IPG': '021IPG', '023IPG': '023IPG', '025ARS': '008IPG,025IPG,039IPG,051IPG,070IPG,090IPG', '026IPG': '026IPG',
+  '035ARS': '022IPG,029IPG,035IPG,056IPG',
+  '350ARS': '014IPG,027IPG,028IPG,041IPG,050IPG,053IPG,061IPG,076IPG,022IPG,029IPG,035IPG,056IPG,016IPG,017IPG,037IPG,044IPG,049IPG,079IPG,086IPG,072IPG,085IPG',
+  '036IPG': '036IPG', '038IPG': '038IPG', '042IPG': '042IPG', '042ARS': '042IPG,069IPG,007IPG,026IPG,038IPG', '043IPG': '043IPG',
+  '049ARS': '016IPG,017IPG,037IPG,044IPG,049IPG,079IPG,086IPG', '054ARS': '052IPG,054IPG,055IPG,057IPG,067IPG,068IPG,088IPG', '058IPG': '058IPG',
+  '059ARS': '002IPG,059IPG,060IPG,062IPG,080IPG', '063IPG': '063IPG', '069IPG': '069IPG', '071IPG': '071IPG', '072IPG': '072IPG', '073IPG': '073IPG',
+  '074IPG': '074IPG', '074ARS': '073IPG,074IPG',
+  '081ARS': '009IPG,011IPG,012IPG,015IPG,019IPG,024IPG,02AIPG,030IPG,031IPG,032IPG,033IPG,034IPG,040IPG,046IPG,047IPG,048IPG,064IPG,065IPG,066IPG,081IPG,082IPG,087IPG',
+  '085IPG': '085IPG', '089ARS': '010IPG,045IPG,075IPG,077IPG,078IPG,089IPG,091IPG,092IPG,093IPG,094IPG,095IPG', '02BIPG': '02BIPG',
+  '971IPG': '971IPG', '972IPG': '972IPG', '973IPG': '973IPG', '974IPG': '974IPG'
+};
+// N° EDE saisi (espaces, points, « FR » facultatif) → « FR » + 8 caractères, ou null si le format n'est pas celui d'un n° d'exploitation
+function normaliserNumeroEde(v) {
+  const c = String(v || '').toUpperCase().replace(/[\s.\-]/g, '').replace(/^FR/, '');
+  return /^(\d{2}|2A|2B)\d{6}$/.test(c) ? 'FR' + c : null;
+}
+function numeroEdeExploitation() { return normaliserNumeroEde(((DB && DB.exploitation) || {}).numeroCheptel); }
+// Département d'un n° EDE : 2 caractères (01…95, 2A, 2B), 3 chiffres pour l'outre-mer (971…974)
+function departementEde(numero) {
+  const n = normaliserNumeroEde(numero);
+  if (!n) return null;
+  const c = n.slice(2);
+  return /^97[1-6]/.test(c) ? c.slice(0, 3) : c.slice(0, 2);
+}
+// Destinataire (IPG du département) et bases locales possibles d'après la table CONFOSIMOC
+function destinataireEde(numero) { const d = departementEde(numero); return d ? (d.length === 3 ? d : '0' + d) + 'IPG' : null; }
+function basesLocalesEdePossibles(numero) {
+  const ipg = destinataireEde(numero);
+  if (!ipg) return [];
+  return Object.keys(TABLE_BASES_EDE).filter(k => TABLE_BASES_EDE[k].split(',').includes(ipg));
+}
+// Base locale retenue : la seule possible, sinon celle choisie dans Paramètres (si elle fait partie des possibles), sinon null (à choisir)
+function baseLocaleEde(numero, choix) {
+  const possibles = basesLocalesEdePossibles(numero);
+  if (possibles.length === 1) return possibles[0];
+  return choix && possibles.includes(choix) ? choix : null;
+}
+// SIREN : 9 chiffres et clé de Luhn
+function sirenValide(v) {
+  const c = String(v || '').replace(/\s/g, '');
+  if (!/^\d{9}$/.test(c)) return false;
+  let t = 0;
+  for (let i = 0; i < 9; i++) { let d = Number(c[8 - i]); if (i % 2 === 1) { d *= 2; if (d > 9) d -= 9; } t += d; }
+  return t % 10 === 0;
+}
+// Ligne sous le champ N° EDE (Paramètres › Exploitation) : base locale déduite, ou message ambre ; rien si le champ est vide
+function etatNumeroEdeHtml(saisie, choix) {
+  if (!String(saisie || '').trim()) return '';
+  const n = normaliserNumeroEde(saisie);
+  if (!n) return `<div class="prm-alerte" id="prm-ede-format" style="margin:6px 0 0;">Le n° EDE s'écrit FR suivi de 8 chiffres (ex. FR 12345678). Vous pouvez enregistrer quand même ; le document de circulation attendra un n° correct.</div>`;
+  const possibles = basesLocalesEdePossibles(n), base = baseLocaleEde(n, choix);
+  if (!possibles.length) return `<div class="prm-alerte" id="prm-ede-format" style="margin:6px 0 0;">Département ${echapperHtml(departementEde(n))} absent de la table des bases locales : à vérifier auprès de votre EDE.</div>`;
+  if (possibles.length > 1) return `<div class="prm-note" id="prm-ede-base" style="margin-top:6px;">Votre département dépend de plusieurs bases locales : choisissez la vôtre.</div>
+    <select id="f-exp-base-ede" style="margin-top:6px;"><option value="">-- à choisir --</option>${possibles.map(b => `<option value="${b}"${b === base ? ' selected' : ''}>${b}</option>`).join('')}</select>`;
+  return `<div class="prm-note" id="prm-ede-base" style="margin-top:6px;">${echapperHtml(n.slice(0, 2) + ' ' + n.slice(2))} · notifications reçues par la base locale ${echapperHtml(base)}.</div>`;
+}
+function etatSirenHtml(saisie) {
+  if (!String(saisie || '').trim() || sirenValide(saisie)) return '';
+  return `<div class="prm-alerte" id="prm-siren-format" style="margin:6px 0 0;">Un SIREN compte 9 chiffres (vérifiez-le sur un document officiel). Vous pouvez enregistrer quand même.</div>`;
+}
 function renderParametresExploitation(content) {
   const ex = DB.exploitation || {};
   // Indicatif de marquage = valeur de référence ; le « préfixe EID » (6 premiers chiffres de l'EID) en est le même nombre : un seul champ, la même valeur est écrite dans les deux
@@ -32287,7 +32355,7 @@ function renderParametresExploitation(content) {
       <label for="f-exp-nom">Nom de l'exploitation</label>
       <input type="text" id="f-exp-nom" value="${xlsxEscape(ex.nom || '')}" placeholder="ex: GAEC des Brebis Heureuses">
       <div class="prm-champs2">
-        <div><label for="f-exp-cheptel">Numéro de cheptel</label><input type="text" id="f-exp-cheptel" value="${xlsxEscape(ex.numeroCheptel || '')}"></div>
+        <div><label for="f-exp-cheptel">N° EDE</label><input type="text" id="f-exp-cheptel" value="${xlsxEscape(ex.numeroCheptel || '')}" placeholder="ex: FR 12345678"><div id="prm-ede-etat">${etatNumeroEdeHtml(ex.numeroCheptel, ex.baseLocaleEde)}</div></div>
         <div><label for="f-exp-marquage">Indicatif de marquage</label><input type="text" id="f-exp-marquage" value="${xlsxEscape(indicatif)}" placeholder="ex: 000000"><div class="prm-note">Sert aussi de préfixe EID.</div></div>
       </div>
       ${valeursDifferentes ? `<div class="prm-alerte" id="prm-prefixe-different"><div style="margin-bottom:6px;">Cet appareil contient deux valeurs différentes : indicatif de marquage « ${xlsxEscape(ex.indicatifMarquage)} » et préfixe EID « ${xlsxEscape(ex.prefixeEid)} ». Rien n'a été fusionné : vérifie-les et corrige si besoin.</div>
@@ -32296,6 +32364,8 @@ function renderParametresExploitation(content) {
         <div><label for="f-exp-adresse">Adresse</label><input type="text" id="f-exp-adresse" value="${xlsxEscape(ex.adresse || '')}"></div>
         <div><label for="f-exp-tel">Téléphone</label><input type="text" id="f-exp-tel" value="${xlsxEscape(ex.telephone || '')}"></div>
       </div>
+      <label for="f-exp-siren">SIREN (facultatif)</label>
+      <input type="text" id="f-exp-siren" value="${xlsxEscape(ex.siren || '')}" placeholder="9 chiffres"><div id="prm-siren-etat">${etatSirenHtml(ex.siren)}</div>
       <label for="f-exp-type-suivi">Type de suivi laitier</label>
       <select id="f-exp-type-suivi">${options.map(([v, l]) => `<option value="${v}"${(ex.typeSuivi || '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
       <div class="prm-note">Détermine les données de contrôle laitier attendues (import, fiche brebis).</div>
@@ -32340,6 +32410,11 @@ function renderParametresExploitation(content) {
     bloc.style.display = CHOIX_CONTROLES_SUIVI[t] ? '' : 'none';
     document.getElementById('f-exp-nb-controles').innerHTML = optionsNbControlesHtml(t, t === DB.exploitation.typeSuivi ? DB.exploitation.nbControlesSuivi : null);
   };
+  // contrôle en direct du N° EDE et du SIREN (message seulement : rien n'est bloqué ni réécrit)
+  const champEde = document.getElementById('f-exp-cheptel');
+  if (champEde) champEde.addEventListener('input', () => { const sel = document.getElementById('f-exp-base-ede'); document.getElementById('prm-ede-etat').innerHTML = etatNumeroEdeHtml(champEde.value, sel ? sel.value : (DB.exploitation || {}).baseLocaleEde); });
+  const champSiren = document.getElementById('f-exp-siren');
+  if (champSiren) champSiren.addEventListener('input', () => { document.getElementById('prm-siren-etat').innerHTML = etatSirenHtml(champSiren.value); });
   document.getElementById('btn-save-exploitation').onclick = () => {
     // Étale DB.exploitation existant plutôt que de le remplacer entièrement
     // -- sans ça, ce bouton écraserait silencieusement campagneMoisDebut/
@@ -32358,8 +32433,12 @@ function renderParametresExploitation(content) {
       // même valeur dans les deux clés, sauf si l'appareil portait deux valeurs différentes (champ « préfixe EID » alors affiché et respecté tel quel)
       prefixeEid: champPrefixe ? champPrefixe.value.trim() : marquage,
       typeSuivi: document.getElementById('f-exp-type-suivi').value || null,
-      laiterie: document.getElementById('f-exp-laiterie').value.trim()
+      laiterie: document.getElementById('f-exp-laiterie').value.trim(),
+      siren: document.getElementById('f-exp-siren').value.trim()
     };
+    // base locale : écrite seulement quand le département en a plusieurs et qu'un choix est fait (sinon la valeur enregistrée reste telle quelle)
+    const choixBase = document.getElementById('f-exp-base-ede');
+    if (choixBase && choixBase.value) DB.exploitation.baseLocaleEde = choixBase.value;
     // contrôles prévus : écrits seulement pour un suivi CLS / CLO (sinon la valeur déjà enregistrée reste telle quelle)
     if (CHOIX_CONTROLES_SUIVI[DB.exploitation.typeSuivi]) DB.exploitation.nbControlesSuivi = parseInt(document.getElementById('f-exp-nb-controles').value, 10);
     saveData(DB);

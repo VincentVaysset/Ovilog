@@ -34,7 +34,7 @@ for (const pc of [false, true]) {
   const e1 = await lire(page, () => ({ etape: document.querySelector('.assistant-tete .stp').textContent, titre: document.querySelector('.assistant-tete h1').textContent, logo: !!document.querySelector('.assistant-tete img[alt="Ovilog"]'), barre: document.querySelectorAll('.assistant-etapes i').length, actives: document.querySelectorAll('.assistant-etapes i.on').length,
     labels: [...document.querySelectorAll('#assistant-premiere-configuration label')].map(l => l.textContent), h: Math.round(document.getElementById('f-premconf-nom').getBoundingClientRect().height), boutons: [...document.querySelectorAll('.mn-barre .btn')].map(b => b.textContent), principaux: document.querySelectorAll('.mn-barre .btn-primary').length }));
   eq([e1.etape, e1.titre, e1.logo, e1.barre, e1.actives], ['Étape 1 sur ' + total, 'Votre exploitation', true, total, 1], nom + ' : étape 1, logo en tête, barre de progression à ' + total + ' étapes');
-  eq(e1.labels, ["Nom de l'exploitation", 'N° de cheptel', 'Indicatif de marquage', 'Adresse', 'Téléphone'], nom + ' : champs de l\'exploitation');
+  eq(e1.labels, ["Nom de l'exploitation", 'N° EDE', 'Indicatif de marquage', 'Adresse', 'Téléphone'], nom + ' : champs de l\'exploitation');
   eq([e1.h, e1.boutons, e1.principaux], [pc ? 44 : 48, ['Continuer'], 1], nom + ' : champs de ' + (pc ? 44 : 48) + ' px, un seul bouton « Continuer »');
   await page.fill('#f-premconf-nom', 'GAEC de la Combe'); await page.fill('#f-premconf-cheptel', '81 123 456'); await page.fill('#f-premconf-marquage', 'FR 81 123'); await page.fill('#f-premconf-adresse', 'La Combe, 81000 Albi'); await page.fill('#f-premconf-tel', '06 12 34 56 78');
   await page.click('#btn-premconf-suivant');
