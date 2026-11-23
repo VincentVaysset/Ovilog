@@ -2296,6 +2296,7 @@ function migrateData(d) {
     (d.mouvementsCollectifs || []).forEach(m => { if (m.categorie === 'agneaux') m.categorie = 'agnelles'; });
     d.agnellesRenommeesDepuisAgneaux20260921 = true;
   }
+  ['brebis', 'beliers', 'agnelles'].forEach(c => (d[c] || []).forEach(f => retirerEchosSansIdFiche(f)));   // v464 : écho d'un appareil v446 (copie sans id d'un élément déjà identifié)
   poserIdsElements(d, 'contenu');   // lot 4 : identifiant technique de chaque élément de liste (anciens éléments : d'après leur contenu)
   return d;
 }
@@ -2320,6 +2321,16 @@ function texteStableElement(v, racine) {
   if (typeof v === 'object') return '{' + Object.keys(v).filter(k => !(racine && k === 'id') && v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + texteStableElement(v[k], false)).join(',') + '}';
   return JSON.stringify(v);
 }
+/* Texte d'IDENTITÉ d'un élément (v464) : LA seule normalisation utilisée pour calculer un identifiant d'après le contenu, sur l'appareil
+   comme pour un document lu du serveur (tout passe par poserIdsListe) : un champ null, absent ou vide ('') compte pareil (Firestore écrit
+   null là où l'appareil n'écrit rien) et les identifiants techniques (`id`) sont ignorés à toute profondeur. Clés triées. */
+function valeurVideIdentite(v) { return v === null || v === undefined || v === ''; }
+function texteIdentiteElement(v) {
+  if (valeurVideIdentite(v)) return 'null';
+  if (Array.isArray(v)) return '[' + v.map(texteIdentiteElement).join(',') + ']';
+  if (typeof v === 'object') return '{' + Object.keys(v).filter(k => k !== 'id' && !valeurVideIdentite(v[k])).sort().map(k => JSON.stringify(k) + ':' + texteIdentiteElement(v[k])).join(',') + '}';
+  return JSON.stringify(v);
+}
 // Empreinte FNV-1a sur 2 × 32 bits, en base 36 (déterministe, sans dépendance)
 function empreinteTexte(t) {
   let a = 0x811c9dc5, b = 0x01000193 ^ t.length;
@@ -2332,34 +2343,74 @@ function empreinteTexte(t) {
 }
 function idAleatoireElement() { return 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 // Pose les id manquants d'UNE liste ; mode 'contenu' (anciens éléments) ou 'nouveau' (créés ici). Rend le nombre d'id posés.
-function poserIdsListe(liste, mode) {
+/* `connus` (facultatif) : identifiants déjà rangés au serveur pour CETTE liste. Un élément sans id dont l'identifiant calculé à l'ancienne
+   (v463 : null et absent distingués) y figure déjà garde cet identifiant : un élément déjà synchronisé ne reçoit jamais un nouvel id. */
+function poserIdsListe(liste, mode, connus) {
   if (!Array.isArray(liste)) return 0;
   let n = 0;
   const pris = new Set(liste.filter(e => e && typeof e === 'object' && e.id).map(e => String(e.id)));
-  const rangs = {};
+  const rangs = {}, rangsAnciens = {};
   liste.forEach(e => {
     if (!e || typeof e !== 'object' || Array.isArray(e) || e.id) return;
     let id;
     if (mode === 'nouveau') { do { id = idAleatoireElement(); } while (pris.has(id)); }
     else {
-      const base = 'h' + empreinteTexte(texteStableElement(e, true));
-      rangs[base] = (rangs[base] || 0) + 1;
-      id = rangs[base] === 1 ? base : base + '-' + rangs[base];
-      while (pris.has(id)) { rangs[base]++; id = base + '-' + rangs[base]; }
+      let ancien = null;
+      if (connus && connus.size) {
+        const baseA = 'h' + empreinteTexte(texteStableElement(e, true));
+        rangsAnciens[baseA] = (rangsAnciens[baseA] || 0) + 1;
+        const candidat = rangsAnciens[baseA] === 1 ? baseA : baseA + '-' + rangsAnciens[baseA];
+        if (connus.has(candidat) && !pris.has(candidat)) ancien = candidat;
+      }
+      if (ancien) id = ancien;
+      else {
+        const base = 'h' + empreinteTexte(texteIdentiteElement(e));
+        rangs[base] = (rangs[base] || 0) + 1;
+        id = rangs[base] === 1 ? base : base + '-' + rangs[base];
+        while (pris.has(id)) { rangs[base]++; id = base + '-' + rangs[base]; }
+      }
     }
     e.id = id; pris.add(id); n++;
   });
   return n;
 }
-// Pose les id manquants de toutes les listes d'une fiche (brebis, bélier, agnelle, fiche du registre), agneaux des mises bas compris
-function poserIdsFiche(fiche, mode) {
+/* Écho d'un appareil d'avant la livraison 1 (v446) : il renvoie un élément déjà enregistré SANS son identifiant (ajout « en fin de liste » rejoué) ;
+   la liste contient alors le même élément deux fois, une fois avec id, une fois sans. Une copie sans id dont le contenu (texteIdentiteElement)
+   est celui d'un élément AVEC id de la même liste est cet écho : retirée, jamais comptée comme un nouvel élément. Deux saisies identiques
+   toutes deux sans id (vraie double saisie) restent. Rend le nombre de copies retirées (fiche entière, agneaux compris). */
+function retirerEchosSansIdListe(liste) {
+  if (!Array.isArray(liste)) return 0;
+  const avecId = new Set(liste.filter(e => e && typeof e === 'object' && e.id).map(texteIdentiteElement));
+  if (!avecId.size) return 0;
+  let n = 0;
+  for (let i = liste.length - 1; i >= 0; i--) {
+    const e = liste[i];
+    if (e && typeof e === 'object' && !Array.isArray(e) && !e.id && avecId.has(texteIdentiteElement(e))) { liste.splice(i, 1); n++; }
+  }
+  return n;
+}
+function retirerEchosSansIdFiche(fiche) {
   if (!fiche || typeof fiche !== 'object') return 0;
   let n = 0;
-  listesElementsFiche().forEach(k => { n += poserIdsListe(fiche[k], mode); });
+  listesElementsFiche().forEach(k => { n += retirerEchosSansIdListe(fiche[k]); });
   (fiche.agnelages || []).forEach(ag => {
     if (!ag || !Array.isArray(ag.lambs)) return;
-    n += poserIdsListe(ag.lambs, mode);
-    ag.lambs.forEach(l => { if (l) listesElementsAgneau().forEach(k => { n += poserIdsListe(l[k], mode); }); });
+    n += retirerEchosSansIdListe(ag.lambs);
+    ag.lambs.forEach(l => { if (l) listesElementsAgneau().forEach(k => { n += retirerEchosSansIdListe(l[k]); }); });
+  });
+  return n;
+}
+// Pose les id manquants de toutes les listes d'une fiche (brebis, bélier, agnelle, fiche du registre), agneaux des mises bas compris
+// connusDe(chemin) (facultatif) : identifiants déjà rangés pour la liste « chemin » (« sanitaire », « agnelages:e1>lambs », …), voir poserIdsListe
+function poserIdsFiche(fiche, mode, connusDe) {
+  if (!fiche || typeof fiche !== 'object') return 0;
+  let n = 0;
+  const c = chemin => connusDe ? connusDe(chemin) : null;
+  listesElementsFiche().forEach(k => { n += poserIdsListe(fiche[k], mode, c(k)); });
+  (fiche.agnelages || []).forEach(ag => {
+    if (!ag || !Array.isArray(ag.lambs)) return;
+    n += poserIdsListe(ag.lambs, mode, c('agnelages:' + ag.id + '>lambs'));
+    ag.lambs.forEach(l => { if (l) listesElementsAgneau().forEach(k => { n += poserIdsListe(l[k], mode, c('agnelages:' + ag.id + '>lambs:' + l.id + '>' + k)); }); });
   });
   return n;
 }
@@ -2458,7 +2509,7 @@ function copieNetteV(v) {
   Object.keys(v).forEach(k => { o[k] = copieNetteV(v[k]); });
   return o;
 }
-function memeContenuV(a, b) { return texteStableElement(copieNetteV(a), false) === texteStableElement(copieNetteV(b), false); }
+function memeContenuV(a, b) { return texteIdentiteElement(a) === texteIdentiteElement(b); }   // null, absent et vide comptent pareil (voir texteIdentiteElement)
 function cleElementV(K) { return 'k' + empreinteTexte(K); }
 function estObjetV(x) { return !!x && typeof x === 'object' && !Array.isArray(x); }
 // Heure serveur d'une version : Timestamp du SDK, { ms } du faux serveur des tests, nombre ; null = écriture pas encore reçue par le serveur
@@ -2575,6 +2626,20 @@ function listesAnciennesV(raw) {
   listesElementsFiche().forEach(l => { if (Array.isArray(raw[l])) leg[l] = raw[l]; });
   return leg;
 }
+// Identifiants déjà rangés dans `el`, par liste (« sanitaire », « agnelages:e1>lambs »…) : un élément déjà synchronisé garde le sien
+function idsConnusDepuisEl(el) {
+  const parListe = new Map();
+  Object.keys(el || {}).forEach(fk => {
+    const ent = el[fk];
+    if (!estObjetV(ent) || typeof ent.c !== 'string') return;
+    const i = ent.c.lastIndexOf(':');
+    if (i < 0) return;
+    const liste = ent.c.slice(0, i), id = ent.c.slice(i + 1).replace(/#\d+$/, '');
+    if (!parListe.has(liste)) parListe.set(liste, new Set());
+    parListe.get(liste).add(id);
+  });
+  return chemin => parListe.get(chemin) || null;
+}
 function recupererEcrituresAnciennesV(raw) {
   if (!raw || !estObjetV(raw.el) || !estObjetV(raw.gel)) return null;
   const leg = listesAnciennesV(raw);
@@ -2584,7 +2649,8 @@ function recupererEcrituresAnciennesV(raw) {
   Object.keys(leg).forEach(l => { if (!(l in gelCommun)) delete leg[l]; });
   if (!Object.keys(leg).length) return null;
   if (texteStableElement(copieNetteV(leg), false) === texteStableElement(copieNetteV(gelCommun), false)) return null;
-  const avecIds = lst => { const f = copieNetteV(lst); poserIdsFiche(f, 'contenu'); return f; };
+  const connus = idsConnusDepuisEl(raw.el);
+  const avecIds = lst => { const f = copieNetteV(lst); retirerEchosSansIdFiche(f); poserIdsFiche(f, 'contenu', connus); return f; };
   const G = aplatirFicheV(avecIds(gelCommun)), N = aplatirFicheV(avecIds(leg));
   const etat = etatVersionsV(raw.el);
   const ajouts = [];
@@ -2657,7 +2723,7 @@ function rangementFicheV(raw, ts) {
 function rangementVerifieV(raw) {
   if (!raw || !estObjetV(raw.el)) return false;
   const f = copieNetteV(listesAnciennesV(raw));
-  poserIdsFiche(f, 'contenu');
+  poserIdsFiche(f, 'contenu', idsConnusDepuisEl(raw.el));
   const m = materialiserFicheV(raw), lm = {};
   listesElementsFiche().forEach(l => { if (Array.isArray(m[l])) lm[l] = m[l]; });
   return texteStableElement(lm, false) === texteStableElement(f, false);
@@ -2684,6 +2750,16 @@ function rangsNouveauxV(ks, etat, deja) {
    serveur) et { __v2: 'del' } (champ effacé), traduits par la synchro. Jamais de liste « à l'ancienne » écrite ici.
    opts.parents : K -> vid (base vue par l'appareil quand l'autre côté a changé en même temps) ; opts.resolutions : K -> { heads, s } (choix de
    l'éleveur : version écrite sur TOUTES les têtes) ; opts.sansPurge : ne rien effacer (choix annulable) ; opts.maintenant : heure locale (purge). */
+/* Marque « fu » : la suppression d'une copie en double (doublons de synchro réunis par l'éleveur). Un appareil qui a encore cette copie (même
+   contenu, autre identifiant, jamais vue par le serveur) ne la renvoie jamais et l'efface à la réception. */
+function copieFusionneeV(etat, pa, l, d) {
+  // seule une copie à identifiant CALCULÉ (venue d'un appareil d'avant, « h… ») peut être une ancienne copie : un élément saisi ici (« e… ») passe toujours
+  if (!d || !/^[hw]/.test(String(d.id || ''))) return false;
+  for (const st of (etat || new Map()).values()) {
+    if (st.s && st.gagnant && st.gagnant.fu && (st.pa || null) === (pa || null) && st.l === l && memeContenuV(st.d, d)) return true;
+  }
+  return false;
+}
 function nouvelIdVersionV() { return 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 function opsVersionsFicheV(local, rawEff, opts) {
   opts = opts || {};
@@ -2714,6 +2790,7 @@ function opsVersionsFicheV(local, rawEff, opts) {
     if (r) { poser(K, e.pa, e.l, nouvelIdVersionV(), { d: e.d, p: r.heads.slice(), n: (st ? st.nMax : 0) + 1, o: st && typeof st.o === 'number' ? st.o : rangs.get(K), res: 1 }); return; }
     if (st && !st.s && memeContenuV(st.d, e.d)) return;                                       // inchangé
     if (st && st.heads.some(h => !h.s && memeContenuV(h.d, e.d))) return;                     // c'est une version déjà écrite (conflit en cours)
+    if (!st && copieFusionneeV(etat, e.pa, e.l, e.d)) return;                                  // ancienne copie d'un doublon réuni : jamais renvoyée au serveur
     const p = parents[K] ? [parents[K]] : (st ? [st.gagnant.vid] : []);
     poser(K, e.pa, e.l, nouvelIdVersionV(), { d: e.d, p, n: (st ? st.nMax : 0) + 1, o: st && typeof st.o === 'number' ? st.o : rangs.get(K) });
     if (st && !parents[K]) remplaces.push({ fk: st.fk, vid: st.gagnant.vid });
@@ -2723,7 +2800,8 @@ function opsVersionsFicheV(local, rawEff, opts) {
     const r = resolutions[K];
     if (r) { poser(K, st.pa, st.l, nouvelIdVersionV(), { d: st.d, s: 1, p: r.heads.slice(), n: st.nMax + 1, o: st.o, res: 1 }); return; }
     const p = parents[K] ? [parents[K]] : [st.gagnant.vid];
-    poser(K, st.pa, st.l, nouvelIdVersionV(), { d: st.d, s: 1, p, n: st.nMax + 1, o: st.o });
+    const fusion = Object.keys(opts.fusions || {}).some(f => K === f || K.indexOf(f + '>') === 0);    // copie retirée en réunissant un doublon : marque synchronisée
+    poser(K, st.pa, st.l, nouvelIdVersionV(), Object.assign({ d: st.d, s: 1, p, n: st.nMax + 1, o: st.o }, fusion ? { fu: 1 } : {}));
     if (!parents[K] && !st.retabli) remplaces.push({ fk: st.fk, vid: st.gagnant.vid });
   });
   // ménage : versions qui ne sont plus des têtes (gardées 10 min si elles viennent d'être départagées par l'éleveur : son choix reste annulable)
@@ -2788,8 +2866,35 @@ function remplacerMarqueursV(v, enMemoire, sdk) {
    envoyé est gardé ; sinon le distant fait foi (suppression distante comprise). Quand l'élément local est une des versions déjà écrites
    (conflit en cours), c'est la gagnante qui s'affiche. `noterParent(K)` : l'autre côté a changé l'élément en même temps qu'un changement
    local pas encore parti -> la version locale sera écrite sur la base qu'elle connaissait (le conflit apparaîtra au lieu d'un écrasement). */
+/* Un élément de l'appareil dont l'identifiant n'existe pas au serveur (ni dans la base vue) mais qui a EXACTEMENT le même contenu
+   (texteIdentiteElement) qu'un élément du serveur au même endroit, lui aussi sans correspondant sur l'appareil, est le MÊME élément :
+   il prend l'identifiant du serveur (jamais l'inverse, jamais deux copies). Parents d'abord, puis leurs listes. Sur une copie. */
+function alignerIdsSurDistantV(local, remote, base) {
+  const loc = copieNetteV(local);
+  const idsDe = arr => new Set((Array.isArray(arr) ? arr : []).filter(estObjetV).map(e => String(e.id)));
+  const aligner = (lArr, rArr, bArr, listesEnfants) => {
+    if (!Array.isArray(lArr) || !Array.isArray(rArr)) return;
+    const idsL = idsDe(lArr), idsR = idsDe(rArr), idsB = idsDe(bArr);
+    const libresR = rArr.filter(r => estObjetV(r) && r.id !== undefined && !idsL.has(String(r.id)));
+    lArr.forEach(l => {
+      if (!estObjetV(l) || l.id === undefined || idsR.has(String(l.id)) || idsB.has(String(l.id))) return;
+      const i = libresR.findIndex(r => texteIdentiteElement(r) === texteIdentiteElement(l));
+      if (i < 0) return;
+      l.id = libresR[i].id; libresR.splice(i, 1);
+    });
+    lArr.forEach(l => {
+      if (!estObjetV(l)) return;
+      const r = rArr.find(x => estObjetV(x) && String(x.id) === String(l.id));
+      const b = (Array.isArray(bArr) ? bArr : []).find(x => estObjetV(x) && String(x.id) === String(l.id));
+      if (r) listesEnfants(l).forEach(sl => aligner(l[sl], r[sl], b ? b[sl] : [], x => listesEnfantsElement(sl)));
+    });
+  };
+  listesElementsFiche().forEach(k => aligner(loc[k], (remote || {})[k], (base || {})[k], () => listesEnfantsElement(k)));
+  return loc;
+}
 function fusionnerFicheElementsV(local, remote, base, etatDistant, noterParent) {
   if (!local || base === undefined || !remote) return remote;
+  local = alignerIdsSurDistantV(local, remote, base);
   const L = aplatirFicheV(copieNetteV(local)), R = aplatirFicheV(remote), B = aplatirFicheV(base);
   const scal = {};
   new Set([...Object.keys(L.scal), ...Object.keys(R.scal), ...Object.keys(B.scal)]).forEach(k => {
@@ -2811,6 +2916,7 @@ function fusionnerFicheElementsV(local, remote, base, etatDistant, noterParent) 
     const st = etatDistant && etatDistant.get(K);
     const dejaEcrit = st && (l ? st.heads.some(h => !h.s && memeContenuV(h.d, l.d)) : st.heads.some(h => h.s));
     if (dejaEcrit) { if (r) garde.set(K, r); return; }
+    if (l && !r && !b && copieFusionneeV(etatDistant, l.pa, l.l, l.d)) return;               // ancienne copie d'un doublon réuni ailleurs : effacée ici aussi
     if (l) garde.set(K, l);
     if (b && (!r || !memeContenuV(r.d, b.d)) && noterParent) noterParent(K);
   });
@@ -7869,6 +7975,7 @@ navDrawer.querySelectorAll('.nav-item').forEach(btn => {
 
 btnBack.onclick = () => {
   if (currentView === 'conflits-synchro') { render(conflitsOrigine || 'home'); return; }
+  if (currentView === 'doublons-synchro') { render(doublonsOrigine || 'home'); return; }
   // Paramètres mobile : depuis une rubrique, retour à l'écran d'arrivée des rubriques
   if (currentView === 'parametres' && !isDesktopMode() && parametresRubrique) { parametresRubrique = null; render('parametres'); return; }
   if (currentView === 'detail') {
@@ -8252,6 +8359,7 @@ function render(view, sheepId) {
     else if (view === 'traitements-collectifs') renderTraitementsCollectifsHistorique();
     else if (view === 'sous-delai') { renderSousDelai(); poserOngletsCarnet(view); }
     else if (view === 'conflits-synchro') renderConflitsSynchro();
+    else if (view === 'doublons-synchro') renderDoublonsSynchro();
     else if (view === 'controle-lot-delai') renderControleLotDelai();
     else if (view === 'ordonnances') { renderOrdonnances(); poserOngletsCarnet(view); }
     else if (view === 'add-ordonnance') renderAddOrdonnance();
@@ -8370,7 +8478,9 @@ function dashboardStatsData() {
 
   let totalMisesBas = 0, totalAgneaux = 0, totalMortNes = 0, totalMales = 0, totalFemelles = 0;
   DB.brebis.forEach(s => {
-    (s.agnelages || []).forEach(a => {
+    // UNE mise bas par brebis et par campagne, la première : même règle que le Bilan de campagne (campagneBilanChiffres), jamais deux chiffres différents
+    const deCampagne = (s.agnelages || []).filter(a => a && (DB.campagneDebut == null || a.campagne === DB.campagneDebut));
+    deCampagne.slice(0, DB.campagneDebut == null ? undefined : 1).forEach(a => {
       // Filtre explicite par campagne plutôt que de compter tel quel :
       // sheep.agnelages n'est plus jamais remis à zéro (voir "Démarrer une
       // nouvelle campagne" dans Paramètres — seul le champ `campagne` posé
@@ -8836,8 +8946,8 @@ function controleLaitierCompareData() {
 function agneauxCampagneRestants() {
   const C = DB.campagneDebut;
   const r = { males: 0, femelles: 0, total: 0, sansNumero: 0, morts: 0, vendus: 0, inventaire: 0, gardees: 0 };
-  DB.brebis.forEach(s => (s.agnelages || []).forEach(a => {
-    if (!a || (C != null && a.campagne !== C)) return;
+  // UNE mise bas par brebis et par campagne, la première (même règle que le Bilan de campagne : campagneBilanChiffres) ; une 2e est un doublon à vérifier
+  DB.brebis.forEach(s => (s.agnelages || []).filter(a => a && (C == null || a.campagne === C)).slice(0, C == null ? undefined : 1).forEach(a => {
     (a.lambs || []).forEach(l => {
       if (!l || l.sexe === 'Mort-né') return;
       if (l.statutFinal === 'mort') r.morts++;
@@ -9170,12 +9280,198 @@ function renderConflitsSynchro() {
   });
 }
 
+/* ---------- Doublons de synchro (v464) ----------
+   Copies en double nées de la v463 (même élément noté avec deux identifiants) : une brebis avec deux mises bas sur la même campagne, ou deux
+   éléments IDENTIQUES dans une même liste (soin, écho, contrôle, mouvement, note…, agneaux compris). Rien n'est réuni d'office : pastille ambre
+   « Doublons à vérifier : N » sur l'Accueil et ligne dans Paramètres › Synchro et sauvegarde, écran « Doublons de synchro » (copies côte à
+   côte, « Réunir en une ») ; la copie la plus complète est gardée et reçoit ce que l'autre est seule à avoir (agneaux, n°, devenir, soins) ;
+   l'autre est retirée par une suppression MARQUÉE et synchronisée (OvilogSync.marquerFusion) : un appareil hors réseau qui a encore cette
+   copie ne la renvoie jamais. Bandeau 6 s « Doublon réuni · Annuler » = fiche exacte d'avant. Contrôle : test_doublons_synchro. */
+let doublonsOrigine = 'home';
+const LISTES_DOUBLONS_IDENTIQUES = ['sanitaire', 'echographies', 'controleLaitier', 'mouvements', 'notes', 'modesRepro', 'videesDefinitives', 'cellules', 'nonTraite', 'miseTraite'];
+function groupesIdentiques(liste) {
+  const parTexte = new Map();
+  (Array.isArray(liste) ? liste : []).forEach(e => { if (!e || typeof e !== 'object') return; const t = texteIdentiteElement(e); if (!parTexte.has(t)) parTexte.set(t, []); parTexte.get(t).push(e); });
+  return [...parTexte.values()].filter(g => g.length > 1);
+}
+function doublonsDeFiche(col, f) {
+  const out = [];
+  if (!f || !f.id) return out;
+  const parCampagne = {};
+  (f.agnelages || []).forEach(a => { if (a && a.campagne !== undefined && a.campagne !== null) (parCampagne[a.campagne] = parCampagne[a.campagne] || []).push(a); });
+  Object.keys(parCampagne).forEach(c => { if (parCampagne[c].length > 1) out.push({ col, id: f.id, type: 'misebas', liste: 'agnelages', campagne: Number(c), ids: parCampagne[c].map(a => a.id) }); });
+  LISTES_DOUBLONS_IDENTIQUES.forEach(l => groupesIdentiques(f[l]).forEach(g => out.push({ col, id: f.id, type: 'identiques', liste: l, ids: g.map(e => e.id) })));
+  (f.agnelages || []).forEach(a => (a && Array.isArray(a.lambs) ? a.lambs : []).forEach(lamb => {
+    if (!lamb) return;
+    listesElementsAgneau().forEach(l => groupesIdentiques(lamb[l]).forEach(g => out.push({ col, id: f.id, type: 'identiques', liste: l, agnelage: a.id, agneau: lamb.id, ids: g.map(e => e.id) })));
+  }));
+  return out;
+}
+function doublonsSynchro() {
+  const out = [];
+  ['brebis', 'beliers', 'agnelles'].forEach(col => (DB[col] || []).forEach(f => doublonsDeFiche(col, f).forEach(d => out.push(d))));
+  return out;
+}
+// Copie la plus complète d'une mise bas : agneaux bouclés, devenirs, soins et notes d'agneaux, champs renseignés
+function scoreMiseBasDoublon(a) {
+  const plein = v => !valeurVideIdentite(v) && !(Array.isArray(v) && !v.length);
+  let s = Object.keys(a || {}).filter(k => k !== 'lambs' && plein(a[k])).length;
+  (a.lambs || []).forEach(l => { if (!l) return; s += 1 + (cleanEid(l.eid || '') ? 10 : 0) + (l.statutFinal ? 5 : 0) + 3 * ((l.sanitaire || []).length + (l.mouvements || []).length + (l.notes || []).length) + Object.keys(l).filter(k => plein(l[k])).length; });
+  return s;
+}
+// Réunit deux objets : ceux de `garde` restent, un champ vide est pris de `autre` ; listes d'éléments réunies sans doublon (contenu identique)
+function reunirElementsDoublon(garde, autre, listes) {
+  const r = copieProfonde(garde);
+  Object.keys(autre || {}).forEach(k => {
+    if (k === 'id' || listes.includes(k)) return;
+    if (valeurVideIdentite(r[k]) && !valeurVideIdentite(autre[k])) r[k] = copieProfonde(autre[k]);
+  });
+  listes.forEach(l => {
+    if (!Array.isArray(autre && autre[l]) || !autre[l].length) return;
+    r[l] = Array.isArray(r[l]) ? r[l] : [];
+    autre[l].forEach(e => { if (!r[l].some(x => texteIdentiteElement(x) === texteIdentiteElement(e))) r[l].push(copieProfonde(e)); });
+  });
+  return r;
+}
+function reunirMisesBasDoublon(a, b) {
+  const garde = scoreMiseBasDoublon(a) >= scoreMiseBasDoublon(b) ? a : b, autre = garde === a ? b : a;
+  const r = reunirElementsDoublon(garde, autre, []);
+  const lambsAutre = (autre.lambs || []).slice();
+  r.lambs = (garde.lambs || []).map(l => {
+    // l'agneau correspondant de l'autre copie : même n° si les deux en ont un, sinon le premier du même sexe pas encore repris
+    let i = lambsAutre.findIndex(x => x && cleanEid(x.eid || '') && cleanEid(x.eid || '') === cleanEid(l.eid || ''));
+    if (i < 0) i = lambsAutre.findIndex(x => x && x.sexe === l.sexe && (!cleanEid(x.eid || '') || !cleanEid(l.eid || '')));
+    if (i < 0) return copieProfonde(l);
+    const x = lambsAutre.splice(i, 1)[0];
+    return reunirElementsDoublon(l, x, listesElementsAgneau());
+  });
+  lambsAutre.forEach(x => { if (x) r.lambs.push(copieProfonde(x)); });     // un agneau que seule l'autre copie connaît : gardé
+  return { reunie: r, retiree: autre };
+}
+// Réunit un doublon sur la fiche (en place) ; rend { avant, chemins } (chemins des copies retirées, pour la marque synchronisée) ou null
+function reunirDoublon(d) {
+  const f = (DB[d.col] || []).find(x => x && x.id === d.id);
+  if (!f) return null;
+  const avant = copieProfonde(f);
+  const chemins = [];
+  if (d.type === 'misebas') {
+    const copies = (f.agnelages || []).filter(a => a && d.ids.includes(a.id));
+    if (copies.length < 2) return null;
+    let reunie = copies[0];
+    for (let i = 1; i < copies.length; i++) { const m = reunirMisesBasDoublon(reunie, copies[i]); chemins.push('agnelages:' + m.retiree.id); reunie = m.reunie; }
+    const idGarde = reunie.id;
+    f.agnelages = f.agnelages.filter(a => !(a && d.ids.includes(a.id) && a.id !== idGarde)).map(a => a && a.id === idGarde ? reunie : a);
+  } else {
+    const parent = d.agneau ? ((f.agnelages || []).find(a => a && a.id === d.agnelage) || { lambs: [] }).lambs.find(l => l && l.id === d.agneau) : f;
+    if (!parent || !Array.isArray(parent[d.liste])) return null;
+    const [garde, ...retires] = parent[d.liste].filter(e => e && d.ids.includes(e.id));
+    if (!garde || !retires.length) return null;
+    const prefixe = d.agneau ? 'agnelages:' + d.agnelage + '>lambs:' + d.agneau + '>' : '';
+    retires.forEach(e => chemins.push(prefixe + d.liste + ':' + e.id));
+    parent[d.liste] = parent[d.liste].filter(e => !retires.includes(e));
+  }
+  return { avant, chemins };
+}
+/* Réunion AUTOMATIQUE (accord de l'éleveur) des seules copies de mise bas STRICTEMENT identiques (même contenu, agneaux et instant de saisie
+   compris : texteIdentiteElement) : c'est une même mise bas notée deux fois, jamais deux vraies. Au démarrage et après chaque réception
+   d'un autre appareil ; suppression marquée et synchronisée comme une réunion à la main. Le reste (copies différentes, soins ou notes
+   identiques) attend l'éleveur dans « Doublons de synchro ». Rend le nombre de mises bas réunies. */
+function reunirDoublonsIdentiquesAuto() {
+  let n = 0;
+  doublonsSynchro().filter(d => d.type === 'misebas').forEach(d => {
+    const f = (DB[d.col] || []).find(x => x && x.id === d.id);
+    if (!f) return;
+    const copies = (f.agnelages || []).filter(a => a && d.ids.includes(a.id));
+    if (copies.length < 2 || !copies.every(a => texteIdentiteElement(a) === texteIdentiteElement(copies[0]))) return;
+    const res = reunirDoublon(d);
+    if (!res) return;
+    if (window.OvilogSync && window.OvilogSync.marquerFusion) window.OvilogSync.marquerFusion(d.col, d.id, res.chemins);
+    n++;
+  });
+  if (n) { saveData(DB); if (typeof currentView !== 'undefined' && currentView === 'home') render('home'); }   // l'Accueil n'est pas une saisie : chiffres à jour
+  return n;
+}
+window.reunirDoublonsIdentiquesAuto = reunirDoublonsIdentiquesAuto;
+window.addEventListener('load', () => { try { reunirDoublonsIdentiquesAuto(); } catch (e) { console.error('Doublons identiques : réunion automatique', e); } });
+function pastilleDoublonsHtml() {
+  const n = doublonsSynchro().length;
+  return n ? `<button type="button" class="pastille-conflits" id="pastille-doublons">Doublons à vérifier : ${n}</button>` : '';
+}
+function brancherPastilleDoublons(racine) {
+  const b = (racine || document).querySelector('#pastille-doublons');
+  if (b) b.onclick = () => { doublonsOrigine = currentView === 'parametres' ? 'parametres' : 'home'; render('doublons-synchro'); };
+}
+function ligneDoublonsParametresHtml() {
+  const n = doublonsSynchro().length;
+  if (!n) return '';
+  return `<div id="prm-doublons" class="prm-conflits"><span class="pastille-conflits statique">Doublons à vérifier : ${n}</span><button type="button" class="btn btn-secondary btn-petit" id="btn-voir-doublons">Voir</button></div>`;
+}
+function brancherLigneDoublons() {
+  const b = document.getElementById('btn-voir-doublons');
+  if (b) b.onclick = () => { doublonsOrigine = 'parametres'; render('doublons-synchro'); };
+}
+function texteAgneauDoublon(l) {
+  if (!l) return '';
+  const n = l.sexe === 'Mort-né' ? 'Mort-né' : (l.sexe || 'Agneau') + ' · ' + (cleanEid(l.eid || '') ? 'n°' + String(cleanEid(l.eid)).slice(-5) : 'sans n°');
+  const dev = l.statutFinal === 'mort' ? ' · mort' : l.statutFinal === 'vendu' ? ' · vendu' : l.statutFinal === 'inventaire' ? ' · inventaire' : '';
+  const soins = (l.sanitaire || []).length ? ' · ' + (l.sanitaire || []).length + ' soin' + ((l.sanitaire || []).length > 1 ? 's' : '') : '';
+  return n + dev + soins;
+}
+function carteDoublonHtml(d, i) {
+  const f = (DB[d.col] || []).find(x => x && x.id === d.id);
+  if (!f) return '';
+  const animal = (d.col === 'beliers' ? 'Bélier ' : d.col === 'agnelles' ? 'Agnelle ' : 'Brebis ') + numeroAnimal(f);
+  let corps, titre;
+  if (d.type === 'misebas') {
+    titre = (d.ids.length) + ' mises bas sur la campagne ' + campagneLabel(d.campagne);
+    corps = (f.agnelages || []).filter(a => a && d.ids.includes(a.id)).map((a, j) => `<div class="cf-version">
+      <div class="cf-entete"><b>Copie ${String.fromCharCode(65 + j)}</b></div>
+      <div class="cf-quand">${echapperHtml(formatDateFr(a.date || ''))}${a.codeRepro ? ' · ' + echapperHtml(a.codeRepro) : ''}</div>
+      ${(a.lambs || []).map(l => `<div class="cf-ligne"><span>Agneau</span><b>${echapperHtml(texteAgneauDoublon(l))}</b></div>`).join('') || '<div class="cf-ligne"><span>Agneaux</span><b>aucun</b></div>'}
+    </div>`).join('');
+  } else {
+    titre = (LIBELLES_LISTES_CONFLIT[d.liste] || 'Élément') + ' en ' + d.ids.length + ' exemplaires identiques' + (d.agneau ? ' (agneau)' : '');
+    const e = (d.agneau ? [] : (f[d.liste] || [])).concat(d.agneau ? (((f.agnelages || []).find(a => a && a.id === d.agnelage) || { lambs: [] }).lambs.find(l => l && l.id === d.agneau) || {})[d.liste] || [] : []).find(x => x && d.ids.includes(x.id)) || {};
+    corps = `<div class="cf-version">${Object.keys(e).filter(k => k !== 'id' && !valeurVideIdentite(e[k]) && !Array.isArray(e[k])).map(k => `<div class="cf-ligne"><span>${echapperHtml(LIBELLES_CHAMPS_CONFLIT[k] || k)}</span><b>${echapperHtml(valeurConflitTexte(k, e[k]))}</b></div>`).join('')}</div>`;
+  }
+  return `<div class="card cf-carte">
+    <div class="cf-titre"><b>${echapperHtml(animal)}</b><span>${echapperHtml(titre)}</span></div>
+    <div class="cf-ligne-grise">${d.type === 'misebas' ? 'Sans doute la même mise bas enregistrée deux fois par la synchro. « Réunir en une » garde la plus complète et y ajoute ce que l\'autre est seule à avoir.' : 'Même contenu en double. « Garder un seul » retire les copies en trop.'}</div>
+    <div class="cf-versions">${corps}</div>
+    <div class="prm-actions"><button type="button" class="btn btn-primary db-reunir" data-i="${i}">${d.type === 'misebas' ? 'Réunir en une' : 'Garder un seul'}</button></div>
+  </div>`;
+}
+function renderDoublonsSynchro() {
+  pageTitle.textContent = 'Doublons de synchro';
+  const liste = doublonsSynchro();
+  const bloc = document.createElement('div');
+  bloc.innerHTML = liste.length
+    ? `<div class="cf-ligne-grise" style="margin:0 0 12px;">Copies nées d'une synchro (même élément noté deux fois). Rien n'est réuni sans vous ; « Annuler » pendant 6 s remet la fiche telle quelle.</div>` + liste.map(carteDoublonHtml).join('')
+    : `<div class="card"><div class="prm-note" style="margin:0;">Aucun doublon à vérifier.</div></div>`;
+  app.appendChild(bloc);
+  bloc.querySelectorAll('.db-reunir').forEach(b => b.onclick = () => {
+    const d = liste[Number(b.dataset.i)];
+    const res = d && reunirDoublon(d);
+    if (!res) { messageCharte('Rien à réunir', 'Ce doublon vient de changer (réception d\'un autre appareil).'); render('doublons-synchro'); return; }
+    if (window.OvilogSync && window.OvilogSync.marquerFusion) window.OvilogSync.marquerFusion(d.col, d.id, res.chemins);
+    saveData(DB);
+    render('doublons-synchro');
+    afficherSnackAnnuler(d.type === 'misebas' ? 'Mises bas réunies' : 'Doublon retiré', () => {
+      const i = (DB[d.col] || []).findIndex(x => x && x.id === d.id);
+      if (i >= 0) { DB[d.col][i] = res.avant; saveData(DB); }
+      if (currentView === 'doublons-synchro') render('doublons-synchro');
+    });
+  });
+}
+
 function renderHome() {
   pageTitle.textContent = isDesktopMode() ? 'Accueil' : 'Mon troupeau';
   const alerteMeta = alerteTailleMetaHtml();   // document principal du compte proche du plafond Firestore (voir etatTailleMeta)
   if (alerteMeta) { const d = document.createElement('div'); d.innerHTML = alerteMeta; app.appendChild(d.firstElementChild); }
   const pastilleConflits = pastilleConflitsHtml();   // conflits de synchro : pastille ambre (jamais de message pendant une saisie)
   if (pastilleConflits) { const d = document.createElement('div'); d.innerHTML = pastilleConflits; app.appendChild(d.firstElementChild); brancherPastilleConflits(app); }
+  const pastilleDoublons = pastilleDoublonsHtml();   // doublons de synchro (v463) : pastille ambre, rien n'est réuni sans l'éleveur
+  if (pastilleDoublons) { const d = document.createElement('div'); d.innerHTML = pastilleDoublons; app.appendChild(d.firstElementChild); brancherPastilleDoublons(app); }
 
   if (isDesktopMode()) {
     const dashboard = document.createElement('div');
@@ -32808,6 +33104,7 @@ function renderParametresSauvegarde(content) {
       <div class="prm-titre">Synchronisation</div>
       <div class="prm-etat sync-etat-ligne" id="sync-etat" style="margin-bottom:8px;">${syncEtatLigneHtml()}</div>
       ${ligneConflitsParametresHtml()}
+      ${ligneDoublonsParametresHtml()}
       <div class="prm-note" style="margin-bottom:12px;">Les données se synchronisent entre tes appareils, y compris après un passage hors ligne.</div>
       <div id="sync-status-detail" style="font-size:12px;margin-bottom:10px;display:none;"></div>
       <button type="button" class="btn btn-secondary" id="btn-voir-journal-synchro" style="margin-bottom:10px;display:none;">Voir le journal de synchro</button>
@@ -32851,6 +33148,7 @@ function renderParametresSauvegarde(content) {
   const cardsHtml = prmColonnesHtml(carteSynchro + carteDonnees, carteApplication + carteContact);
   content.innerHTML = alerteTailleMetaHtml() + cardsHtml + `<details class="prm-maintenance" id="prm-maintenance"${prmMaintenanceOuvert ? ' open' : ''}><summary><b>Maintenance</b> · Rechercher les doublons du registre</summary><div class="prm-maintenance-corps">${maintenance.html}</div></details>`;
   brancherLigneConflits();
+  brancherLigneDoublons();
   document.getElementById('f-bulle-contact').onchange = (ev) => {
     try { if (ev.target.checked) localStorage.removeItem(CLE_BULLE_MASQUEE); else localStorage.setItem(CLE_BULLE_MASQUEE, '1'); } catch (e) {}
     majBulleContact();
@@ -35376,7 +35674,7 @@ function setRecordsArrayForSync(colName, arr) {
    encore parti quand l'autre côté a changé le même élément ; resolutions : choix de l'éleveur dans un conflit, écrits au prochain envoi. */
 function nouvelEtatV2() {
   const parCol = () => ({ brebis: {}, beliers: {}, agnelles: {}, listesCompte: {} });
-  return { serveur: parCol(), charge: {}, attente: parCol(), vue: parCol(), vueRaw: parCol(), parents: parCol(), resolutions: parCol(), sansPurge: parCol(), passageEnCours: false };
+  return { serveur: parCol(), charge: {}, attente: parCol(), vue: parCol(), vueRaw: parCol(), parents: parCol(), resolutions: parCol(), sansPurge: parCol(), fusions: parCol(), passageEnCours: false };
 }
 sync.v2 = nouvelEtatV2();
 function estVersionnee(colName) { return colName === 'listesCompte' || collectionsVersionnees().includes(colName); }
@@ -35435,12 +35733,14 @@ function opsFicheVersionnee(colName, colRef, rec, old, ops) {
   const eff = rawEffectifV2(colName, id);
   const opts = { parents: sync.v2.parents[colName][id] || {}, resolutions: sync.v2.resolutions[colName][id] || {}, sansPurge: !!sync.v2.sansPurge[colName][id] };
   opts.toutRes = Object.keys(opts.resolutions).length > 0;     // tout ce qu'écrit un choix de l'éleveur reste annulable (jamais effacé avant 10 min)
+  opts.fusions = sync.v2.fusions[colName][id] || {};
   const res = opsVersionsFicheV(rec, eff, opts);
   const plat = aplatirFicheV(rec), platOld = aplatirFicheV(old || {});
   const scalNew = Object.assign(deepClean(plat.scal), { lp: plat.lp }), scalOld = Object.assign(deepClean(platOld.scal), { lp: platOld.lp });
   const scal = buildUpdatePayload(scalOld, scalNew) || {};
   const maj = Object.assign({}, scal, res.maj);
   delete sync.v2.parents[colName][id];
+  delete sync.v2.fusions[colName][id];
   if (Object.keys(opts.resolutions).length) { sync.v2.dernieresVersionsResolution = { colName, id, versions: res.versionsEcrites }; delete sync.v2.resolutions[colName][id]; }
   if (!Object.keys(maj).length) return true;
   const ecr = { type: 'update', data: res.maj };
@@ -36133,6 +36433,8 @@ function apresFusionV2(colName) {
   });
   if (aEnvoyer) setTimeout(() => { if (sync.uid && !sync.applyingRemote) syncAllToCloud(DB).catch(e => console.error('Synchro des versions : erreur', e)); }, 0);
   if (typeof window.majPastilleConflits === 'function') setTimeout(() => window.majPastilleConflits(), 0);
+  // copies de mise bas strictement identiques reçues d'un autre appareil : réunies d'office (jamais pendant une saisie : seule la donnée change)
+  if (collectionsVersionnees().includes(colName) && typeof window.reunirDoublonsIdentiquesAuto === 'function') setTimeout(() => { try { window.reunirDoublonsIdentiquesAuto(); } catch (e) { console.error('Doublons identiques : réunion automatique', e); } }, 0);
 }
 function fusionnerInstantaneDistant(colName, arr, ancienneRef) {
   const localParId = new Map((getRecordsArrayForSync(colName, DB) || []).map(r => [r.id, r]));
@@ -36402,7 +36704,10 @@ async function startListeners(dejaAppairePrecedemment) {
         setRecordsArrayForSync(colName, fusion);
         // lot 4 : élément reçu sans id (appareil pas encore à jour) = id d'après son contenu, le même partout ; renvoyé tout de suite pour que
         // le compte et l'appareil restent identiques (une seule fois : ces id sont déterministes, l'instantané suivant n'en ajoute plus)
-        if (poserIdsElements(DB, 'contenu') > 0) setTimeout(() => { if (sync.uid && !sync.applyingRemote) saveData(DB); }, 0);
+        // écho d'un appareil v446 (même élément renvoyé sans id) : retiré avant de poser les id, sinon il devenait une 2e copie (« …-2 »)
+        let echos = 0;
+        if (estVersionnee(colName) && colName !== 'listesCompte') (DB[colName] || []).forEach(f => { echos += retirerEchosSansIdFiche(f); });
+        if (poserIdsElements(DB, 'contenu') > 0 || echos > 0) setTimeout(() => { if (sync.uid && !sync.applyingRemote) saveData(DB); }, 0);
       });
       persisterSyncLastSynced();
       if (duServeur) lectureServeurTerminee(colName);
@@ -36950,6 +37255,8 @@ window.OvilogSync = {
   // Bulle de contact (script classique : panneau, « Messages reçus ») -- voir demarrerContact
   mesureMeta() { return mesureMeta(); },
   conflits() { return listerConflitsV2(); },
+  // doublon réuni par l'éleveur : les copies retirées (chemins K) partent comme suppressions marquées « fu » au prochain envoi
+  marquerFusion(col, id, chemins) { if (!estVersionnee(col)) return; const f = (sync.v2.fusions[col][id] = sync.v2.fusions[col][id] || {}); (chemins || []).forEach(K => { f[K] = true; }); },
   resoudreConflit(c, id, K, vid) { return resoudreConflitV2(c, id, K, vid); },
   annulerResolution(jeton) { return annulerResolutionV2(jeton); },
   // Rapports d'erreurs automatiques (voir ecrireRapportErreur) : envoi (faux si aucun compte connecté), liste et suppression pour l'administrateur
