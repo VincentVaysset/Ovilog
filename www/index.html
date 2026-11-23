@@ -32342,6 +32342,27 @@ function etatSirenHtml(saisie) {
   if (!String(saisie || '').trim() || sirenValide(saisie)) return '';
   return `<div class="prm-alerte" id="prm-siren-format" style="margin:6px 0 0;">Un SIREN compte 9 chiffres (vérifiez-le sur un document officiel). Vous pouvez enregistrer quand même.</div>`;
 }
+// Code postal : 5 chiffres (message ambre sinon, jamais bloquant)
+function codePostalValide(v) { return /^\d{5}$/.test(String(v || '').replace(/\s/g, '')); }
+function etatCodePostalHtml(saisie) {
+  if (!String(saisie || '').trim() || codePostalValide(saisie)) return '';
+  return `<div class="prm-alerte" id="prm-cp-format" style="margin:6px 0 0;">Un code postal compte 5 chiffres.</div>`;
+}
+// Ancienne adresse sur une ligne (« 1 chemin du Test, 12000 Commune ») : découpage PROPOSÉ (rue, code postal, commune), seulement si code postal et
+// commune sont encore vides ; rien n'est réécrit sans le geste de l'éleveur
+function decoupageAdresse(o) {
+  if (!o || String(o.codePostal || '').trim() || String(o.commune || '').trim()) return null;
+  const m = String(o.adresse || '').trim().match(/^(.*?)[\s,;-]*\b(\d{5})\s+([^\d,;][^,;]*)$/);
+  if (!m || !m[1].trim() || !m[3].trim()) return null;
+  return { rue: m[1].trim().replace(/[\s,;-]+$/, ''), codePostal: m[2], commune: m[3].trim() };
+}
+function carteDecoupageAdresseHtml(o) {
+  const d = decoupageAdresse(o);
+  if (!d) return '';
+  return `<div class="prm-alerte" id="prm-decoupage-adresse" style="margin-top:10px;"><div style="font-weight:700;margin-bottom:4px;">À compléter : adresse en trois champs</div>
+    <div>Rue ou lieu-dit : ${echapperHtml(d.rue)}<br>Code postal : ${echapperHtml(d.codePostal)}<br>Commune : ${echapperHtml(d.commune)}</div>
+    <button type="button" class="btn btn-secondary btn-petit" id="btn-decouper-adresse" style="margin-top:8px;">Découper ainsi</button></div>`;
+}
 function renderParametresExploitation(content) {
   const ex = DB.exploitation || {};
   // Indicatif de marquage = valeur de référence ; le « préfixe EID » (6 premiers chiffres de l'EID) en est le même nombre : un seul champ, la même valeur est écrite dans les deux
@@ -32361,9 +32382,14 @@ function renderParametresExploitation(content) {
       ${valeursDifferentes ? `<div class="prm-alerte" id="prm-prefixe-different"><div style="margin-bottom:6px;">Cet appareil contient deux valeurs différentes : indicatif de marquage « ${xlsxEscape(ex.indicatifMarquage)} » et préfixe EID « ${xlsxEscape(ex.prefixeEid)} ». Rien n'a été fusionné : vérifie-les et corrige si besoin.</div>
         <label for="f-exp-prefixe-eid">Préfixe EID</label><input type="text" id="f-exp-prefixe-eid" value="${xlsxEscape(ex.prefixeEid)}"></div>` : ''}
       <div class="prm-champs2 prm-champs2-large">
-        <div><label for="f-exp-adresse">Adresse</label><input type="text" id="f-exp-adresse" value="${xlsxEscape(ex.adresse || '')}"></div>
+        <div><label for="f-exp-adresse">Adresse (n°, rue ou lieu-dit)</label><input type="text" id="f-exp-adresse" value="${xlsxEscape(ex.adresse || '')}"></div>
         <div><label for="f-exp-tel">Téléphone</label><input type="text" id="f-exp-tel" value="${xlsxEscape(ex.telephone || '')}"></div>
       </div>
+      <div class="prm-champs2">
+        <div><label for="f-exp-cp">Code postal</label><input type="text" id="f-exp-cp" value="${xlsxEscape(ex.codePostal || '')}" placeholder="5 chiffres" inputmode="numeric"><div id="prm-cp-etat">${etatCodePostalHtml(ex.codePostal)}</div></div>
+        <div><label for="f-exp-commune">Commune</label><input type="text" id="f-exp-commune" value="${xlsxEscape(ex.commune || '')}"></div>
+      </div>
+      ${carteDecoupageAdresseHtml(ex)}
       <label for="f-exp-siren">SIREN (facultatif)</label>
       <input type="text" id="f-exp-siren" value="${xlsxEscape(ex.siren || '')}" placeholder="9 chiffres"><div id="prm-siren-etat">${etatSirenHtml(ex.siren)}</div>
       <label for="f-exp-type-suivi">Type de suivi laitier</label>
@@ -32413,6 +32439,23 @@ function renderParametresExploitation(content) {
   // contrôle en direct du N° EDE et du SIREN (message seulement : rien n'est bloqué ni réécrit)
   const champEde = document.getElementById('f-exp-cheptel');
   if (champEde) champEde.addEventListener('input', () => { const sel = document.getElementById('f-exp-base-ede'); document.getElementById('prm-ede-etat').innerHTML = etatNumeroEdeHtml(champEde.value, sel ? sel.value : (DB.exploitation || {}).baseLocaleEde); });
+  const champCp = document.getElementById('f-exp-cp');
+  if (champCp) champCp.addEventListener('input', () => { document.getElementById('prm-cp-etat').innerHTML = etatCodePostalHtml(champCp.value); });
+  // carte « À compléter » : découpage proposé de l'ancienne adresse, appliqué en UN geste, « Annuler » 6 s = valeurs exactes d'avant
+  const btnDecoupe = document.getElementById('btn-decouper-adresse');
+  if (btnDecoupe) btnDecoupe.onclick = () => {
+    const d = decoupageAdresse(DB.exploitation || {});
+    if (!d) return;
+    const avant = { adresse: DB.exploitation.adresse, codePostal: DB.exploitation.codePostal, commune: DB.exploitation.commune };
+    Object.assign(DB.exploitation, { adresse: d.rue, codePostal: d.codePostal, commune: d.commune });
+    saveData(DB);
+    render('parametres');
+    afficherSnackAnnuler('Adresse découpée', () => {
+      Object.keys(avant).forEach(k => { if (avant[k] === undefined) delete DB.exploitation[k]; else DB.exploitation[k] = avant[k]; });
+      saveData(DB);
+      if (currentView === 'parametres') render('parametres');
+    });
+  };
   const champSiren = document.getElementById('f-exp-siren');
   if (champSiren) champSiren.addEventListener('input', () => { document.getElementById('prm-siren-etat').innerHTML = etatSirenHtml(champSiren.value); });
   document.getElementById('btn-save-exploitation').onclick = () => {
@@ -32434,7 +32477,9 @@ function renderParametresExploitation(content) {
       prefixeEid: champPrefixe ? champPrefixe.value.trim() : marquage,
       typeSuivi: document.getElementById('f-exp-type-suivi').value || null,
       laiterie: document.getElementById('f-exp-laiterie').value.trim(),
-      siren: document.getElementById('f-exp-siren').value.trim()
+      siren: document.getElementById('f-exp-siren').value.trim(),
+      codePostal: document.getElementById('f-exp-cp').value.trim(),
+      commune: document.getElementById('f-exp-commune').value.trim()
     };
     // base locale : écrite seulement quand le département en a plusieurs et qu'un choix est fait (sinon la valeur enregistrée reste telle quelle)
     const choixBase = document.getElementById('f-exp-base-ede');
