@@ -36388,6 +36388,13 @@ function buildMetaOp(data, ops) {
   // Même porte que pour les collections : sans état serveur connu, lastSynced.meta est vide et produirait un `set` complet de valeurs par défaut.
   if (!sync.connu.has('meta')) { sync.ecrituresRetenues = true; return; }
   const metaRecord = metaRecordPourCloud(data);
+  // Le FORMAT du compte (schemaDonnees, rangementVersionsDate) ne recule JAMAIS : un appareil qui ne le connaît pas (resté éteint depuis avant le
+  // rangement) n'envoie jamais une valeur plus ancienne ou vide à la place de celle du serveur
+  const connu = sync.lastSynced.meta || {};
+  if (typeof connu.schemaDonnees === 'number' && !(typeof metaRecord.schemaDonnees === 'number' && metaRecord.schemaDonnees >= connu.schemaDonnees)) {
+    metaRecord.schemaDonnees = connu.schemaDonnees;
+    if (connu.rangementVersionsDate) metaRecord.rangementVersionsDate = connu.rangementVersionsDate;
+  }
   const metaRef = doc(fbDb, 'users', sync.uid, 'meta', 'main');
   if (sync.lastSynced.meta === undefined) {
     ops.push({ type: 'set', ref: metaRef, data: metaRecord, colName: 'meta', id: 'main', newValue: metaRecord });
@@ -36763,7 +36770,10 @@ function fusionnerEnregistrementDistant(local, remote, refConnue) {
   const fusionne = {};
   const cles = new Set([...Object.keys(localNettoye), ...Object.keys(remote), ...Object.keys(refConnue)]);
   cles.forEach(cle => {
-    const champModifieLocalementNonConfirme = JSON.stringify(localNettoye[cle]) !== JSON.stringify(refConnue[cle]);
+    // null et absent comptent pareil (Firestore garde l'un, l'appareil l'autre) : sinon un champ vide connu « null » passait pour modifié ici
+    // et écrasait la valeur reçue (cas réel : marqueur de format du compte effacé par un appareil resté éteint depuis avant le rangement)
+    const nul = v => (v === undefined ? null : v);
+    const champModifieLocalementNonConfirme = JSON.stringify(nul(localNettoye[cle])) !== JSON.stringify(nul(refConnue[cle]));
     fusionne[cle] = champModifieLocalementNonConfirme ? local[cle] : remote[cle];
   });
   return fusionne;
@@ -37287,7 +37297,19 @@ async function startListeners(dejaAppairePrecedemment) {
         const fus = fusionnerEnregistrementDistant(localMetaSubset, sansChampsInactifs(meta, champs), sansChampsInactifs(refConnueMeta, champs));
         const lotsFusionnes = refConnueMeta !== undefined && Array.isArray(meta.lots) && Array.isArray(localMetaSubset.lots)
           ? { lots: fusionnerListeLots(localMetaSubset.lots, meta.lots, Array.isArray(refConnueMeta.lots) ? refConnueMeta.lots : []) } : {};
+        const formatAvant = { schemaDonnees: DB.schemaDonnees, rangementVersionsDate: DB.rangementVersionsDate };
         Object.assign(DB, fus, lotsFusionnes);
+        // format reçu PLUS ANCIEN que celui de cet appareil (un appareil pas à jour l'a effacé) : on garde le nôtre, il repart au serveur au prochain envoi
+        if (typeof formatAvant.schemaDonnees === 'number' && !(typeof DB.schemaDonnees === 'number' && DB.schemaDonnees >= formatAvant.schemaDonnees)) {
+          DB.schemaDonnees = formatAvant.schemaDonnees;
+          if (formatAvant.rangementVersionsDate) DB.rangementVersionsDate = formatAvant.rangementVersionsDate;
+          setTimeout(() => { if (sync.uid) syncAllToCloud(DB).catch(e => console.error('Format du compte : renvoi', e)); }, 0);
+        }
+        // format du compte : jamais plus ancien ici que sur le serveur (voir buildMetaOp)
+        if (typeof meta.schemaDonnees === 'number' && !(typeof DB.schemaDonnees === 'number' && DB.schemaDonnees >= meta.schemaDonnees)) {
+          DB.schemaDonnees = meta.schemaDonnees;
+          if (meta.rangementVersionsDate) DB.rangementVersionsDate = meta.rangementVersionsDate;
+        }
         recalculerMembresLotsRepro();      // lots reçus (cache membres d'un autre appareil) : à confronter au journal local, sans jamais écraser un écart
         poserIdsListe(DB.journal, 'contenu');   // évènement du calendrier reçu sans id : id d'après son contenu, le même sur tous les appareils (jamais tiré au hasard)
         if (avertissement) afficherMessageSynchro(avertissement);
