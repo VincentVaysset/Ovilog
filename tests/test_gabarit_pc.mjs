@@ -51,7 +51,7 @@ for (const [nom, code] of VUES_GABARIT.concat([['Agneaux', 'render("agneaux")'],
 }
 console.log('OK gabarit PC, titre unique : ' + nTitres + ' écrans sans titre répété ; pleine largeur : ' + nLarges + ' écrans (marge 24 px, aucun bloc plafonné).');
 // Section 3 : exports
-const VUES_EXPORTS = VUES_GABARIT.concat([['Échographies, résultats', 'echoPcEtat=null;render("echo-rapide")'], ['Traitements 12 mois', 'render("traitements-12-mois")'], ['Production laitière', 'render("qualite")'], ['Bilan de lactation', 'bilanCampagneTab="lactation";render("bilan-campagne")'], ['Tri des agnelles', 'render("agnelles")']]);
+const VUES_EXPORTS = VUES_GABARIT.concat([['Échographies, résultats', 'echoPcEtat=null;render("echo-rapide")'], ['Traitements 12 mois', 'render("traitements-12-mois")'], ['Production laitière', 'render("qualite")'], ['Bilan de lactation', 'bilanCampagneTab="lactation";render("bilan-campagne")'], ['Tri des agnelles', 'render("agnelles")'], ['Tri des agnelles, Gardées', 'triPcEtat=null;render("agnelles");triPcEtat.onglet="gardees";render("agnelles")']]);
 let nExp = 0;
 for (const [nom, code] of VUES_EXPORTS) {
   await pc.evaluate(code); await pc.waitForTimeout(120);
@@ -63,7 +63,8 @@ for (const [nom, code] of VUES_EXPORTS) {
   for (const b of r) {
     check(!/\.xlsx|^Exporter/.test(b.t), nom + ' : libellé d\'export à l\'ancienne « ' + b.t + ' »');
     if (/excel|xlsx/i.test(b.id + b.t) && !/pdf/i.test(b.id + b.t)) check(b.bg === BLANC && /^Export Excel$/.test(b.t), nom + ' : « ' + b.t + ' » doit être « Export Excel » en blanc (' + b.bg + ')');
-    else if (/pdf/i.test(b.id + b.t) && !/ce lot|bilan par âge/i.test(b.t)) check(b.bg === VERT, nom + ' : « ' + b.t + ' » doit être un bouton PDF vert (' + b.bg + ')');
+    // EXCEPTION VOULUE (Tri des agnelles par critères, onglet « À trier ») : Export PDF blanc, « Valider le tri » est le seul bouton vert
+    else if (/pdf/i.test(b.id + b.t) && !/ce lot|bilan par âge/i.test(b.t) && b.id !== 'tc-export-pdf') check(b.bg === VERT, nom + ' : « ' + b.t + ' » doit être un bouton PDF vert (' + b.bg + ')');
     nExp++;
   }
   const xl = r.find(b => /^Export Excel$/.test(b.t)), pdf = r.find(b => /^Export PDF$/.test(b.t));
