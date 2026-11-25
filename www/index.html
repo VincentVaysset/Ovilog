@@ -18358,6 +18358,100 @@ function triAgnellesDonnees() {
   return { aTrier: trierAgnellesAgeNumero(aTrier, x => x), gardees: trierAgnellesAgeNumero(gardees, x => x), ecartees: trierAgnellesAgeNumero(ecartees, x => x),
     compteur: { N, M, aTrier: aTrier.length, ecartees: ecartees.length, achetees: achetees.length, pct: M > 0 ? Math.round((N / M) * 100) : 0 } };
 }
+/* ---------- Tri des agnelles par critères (PC) : moteur, fonctions pures ----------
+   Règles « Refuser » enregistrées PAR CAMPAGNE (réglage de compte `criteresTriAgnelles[campagne]` = { regles, decisions }, META_FIELDS), aucun seuil
+   préréglé. Une règle = une ou plusieurs conditions liées par ET + ses exceptions « Accepter quand même si… » (une ou plusieurs conditions en ET),
+   RATTACHÉES à cette règle. Une agnelle est refusée dès qu'une règle la touche, sauf si une exception de CETTE règle l'accepte ; une exception ne
+   lève jamais une autre règle. Critères : classe de la mère (=, au moins, au plus, sans classe), lactation de la mère (moins de, au moins, sans
+   lactation connue), date de naissance (avant le, après le, entre le … et le …), type de repro (IA, EP, RE, MN, sans code), portée (simple, double,
+   triple et plus). Classe et lactation de la mère : campagne précédente (lactationPrecedenteBrebis, comme le tri). Une valeur inconnue ne remplit
+   jamais une condition, sauf « sans classe », « sans lactation connue », « sans code ». C'est une PROPOSITION : décisions Garder / Écarter
+   pré-remplies, une décision changée est « forcée » (`decisions[eid]`), seul « Valider le tri » écrit sur les agnelles. Contrôle : test_tri_criteres. */
+const CRITERES_TRI = {
+  classe: { libelle: 'Classe de la mère', ops: [['egale', '='], ['auMoins', 'au moins'], ['auPlus', 'au plus'], ['sans', 'sans classe']], valeurs: [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']] },
+  lactation: { libelle: 'Lactation de la mère', ops: [['moinsDe', 'moins de'], ['auMoins', 'au moins'], ['sans', 'sans lactation connue']], unite: 'L' },
+  naissance: { libelle: 'Date de naissance', ops: [['avant', 'avant le'], ['apres', 'après le'], ['entre', 'entre le']], date: true },
+  repro: { libelle: 'Type de repro', ops: [['egal', 'est']], valeurs: [['IA', 'IA'], ['EP', 'EP'], ['RE', 'RE'], ['MN', 'MN'], ['aucun', 'sans code']] },
+  portee: { libelle: 'Simple / double', ops: [['egal', 'est']], valeurs: [['1', 'simple'], ['2', 'double'], ['3', 'triple et plus']] }
+};
+const OPS_SANS_VALEUR = ['sans'];
+function criteresTriCampagne(campagne) {
+  const c = campagne === undefined ? DB.campagneDebut : campagne;
+  const t = DB && DB.criteresTriAgnelles && typeof DB.criteresTriAgnelles === 'object' ? DB.criteresTriAgnelles[c] : null;
+  return { regles: t && Array.isArray(t.regles) ? t.regles : [], decisions: t && t.decisions && typeof t.decisions === 'object' ? t.decisions : {} };
+}
+function ecrireCriteresTri(campagne, valeur) {
+  DB.criteresTriAgnelles = Object.assign({}, DB.criteresTriAgnelles || {}, { [campagne]: valeur });
+}
+// Une condition est-elle complète (valeurs saisies) ?
+function conditionTriComplete(c) {
+  if (!c || !CRITERES_TRI[c.critere] || !CRITERES_TRI[c.critere].ops.some(o => o[0] === c.op)) return false;
+  if (OPS_SANS_VALEUR.includes(c.op)) return true;
+  if (c.critere === 'lactation') return Number.isFinite(Number(String(c.valeur).replace(',', '.'))) && String(c.valeur).trim() !== '';
+  if (c.critere === 'naissance') return /^\d{4}-\d{2}-\d{2}$/.test(c.valeur || '') && (c.op !== 'entre' || /^\d{4}-\d{2}-\d{2}$/.test(c.valeur2 || ''));
+  return CRITERES_TRI[c.critere].valeurs.some(v => v[0] === String(c.valeur));
+}
+// Vrai si l'agnelle x (ligne de triAgnellesDonnees : classeMere, lactMere, date, origineNaissance, porteeNb) remplit la condition
+function conditionTriRemplie(c, x) {
+  if (!conditionTriComplete(c)) return false;
+  const v = String(c.valeur);
+  if (c.critere === 'classe') {
+    const k = x.classeMere;
+    if (c.op === 'sans') return k === null || k === undefined;
+    if (k === null || k === undefined) return false;
+    return c.op === 'egale' ? k === +v : c.op === 'auMoins' ? k >= +v : k <= +v;
+  }
+  if (c.critere === 'lactation') {
+    const l = x.lactMere, s = Number(v.replace(',', '.'));
+    if (c.op === 'sans') return l === null || l === undefined;
+    if (l === null || l === undefined) return false;
+    return c.op === 'moinsDe' ? l < s : l >= s;
+  }
+  if (c.critere === 'naissance') {
+    const d = x.date || '';
+    if (!d) return false;
+    return c.op === 'avant' ? d < c.valeur : c.op === 'apres' ? d > c.valeur : (d >= (c.valeur < c.valeur2 ? c.valeur : c.valeur2) && d <= (c.valeur < c.valeur2 ? c.valeur2 : c.valeur));
+  }
+  if (c.critere === 'repro') return v === 'aucun' ? !x.origineNaissance : x.origineNaissance === v;
+  if (c.critere === 'portee') { const n = x.porteeNb; if (!n) return false; return v === '3' ? n >= 3 : n === +v; }
+  return false;
+}
+function libelleConditionTri(c) {
+  const def = CRITERES_TRI[c && c.critere];
+  if (!def) return '?';
+  const op = (def.ops.find(o => o[0] === c.op) || [null, ''])[1];
+  if (c.critere === 'classe') return c.op === 'sans' ? 'Mère sans classe' : 'Classe de la mère ' + (c.op === 'egale' ? '= ' : op + ' ') + c.valeur;
+  if (c.critere === 'lactation') return c.op === 'sans' ? 'Mère sans lactation connue' : 'Lactation de la mère ' + op + ' ' + String(c.valeur).replace('.', ',') + ' L';
+  if (c.critere === 'naissance') return c.op === 'entre' ? 'Née entre le ' + formatDateFr(c.valeur) + ' et le ' + formatDateFr(c.valeur2) : 'Née ' + op + ' ' + formatDateFr(c.valeur);
+  if (c.critere === 'repro') return c.valeur === 'aucun' ? 'Repro sans code' : 'Repro ' + c.valeur;
+  if (c.critere === 'portee') return 'Portée ' + ((def.valeurs.find(v => v[0] === String(c.valeur)) || [])[1] || '?');
+  return '?';
+}
+const libelleConditionsTri = conds => (conds || []).map(libelleConditionTri).join(' et ');
+const blocTriRempli = (conds, x) => Array.isArray(conds) && conds.length > 0 && conds.every(c => conditionTriRemplie(c, x));
+// Proposition pour UNE agnelle : { refusee, motifs (règles qui refusent), repechages (règles levées par leur propre exception) }
+function evaluerAgnelleTri(x, regles) {
+  const motifs = [], repechages = [];
+  (regles || []).forEach(r => {
+    if (!blocTriRempli(r.conditions, x)) return;
+    const exc = (r.exceptions || []).find(e => blocTriRempli(e.conditions, x));
+    if (exc) repechages.push(libelleConditionsTri(r.conditions) + ' · repêchée (' + libelleConditionsTri(exc.conditions) + ')');
+    else motifs.push(libelleConditionsTri(r.conditions));
+  });
+  return { refusee: motifs.length > 0, motifs, repechages };
+}
+// Toutes les agnelles à trier avec leur proposition et leur décision (forcée ou non)
+function triCriteresDonnees(campagne) {
+  const crit = criteresTriCampagne(campagne);
+  const lignes = triAgnellesDonnees().aTrier.map(x => {
+    const ev = evaluerAgnelleTri(x, crit.regles);
+    const proposee = ev.refusee ? 'ecarter' : 'garder';
+    const forcee = crit.decisions[cleanEid(x.eid)];
+    const decision = forcee === 'garder' || forcee === 'ecarter' ? forcee : proposee;
+    return Object.assign({}, x, { refusee: ev.refusee, motifs: ev.motifs, repechages: ev.repechages, proposee, decision, forcee: decision !== proposee });
+  });
+  return { lignes, regles: crit.regles, acceptees: lignes.filter(l => !l.refusee).length, refusees: lignes.filter(l => l.refusee).length, forcees: lignes.filter(l => l.forcee).length };
+}
 // Incohérences REMONTÉES (jamais corrigées seules, c'est à l'éleveur de trancher) : une agnelle « gardée » sans fiche d'agnelle (fiche supprimée à la main, l'agneau
 // garde triStatut = 'gardée' : il n'est plus ni à trier ni gardé), ou une fiche d'agnelle née dont l'agneau n'est plus marqué gardé.
 function incoherencesTriAgnelles() {
@@ -36584,6 +36678,8 @@ const META_FIELDS = ['rangementVersionsDate', 'libellesAnomaliesControle', 'expl
   'bilanEconomiqueActif',
   // Interrupteur du Bilan économique disponible sur ce compte (voir bilanEconomiqueDisponible) : faux pour un compte neuf
   'bilanEconomiqueDisponible', 'boucleSuivanteAuto', 'seuilCellules',
+  // Tri des agnelles par critères (PC) : règles « Refuser », exceptions et décisions forcées, par campagne
+  'criteresTriAgnelles',
   // Chantier EDE (documents de circulation) : délai de notification réglé dans Règles d'élevage › Mouvements (7 j si absent)
   'delaiNotificationEde',
   // Format des données du compte (lot 4, voir donneesVerrouillees) : posé par le passage au rangement élément par élément
