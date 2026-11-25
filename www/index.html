@@ -924,6 +924,16 @@
   .pc-t th { white-space: nowrap; }
   .pc-t th.l, .pc-t td.l { text-align: left; }
   .pc-t th.sortable { cursor: pointer; }
+  /* Tableaux triables (composant unique tableauTriable) : en-tête = bouton, flèche pâle sauf sur la colonne active */
+  .tt-tete { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; font: inherit; color: inherit; white-space: nowrap; }
+  .tt-tete:focus-visible { outline: 2px solid var(--ch-vert-pastel); outline-offset: 2px; border-radius: 4px; }
+  .tt-fleche { font-size: 10px; opacity: 0.35; }
+  .tt-fleche::after { content: attr(data-f); }   /* flèche dessinée par la feuille de style : le texte de l'en-tête reste le libellé seul */
+  .tt-fleche.on { opacity: 1; }
+  .tt-trier-par { display: flex; align-items: flex-end; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
+  .tt-trier-par label { width: 100%; margin: 0; }
+  .tt-trier-par select { flex: 1 1 160px; margin: 0; }
+  .tt-trier-par .tt-sens { width: auto; flex: 0 0 auto; margin: 0; }
   .pc-t td.cb, .pc-t th.cb { text-align: center; width: 40px; }
   /* Tableaux à contrôles laitiers (C1 à Cn) : la colonne du n° reste visible quand les contrôles défilent sur le côté (PC, partout pareil) */
   .tab-num-fixe { overflow-x: auto; }
@@ -9059,7 +9069,7 @@ function accueilDesktopHtml() {
   const pillType = t => /^Mort/.test(t) || t === 'Perte' ? 'p-r' : t === 'Autoconsommation' ? 'p-a' : 'p-n';
   const lignesMvt = d.mouvements.map((m, i) => `<tr${i % 2 ? ' class="alt"' : ''}><td>${formatDateFr(m.date)}</td><td class="n">${m.lot ? libAnimauxCat(m.nb, m.cle) + '<span class="tag">lot</span>' : m.numero}</td><td><span class="pill ${m.categorie === 'Brebis' ? 'p-g' : 'p-a'}">${m.categorie}</span></td><td><span class="pill ${pillType(m.type)}">${m.type}</span></td><td>${echapperHtml(m.detail || '—')}</td></tr>`).join('');
   const cardMouvements = `<div class="card apc-carte"><div class="ch"><h3>Derniers mouvements · brebis et agneaux</h3><span class="info">Du plus récent au plus ancien</span></div>
-    ${d.mouvements.length === 0 ? '<div class="info">Aucun mouvement enregistré cette campagne.</div>' : `<div class="tw"><table class="apc-t"><thead><tr><th>Date</th><th>N°</th><th>Catégorie</th><th>Type</th><th>Cause / acheteur</th></tr></thead><tbody>${lignesMvt}</tbody></table></div>`}
+    ${d.mouvements.length === 0 ? '<div class="info">Aucun mouvement enregistré cette campagne.</div>' : `<div class="tw"><table class="apc-t" data-triable="accueil-mouvements"><thead><tr><th>Date</th><th>N°</th><th>Catégorie</th><th>Type</th><th>Cause / acheteur</th></tr></thead><tbody>${lignesMvt}</tbody></table></div>`}
     <div class="apc-pied"><span class="info">Un lot = un mouvement collectif</span><button type="button" class="apc-lien" id="apc-tous-mouvements">Voir tous les mouvements</button></div></div>`;
 
   const lait = d.lait;
@@ -9848,8 +9858,12 @@ function renderList() {
   const tagSieol = (sheep) => sieolTravailBadgeHtml(sheep.numeroLongTravailSieol, sheep.numeroCourtTravailSieol);
   const ouvrirFiche = (sheep) => { detailOrigin = 'list'; previousDetailId = null; render('detail', sheep.id); };
 
+  // Tri (composant commun des tableaux triables) : en-têtes de la liste PC, « Trier par » sur mobile ; sans choix = âge puis n° (règle des listes)
+  const texteSansBalises = h => String(h || '').replace(/<[^>]*>/g, '').trim();
+  const valBrebis = (sheep, k) => { const st = statutRepro(sheep); return k === 'num' ? numeroAnimal(sheep) : k === 'age' ? age(sheep.eid) : k === 'mb' ? texteSansBalises(st.badgeHtml) : texteSansBalises(st.reproBadgeHtml); };
+  const COLS_BREBIS = [['num', 'Brebis'], ['age', 'Âge'], ['mb', 'Mise-bas campagne'], ['repro', 'Statut repro']];
   function dessinerListe() {
-    const visibles = brebisCorrespondantA(sorted, recherche);
+    const visibles = trierDonneesTableau('brebis-liste', brebisCorrespondantA(sorted, recherche), valBrebis);
     const compte = document.getElementById('brebis-compte');
     if (compte) {
       const filtre = rechercheNumeroNormalisee(recherche) !== '';
@@ -9864,7 +9878,7 @@ function renderList() {
       // Desktop (chantier "Refonte desktop", mockup validé) : liste en lignes, badges de couleur, contenu centré/plafonné (.list-table-contain).
       listeEl.innerHTML = `<div class="list-table-contain"><div class="list-table-wrap">
       <div class="list-table-head" style="grid-template-columns:2.1fr 0.9fr 1.6fr 1.4fr;">
-        <span>Brebis</span><span>Âge</span><span>Mise-bas campagne</span><span>Statut repro</span>
+        ${COLS_BREBIS.map(([k, l]) => `<span role="columnheader" aria-sort="${ariaSortTableau('brebis-liste', k)}">${enteteTriableInterieur('brebis-liste', k, l)}</span>`).join('')}
       </div>
       ${visibles.map((sheep, i) => {
         const { badgeHtml, reproBadgeHtml } = statutRepro(sheep);
@@ -9884,10 +9898,11 @@ function renderList() {
       }).join('')}
     </div></div>`;
       listeEl.querySelectorAll('.list-table-row').forEach(row => { row.onclick = () => ouvrirFiche(visibles[parseInt(row.dataset.i, 10)]); });
+      brancherEntetesTriables(listeEl, 'brebis-liste', dessinerListe);
       return;
     }
     // Mobile (charte) : lignes compactes dans une seule carte blanche.
-    listeEl.innerHTML = '<div class="card al-carte">' + visibles.map((sheep, i) => {
+    listeEl.innerHTML = selecteurTriCartesHtml('brebis-liste', COLS_BREBIS) + '<div class="card al-carte">' + visibles.map((sheep, i) => {
       const { pastilles } = statutRepro(sheep);
       return `<div class="al-ligne" data-i="${i}">
       <div class="al-id">
@@ -9899,6 +9914,7 @@ function renderList() {
     </div>`;
     }).join('') + '</div>';
     listeEl.querySelectorAll('.al-ligne').forEach(row => { row.onclick = () => ouvrirFiche(visibles[parseInt(row.dataset.i, 10)]); });
+    brancherSelecteurTriCartes(listeEl, 'brebis-liste', dessinerListe);
   }
 
   // Entrée / scan : EID complet ou n° à un seul résultat -> fiche ; plusieurs résultats -> jamais d'ouverture automatique, la liste reste filtrée sur les candidats.
@@ -12151,7 +12167,8 @@ function mouvementsPassesPcHtml(conteneur) {
   // effectifs des catégories dans la période choisie (autres filtres ignorés), comme la maquette
   const dansPeriode = toutes.filter(r => F.periode === 'toutes' || periodeMvDe(r) === F.periode);
   const cpt = k => dansPeriode.filter(r => r.cle === k).length;
-  const liste = filtrerMouvementsPassesMv(toutes, F);
+  const valMv = (r, k) => k === 'date' ? r.date : k === 'num' ? (r.court || r.numero) : k === 'cat' ? r.categorie : k === 'type' ? r.type : k === 'detail' ? r.detail : (r.lot ? libelleLotMv(r.lot) : '');
+  const liste = trierDonneesTableau('mv-passes', filtrerMouvementsPassesMv(toutes, F), valMv);
   const types = Array.from(new Set(toutes.map(r => r.type)));
   const acheteurs = Array.from(new Set(toutes.map(r => r.acheteur).filter(Boolean))).sort();
   const montres = F.toutVoir ? liste : liste.slice(0, 50);
@@ -12175,13 +12192,14 @@ function mouvementsPassesPcHtml(conteneur) {
     </div></div>
     <div class="card" id="mvp-carte">
       <div class="pc-cardhead" style="margin-bottom:8px;"><p class="brd-ttl" style="margin:0;" id="mvp-compte">${liste.length} mouvement${liste.length > 1 ? 's' : ''}</p><button type="button" class="btn btn-secondary" id="mvp-export" style="width:auto;padding:6px 14px;">Export Excel</button></div>
-      <div style="overflow-x:auto;"><table class="pc-t" id="mvp-table"><tr><th class="l">Date</th><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type</th><th class="l">Cause / acheteur</th><th class="l">Lot</th><th style="text-align:right;">Actions</th></tr>
+      <div style="overflow-x:auto;"><table class="pc-t" id="mvp-table"><tr>${[['date', 'Date'], ['num', 'N°'], ['cat', 'Catégorie'], ['type', 'Type'], ['detail', 'Cause / acheteur'], ['lot', 'Lot']].map(([k, l]) => thTriable('mv-passes', k, l, 'class="l"')).join('')}<th style="text-align:right;">Actions</th></tr>
       ${montres.map(r => `<tr data-eid="${r.eid}"><td class="l">${jjmmaaaa(r.date)}</td><td class="l"><b>${r.court || r.numero}</b></td><td class="l">${r.categorie}</td><td class="l">${pcPill(PILL_TYPE_MV(r.type), r.type)}</td><td class="l">${echapperHtml(r.detail || '—')}</td><td class="l">${r.collectifId ? `<span class="pc-pill neutral" style="white-space:normal;">${r.lot ? libelleLotMv(r.lot) : 'Lot introuvable'}</span>` : '—'}</td><td style="text-align:right;white-space:nowrap;">${actions(r)}</td></tr>`).join('') || '<tr><td colspan="7" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun mouvement ne correspond aux filtres.</td></tr>'}</table></div>
       ${liste.length > montres.length ? `<p style="margin:10px 0 0;text-align:center;"><button type="button" class="btn btn-secondary" id="mvp-voir-tout" style="width:auto;">Voir les ${liste.length - montres.length} autres</button></p>` : ''}
       <p class="brd-note" style="margin:10px 0 0;">Annuler demande toujours une confirmation et remet l'animal à son statut précédent (« active » s'il n'a pas d'autre sortie). Annuler un lot annule tous ses mouvements d'un coup. Les agnelles sorties sont archivées : non annulables automatiquement.</p>
     </div>`;
   const $ = id => conteneur.querySelector('#' + id);
   const redessiner = () => mouvementsPassesPcHtml(conteneur);
+  brancherEntetesTriables(conteneur, 'mv-passes', redessiner);
   conteneur.querySelectorAll('.mvp-cat').forEach(b => { b.onclick = () => { F.cats[b.dataset.cat] = !F.cats[b.dataset.cat]; redessiner(); }; });
   $('mvp-type').onchange = ev => { F.type = ev.target.value; redessiner(); };
   $('mvp-periode').onchange = ev => { F.periode = ev.target.value; F.toutVoir = false; redessiner(); };
@@ -12252,7 +12270,9 @@ function renderMouvementsMobile() {
   const rowsCourante = filtrerMouvementsPassesMv(toutes, filtres('courante'));
   const rowsToutes = filtrerMouvementsPassesMv(toutes, filtres('toutes'));
   const rows = E.etendu ? rowsToutes : rowsCourante;
-  const cartes = cartesMouvementsMobile(rows);
+  // « Trier par » (composant commun des tableaux triables) : sur la carte (un lot = une carte, valeurs de son 1er mouvement)
+  const COLS_MV_MOBILE = [['date', 'Date'], ['num', 'N°'], ['type', 'Type'], ['detail', 'Cause / acheteur']];
+  const cartes = trierDonneesTableau('mouvements-mobile', cartesMouvementsMobile(rows), (c, k) => { const r0 = c.rows[0]; return k === 'date' ? r0.date : k === 'num' ? (c.lot ? '' : (r0.court || r0.numero)) : k === 'type' ? r0.type : r0.detail; });
   const montrees = cartes.slice(0, E.nb);
   const resteCartes = cartes.length - montrees.length;
   const plusAnciens = resteCartes > 0 || (!E.etendu && rowsToutes.length > rowsCourante.length);
@@ -12294,11 +12314,13 @@ function renderMouvementsMobile() {
       <select id="mm-type"><option value="">Tous types</option>${types.map(t => `<option value="${t}"${E.type === t ? ' selected' : ''}>${t}</option>`).join('')}</select>
     </div>
     <div class="reg-info" id="mm-info">${E.etendu ? 'Toutes les campagnes' : 'Campagne en cours'}, du plus récent au plus ancien. Un mouvement groupé s'ouvre pour voir ses animaux.</div>
+    ${selecteurTriCartesHtml('mouvements-mobile', COLS_MV_MOBILE)}
     <div id="mm-liste">${montrees.map(carteHtml).join('') || '<div class="mm-carte"><div class="reg-info">Aucun mouvement ne correspond.</div></div>'}</div>
     ${plusAnciens ? '<button type="button" class="reg-voir mm-plus" id="mm-plus">Voir les mouvements plus anciens</button>' : ''}
     <button type="button" class="btn btn-secondary" id="mm-export">Export Excel</button>
   </div>`;
   const $ = id => document.getElementById(id);
+  poserCarteDocumentsMobile();   // chantier EDE : carte « Documents de circulation » en haut (à chaque redessin, recherche comprise)
   E.message = '';
   $('mm-nouveau').onclick = () => render('mouvement-groupe');
   document.querySelectorAll('#mm-cats .tab-btn').forEach(b => { b.onclick = () => { E.cat = b.dataset.cat; E.type = ''; E.nb = 20; renderMouvementsMobile(); }; });
@@ -12309,6 +12331,7 @@ function renderMouvementsMobile() {
     renderMouvementsMobile();
   };
   $('mm-export').onclick = () => exporterMouvementsPassesXlsx(rows);
+  brancherSelecteurTriCartes(app, 'mouvements-mobile', renderMouvementsMobile);
   document.querySelectorAll('.mm-voir').forEach(b => { b.onclick = () => {
     const id = b.dataset.lot, corps = b.closest('.mm-lot').querySelector('.mm-membres');
     const ouvert = corps.classList.toggle('hidden') === false;
@@ -12338,7 +12361,6 @@ function renderMouvementsMobile() {
 function renderInventaire() {
   if (isDesktopMode()) { renderMouvementsPc(); return; }
   renderMouvementsMobile();
-  poserCarteDocumentsMobile();
 }
 
 /* ---------- Inventaire (actifs) : Brebis/Agnelles/Béliers/Agneaux actifs,
@@ -12461,7 +12483,7 @@ function renderInventaireActifs() {
   // Les lignes sont cliquables pour ouvrir la fiche (voir plus bas). Seul #inv-liste est redessiné pendant la frappe : le champ de recherche garde le focus.
   const tableHtml = () => items.length === 0
     ? `<div class="empty">${inventaireActifsRecherche ? 'Aucun animal ne correspond à la recherche.' : 'Aucun animal dans cette catégorie.'}</div>`
-    : desktopInv ? `<div class="inv-table-wrap"><table class="inv-table">
+    : desktopInv ? `<div class="inv-table-wrap"><table class="inv-table" data-triable="inventaire-${inventaireActifsTab}">
     <thead><tr>${cols.map(c => `<th>${c.header}</th>`).join('')}</tr></thead>
     <tbody>${items.map((it, i) => `
     <tr class="inventaire-actifs-row" data-i="${i}" style="cursor:pointer;">
@@ -13408,7 +13430,10 @@ function renderAgneauxMobile(items) {
   const onglets = `<div class="tab-bar onglets-nav bc-onglets ag-onglets">${AGNEAUX_ONGLETS.filter(([k]) => k !== 'inventaire' || effectifs.inventaire).map(([k, l]) =>
     `<button type="button" class="tab-btn${agneauxMobileTab === k ? ' active' : ''}" data-tab="${k}">${l} (${effectifs[k]})</button>`).join('')}</div>`;
   const vides = { attente: 'Aucun agneau en attente de devenir.', vendus: 'Aucun agneau vendu.', morts: 'Aucun agneau mort.', inventaire: 'Aucun agneau sorti en mise à jour inventaire.' };
-  const cartes = items.map((it, i) => ({ it, i })).filter(({ it }) => agneauOnglet(it.lamb) === agneauxMobileTab).map(({ it, i }) => {
+  // « Trier par » (composant commun des tableaux triables) ; sans choix = n° par campagne de naissance (règle de la liste Agneaux)
+  const COLS_AGNEAUX = [['num', 'N°'], ['naissance', 'Née le'], ['mere', 'Mère'], ['sexe', 'Sexe']];
+  const valAgneau = ({ it }, k) => k === 'num' ? numeroVisuel(it.lamb.eid || '') : k === 'naissance' ? it.date : k === 'mere' ? numeroVisuel(it.mereEid || '') : it.lamb.sexe;
+  const cartes = trierDonneesTableau('agneaux-liste', items.map((it, i) => ({ it, i })).filter(({ it }) => agneauOnglet(it.lamb) === agneauxMobileTab), valAgneau).map(({ it, i }) => {
     const l = it.lamb;
     const sortie = agneauSorti(l);
     const mv = sortie ? (l.mouvements || []).slice().reverse().find(m => m.type === (l.statutFinal === 'vendu' ? 'Vendu' : l.statutFinal === 'inventaire' ? SORTIE_INVENTAIRE : 'Mort')) : null;
@@ -13435,7 +13460,8 @@ function renderAgneauxMobile(items) {
   }).join('');
   app.innerHTML = `<div class="al-haut">${champScanMobileHtml('scan-open-agneau', 'scan-open-agneau-err')}</div>`
     + (items.length === 0 ? '<div class="empty">Aucun agneau bouclé pour l\'instant.</div>'
-      : onglets + `<div class="ag-liste">${cartes || `<div class="empty">${vides[agneauxMobileTab]}</div>`}</div>`);
+      : onglets + selecteurTriCartesHtml('agneaux-liste', COLS_AGNEAUX) + `<div class="ag-liste">${cartes || `<div class="empty">${vides[agneauxMobileTab]}</div>`}</div>`);
+  brancherSelecteurTriCartes(app, 'agneaux-liste', () => render('agneaux'));
 
   const scanEl = document.getElementById('scan-open-agneau');
   setActiveScanTarget(scanEl);
@@ -15911,7 +15937,8 @@ function echoLignesJourFiltrees(D) {
   return D.lignes.filter(r => (!q || brebisCorrespondantA([r.sheep], q).length) && (!E.fCat || r.sit.cat === E.fCat));
 }
 function echoDetailJourHtml(D) {
-  const E = echosPcEtat, rows = echoLignesJourFiltrees(D), vues = rows.slice(0, E.nb);
+  const valJour = (r, k) => { const e = r.sit.echo; return k === 'num' ? r.numero : k === 'age' ? r.millesime : k === 'auj' ? r.pastille[0] : k === 'echo' ? (e ? e.date : '') : k === 'comptage' ? (e && resultatEcho(e) === 'pleine' ? libelleComptageEcho(e) : '') : (r.lots.length ? r.lots.join(', ') : 'Monte naturelle'); };
+  const E = echosPcEtat, rows = trierDonneesTableau('echo-jour', echoLignesJourFiltrees(D), valJour), vues = rows.slice(0, E.nb);
   const corps = vues.length === 0 ? '<tr><td colspan="7" style="text-align:center;color:var(--ch-texte2);height:60px;">Aucune brebis ne correspond.</td></tr>' : vues.map(r => {
     const e = r.sit.echo, idx = e ? r.sheep.echographies.indexOf(e) : -1;
     return `<tr data-id="${r.id}"><td>${echoHtml(r.numero)}</td><td>${r.millesime === null ? '—' : r.millesime + ' · ' + r.age + ' an' + (r.age > 1 ? 's' : '')}</td>
@@ -15920,7 +15947,7 @@ function echoDetailJourHtml(D) {
       <td style="white-space:nowrap;">${idx >= 0 ? `<button type="button" class="ep-btn ep-edit" data-id="${r.id}" data-idx="${idx}">Modifier</button> <button type="button" class="ep-btn ep-del" data-id="${r.id}" data-idx="${idx}">Suppr.</button>` : ''}</td></tr>`;
   }).join('');
   const pied = rows.length > E.nb ? `<span>1 à ${vues.length} sur ${rows.length}</span><button type="button" class="ep-btn" id="ep-plus">Voir les 20 suivantes</button>` : `<span>${rows.length ? '1 à ' + rows.length + ' sur ' + rows.length : ''}</span><span></span>`;
-  return `<div class="ep-tw"><table class="ep-table ep-detail"><thead><tr><th>N° de travail</th><th>Millésime · âge</th><th>Aujourd'hui</th><th>Dernière écho</th><th>Comptage</th><th>Lot</th><th></th></tr></thead><tbody>${corps}</tbody></table></div><div class="ep-pg">${pied}</div>`;
+  return `<div class="ep-tw"><table class="ep-table ep-detail"><thead><tr>${[['num', 'N° de travail'], ['age', 'Millésime · âge'], ['auj', 'Aujourd\'hui'], ['echo', 'Dernière écho'], ['comptage', 'Comptage'], ['lot', 'Lot']].map(([k, l]) => thTriable('echo-jour', k, l)).join('')}<th></th></tr></thead><tbody>${corps}</tbody></table></div><div class="ep-pg">${pied}</div>`;
 }
 function brancherModifierSupprimerEchosPc(racine) {
   racine.querySelectorAll('.ep-edit').forEach(b => { b.onclick = () => { currentSheepId = b.dataset.id; editItem('echographies', parseInt(b.dataset.idx, 10)); }; });
@@ -15931,6 +15958,7 @@ function brancherDetailJourPc(D) {
   brancherModifierSupprimerEchosPc(corps);
   const plus = document.getElementById('ep-plus');
   if (plus) plus.onclick = () => { echosPcEtat.nb += 20; corps.innerHTML = echoDetailJourHtml(D); brancherDetailJourPc(D); };
+  brancherEntetesTriables(corps, 'echo-jour', () => { corps.innerHTML = echoDetailJourHtml(D); brancherDetailJourPc(D); });
 }
 function ongletAujourdhuiPcHtml(D) {
   const E = echosPcEtat, T = D.T, C = D.C;
@@ -15975,7 +16003,7 @@ function ongletPassagesPcHtml(C, passages) {
     P.premiere.passees ? `1re écho : ${P.premiere.passees} jamais vue${P.premiere.passees > 1 ? 's' : ''} · ${P.premiere.pleines} pleine${P.premiere.pleines > 1 ? 's' : ''} · ${P.premiere.vides} vide${P.premiere.vides > 1 ? 's' : ''}${P.premiere.antenaises ? ' · dont ' + P.premiere.antenaises + ' antenaise' + (P.premiere.antenaises > 1 ? 's' : '') : ''}` : ''].filter(Boolean).map(t => `<div>${t}</div>`).join('');
   const parLot = `<div class="ep-tw"><table class="ep-table ep-sm" id="ep-parlot-passage"><thead><tr><th>Lot</th><th>Passées</th><th>Pleines</th><th>Vides</th><th>Réussite</th><th>1</th><th>2 et +</th><th>3 et +</th></tr></thead><tbody>${P.parLot.map(g => `<tr><td>${echoHtml(g.nom)}</td><td>${g.passees}</td><td>${g.pleines}</td><td>${g.vides}</td><td>${pct(g.reussite)}</td><td>${g.comptage.un}</td><td>${g.comptage.deux}</td><td>${g.comptage.troisEtPlus}</td></tr>`).join('')}</tbody></table></div>`;
   const lignes = brebisVuePassage(P, vue);
-  const brebis = `<div class="ep-tw"><table class="ep-table ep-detail" id="ep-brebis-passage"><thead><tr><th>N° de travail</th><th>Le ${formatDateFr(P.date)}</th><th>Comptage</th><th>Écho précédente</th><th>Devenue</th><th>Lot</th><th></th></tr></thead><tbody>${lignes.length ? lignes.map(x => {
+  const brebis = `<div class="ep-tw"><table class="ep-table ep-detail" id="ep-brebis-passage" data-triable="echo-passage-brebis"><thead><tr><th>N° de travail</th><th>Le ${formatDateFr(P.date)}</th><th>Comptage</th><th>Écho précédente</th><th>Devenue</th><th>Lot</th><th></th></tr></thead><tbody>${lignes.length ? lignes.map(x => {
     const pa = pastilleSituationEchoJour(x.sheep, x.sit), idx = x.sheep.echographies.indexOf(x.echo), ton = x.res === 'pleine' ? 'vert' : x.res === 'vide' ? 'ambre' : 'ambre';
     return `<tr><td>${echoHtml(numeroAffichageEcho(x.sheep))}</td><td>${echoPastilleHtml(libelleResultatEcho(x.echo), ton)}</td><td>${x.res === 'pleine' ? libelleComptageEcho(x.echo) : '—'}</td><td class="ep-gris">${echoHtml(libellePrecedenteEcho(x))}</td><td>${echoPastilleHtml(pa[0], pa[1])}</td><td>${x.lots.length ? x.lots.map(l => echoHtml(l.nom)).join(', ') : 'Monte naturelle'}</td>
       <td style="white-space:nowrap;"><button type="button" class="ep-btn ep-edit" data-id="${x.sheep.id}" data-idx="${idx}">Modifier</button> <button type="button" class="ep-btn ep-del" data-id="${x.sheep.id}" data-idx="${idx}">Suppr.</button></td></tr>`;
@@ -16226,7 +16254,7 @@ function echoHistoriquePcHtml() {
     <td style="white-space:nowrap;"><button type="button" class="ep-btn ep-edit" data-id="${r.sheepId}" data-idx="${r.idx}">Modifier</button> <button type="button" class="ep-btn ep-del" data-id="${r.sheepId}" data-idx="${r.idx}">Suppr.</button></td></tr>`).join('')
     : '<tr><td colspan="5" style="text-align:center;color:var(--ch-texte2);height:60px;">Aucune échographie ne correspond.</td></tr>';
   return `<div class="ep-tb"><input type="date" id="ep-histo-date" class="ep-fld" value="${E.histoDate}" aria-label="Filtrer par date"><button type="button" class="ep-btn" id="ep-histo-toutes">Toutes</button><span class="ep-info" id="ep-histo-compte">${rows.length} échographie${rows.length > 1 ? 's' : ''}</span></div>
-    <div class="ep-tw"><table class="ep-table" id="ep-histo-table"><thead><tr><th>N° de travail</th><th>Date</th><th>Campagne</th><th>Résultat</th><th></th></tr></thead><tbody>${corps}</tbody></table></div>`;
+    <div class="ep-tw"><table class="ep-table" id="ep-histo-table" data-triable="echo-historique"><thead><tr><th>N° de travail</th><th>Date</th><th>Campagne</th><th>Résultat</th><th></th></tr></thead><tbody>${corps}</tbody></table></div>`;
 }
 function brancherHistoriqueEchosPc() {
   const E = echosPcEtat;
@@ -17693,7 +17721,11 @@ function renderControleLaitier() {
     return true;
   }
 
+  // Tri par en-tête : composant commun (tableauTriable, clé « controle-laitier ») ; N° = âge puis n° (règle des listes), par défaut croissant
+  if (!etatTriTableau('controle-laitier')) etatsTriTableaux.set('controle-laitier', { col: 'numero', sens: 1 });
   function sortRows(list) {
+    const et = etatTriTableau('controle-laitier');
+    state.sortKey = et.col; state.sortDir = et.sens > 0 ? 'asc' : 'desc';
     const dir = state.sortDir === 'asc' ? 1 : -1;
     const sorted = [...list];
     sorted.sort((a, b) => {
@@ -17881,19 +17913,13 @@ function renderControleLaitier() {
       const badge = an ? ` <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:999px;background:var(--ch-ambre-pastel);color:var(--ch-ambre-texte);font-size:10px;font-weight:700;vertical-align:1px;" title="${echapperHtml(libelleAnomalieControle(an))}">${codeAnomalieTexte(an)}</span>` : '';
       return `<td>${sous ? `<span class="pc-lo">${fmt(v)}</span>` : fmt(v)}${badge}</td>`;
     };
-    const th = (key, label, cls) => `<th class="sortable ${cls || ''} cl-th" data-key="${key}">${label}${arrow(key)}</th>`;
+    const th = (key, label, cls) => thTriable('controle-laitier', key, label, `class="${cls || ''} cl-th" data-key="${key}"`);
     // Cellules : dernier échantillon de la campagne, pastille ambre au-dessus du seuil des Règles d'élevage ; « — » sans échantillon
     const celluleCellules = r => r.cellules === null ? '<td class="cl-cellules">—</td>' : `<td class="cl-cellules" title="Échantillon du ${formatDateFr(r.cellulesDate)}">${cellulesAuDessusSeuil(r.cellules) ? `<span class="badge badge-amber cl-cellules-haut">${texteCellules(r.cellules)}</span>` : texteCellules(r.cellules)}</td>`;
     document.getElementById('cl-table').innerHTML = `
       <tr><th class="cb"></th>${th('numero', 'N° de travail', 'l num-fixe')}${th('mab', 'MàB', 'l')}${NC.map(k => th('c' + k, 'C' + k + ' (mL)')).join('')}${avecCellules ? th('cellules', 'Cellules') : ''}</tr>
       ${filtered.map((r, i) => `<tr class="${i % 2 ? 'alt' : ''}"><td class="cb"><input type="checkbox" class="cl-check" data-eid="${r.eid}" style="width:16px;height:16px;margin:0;"${selection.has(r.eid) ? ' checked' : ''}></td><td class="l num-fixe">${echapperHtml(numeroAnimal(r.sheep))}</td><td class="l">${r.dateMab ? formatDateFr(r.dateMab) : ''}</td>${NC.map(k => cell(k, r)).join('')}${avecCellules ? celluleCellules(r) : ''}</tr>`).join('') || '<tr><td colspan="' + (NC.length + 3 + (avecCellules ? 1 : 0)) + '" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucune brebis ne correspond aux filtres.</td></tr>'}`;
-    document.querySelectorAll('#cl-table .cl-th').forEach(h => {
-      h.onclick = () => {
-        const key = h.dataset.key;
-        if (state.sortKey === key) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc'; else { state.sortKey = key; state.sortDir = 'asc'; }
-        drawTable();
-      };
-    });
+    brancherEntetesTriables(document.getElementById('cl-table'), 'controle-laitier', drawTable);
     document.querySelectorAll('#cl-table .cl-check').forEach(chk => {
       chk.onclick = () => { if (chk.checked) selection.add(chk.dataset.eid); else selection.delete(chk.dataset.eid); updateToggleAllLabel(filtered); updateActionBar(); };
     });
@@ -17920,14 +17946,16 @@ function renderControleLaitier() {
     if (state.dateApres) actifs.push('mise bas après le ' + formatDateFr(state.dateApres));
     if (state.anomalie !== null) actifs.push('anomalie ' + echapperHtml(texteAnomalieControle(state.anomalie)));
     if (state.cellules) actifs.push('cellules au-dessus de ' + texteCellules(state.seuilCel));
-    document.getElementById('cl-filtre-actif').textContent = (actifs.length ? 'Filtre actif : ' + actifs.join(' · ') : 'Aucun filtre actif') + ' · tri : N° de travail';
+    const optsTriCl = [['numero', 'N° de travail'], ['mab', 'Mise bas'], ...NC.map(k => ['c' + k, 'C' + k + ' (mL)']), ...(avecCellules ? [['cellules', 'Cellules']] : [])];
+    const etTri = etatTriTableau('controle-laitier');
+    document.getElementById('cl-filtre-actif').textContent = (actifs.length ? 'Filtre actif : ' + actifs.join(' · ') : 'Aucun filtre actif') + ' · tri : ' + ((optsTriCl.find(o => etTri && o[0] === etTri.col) || optsTriCl[0])[1]) + (etTri && etTri.sens < 0 ? ' (décroissant)' : '');
     const fmt = v => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
     const valeur = (k, r) => {
       const v = r['c' + k], an = r['a' + k];
       const sous = filtreValeur && v !== null && v !== undefined && state.controle === k && (state.operateur === '<' ? v < seuilNum : v > seuilNum);
       return `<div class="cl-val${sous ? ' cl-val-signale' : ''}"><div class="cl-val-l">C${k}</div><div class="cl-val-v">${v === null || v === undefined ? '—' : fmt(v)}${an ? `<span class="cl-ano" title="${echapperHtml(libelleAnomalieControle(an))}">${codeAnomalieTexte(an)}</span>` : ''}</div></div>`;   // « mL » une seule fois, dans la ligne grise du haut
     };
-    document.getElementById('cl-table').innerHTML = filtered.length === 0 ? '<div class="empty">Aucune brebis ne correspond aux filtres.</div>' : filtered.map(r => {
+    document.getElementById('cl-table').innerHTML = selecteurTriCartesHtml('controle-laitier', optsTriCl) + (filtered.length === 0 ? '<div class="empty">Aucune brebis ne correspond aux filtres.</div>' : '') + filtered.map(r => {
       const aucun = NC.every(k => r['c' + k] === null || r['c' + k] === undefined);
       return `<div class="cl-carte" data-eid="${r.eid}">
         <input type="checkbox" class="cl-check" data-eid="${r.eid}" aria-label="Sélectionner ${echapperHtml(numeroAnimal(r.sheep))}"${selection.has(r.eid) ? ' checked' : ''}>
@@ -17938,6 +17966,7 @@ function renderControleLaitier() {
         </div>
       </div>`;
     }).join('');
+    brancherSelecteurTriCartes(document.getElementById('cl-table'), 'controle-laitier', drawTable);
     document.querySelectorAll('#cl-table .cl-check').forEach(chk => {
       chk.onclick = () => {
         if (chk.checked) selection.add(chk.dataset.eid);
@@ -21183,8 +21212,9 @@ function cleTriLotsPc(r, col) {
   return m[col];
 }
 function trierLignesLotsPc(lignes) {
-  const { col, dir } = lotsPcEtat.tri;
-  if (!col) return lignes;
+  const et = etatTriTableau('lots-panneau');   // composant commun des tableaux triables (en-têtes, flèches, aria-sort)
+  if (!et) return lignes;
+  const col = et.col, dir = et.sens;
   return lignes.slice().sort((a, b) => {
     const x = cleTriLotsPc(a, col), y = cleTriLotsPc(b, col);
     const vx = x === null || x === undefined || x === '', vy = y === null || y === undefined || y === '';
@@ -21266,7 +21296,7 @@ function lotsExistantsPcHtml(conteneur) {
       <div class="pc-grand"><label for="le-q">Rechercher un lot ou un n°</label><input type="text" id="le-q" value="${T.q.replace(/"/g, '&quot;')}" placeholder="Nom du lot ou n° d'animal" autocomplete="off"></div>
     </div></div>
     <div class="card"><div class="pc-cardhead" style="margin-bottom:8px;"><p class="brd-ttl" style="margin:0;" id="le-compte">${liste.length} lot${liste.length > 1 ? 's' : ''}</p><button type="button" class="btn btn-secondary" id="le-export" style="width:auto;padding:6px 14px;"${liste.length ? '' : ' disabled'}>Export Excel</button></div>
-      <div style="overflow-x:auto;"><table class="pc-t" id="le-table"><tr><th class="l" style="text-align:left;">Nom</th><th style="text-align:left;">Type</th><th style="text-align:left;">Cible</th><th>Animaux</th><th>Date</th><th>Mises bas (campagne)</th><th style="text-align:right;">Actions</th></tr>
+      <div style="overflow-x:auto;"><table class="pc-t" id="le-table" data-triable="lots-existants"><tr><th class="l" style="text-align:left;">Nom</th><th style="text-align:left;">Type</th><th style="text-align:left;">Cible</th><th>Animaux</th><th>Date</th><th>Mises bas (campagne)</th><th style="text-align:right;" data-tri-non>Actions</th></tr>
       ${liste.map(l => { const d = dateAfficheeLot(l), c = l.type === 'reproduction' ? campagneMisesBasDuLot(l) : null; return `<tr data-id="${l.id}"><td style="text-align:left;"><b>${echapperHtml(l.nom)}</b></td><td style="text-align:left;">${pcPill(TON_TYPE_LOT[typeLotPc(l)], LIB_TYPE_LOT[typeLotPc(l)])}</td><td style="text-align:left;">${l.type === 'reproduction' ? l.cible : 'Brebis'}</td><td>${(l.membres || []).length}</td><td>${d.texte}${d.lutte ? ' <small style="color:var(--text-muted);">(lutte)</small>' : ''}</td><td>${c === null ? '<span style="color:var(--text-muted);">—</span>' : libCampagneAffichee(c) + (l.campagneMisesBasDeduite ? ' <small style="color:var(--text-muted);" title="Déduite de la date du lot">(déduite)</small>' : '')}</td><td style="text-align:right;white-space:nowrap;"><button type="button" class="btn btn-secondary le-modifier" data-id="${l.id}" style="width:auto;padding:4px 10px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary le-excel" data-id="${l.id}" style="width:auto;padding:4px 10px;font-size:12px;">Export Excel</button> <button type="button" class="btn btn-secondary le-suppr" data-id="${l.id}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`; }).join('') || '<tr><td colspan="7" class="l" style="color:var(--text-muted);padding:14px 10px;text-align:left;">Aucun lot ne correspond aux filtres.</td></tr>'}</table></div>
       <p class="brd-note" style="margin:10px 0 0;">Supprimer demande toujours une confirmation. « Chercher en bergerie » reste sur mobile ; le lot y est visible dès la synchronisation.</p></div>`;
   const redessiner = () => { if (lotsPcRedessin) return; lotsPcRedessin = true; const sv = capturerSaisieEnCours(), df = capturerDefilementsLots(); try { renderLotsPc(); restaurerSaisieEnCours(sv); restaurerDefilementsLots(df); } finally { lotsPcRedessin = false; } };
@@ -21425,8 +21455,7 @@ function renderLotsPc() {
     const colsIA = campagnesIAColonnes(), ctrlCamps = campagnesControlesDisponibles();
     const ctrlC = F.ctrlCampagne !== '' ? parseInt(F.ctrlCampagne, 10) : (ctrlCamps[0] != null ? ctrlCamps[0] : DB.campagneDebut);
     const ncPanneau = numerosControles(ctrlC);
-    const tri = col => E.tri.col === col ? (E.tri.dir === 1 ? ' ▲' : ' ▼') : '';
-    const th = (col, l, left) => `<th class="lt-th${col === 'numero' ? ' num-fixe' : ''}" data-col="${col}" style="cursor:pointer;${left ? 'text-align:left;' : ''}">${l}${tri(col)}</th>`;
+    const th = (col, l, left) => thTriable('lots-panneau', col, l, `class="lt-th${col === 'numero' ? ' num-fixe' : ''}" data-col="${col}"${left ? ' style="text-align:left;"' : ''}`);
     const dash = v => v === null || v === undefined || v === '' ? '<span style="color:var(--text-muted);">-</span>' : v;
     const lotsPills = r => r.lots.length ? r.lots.map(n => pcPill('info', echapperHtml(n))).join(' ') : '—';
     let cols, cellules;
@@ -21635,13 +21664,13 @@ function renderLotsPc() {
   document.querySelectorAll('.lt-echo-agn').forEach(b => { b.onclick = () => { F.echo.agneaux = basculer(F.echo.agneaux, b.dataset.val); redessiner(); }; });
   document.querySelectorAll('.lt-echo-cas-chip').forEach(b => { b.onclick = () => { F.echo.cas = basculer(F.echo.cas, b.dataset.val); redessiner(); }; });
   if ($('lt-mb-raccourci')) $('lt-mb-raccourci').onclick = () => { F.mbMode = 'avant'; F.mbDu = ajouterMoisISO(lot.dateEvenement || lot.dateCreation || jourAujourdhuiISO(), -seuilMiseBasMois()); redessiner(); };
-  $('lt-reinit').onclick = () => { E.F = filtresLotsVides(); E.tri = { col: null, dir: 1 }; redessiner(); };
+  $('lt-reinit').onclick = () => { E.F = filtresLotsVides(); etatsTriTableaux.delete('lots-panneau'); redessiner(); };
   // filtres rapides : règlent des filtres, JAMAIS de case cochée
-  if ($('lt-rapide-reforme')) $('lt-rapide-reforme').onclick = () => { E.F = filtresLotsVides(); E.F.anomalieAny = true; E.onglet = 'controles'; E.tri = { col: null, dir: 1 }; redessiner(); };
-  if ($('lt-rapide-ia')) $('lt-rapide-ia').onclick = () => { E.F = filtresLotsVides(); E.F.sansDeuxEchecs = true; E.F.mbMode = 'avant'; E.F.mbDu = ajouterMoisISO(lot.dateEvenement || lot.dateCreation || jourAujourdhuiISO(), -seuilMiseBasMois()); E.onglet = 'misesbas'; E.tri = { col: null, dir: 1 }; redessiner(); };
+  if ($('lt-rapide-reforme')) $('lt-rapide-reforme').onclick = () => { E.F = filtresLotsVides(); E.F.anomalieAny = true; E.onglet = 'controles'; etatsTriTableaux.delete('lots-panneau'); redessiner(); };
+  if ($('lt-rapide-ia')) $('lt-rapide-ia').onclick = () => { E.F = filtresLotsVides(); E.F.sansDeuxEchecs = true; E.F.mbMode = 'avant'; E.F.mbDu = ajouterMoisISO(lot.dateEvenement || lot.dateCreation || jourAujourdhuiISO(), -seuilMiseBasMois()); E.onglet = 'misesbas'; etatsTriTableaux.delete('lots-panneau'); redessiner(); };
   document.querySelectorAll('#lt-tags .lt-tag').forEach(a => { a.onclick = ev => { ev.preventDefault(); const t = ctx.tags[parseInt(a.dataset.i, 10)]; if (t) { t[1](F); redessiner(); } }; });
   const lignesFiltrees = ctx.lignes;
-  document.querySelectorAll('.lt-th').forEach(h => { h.onclick = () => { const col = h.dataset.col; E.tri = E.tri.col === col ? { col, dir: -E.tri.dir } : { col, dir: 1 }; redessiner(); }; });
+  brancherEntetesTriables(document, 'lots-panneau', redessiner);
   document.querySelectorAll('#lt-table tr.clic').forEach(tr => { tr.onclick = ev => { const k = cleanEid(tr.dataset.eid); if (E.selection.has(k)) E.selection.delete(k); else E.selection.add(k); redessiner(); }; });
   $('lt-tout').onclick = () => { lignesFiltrees.filter(r => !r.dansCeLot).forEach(r => E.selection.add(cleanEid(r.eid))); redessiner(); };
   $('lt-rien').onclick = () => { E.selection.clear(); redessiner(); };
@@ -23697,6 +23726,23 @@ async function exportSoinsRealisesPdf() {
   });
   await saveOrShareBinaryFile('carnet-sanitaire-soins_' + jourAujourdhuiISO() + '.pdf', bytes, 'application/pdf');
 }
+// Soins réalisés (Carnet) : colonnes triables (tableau PC et « Trier par » des cartes mobiles, composant commun)
+const COLS_SOINS_REALISES = [['num', 'N°'], ['type', 'Type de soin'], ['produit', 'Produit'], ['date', 'Date'], ['dose', 'Dose'], ['ordonnance', 'Ordonnance'], ['par', 'Fait par'], ['lait', 'Reprise lait'], ['viande', 'Viande dès le'], ['voie', 'Voie'], ['duree', 'Durée'], ['fin', 'Date de fin']];
+function valeurSoinRealise(g, k) {
+  const x = g.soin, d = g.dates || datesDuSoin(x);
+  if (k === 'num') return g.animaux.length > 1 ? '' : (g.animaux[0].court || g.animaux[0].numero);
+  if (k === 'type') return (x.type || '') + (x.sousType ? ' · ' + x.sousType : '');
+  if (k === 'produit') return x.produit || x.type || '';
+  if (k === 'date') return x.date || '';
+  if (k === 'dose') return x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? Number(x.quantiteCc) : (x.dose || '');
+  if (k === 'ordonnance') return x.numeroOrdonnance || '';
+  if (k === 'par') return x.intervenant || '';
+  if (k === 'lait') return d.repriseLait || '';
+  if (k === 'viande') return d.venteDes || '';
+  if (k === 'voie') return x.voie || '';
+  if (k === 'duree') return x.dureeJours || '';
+  return d.derniere || '';
+}
 function ongletSoinsRealises() {
   if (!carnetSoinsF) carnetSoinsF = carnetSoinsFiltresVides();
   const F = carnetSoinsF;
@@ -23725,7 +23771,7 @@ function ongletSoinsRealises() {
     <p class="brd-note" style="margin:8px 2px 0;">Les exports suivent les filtres. Animaux vendus, morts ou archivés : leurs soins restent ici en lecture seule (« Sorti »).</p>`;
   const zone = document.getElementById('cs-sr-liste');
   const dessiner = () => {
-    const filtres = soinsRealisesCarnet(F);
+    const filtres = trierDonneesTableau('carnet-soins', soinsRealisesCarnet(F), valeurSoinRealise);
     const nTousSoins = filtres.length;
     const gs = carnetVoirTousSoins ? filtres : filtres.slice(0, 30);
     document.getElementById('cs-sr-compte').textContent = nTousSoins + ' soin' + (nTousSoins > 1 ? 's' : '') + ' · du plus récent au plus ancien · un traitement collectif sur une ligne';
@@ -23737,7 +23783,7 @@ function ongletSoinsRealises() {
       const coll = g.soin.collectifId && g.refs.length > 1;
       return `<button type="button" class="${cls} cs-soin-modifier" data-g="${gi}">Modifier</button>${coll ? ` <button type="button" class="${cls} cs-soin-animaux" data-g="${gi}">Animaux</button>` : ''} <button type="button" class="${del} cs-soin-suppr" data-g="${gi}">Suppr.</button>`;
     };
-    const TABLE_DERNIERS = `<div style="overflow-x:auto;"><table class="pc-t" id="cs-table-derniers"><tr><th class="l">N°</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">Ordonnance</th><th class="l">Fait par</th><th class="l">Reprise lait</th><th class="l">Viande dès le</th><th class="l">Voie</th><th class="l">Durée</th><th class="l">Date de fin</th><th class="l"></th></tr>${gs.map((g, gi) => { const d = g.dates || datesDuSoin(g.soin), x = g.soin; return `<tr><td class="l">${g.animaux.length > 1 ? libAnimaux(g.animaux.length) : echappe(nom(g.animaux[0]))}</td><td class="l">${echappe((x.type || '') + (x.sousType ? ' · ' + x.sousType : ''))}</td><td class="l">${echappe(x.produit || x.type || '—')}${mentionsBioSoin(x)}</td><td class="l">${fmt(x.date)}</td><td class="l">${x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? x.quantiteCc + ' cc' : echappe(x.dose || '—')}</td><td class="l">${echappe(x.numeroOrdonnance || '—')}</td><td class="l">${echappe(x.intervenant || '—')}</td><td class="l">${d.repriseLait ? fmt(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—')}</td><td class="l">${d.venteDes ? fmt(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')}</td><td class="l">${echappe(x.voie || '—')}</td><td class="l">${x.dureeJours ? x.dureeJours + ' j' : '—'}</td><td class="l">${fmt(d.derniere)}</td><td class="l" style="white-space:nowrap;">${actionsSoinHtml(g, gi, false)}</td></tr>`; }).join('') || '<tr><td colspan="13" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun soin enregistré.</td></tr>'}</table></div>`;
+    const TABLE_DERNIERS = `<div style="overflow-x:auto;"><table class="pc-t" id="cs-table-derniers"><tr>${COLS_SOINS_REALISES.map(([k, l]) => thTriable('carnet-soins', k, l, 'class="l"')).join('')}<th class="l"></th></tr>${gs.map((g, gi) => { const d = g.dates || datesDuSoin(g.soin), x = g.soin; return `<tr><td class="l">${g.animaux.length > 1 ? libAnimaux(g.animaux.length) : echappe(nom(g.animaux[0]))}</td><td class="l">${echappe((x.type || '') + (x.sousType ? ' · ' + x.sousType : ''))}</td><td class="l">${echappe(x.produit || x.type || '—')}${mentionsBioSoin(x)}</td><td class="l">${fmt(x.date)}</td><td class="l">${x.quantiteCc !== undefined && x.quantiteCc !== null && x.quantiteCc !== '' ? x.quantiteCc + ' cc' : echappe(x.dose || '—')}</td><td class="l">${echappe(x.numeroOrdonnance || '—')}</td><td class="l">${echappe(x.intervenant || '—')}</td><td class="l">${d.repriseLait ? fmt(d.repriseLait) : (d.aucuneAttenteLait ? 'aucune attente' : '—')}</td><td class="l">${d.venteDes ? fmt(d.venteDes) : (d.aucuneAttenteViande ? 'aucune attente' : '—')}</td><td class="l">${echappe(x.voie || '—')}</td><td class="l">${x.dureeJours ? x.dureeJours + ' j' : '—'}</td><td class="l">${fmt(d.derniere)}</td><td class="l" style="white-space:nowrap;">${actionsSoinHtml(g, gi, false)}</td></tr>`; }).join('') || '<tr><td colspan="13" class="l" style="color:var(--text-muted);padding:14px 10px;">Aucun soin enregistré.</td></tr>'}</table></div>`;
     const cartesDerniers = (() => {
       if (!gs.length) return '<div class="info" style="padding:6px 0;">Aucun soin enregistré.</div>';
       return `<div class="cartes-liste" id="cs-cartes-derniers" style="margin-top:12px;">${gs.map((g, gi) => {
@@ -23750,8 +23796,10 @@ function ongletSoinsRealises() {
           acts: actionsSoinHtml(g, gi, true) });
       }).join('')}</div>`;
     })();
-    zone.innerHTML = (mobile ? cartesDerniers : TABLE_DERNIERS)
+    zone.innerHTML = (mobile ? selecteurTriCartesHtml('carnet-soins', COLS_SOINS_REALISES) + cartesDerniers : TABLE_DERNIERS)
       + (nTousSoins > 30 ? `<div style="margin-top:12px;"><button type="button" class="btn btn-secondary" id="cs-voir-tous-soins" style="width:auto;padding:8px 16px;">${carnetVoirTousSoins ? 'Voir les 30 derniers' : 'Voir tous les soins (' + nTousSoins + ')'}</button></div>` : '');
+    brancherEntetesTriables(zone, 'carnet-soins', dessiner);
+    brancherSelecteurTriCartes(zone, 'carnet-soins', dessiner);
     const btnTous = document.getElementById('cs-voir-tous-soins');
     if (btnTous) btnTous.onclick = () => { carnetVoirTousSoins = !carnetVoirTousSoins; dessiner(); };
     const nomGroupe = g => g.animaux.length > 1 ? libAnimaux(g.animaux.length) : nom(g.animaux[0]);
@@ -23844,7 +23892,7 @@ function ecranCarnetAnimaux() {
     <div class="card">
       <div class="pc-cardhead" style="margin-bottom:10px;flex-wrap:wrap;"><div><p class="brd-ttl" style="margin:0;" id="cs-compte"></p><p class="brd-note" style="margin:2px 0 0;">${mobile ? 'Scanne un animal ou tape son n° puis OK pour le cocher, ou touche une carte.' : 'Tape un n° puis Entrée, ou clique sur une ligne, pour la cocher.'} Seuls les animaux actifs sont proposés. Tri : âge décroissant, puis n° croissant.</p></div>
         <div style="display:flex;gap:8px;"><button type="button" class="btn btn-secondary" id="cs-tout" style="width:auto;padding:6px 14px;font-size:13px;">Tout cocher</button><button type="button" class="btn btn-secondary" id="cs-rien" style="width:auto;padding:6px 14px;font-size:13px;">Tout décocher</button></div></div>
-      ${mobile ? '<div id="cs-cards"></div>' : '<table class="pc-t" id="cs-table"></table>'}
+      ${mobile ? '<div id="cs-cards"></div>' : '<table class="pc-t" id="cs-table" data-triable="carnet-animaux"></table>'}
     </div>
     <div class="pc-selbar" id="cs-barre"><span class="pc-selcount" id="cs-nsel"></span><button type="button" class="btn btn-secondary" id="cs-retour">← Retour au soin</button><button type="button" class="btn btn-primary" id="cs-enregistrer">Enregistrer le soin</button></div>
     <div id="cs-msg"></div>`;
@@ -24066,7 +24114,7 @@ function renderSoinsSansBio() {
     <div class="card" id="sb-carte">
       ${pcCardHead('Aperçu : délais enregistrés (supposés légaux) → délais bio', rows.length ? pcPill('warn', rows.length + ' soin' + (rows.length > 1 ? 's' : '')) : pcPill('ok', 'rien à faire'))}
       <p class="brd-note" style="margin-top:4px;">Ces soins ont été enregistrés avant le mode bio : leurs délais sont traités comme des délais légaux. « Appliquer le mode bio » les double (minimum 48 h selon l'option du produit) et fige le résultat dans le soin, <b>uniquement pour les soins cochés</b>. Un soin dont le délai diffère de la fiche actuelle a pu être modifié à la main (ou déjà doublé par toi) : il est décoché, à vérifier. Rien n'est écrit tant que tu n'as pas confirmé.</p>
-      ${rows.length ? (mobile ? listeMobile : `<div style="overflow-x:auto;"><table class="pc-t" id="sb-table"><tr><th class="cb"></th><th class="l">Animal</th><th class="l">Date</th><th class="l">Produit</th><th class="l">Délais enregistrés<br><span style="font-weight:400;">lait / viande</span></th><th class="l">Délais bio<br><span style="font-weight:400;">lait / viande</span></th><th class="l">Reprise du lait<br><span style="font-weight:400;">avant → après</span></th><th class="l">Vente dès le<br><span style="font-weight:400;">avant → après</span></th><th class="l">Contrôle</th></tr>
+      ${rows.length ? (mobile ? listeMobile : `<div style="overflow-x:auto;"><table class="pc-t" id="sb-table" data-triable="soins-sans-bio"><tr><th class="cb"></th><th class="l">Animal</th><th class="l">Date</th><th class="l">Produit</th><th class="l">Délais enregistrés<br><span style="font-weight:400;">lait / viande</span></th><th class="l">Délais bio<br><span style="font-weight:400;">lait / viande</span></th><th class="l">Reprise du lait<br><span style="font-weight:400;">avant → après</span></th><th class="l">Vente dès le<br><span style="font-weight:400;">avant → après</span></th><th class="l">Contrôle</th></tr>
       ${rows.map((r, i) => `<tr data-i="${i}" class="clic${sel.has(i) ? ' sel' : ''}"><td class="cb"><input type="checkbox" class="sb-chk" ${sel.has(i) ? 'checked' : ''} style="width:16px;height:16px;margin:0;"></td><td class="l">${r.label}${r.archive ? ' <span class="b" style="font-size:11px;color:var(--text-muted);">archivé</span>' : ''}</td><td class="l">${fmt(r.soin.date)}</td><td class="l">${echapperHtml(r.soin.produit || r.soin.type)}</td><td class="l">${Number.isInteger(r.soin.delaiLaitJours) ? r.soin.delaiLaitJours + ' j' : '—'} / ${Number.isInteger(r.soin.delaiViandeJours) ? r.soin.delaiViandeJours + ' j' : '—'}</td><td class="l"><b>${r.ap.lait === null ? '—' : r.ap.lait + ' j'} / ${r.ap.viande === null ? '—' : r.ap.viande + ' j'}</b>${r.ap.min48AConfirmer ? '<br>' + pcPill('warn', 'minimum 48 h bio à confirmer') : ''}</td><td class="l">${dl(r.avant.repriseLait, r.avant.aucuneAttenteLait)} → <b>${dl(r.apres.repriseLait, r.apres.aucuneAttenteLait)}</b></td><td class="l">${dl(r.avant.venteDes, r.avant.aucuneAttenteViande)} → <b>${dl(r.apres.venteDes, r.apres.aucuneAttenteViande)}</b></td><td class="l">${r.memeQueFiche ? pcPill('ok', 'identique à la fiche') : pcPill('danger', 'différent de la fiche : à vérifier')}</td></tr>`).join('')}</table></div>`)  : '<p class="brd-note" style="margin:10px 0 0;">Aucun soin enregistré avec la 1.0.198 sans indicateur bio.</p>'}
       ${rows.length && !mobile ? `<div class="pc-selbar" style="margin-top:14px;"><span class="pc-selcount" id="sb-n"></span><button type="button" class="btn btn-secondary" id="sb-tout">Tout cocher</button><button type="button" class="btn btn-secondary" id="sb-rien">Tout décocher</button><button type="button" class="btn btn-primary" id="sb-appliquer">Appliquer le mode bio</button></div>` : ''}
       <div id="sb-msg"></div>
@@ -24228,7 +24276,7 @@ function renderTraitements12Pc() {
   const montres = E.toutVoir ? liste : liste.slice(0, 30);
   const blocAnimal = a => `<div class="s12-an" data-eid="${a.eid}"><div class="s12-ah"><b style="font-size:15px;">${libAnimal12(a)}</b><span style="font-size:12px;color:var(--text-muted);">${detailAnimal12(a)}</span><span style="flex:1;"></span>${pillNiveau12(a)}</div>${a.traitements.map(ligneTraitement12).join('') || '<div class="s12-ln nc"><span class="p">Aucun soin sur la période</span></div>'}</div>`;
   const nbInter = D.interventions.length;
-  const tableInterventions = `<table class="pc-t" id="s12-table-interventions"><tr><th class="l">Date</th><th class="l">Produit</th><th class="l">Type</th><th class="l">Animaux traités</th><th class="l">Compte</th><th class="l">Fait par</th></tr>${D.interventions.map(g => {
+  const tableInterventions = `<table class="pc-t" id="s12-table-interventions" data-triable="traitements-12-mois"><tr><th class="l">Date</th><th class="l">Produit</th><th class="l">Type</th><th class="l">Animaux traités</th><th class="l">Compte</th><th class="l">Fait par</th></tr>${D.interventions.map(g => {
     const c = {}; g.animaux.forEach(a => { c[a.categorie] = (c[a.categorie] || 0) + 1; });
     const qui = g.animaux.length <= 6 ? g.animaux.length + ' · ' + g.animaux.map(a => libAnimal12(a).replace('n°', '')).join(', ') : g.animaux.length + ' animaux · ' + Object.entries(c).map(([n, x]) => x + ' ' + n.toLowerCase() + (x > 1 && !/s$/i.test(n) ? 's' : '')).join(', ');
     return `<tr><td class="l">${formatDateFr(g.date)}</td><td class="l">${echapperHtml(g.produit)}</td><td class="l">${g.sousType || g.type || '—'}</td><td class="l">${qui}</td><td class="l">${g.etat === 'oui' ? pcPill('ok', 'compte') : g.etat === 'non' ? pcPill('neutral', 'ne compte pas') : pcPill('warn', 'à confirmer')}</td><td class="l">${echapperHtml(g.faitPar || '—')}</td></tr>`;
@@ -24509,7 +24557,7 @@ function renderOrdonnances() {
     { header: 'Vétérinaire', value: o => o.veterinaire || '—' },
     { header: 'Produits', value: o => (o.produits || []).map(p => p.nom).join(', ') || '—' }
   ];
-  const tableHtml = ordonnances.length === 0 ? '<div class="empty">Aucune ordonnance enregistrée.</div>' : desktopOrd ? `<div style="overflow-x:auto;"><table class="table-desktop" style="width:100%;">
+  const tableHtml = ordonnances.length === 0 ? '<div class="empty">Aucune ordonnance enregistrée.</div>' : desktopOrd ? `<div style="overflow-x:auto;"><table class="table-desktop" style="width:100%;" data-triable="ordonnances">
     <thead><tr>${cols.map(c => `<th>${c.header}</th>`).join('')}</tr></thead>
     <tbody>${ordonnances.map((o, i) => `<tr class="ordonnance-row" data-i="${i}" style="cursor:pointer;">${cols.map(c => `<td>${echapperHtml(c.value(o))}</td>`).join('')}</tr>`).join('')}</tbody>
   </table></div>`
@@ -24849,7 +24897,7 @@ function renderSousDelai() {
   // Onglets Brebis | Agnelles | Agneaux | Béliers (effectifs) ; une ligne / une carte par animal, avec tous ses produits encore en délai
   const parCat = Object.fromEntries(SOUS_DELAI_CATEGORIES.map(([k]) => [k, sousDelaiParAnimal(k)]));
   if (!parCat[sousDelaiOnglet]) sousDelaiOnglet = 'brebis';
-  const rows = parCat[sousDelaiOnglet];
+  let rows = parCat[sousDelaiOnglet];
   const libCat = (SOUS_DELAI_CATEGORIES.find(c => c[0] === sousDelaiOnglet) || [])[1];
   const onglets = `<div class="tab-bar onglets-nav bc-onglets sd-onglets">${SOUS_DELAI_CATEGORIES.map(([k, l]) => `<button type="button" class="tab-btn${k === sousDelaiOnglet ? ' active' : ''}" data-tab="${k}">${l} (${parCat[k].length})</button>`).join('')}</div>`;
   const desktopSousDelai = isDesktopMode();
@@ -24859,12 +24907,15 @@ function renderSousDelai() {
     { header: 'Fin du délai', value: r => formatDateFr(r.finDelai) },
     { header: 'Jours restants', value: r => String(joursRestantsAvant(r.finDelai)) }
   ];
-  const tableHtml = rows.length === 0 ? `<div class="empty">Aucun animal (${libCat.toLowerCase()}) sous délai d'attente actuellement.</div>` : desktopSousDelai ? `<div style="overflow-x:auto;"><table class="table-desktop" style="width:100%;">
+  // Tri (composant commun) : en-têtes du tableau PC, « Trier par » des cartes mobiles ; colonne = son rang
+  const cleTriSd = 'sous-delai-' + sousDelaiOnglet;
+  if (!desktopSousDelai) rows = trierDonneesTableau(cleTriSd, rows, (r, k) => +k === 2 ? r.finDelai : cols[+k].value(r));
+  const tableHtml = rows.length === 0 ? `<div class="empty">Aucun animal (${libCat.toLowerCase()}) sous délai d'attente actuellement.</div>` : desktopSousDelai ? `<div style="overflow-x:auto;"><table class="table-desktop" style="width:100%;" data-triable="${cleTriSd}">
     <thead><tr>${cols.map(c => `<th>${c.header}</th>`).join('')}</tr></thead>
     <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${echapperHtml(c.value(r))}</td>`).join('')}</tr>`).join('')}</tbody>
   </table></div>`
     // Mobile : une carte par brebis (n°, jours restants avant la fin la plus tardive, une ligne par produit) ; mêmes brebis, même tri que le PC
-    : `<div class="cartes-liste" id="sous-delai-cartes">${rows.map(r => {
+    : selecteurTriCartesHtml(cleTriSd, cols.map((c, i) => [i, c.header])) + `<div class="cartes-liste" id="sous-delai-cartes">${rows.map(r => {
       const j = joursRestantsAvant(r.finDelai);
       return carteListeHtml({ nm: xlsxEscape(cols[0].value(r)), pastille: cartePastille('Encore ' + j + ' j', 'ambre'),
         l2: r.soins.map(x => `<div class="sd-soin">${echapperHtml(x.produit)} · ${x.type} · soin du ${formatDateFr(x.dateSoin)} · fin le ${formatDateFr(x.finDelai)}</div>`).join(''),
@@ -24885,6 +24936,7 @@ function renderSousDelai() {
   `;
 
   app.querySelectorAll('.sd-onglets .tab-btn').forEach(b => { b.onclick = () => { sousDelaiOnglet = b.dataset.tab; render('sous-delai'); }; });
+  brancherSelecteurTriCartes(app, cleTriSd, () => render('sous-delai'));
   if (document.getElementById('btn-controle-lot-delai')) document.getElementById('btn-controle-lot-delai').onclick = () => render('controle-lot-delai');
   document.getElementById('btn-sous-delai-creer-lot').onclick = () => {
     const membres = rows.filter(r => r.eid).map(r => r.eid);   // un agneau sans n° n'entre pas dans un lot
@@ -25360,13 +25412,13 @@ function renderProduitsDelais() {
     ${aConfirmer.length ? `<div class="card pc-card-warn" id="pd-anciennes">
       ${pcCardHead('Anciennes valeurs à confirmer ou corriger', pcPill('warn', aConfirmer.length + ' produit' + (aConfirmer.length > 1 ? 's' : '')))}
       <p class="brd-note" style="margin-top:4px;">Ces valeurs ont été saisies avant les nouvelles fiches (délai lait seulement). Rien n'est repris sans ton accord : <b>Confirmer</b> garde le délai lait indiqué (saisis le délai viande, obligatoire), <b>Corriger</b> ouvre la fiche complète. Les données de l'ancienne intégration ANMV ne sont jamais utilisées.</p>
-      ${mobile ? `<div class="cartes-liste" id="pd-cartes-anciennes" style="margin-top:12px;">${aConfirmer.map(carteConfirmer).join('')}</div>` : `<table class="pc-t"><tr><th class="l">Produit</th><th class="l">Catégorie</th><th class="l">Délai lait</th><th class="l">Ancienne posologie</th><th class="l">Délai viande</th><th class="l"></th></tr>${aConfirmer.map(ligneConfirmer).join('')}</table>`}
+      ${mobile ? `<div class="cartes-liste" id="pd-cartes-anciennes" style="margin-top:12px;">${aConfirmer.map(carteConfirmer).join('')}</div>` : `<table class="pc-t" data-triable="produits-anciens"><tr><th class="l">Produit</th><th class="l">Catégorie</th><th class="l">Délai lait</th><th class="l">Ancienne posologie</th><th class="l">Délai viande</th><th class="l"></th></tr>${aConfirmer.map(ligneConfirmer).join('')}</table>`}
       <div id="pd-err" class="error-box hidden" style="margin-top:10px;"></div>
     </div>` : ''}
     ${tous.length > 1 ? `<input type="text" id="pd-recherche" placeholder="Rechercher un produit (nom ou usage)" style="margin:0 0 12px;">` : ''}
     ${fiches.map(({ cat, produits }) => `<div class="card">
       ${pcCardHead(cat.label, pcPill('neutral', produits.length + ' produit' + (produits.length > 1 ? 's' : '')))}
-      ${produits.length === 0 ? '<p class="brd-note" style="margin:8px 0 0;">Aucun produit.</p>' : mobile ? `<div class="cartes-liste" style="margin-top:12px;">${produits.map(f => `<div class="pd-ligne" data-recherche="${echapperHtml((f.nom + ' ' + (f.usage || '')).toLowerCase())}">${carteProduit(f, cat)}</div>`).join('')}</div>` : `<div style="overflow-x:auto;"><table class="pc-t" style="margin-top:8px;"><tr><th class="l">Produit</th><th class="l">Fiche</th><th>Viande${bio ? ' (légal)' : ''}</th><th>Lait${bio ? ' (légal)' : ''}</th><th class="l">Posologie habituelle</th><th class="l">Ordonnance</th>${bio ? '<th class="l" style="white-space:normal;max-width:120px;">Minimum 48 h bio</th><th class="l" style="white-space:normal;max-width:130px;">Compte dans les 3 traitements</th>' : ''}<th></th></tr>
+      ${produits.length === 0 ? '<p class="brd-note" style="margin:8px 0 0;">Aucun produit.</p>' : mobile ? `<div class="cartes-liste" style="margin-top:12px;">${produits.map(f => `<div class="pd-ligne" data-recherche="${echapperHtml((f.nom + ' ' + (f.usage || '')).toLowerCase())}">${carteProduit(f, cat)}</div>`).join('')}</div>` : `<div style="overflow-x:auto;"><table class="pc-t" style="margin-top:8px;" data-triable="produits-${echapperHtml(cat.label)}"><tr><th class="l">Produit</th><th class="l">Fiche</th><th>Viande${bio ? ' (légal)' : ''}</th><th>Lait${bio ? ' (légal)' : ''}</th><th class="l">Posologie habituelle</th><th class="l">Ordonnance</th>${bio ? '<th class="l" style="white-space:normal;max-width:120px;">Minimum 48 h bio</th><th class="l" style="white-space:normal;max-width:130px;">Compte dans les 3 traitements</th>' : ''}<th></th></tr>
       ${produits.map(f => `<tr class="pd-ligne" data-recherche="${echapperHtml((f.nom + ' ' + (f.usage || '')).toLowerCase())}"><td class="l"><b>${echapperHtml(f.nom)}</b>${f.usage ? `<div class="pd-usage" style="font-size:13px;color:var(--ch-texte2);">${echapperHtml(f.usage)}</div>` : ''}${f.bouclage ? ' ' + pcPill('ok', echapperHtml(libelleSoinBouclage(Object.assign({ produit: 'Au bouclage ·' }, f.bouclage)))) : ''}</td><td class="l">${statut(f)}</td><td>${jours(f.delaiViande)}</td><td>${jours(f.delaiLait)}</td><td class="l">${echapperHtml(f.posologie || '—')}</td><td class="l">${f.existe && (f.complete || !f.aConfirmer) ? (f.surOrdonnance ? 'Sur ordonnance' : 'Non') : '—'}</td>${bio ? `<td class="l pd-min48" style="white-space:normal;max-width:150px;">${etatBio(f.min48h, 'minimum 48 h bio à confirmer', f.min48hDefaut)}</td><td class="l pd-compte">${etatBio(f.compte, 'à confirmer', f.compteDefaut)}</td>` : ''}<td style="white-space:nowrap;"><button type="button" class="btn btn-secondary pd-modifier" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;">Modifier</button> <button type="button" class="btn btn-secondary pd-supprimer" data-cat="${cat.key}" data-nom="${encodeURIComponent(f.nom)}" style="width:auto;padding:4px 12px;font-size:12px;color:var(--danger);border-color:var(--danger);">Suppr.</button></td></tr>`).join('')}</table></div>`}
     </div>`).join('')}
   </div>`;
@@ -28118,14 +28170,24 @@ function renderRegistreBody() {
       s.onchange = () => { registreColFiltres[registreView][s.dataset.col] = s.value; registreVoirTout = false; renderRegistreBody(); };
     });
   }
-  const n = v.rows.length, visibles = registreVoirTout ? v.rows : v.rows.slice(0, REGISTRE_CARTES_MAX);
+  // « Trier par » (composant commun des tableaux triables) : colonnes du registre de l'onglet
+  const optsTri = REGISTRE_TRI_MOBILE[registreView] || [], cleTri = 'registre-mobile-' + registreView;
+  const lignesTriees = trierDonneesTableau(cleTri, v.rows, (r, k) => (optsTri.find(o => o[0] === k) || [0, 0, () => ''])[2](r));
+  const n = lignesTriees.length, visibles = registreVoirTout ? lignesTriees : lignesTriees.slice(0, REGISTRE_CARTES_MAX);
   body.innerHTML = n === 0 ? `<div class="empty">${v.vide}</div>` : `
-    <div class="reg-liste-tete"><div class="reg-liste-n">${n} ${n > 1 ? v.nom[1] : v.nom[0]}</div><div class="reg-liste-tri">Du plus récent au plus ancien</div></div>
+    ${selecteurTriCartesHtml(cleTri, optsTri.map(o => [o[0], o[1]]))}
+    <div class="reg-liste-tete"><div class="reg-liste-n">${n} ${n > 1 ? v.nom[1] : v.nom[0]}</div><div class="reg-liste-tri">${etatTriTableau(cleTri) ? '' : 'Du plus récent au plus ancien'}</div></div>
     ${visibles.map(v.carte).join('')}
     ${n > visibles.length ? `<button type="button" class="reg-voir" id="btn-registre-voir-tout">Voir tout (${n})</button>` : ''}`;
   const voir = document.getElementById('btn-registre-voir-tout');
   if (voir) voir.onclick = () => { registreVoirTout = true; renderRegistreBody(); };
+  brancherSelecteurTriCartes(body, cleTri, renderRegistreBody);
 }
+const REGISTRE_TRI_MOBILE = {
+  agnelage: [['mere', 'N° mère', r => numeroVisuel(r.mereEid || '')], ['date', 'Date', r => r.date || ''], ['sexe', 'Sexe', r => r.sexe || '']],
+  mouvements: [['num', 'N°', r => numeroVisuel(r.eid || '')], ['date', 'Date', r => r.date || ''], ['type', 'Type', r => typeAfficheRegistre(r)], ['cat', 'Catégorie', r => r.categorie || '']],
+  sanitaire: [['num', 'N°', r => numeroLigneSanitaire(r)], ['date', 'Date', r => r.date || ''], ['produit', 'Produit', r => r.produit || ''], ['cat', 'Catégorie', r => r.categorie || '']]
+};
 
 /* ---------- Page PC « Registre d'élevage » ----------
    Même données, mêmes filtres (registreFiltre / registreColFiltres) et mêmes exports que l'écran mobile : seul le gabarit
@@ -28191,16 +28253,16 @@ function registrePcTableHtml(view) {
   const eidTxt = e => 'n°' + numeroVisuel(e);
   if (view === 'agnelage') {
     const rows = registreAgnelageFilteredRows(f, cf);
-    return { n: rows.length, unite: 'agneau', unites: 'agneaux', html: rows.length === 0 ? vide('Aucune mise bas ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N° mère</th><th class="l">N° agneau</th><th class="l">Sexe</th><th class="l">Date de naissance</th><th class="l">Campagne</th></tr>
+    return { n: rows.length, unite: 'agneau', unites: 'agneaux', html: rows.length === 0 ? vide('Aucune mise bas ne correspond aux filtres.') : `<table class="pc-t" data-triable="registre-agnelage"><tr><th class="l">N° mère</th><th class="l">N° agneau</th><th class="l">Sexe</th><th class="l">Date de naissance</th><th class="l">Campagne</th></tr>
       ${rows.map(r => `<tr>${td(eidTxt(r.mereEid))}${td(r.agneauEid ? eidTxt(r.agneauEid) : '<span style="color:var(--text-muted);">' + libelleNumeroAgneauRegistre(r) + '</span>')}${td(r.sexe)}${td(formatDateFr(r.date))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
   }
   if (view === 'mouvements') {
     const rows = registreMouvementsFilteredRows(f, cf);
-    return { n: rows.length, unite: 'mouvement', unites: 'mouvements', html: rows.length === 0 ? vide('Aucun mouvement ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type</th><th class="l">Cause / détail</th><th class="l">Date</th><th class="l">Campagne</th></tr>
+    return { n: rows.length, unite: 'mouvement', unites: 'mouvements', html: rows.length === 0 ? vide('Aucun mouvement ne correspond aux filtres.') : `<table class="pc-t" data-triable="registre-mouvements"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type</th><th class="l">Cause / détail</th><th class="l">Date</th><th class="l">Campagne</th></tr>
       ${rows.map(r => `<tr>${td(eidTxt(r.eid))}${td(r.categorie)}${td(typeAfficheRegistre(r))}${td(echapperHtml(r.detail))}${td(dateMouvementRegistreTexte(r))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
   }
   const rows = registreSanitaireFilteredRows(f, cf);
-  return { n: rows.length, unite: 'soin', unites: 'soins', html: rows.length === 0 ? vide('Aucun soin ne correspond aux filtres.') : `<table class="pc-t"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">N° ordonnance</th><th class="l">Campagne</th></tr>
+  return { n: rows.length, unite: 'soin', unites: 'soins', html: rows.length === 0 ? vide('Aucun soin ne correspond aux filtres.') : `<table class="pc-t" data-triable="registre-sanitaire"><tr><th class="l">N°</th><th class="l">Catégorie</th><th class="l">Type de soin</th><th class="l">Produit</th><th class="l">Date</th><th class="l">Dose</th><th class="l">N° ordonnance</th><th class="l">Campagne</th></tr>
       ${rows.map(r => `<tr>${td(echapperHtml(numeroLigneSanitaire(r)))}${td(r.categorie)}${td(r.type)}${td(echapperHtml(r.produit))}${td(formatDateFr(r.date))}${td(echapperHtml(r.dose))}${td(echapperHtml(r.numeroOrdonnance || '—'))}${td(registreCampagneLabel(r))}</tr>`).join('')}</table>` };
 }
 function renderRegistrePc() {
@@ -34875,6 +34937,104 @@ function comparerTriExport(a, b) {
   const x = valeurTriExport(a), y = valeurTriExport(b);
   if (x.k === y.k && (x.k === 'n' || x.k === 'd')) return x.v - y.v;
   return String(a).localeCompare(String(b), 'fr', { numeric: true, sensitivity: 'base' });
+}
+/* ---------- Tableaux triables : UN composant pour tous les tableaux (PC et mobile) ----------
+   Clic sur un en-tête = tri croissant, re-clic = décroissant ; ▲ / ▼ sur la colonne active, flèche pâle sur les autres ; `aria-sort`. Ordre selon
+   la valeur (comparerTriExport, même règle que les exports) : dates chronologiques, nombres (« 412 L », « 1,5 », « 800 000 » compris), texte
+   alphabétique (2 avant 10) ; « — » et case vide toujours en bas ; tri stable (à égalité : ordre de l'écran). État gardé par tableau le temps de la
+   séance (un redessin garde le tri). Deux façons de s'en servir, même état, mêmes en-têtes :
+   - tableau HTML complet marqué `data-triable="<clé>"` : les lignes sont triées sur place (valeur = `data-tri` de la case, sinon son texte) ;
+     une ligne `data-fixe` reste en bas, une ligne `data-suite` suit la ligne au-dessus ; une colonne `data-tri-non` (cases, actions) n'est pas triable ;
+   - liste paginée (« Voir les suivantes ») ou triée avant affichage : `trierDonneesTableau` + `thTriable` + `brancherEntetesTriables`.
+   Mobile (cartes) : `selecteurTriCartesHtml` (« Trier par ») sur le même état. Contrôle : test_tableaux_triables. */
+const etatsTriTableaux = new Map();
+function etatTriTableau(cle) { return etatsTriTableaux.get(cle) || null; }
+function changerTriTableau(cle, col) {
+  const e = etatsTriTableaux.get(cle);
+  const n = !e || e.col !== col ? { col, sens: 1 } : { col, sens: -e.sens };
+  etatsTriTableaux.set(cle, n);
+  return n;
+}
+function comparerValeursTri(a, b, sens) {
+  const va = valeurTriExport(a).k === 'vide', vb = valeurTriExport(b).k === 'vide';
+  if (va || vb) return va === vb ? 0 : (va ? 1 : -1);
+  return comparerTriExport(a, b) * sens;
+}
+// Liste triée (copie) d'après l'état du tableau ; valeur(item, col) = valeur affichée (texte, nombre ou date ISO)
+function trierDonneesTableau(cle, items, valeur) {
+  const e = etatTriTableau(cle);
+  if (!e) return items;
+  return items.map((it, i) => [it, i]).sort((x, y) => comparerValeursTri(valeur(x[0], e.col), valeur(y[0], e.col), e.sens) || x[1] - y[1]).map(x => x[0]);
+}
+function enteteTriableInterieur(cle, col, libelle) {
+  const e = etatTriTableau(cle), on = !!e && e.col === String(col);
+  return `<button type="button" class="tt-tete" data-tt="${echapperHtml(cle)}" data-col="${echapperHtml(String(col))}">${libelle}<span class="tt-fleche${on ? ' on' : ''}" aria-hidden="true" data-f="${on && e.sens < 0 ? '▼' : '▲'}"></span></button>`;
+}
+function ariaSortTableau(cle, col) { const e = etatTriTableau(cle); return e && e.col === String(col) ? (e.sens > 0 ? 'ascending' : 'descending') : 'none'; }
+// <th> triable (mode données) ; attrs = attributs du <th> (classe…)
+function thTriable(cle, col, libelle, attrs) { return `<th ${attrs || ''} aria-sort="${ariaSortTableau(cle, col)}">${enteteTriableInterieur(cle, col, libelle)}</th>`; }
+function brancherEntetesTriables(racine, cle, redessiner) {
+  (racine || document).querySelectorAll('.tt-tete').forEach(b => { if (b.dataset.tt === cle) b.onclick = () => { changerTriTableau(cle, b.dataset.col); redessiner(); }; });
+}
+// Mode « tableau HTML complet »
+function rendreTableauTriable(table) {
+  if (!table) return;
+  const cle = table.dataset.triable || table.id || 'tableau';
+  const entete = [...table.rows].find(r => r.querySelector('th'));
+  if (!entete || table._ttEntete === entete) return;     // déjà posé sur cet en-tête (un tableau redessiné par innerHTML reçoit un nouvel en-tête)
+  table._ttEntete = entete;
+  [...entete.cells].forEach((th, j) => {
+    if (th.dataset.triNon !== undefined || !th.textContent.trim() || th.querySelector('input,button,select')) return;
+    th.innerHTML = enteteTriableInterieur(cle, j, th.innerHTML);
+    th.setAttribute('aria-sort', ariaSortTableau(cle, j));
+    th.querySelector('.tt-tete').onclick = () => { changerTriTableau(cle, String(j)); appliquerTriTableauDom(table, cle); };
+  });
+  appliquerTriTableauDom(table, cle);
+}
+function appliquerTriTableauDom(table, cle) {
+  const e = etatTriTableau(cle);
+  const entete = [...table.rows].find(r => r.querySelector('th'));
+  if (entete) [...entete.cells].forEach((th, j) => {
+    const b = th.querySelector('.tt-tete');
+    if (!b) return;
+    const on = !!e && e.col === String(j), f = b.querySelector('.tt-fleche');
+    th.setAttribute('aria-sort', on ? (e.sens > 0 ? 'ascending' : 'descending') : 'none');
+    if (f) { f.classList.toggle('on', on); f.dataset.f = on && e.sens < 0 ? '▼' : '▲'; }
+  });
+  if (!e) return;
+  const j = +e.col;
+  const lignes = [...table.rows].filter(r => r !== entete && !r.querySelector('th'));
+  const groupes = [];
+  lignes.forEach(r => {
+    if (r.dataset.fixe !== undefined) return;
+    if (r.dataset.suite !== undefined && groupes.length) groupes[groupes.length - 1].push(r);
+    else if (r.cells.length > j && !(r.cells.length === 1 && r.cells[0].colSpan > 1)) groupes.push([r]);
+  });
+  if (groupes.length < 2) return;
+  const val = g => { const c = g[0].cells[j]; return c ? (c.dataset.tri !== undefined ? c.dataset.tri : c.textContent.trim()) : ''; };
+  const tries = groupes.map((g, i) => [g, i]).sort((x, y) => comparerValeursTri(val(x[0]), val(y[0]), e.sens) || x[1] - y[1]).map(x => x[0]);
+  const parent = groupes[0][0].parentNode, repere = lignes.find(r => r.dataset.fixe !== undefined && r.parentNode === parent) || null;
+  const zebre = groupes.some(g => g[0].classList.contains('alt'));
+  tries.forEach((g, i) => g.forEach(r => { parent.insertBefore(r, repere); if (zebre) r.classList.toggle('alt', i % 2 === 1); }));
+}
+if (typeof document !== 'undefined' && !window.__tableauxTriables) {
+  window.__tableauxTriables = true;
+  const poser = () => document.querySelectorAll('table[data-triable]').forEach(rendreTableauTriable);
+  new MutationObserver(poser).observe(document.documentElement, { childList: true, subtree: true });
+}
+// Mobile (cartes) : « Trier par » (colonne puis sens) sur le même état ; options = [[col, libellé]]
+const tableauTriable = { trier: (cle, items, valeur) => trierDonneesTableau(cle, items, valeur), th: (cle, col, libelle, attrs) => thTriable(cle, col, libelle, attrs), brancher: (r, cle, f) => brancherEntetesTriables(r, cle, f), rendre: t => rendreTableauTriable(t), trierPar: (cle, o) => selecteurTriCartesHtml(cle, o) };   // nom du composant (règle de la charte)
+function selecteurTriCartesHtml(cle, options) {
+  const e = etatTriTableau(cle);
+  return `<div class="tt-trier-par" data-tt="${echapperHtml(cle)}"><label for="tt-${echapperHtml(cle)}">Trier par</label>
+    <select id="tt-${echapperHtml(cle)}" class="tt-col"><option value="">Comme à l'écran</option>${options.map(([c, l]) => `<option value="${echapperHtml(String(c))}"${e && e.col === String(c) ? ' selected' : ''}>${echapperHtml(l)}</option>`).join('')}</select>
+    <button type="button" class="btn btn-secondary tt-sens"${e ? '' : ' disabled'} aria-label="Sens du tri">${e && e.sens < 0 ? '▼ décroissant' : '▲ croissant'}</button></div>`;
+}
+function brancherSelecteurTriCartes(racine, cle, redessiner) {
+  const z = [...(racine || document).querySelectorAll('.tt-trier-par')].find(x => x.dataset.tt === cle);
+  if (!z) return;
+  z.querySelector('.tt-col').onchange = ev => { if (ev.target.value) etatsTriTableaux.set(cle, { col: ev.target.value, sens: 1 }); else etatsTriTableaux.delete(cle); redessiner(); };
+  z.querySelector('.tt-sens').onclick = () => { const e = etatTriTableau(cle); if (e) { etatsTriTableaux.set(cle, { col: e.col, sens: -e.sens }); redessiner(); } };
 }
 // Nature d'une colonne (pour le libellé du sens) d'après ses valeurs
 function natureColonneExport(valeurs) {
