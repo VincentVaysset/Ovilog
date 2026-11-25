@@ -926,14 +926,24 @@
   .pc-t th.sortable { cursor: pointer; }
   /* Tri des agnelles par critères (PC) */
   .tc-grille { display: grid; grid-template-columns: minmax(320px, 400px) minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 12px; }
-  @media (max-width: 1799px) { .tc-grille { grid-template-columns: minmax(0, 1fr); } .tc-panneau { max-width: 760px; } }   /* écran étroit : critères au-dessus, tableau en pleine largeur */
+  .tc-panneau-tete { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .tc-resume { flex: 1 1 auto; color: var(--ch-texte2); font-size: 13px; }
+  .tc-panneau-tete .btn { flex: none; width: auto; }
+  .tc-panneau-corps { display: flex; flex-direction: column; gap: 10px; }
+  .tc-regles-grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 10px; align-items: start; }
+  .tc-regles-grille .tc-regle { margin-bottom: 0; }
+  @media (min-width: 1800px) { #tc-replier, .tc-resume { display: none; } .tc-panneau.replie .tc-panneau-corps { display: flex; } .tc-regles-grille { grid-template-columns: minmax(0, 1fr); } }   /* large : panneau à gauche, jamais replié */
+  @media (max-width: 1799px) { .tc-grille { grid-template-columns: minmax(0, 1fr); } .tc-panneau.replie .tc-panneau-corps { display: none; } .tc-panneau.replie .tc-panneau-tete { margin-bottom: 0; } }   /* écran étroit : critères au-dessus sur toute la largeur, règles sur deux colonnes, panneau repliable */
+  .tc-multi { display: inline-flex; gap: 4px; flex-wrap: wrap; flex: 2 1 220px; }
+  .tc-multi .opt-btn { flex: 0 0 auto; padding: 6px 10px; font-size: 13px; }
   .tc-resultat { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   .tc-regle { border: 1px solid var(--ch-bord); border-radius: 12px; overflow: hidden; margin-bottom: 10px; }
   .tc-regle-tete, .tc-exc { display: flex; align-items: center; gap: 8px; padding: 10px 12px; flex-wrap: wrap; }
   .tc-regle-tete { background: var(--ch-ambre-pastel); }
   .tc-exc { background: var(--ch-vert-pastel); border-top: 1px solid var(--ch-bord); padding-left: 24px; }
-  .tc-lib { flex: 1 1 0; min-width: 0; font-weight: 500; }
-  .tc-regle-tete .btn, .tc-exc .btn { flex: none; }
+  .tc-lib { flex: 1 1 150px; min-width: 0; font-weight: 500; }   /* libellé lisible : trop étroit, les boutons passent dessous */
+  .tc-regle-tete .btn, .tc-exc .btn { flex: none; width: auto; }
+  .tc-btns { display: inline-flex; gap: 8px; flex: none; margin-left: auto; }
   .tc-resultat .tri-pc-tableau { overflow-x: auto; }
   .tc-exc .tc-lib { color: var(--ch-vert-texte); }
   .tc-pill { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; color: var(--ch-carte); }
@@ -18437,17 +18447,43 @@ const CRITERES_TRI = {
   classe: { libelle: 'Classe de la mère', ops: [['egale', '='], ['auMoins', 'au moins'], ['auPlus', 'au plus'], ['sans', 'sans classe']], valeurs: [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']] },
   lactation: { libelle: 'Lactation de la mère', ops: [['moinsDe', 'moins de'], ['auMoins', 'au moins'], ['sans', 'sans lactation connue']], unite: 'L' },
   naissance: { libelle: 'Date de naissance', ops: [['avant', 'avant le'], ['apres', 'après le'], ['entre', 'entre le']], date: true },
-  repro: { libelle: 'Type de repro', ops: [['egal', 'est']], valeurs: [['IA', 'IA'], ['EP', 'EP'], ['RE', 'RE'], ['MN', 'MN'], ['aucun', 'sans code']] },
-  portee: { libelle: 'Simple / double', ops: [['egal', 'est']], valeurs: [['1', 'simple'], ['2', 'double'], ['3', 'triple et plus']] }
+  repro: { libelle: 'Type de repro', ops: [['egal', 'est']], valeurs: [['IA', 'IA'], ['EP', 'EP'], ['RE', 'RE'], ['MN', 'MN'], ['aucun', 'sans code']], multiple: true },
+  portee: { libelle: 'Simple / double', ops: [['egal', 'est']], valeurs: [['1', 'simple'], ['2', 'double'], ['3', 'triple et plus']], multiple: true }
 };
 const OPS_SANS_VALEUR = ['sans'];
+// Règles de la campagne. Campagne sans règles enregistrées : celles de la DERNIÈRE campagne précédente qui en a sont reprises comme point de départ
+// (dates décalées du nombre d'années d'écart, sans les décisions forcées, `reprise` = campagne d'origine) ; rien n'est écrit avant le premier geste.
+// Jamais de règle par défaut : un compte qui n'en a jamais eu n'en a aucune.
 function criteresTriCampagne(campagne) {
   const c = campagne === undefined ? DB.campagneDebut : campagne;
-  const t = DB && DB.criteresTriAgnelles && typeof DB.criteresTriAgnelles === 'object' ? DB.criteresTriAgnelles[c] : null;
-  return { regles: t && Array.isArray(t.regles) ? t.regles : [], decisions: t && t.decisions && typeof t.decisions === 'object' ? t.decisions : {} };
+  const tout = DB && DB.criteresTriAgnelles && typeof DB.criteresTriAgnelles === 'object' ? DB.criteresTriAgnelles : {};
+  const t = tout[c];
+  if (t && typeof t === 'object') return { regles: Array.isArray(t.regles) ? t.regles : [], decisions: t.decisions && typeof t.decisions === 'object' ? t.decisions : {}, reprise: null };
+  const prec = Object.keys(tout).map(Number).filter(k => Number.isFinite(k) && k < c && tout[k] && Array.isArray(tout[k].regles) && tout[k].regles.length).sort((a, b) => b - a)[0];
+  if (prec === undefined) return { regles: [], decisions: {}, reprise: null };
+  return { regles: decalerReglesTri(tout[prec].regles, c - prec), decisions: {}, reprise: prec };
+}
+// Copie des règles, dates de naissance décalées de n années (29/02 → 28/02 si l'année n'est pas bissextile) ; le reste à l'identique
+function decalerDateAns(iso, n) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); if (!m) return iso;
+  const a = +m[1] + n, j = Math.min(+m[3], new Date(Date.UTC(a, +m[2], 0)).getUTCDate());
+  return a + '-' + m[2] + '-' + String(j).padStart(2, '0');
+}
+function decalerReglesTri(regles, n) {
+  const dec = conds => (conds || []).map(c => { const x = copieProfonde(c); if (x.critere === 'naissance') { if (x.valeur) x.valeur = decalerDateAns(x.valeur, n); if (x.valeur2) x.valeur2 = decalerDateAns(x.valeur2, n); } return x; });
+  return (regles || []).map(r => Object.assign(copieProfonde(r), { conditions: dec(r.conditions), exceptions: (r.exceptions || []).map(e => Object.assign(copieProfonde(e), { conditions: dec(e.conditions) })) }));
 }
 function ecrireCriteresTri(campagne, valeur) {
-  DB.criteresTriAgnelles = Object.assign({}, DB.criteresTriAgnelles || {}, { [campagne]: valeur });
+  const tout = Object.assign({}, DB.criteresTriAgnelles || {});
+  if (valeur === null || valeur === undefined) delete tout[campagne];   // annulation d'un premier geste : la campagne revient « sans règles enregistrées »
+  else tout[campagne] = { regles: valeur.regles || [], decisions: valeur.decisions || {} };
+  DB.criteresTriAgnelles = tout;
+}
+// Valeurs d'un critère à choix multiples (repro, portée) : `valeurs` [] ; une règle enregistrée avec une seule `valeur` reste lue telle quelle
+function valeursConditionTri(c) {
+  if (!c) return [];
+  if (Array.isArray(c.valeurs)) return c.valeurs.map(String);
+  return c.valeur === undefined || c.valeur === null || c.valeur === '' ? [] : [String(c.valeur)];
 }
 // Une condition est-elle complète (valeurs saisies) ?
 function conditionTriComplete(c) {
@@ -18455,7 +18491,9 @@ function conditionTriComplete(c) {
   if (OPS_SANS_VALEUR.includes(c.op)) return true;
   if (c.critere === 'lactation') return Number.isFinite(Number(String(c.valeur).replace(',', '.'))) && String(c.valeur).trim() !== '';
   if (c.critere === 'naissance') return /^\d{4}-\d{2}-\d{2}$/.test(c.valeur || '') && (c.op !== 'entre' || /^\d{4}-\d{2}-\d{2}$/.test(c.valeur2 || ''));
-  return CRITERES_TRI[c.critere].valeurs.some(v => v[0] === String(c.valeur));
+  const def = CRITERES_TRI[c.critere];
+  if (def.multiple) { const vs = valeursConditionTri(c); return vs.length > 0 && vs.every(x => def.valeurs.some(v => v[0] === x)); }
+  return def.valeurs.some(v => v[0] === String(c.valeur));
 }
 // Vrai si l'agnelle x (ligne de triAgnellesDonnees : classeMere, lactMere, date, origineNaissance, porteeNb) remplit la condition
 function conditionTriRemplie(c, x) {
@@ -18478,8 +18516,8 @@ function conditionTriRemplie(c, x) {
     if (!d) return false;
     return c.op === 'avant' ? d < c.valeur : c.op === 'apres' ? d > c.valeur : (d >= (c.valeur < c.valeur2 ? c.valeur : c.valeur2) && d <= (c.valeur < c.valeur2 ? c.valeur2 : c.valeur));
   }
-  if (c.critere === 'repro') return v === 'aucun' ? !x.origineNaissance : x.origineNaissance === v;
-  if (c.critere === 'portee') { const n = x.porteeNb; if (!n) return false; return v === '3' ? n >= 3 : n === +v; }
+  if (c.critere === 'repro') return valeursConditionTri(c).some(w => w === 'aucun' ? !x.origineNaissance : x.origineNaissance === w);   // une des valeurs cochées
+  if (c.critere === 'portee') { const n = x.porteeNb; if (!n) return false; return valeursConditionTri(c).some(w => w === '3' ? n >= 3 : n === +w); }
   return false;
 }
 function libelleConditionTri(c) {
@@ -18489,8 +18527,9 @@ function libelleConditionTri(c) {
   if (c.critere === 'classe') return c.op === 'sans' ? 'Mère sans classe' : 'Classe de la mère ' + (c.op === 'egale' ? '= ' : op + ' ') + c.valeur;
   if (c.critere === 'lactation') return c.op === 'sans' ? 'Mère sans lactation connue' : 'Lactation de la mère ' + op + ' ' + String(c.valeur).replace('.', ',') + ' L';
   if (c.critere === 'naissance') return c.op === 'entre' ? 'Née entre le ' + formatDateFr(c.valeur) + ' et le ' + formatDateFr(c.valeur2) : 'Née ' + op + ' ' + formatDateFr(c.valeur);
-  if (c.critere === 'repro') return c.valeur === 'aucun' ? 'Repro sans code' : 'Repro ' + c.valeur;
-  if (c.critere === 'portee') return 'Portée ' + ((def.valeurs.find(v => v[0] === String(c.valeur)) || [])[1] || '?');
+  const choix = valeursConditionTri(c).map(w => (def.valeurs.find(v => v[0] === w) || [])[1] || '?').join(' ou ');
+  if (c.critere === 'repro') return 'Repro ' + choix;
+  if (c.critere === 'portee') return 'Portée ' + choix;
   return '?';
 }
 const libelleConditionsTri = conds => (conds || []).map(libelleConditionTri).join(' et ');
@@ -18516,7 +18555,7 @@ function triCriteresDonnees(campagne) {
     const decision = forcee === 'garder' || forcee === 'ecarter' ? forcee : proposee;
     return Object.assign({}, x, { refusee: ev.refusee, motifs: ev.motifs, repechages: ev.repechages, proposee, decision, forcee: decision !== proposee });
   });
-  return { lignes, regles: crit.regles, acceptees: lignes.filter(l => !l.refusee).length, refusees: lignes.filter(l => l.refusee).length, forcees: lignes.filter(l => l.forcee).length };
+  return { lignes, regles: crit.regles, reprise: crit.reprise, acceptees: lignes.filter(l => !l.refusee).length, refusees: lignes.filter(l => l.refusee).length, forcees: lignes.filter(l => l.forcee).length };
 }
 // Incohérences REMONTÉES (jamais corrigées seules, c'est à l'éleveur de trancher) : une agnelle « gardée » sans fiche d'agnelle (fiche supprimée à la main, l'agneau
 // garde triStatut = 'gardée' : il n'est plus ni à trier ni gardé), ou une fiche d'agnelle née dont l'agneau n'est plus marqué gardé.
@@ -18681,7 +18720,8 @@ function conditionEditeurHtml(c, i, nb) {
   const choixOp = def ? `<select class="tc-op" data-i="${i}" aria-label="Condition"><option value="">— condition —</option>${def.ops.map(([k, l]) => opt(k, l, c.op)).join('')}</select>` : '<select disabled aria-label="Condition"><option>—</option></select>';
   let valeur = '';
   if (def && c.op && !OPS_SANS_VALEUR.includes(c.op)) {
-    if (def.valeurs) valeur = `<select class="tc-val" data-i="${i}" aria-label="Valeur"><option value="">— valeur —</option>${def.valeurs.map(([k, l]) => opt(k, l, c.valeur)).join('')}</select>`;
+    if (def.multiple) { const vs = valeursConditionTri(c); valeur = `<span class="tc-multi" data-i="${i}" role="group" aria-label="Valeurs (plusieurs possibles)">${def.valeurs.map(([k, l]) => `<button type="button" class="opt-btn tc-mv${vs.includes(k) ? ' selected' : ''}" data-v="${echapperHtml(k)}" aria-pressed="${vs.includes(k)}">${echapperHtml(l)}</button>`).join('')}</span>`; }
+    else if (def.valeurs) valeur = `<select class="tc-val" data-i="${i}" aria-label="Valeur"><option value="">— valeur —</option>${def.valeurs.map(([k, l]) => opt(k, l, c.valeur)).join('')}</select>`;
     else if (def.date) valeur = `<input type="date" class="tc-val" data-i="${i}" aria-label="Date" value="${echapperHtml(c.valeur || '')}">${c.op === 'entre' ? `<input type="date" class="tc-val2" data-i="${i}" aria-label="et le" value="${echapperHtml(c.valeur2 || '')}">` : ''}`;
     else valeur = `<input type="text" inputmode="decimal" class="tc-val" data-i="${i}" aria-label="Litres" placeholder="L" value="${echapperHtml(c.valeur || '')}">`;
   }
@@ -18690,13 +18730,19 @@ function conditionEditeurHtml(c, i, nb) {
 function editeurCriteresHtml(E, regles) {
   const ed = E.crit.edit;
   const regle = ed.regleId ? regles.find(r => r.id === ed.regleId) : null;
-  const titre = ed.mode === 'exception' ? 'Accepter quand même si… (' + echapperHtml(regle ? libelleConditionsTri(regle.conditions) : '') + ')' : ed.regleId ? 'Modifier la règle de refus' : 'Nouvelle règle de refus';
+  const titre = ed.mode === 'exception' ? (ed.excId ? 'Modifier l\'exception' : 'Accepter quand même si…') + ' (' + echapperHtml(regle ? libelleConditionsTri(regle.conditions) : '') + ')' : ed.regleId ? 'Modifier la règle de refus' : 'Nouvelle règle de refus';
   return `<div class="tc-editeur" id="tc-editeur"><div class="tc-editeur-titre">${titre}</div>
     ${ed.conds.map((c, i) => conditionEditeurHtml(c, i, ed.conds.length)).join('')}
     <div id="tc-editeur-err" class="error-box${ed.erreur ? '' : ' hidden'}" style="margin:0;">${echapperHtml(ed.erreur || '')}</div>
     <div class="tc-editeur-acts"><button type="button" class="btn btn-secondary btn-petit" id="tc-ajout-cond">+ ET une autre condition</button>
-      <button type="button" class="btn btn-secondary btn-petit" id="tc-enregistrer">${ed.mode === 'exception' ? 'Ajouter l\'exception' : ed.regleId ? 'Enregistrer' : 'Ajouter la règle'}</button>
+      <button type="button" class="btn btn-secondary btn-petit" id="tc-enregistrer">${ed.mode === 'exception' ? (ed.excId ? 'Enregistrer' : 'Ajouter l\'exception') : ed.regleId ? 'Enregistrer' : 'Ajouter la règle'}</button>
       ${ed.mode === 'exception' || ed.regleId ? '<button type="button" class="btn btn-secondary btn-petit" id="tc-annuler-edit">Annuler</button>' : ''}</div></div>`;
+}
+// Résumé du panneau replié : « 3 règles · 2 exceptions »
+function resumeCriteresTri(regles) {
+  const n = (regles || []).length, e = (regles || []).reduce((t, r) => t + (r.exceptions || []).length, 0);
+  if (!n) return 'Aucune règle';
+  return n + ' règle' + (n > 1 ? 's' : '') + (e ? ' · ' + e + ' exception' + (e > 1 ? 's' : '') : '');
 }
 function triCriteresPcHtml(E, Tc) {
   const vis = colonnesTriCriteresVisibles(E);
@@ -18705,8 +18751,8 @@ function triCriteresPcHtml(E, Tc) {
   const tous = Tc.lignes.length > 0 && nSel === Tc.lignes.length;
   const regleHtml = r => `<div class="tc-regle" data-regle="${echapperHtml(r.id)}">
       <div class="tc-regle-tete"><span class="tc-pill refus">Refuser</span><span class="tc-lib">${echapperHtml(libelleConditionsTri(r.conditions))}</span>
-        <button type="button" class="btn btn-secondary btn-petit tc-modifier" data-regle="${echapperHtml(r.id)}">Modifier</button><button type="button" class="btn btn-secondary btn-petit btn-supprimer tc-suppr" data-regle="${echapperHtml(r.id)}">Suppr.</button></div>
-      ${(r.exceptions || []).map(e => `<div class="tc-exc"><span class="tc-pill accepte">Accepter quand même</span><span class="tc-lib">${echapperHtml(libelleConditionsTri(e.conditions))}</span><button type="button" class="btn btn-secondary btn-petit btn-supprimer tc-suppr-exc" data-regle="${echapperHtml(r.id)}" data-exc="${echapperHtml(e.id)}">Suppr.</button></div>`).join('')}
+        <span class="tc-btns"><button type="button" class="btn btn-secondary btn-petit tc-modifier" data-regle="${echapperHtml(r.id)}">Modifier</button><button type="button" class="btn btn-secondary btn-petit btn-supprimer tc-suppr" data-regle="${echapperHtml(r.id)}">Suppr.</button></span></div>
+      ${(r.exceptions || []).map(e => `<div class="tc-exc"><span class="tc-pill accepte">Accepter quand même</span><span class="tc-lib">${echapperHtml(libelleConditionsTri(e.conditions))}</span><span class="tc-btns"><button type="button" class="btn btn-secondary btn-petit tc-modifier-exc" data-regle="${echapperHtml(r.id)}" data-exc="${echapperHtml(e.id)}">Modifier</button><button type="button" class="btn btn-secondary btn-petit btn-supprimer tc-suppr-exc" data-regle="${echapperHtml(r.id)}" data-exc="${echapperHtml(e.id)}">Suppr.</button></span></div>`).join('')}
       <div class="tc-exc-ajout"><button type="button" class="tc-lien tc-ajout-exc" data-regle="${echapperHtml(r.id)}">+ Accepter quand même si…</button></div></div>`;
   const cellule = (x, k) => {
     if (k === 'num') return `<td class="l"><b>${echapperHtml(x.numero)}</b></td>`;
@@ -18718,11 +18764,14 @@ function triCriteresPcHtml(E, Tc) {
   };
   const ligne = x => `<tr data-eid="${x.eid}" class="${x.refusee ? 'tc-refusee' : 'tc-acceptee'}${cleanEid(x.eid) === E.surligne ? ' sel' : ''}"${cleanEid(x.eid) === E.surligne ? ' aria-selected="true"' : ''}><td class="cb"><input type="checkbox" class="tc-sel" data-eid="${x.eid}" aria-label="Sélectionner ${echapperHtml(x.numero)}"${sel.has(cleanEid(x.eid)) ? ' checked' : ''}></td>${vis.map(([k]) => cellule(x, k)).join('')}</tr>`;
   return `<div class="tc-grille">
-    <section class="card tc-panneau" id="tc-panneau">
-      <div class="prm-titre" style="margin-bottom:4px;">Critères de tri</div>
-      <p class="brd-note" style="margin:0 0 12px;">Une agnelle est refusée dès qu'une règle la touche, sauf si une exception de cette règle l'accepte. Classe et lactation de la mère : campagne ${echapperHtml(libCampagneAffichee(DB.campagneDebut - 1))}.</p>
-      <div id="tc-regles">${Tc.regles.length ? Tc.regles.map(regleHtml).join('') : '<p class="brd-note" style="margin:0 0 12px;">Aucune règle : toutes les agnelles sont acceptées.</p>'}</div>
-      ${editeurCriteresHtml(E, Tc.regles)}
+    <section class="card tc-panneau${E.crit.replie ? ' replie' : ''}" id="tc-panneau">
+      <div class="tc-panneau-tete"><div class="prm-titre" style="margin:0;">Critères de tri</div><span class="tc-resume" id="tc-resume">${echapperHtml(resumeCriteresTri(Tc.regles))}</span>
+        <button type="button" class="btn btn-secondary btn-petit" id="tc-replier" aria-expanded="${!E.crit.replie}" aria-controls="tc-panneau-corps">${E.crit.replie ? 'Déplier' : 'Replier'}</button></div>
+      <div class="tc-panneau-corps" id="tc-panneau-corps">
+      <p class="brd-note" style="margin:0;">Une agnelle est refusée dès qu'une règle la touche, sauf si une exception de cette règle l'accepte. Classe et lactation de la mère : campagne ${echapperHtml(libCampagneAffichee(DB.campagneDebut - 1))}.</p>
+      ${Tc.reprise !== null && Tc.reprise !== undefined ? `<p class="brd-note" id="tc-reprise" style="margin:0;">Règles reprises de la campagne ${echapperHtml(libCampagneAffichee(Tc.reprise))} : modifiez-les au besoin.</p>` : ''}
+      <div class="tc-regles-grille" id="tc-regles">${Tc.regles.length ? Tc.regles.map(regleHtml).join('') : '<p class="brd-note" style="margin:0;">Aucune règle : toutes les agnelles sont acceptées.</p>'}${editeurCriteresHtml(E, Tc.regles)}</div>
+      </div>
     </section>
     <section class="tc-resultat">
       <div class="pc-kpis tc-tuiles">${pcKpi('Femelles nées à trier', Tc.lignes.length, '', 'bleu')}${pcKpi('Acceptées', Tc.acceptees, '', tonTuile(Tc.acceptees, 'vert'))}${pcKpi('Refusées', Tc.refusees, '', tonTuile(Tc.refusees, 'ambre', true))}${pcKpi('Décisions forcées', Tc.forcees, '', 'neutre')}</div>
@@ -18767,7 +18816,7 @@ function brancherTriCriteresPc(E, Tc, redessiner) {
   const $ = id => document.getElementById(id), camp = DB.campagneDebut;
   const crit = () => criteresTriCampagne(camp);
   const ecrire = (regles, decisions) => { ecrireCriteresTri(camp, { regles, decisions }); saveData(DB); };
-  const instant = () => copieProfonde(crit());
+  const instant = () => { const t = DB.criteresTriAgnelles && DB.criteresTriAgnelles[camp]; return t ? copieProfonde(t) : null; };   // null = campagne encore « sans règles enregistrées » (reprise comprise)
   const annulable = (texte, avant) => afficherSnackAnnuler(texte, () => { ecrireCriteresTri(camp, avant); saveData(DB); if (currentView === 'agnelles') redessiner(); });
   const nid = () => 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const ed = E.crit.edit;
@@ -18776,18 +18825,24 @@ function brancherTriCriteresPc(E, Tc, redessiner) {
   document.querySelectorAll('.tc-crit').forEach(s => s.onchange = () => { ed.conds[+s.dataset.i] = { critere: s.value, op: '', valeur: '' }; ed.erreur = ''; majEditeur(); });
   document.querySelectorAll('.tc-op').forEach(s => s.onchange = () => { const c = ed.conds[+s.dataset.i]; c.op = s.value; if (OPS_SANS_VALEUR.includes(c.op)) { c.valeur = ''; delete c.valeur2; } ed.erreur = ''; majEditeur(); });
   document.querySelectorAll('.tc-val').forEach(s => { const f = () => { ed.conds[+s.dataset.i].valeur = s.value; }; s.oninput = f; s.onchange = f; });
+  document.querySelectorAll('.tc-multi').forEach(g => g.querySelectorAll('.tc-mv').forEach(b => b.onclick = () => {
+    const c = ed.conds[+g.dataset.i], vs = valeursConditionTri(c), k = b.dataset.v;
+    c.valeurs = vs.includes(k) ? vs.filter(x => x !== k) : vs.concat([k]); delete c.valeur;
+    b.classList.toggle('selected', c.valeurs.includes(k)); b.setAttribute('aria-pressed', String(c.valeurs.includes(k))); ed.erreur = '';
+  }));
   document.querySelectorAll('.tc-val2').forEach(s => { const f = () => { ed.conds[+s.dataset.i].valeur2 = s.value; }; s.oninput = f; s.onchange = f; });
   document.querySelectorAll('.tc-retirer-cond').forEach(b => b.onclick = () => { ed.conds.splice(+b.dataset.i, 1); majEditeur(); });
   if ($('tc-ajout-cond')) $('tc-ajout-cond').onclick = () => { ed.conds.push({ critere: '', op: '', valeur: '' }); majEditeur(); };
   if ($('tc-annuler-edit')) $('tc-annuler-edit').onclick = () => { E.crit.edit = editeurCritereVide(); redessiner(); };
   if ($('tc-enregistrer')) $('tc-enregistrer').onclick = () => {
-    const conds = ed.conds.map(c => Object.assign({ critere: c.critere, op: c.op }, OPS_SANS_VALEUR.includes(c.op) ? {} : { valeur: String(c.valeur || '').trim().replace(',', '.') }, c.op === 'entre' ? { valeur2: c.valeur2 } : {}));
+    const conds = ed.conds.map(c => Object.assign({ critere: c.critere, op: c.op }, OPS_SANS_VALEUR.includes(c.op) ? {} : CRITERES_TRI[c.critere] && CRITERES_TRI[c.critere].multiple ? { valeurs: valeursConditionTri(c) } : { valeur: String(c.valeur || '').trim().replace(',', '.') }, c.op === 'entre' ? { valeur2: c.valeur2 } : {}));
     if (!conds.length || !conds.every(conditionTriComplete)) { ed.erreur = 'Complétez chaque condition (critère, condition et valeur).'; majEditeur(); return; }
     const avant = instant(), C = crit(), regles = copieProfonde(C.regles);
     let texte;
     if (ed.mode === 'exception') {
       const r = regles.find(x => x.id === ed.regleId); if (!r) return;
-      r.exceptions = (r.exceptions || []).concat([{ id: nid(), conditions: conds }]); texte = 'Exception ajoutée';
+      if (ed.excId) { const e = (r.exceptions || []).find(x => x.id === ed.excId); if (!e) return; e.conditions = conds; texte = 'Exception modifiée'; }
+      else { r.exceptions = (r.exceptions || []).concat([{ id: nid(), conditions: conds }]); texte = 'Exception ajoutée'; }
     } else if (ed.regleId) {
       const r = regles.find(x => x.id === ed.regleId); if (!r) return;
       r.conditions = conds; texte = 'Règle modifiée';
@@ -18796,6 +18851,11 @@ function brancherTriCriteresPc(E, Tc, redessiner) {
     E.crit.edit = editeurCritereVide(); redessiner(); annulable(texte, avant);
   };
   document.querySelectorAll('.tc-modifier').forEach(b => b.onclick = () => { const r = crit().regles.find(x => x.id === b.dataset.regle); if (!r) return; E.crit.edit = { mode: 'regle', regleId: r.id, conds: copieProfonde(r.conditions), erreur: '' }; redessiner(); });
+  document.querySelectorAll('.tc-modifier-exc').forEach(b => b.onclick = () => {
+    const r = crit().regles.find(x => x.id === b.dataset.regle), e = r && (r.exceptions || []).find(x => x.id === b.dataset.exc); if (!e) return;
+    E.crit.edit = { mode: 'exception', regleId: r.id, excId: e.id, conds: copieProfonde(e.conditions), erreur: '' }; redessiner();
+  });
+  if ($('tc-replier')) $('tc-replier').onclick = () => { E.crit.replie = !E.crit.replie; redessiner(); };   // pour la séance seulement
   document.querySelectorAll('.tc-ajout-exc').forEach(b => b.onclick = () => { E.crit.edit = { mode: 'exception', regleId: b.dataset.regle, conds: [{ critere: '', op: '', valeur: '' }], erreur: '' }; redessiner(); });
   document.querySelectorAll('.tc-suppr').forEach(b => b.onclick = () => { const avant = instant(), C = crit(); ecrire(C.regles.filter(r => r.id !== b.dataset.regle), C.decisions); redessiner(); annulable('Règle supprimée', avant); });
   document.querySelectorAll('.tc-suppr-exc').forEach(b => b.onclick = () => {
@@ -18827,6 +18887,8 @@ function brancherTriCriteresPc(E, Tc, redessiner) {
     const g = Tc.lignes.filter(x => x.decision === 'garder'), e = Tc.lignes.filter(x => x.decision === 'ecarter');
     if (!g.length && !e.length) return;
     questionCharte('Valider le tri ?', g.length + ' agnelle' + (g.length > 1 ? 's' : '') + ' gardée' + (g.length > 1 ? 's' : '') + ', ' + e.length + ' écartée' + (e.length > 1 ? 's' : '') + '. Les gardées reçoivent leur fiche d\'agnelle ; « Annuler » remet tout comme avant.', 'Valider le tri', 'Revenir', () => {
+      const avantCrit = instant(), C = crit();
+      if (C.reprise !== null && C.reprise !== undefined) ecrire(C.regles, C.decisions);   // règles reprises : écrites pour cette campagne au premier geste
       const fiches = g.map(x => garderAgnelleTri(x));
       e.forEach(x => ecarterAgnelleTri(x));
       E.crit.sel.clear(); E.crit.imprimer = 'toutes';
@@ -18834,6 +18896,7 @@ function brancherTriCriteresPc(E, Tc, redessiner) {
       afficherSnackAnnuler('Tri validé : ' + g.length + ' gardée' + (g.length > 1 ? 's' : '') + ', ' + e.length + ' écartée' + (e.length > 1 ? 's' : ''), () => {
         fiches.forEach(ag => revenirSurTriAgnelle(ag));
         e.forEach(x => reconsidererEcarteeTri(x));
+        ecrireCriteresTri(camp, avantCrit);
         saveData(DB); if (currentView === 'agnelles') redessiner();
       });
     });

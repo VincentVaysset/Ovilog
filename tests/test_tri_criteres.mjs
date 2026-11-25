@@ -51,11 +51,27 @@ const d = await page.evaluate(() => {
   DB.lactationModele = [{ eid: '250000004510001', campagne: 2025, lactationTotale: 318, classeParQuart: 4 }, { eid: '250000004510002', campagne: 2025, lactationTotale: 410, classeParQuart: 1 }];
   ecrireCriteresTri(2026, { regles: [{ id: 'r1', conditions: [{ critere: 'naissance', op: 'apres', valeur: '2026-11-15' }], exceptions: [] }], decisions: { '250000004571001': 'ecarter' } });
   const t = triCriteresDonnees();
-  const autre = criteresTriCampagne(2027);
-  return { lignes: t.lignes.map(l => [l.numero, l.refusee, l.proposee, l.decision, l.forcee]), comptes: [t.acceptees, t.refusees, t.forcees], autre: autre.regles.length };
+  const autre = criteresTriCampagne(2027), plusTard = criteresTriCampagne(2029), avantLui = criteresTriCampagne(2025);
+  return { lignes: t.lignes.map(l => [l.numero, l.refusee, l.proposee, l.decision, l.forcee]), comptes: [t.acceptees, t.refusees, t.forcees],
+    autre: [autre.regles.map(r => r.conditions[0].valeur), autre.reprise, autre.decisions, Object.keys(DB.criteresTriAgnelles), plusTard.regles[0].conditions[0].valeur, avantLui.regles.length, criteresTriCampagne(2026).reprise] };
 });
 eq(d.lignes, [['71001', false, 'garder', 'ecarter', true], ['71003', true, 'ecarter', 'ecarter', false]], 'femelles à trier seulement ; proposition et décision forcée');
-eq([d.comptes, d.autre], [[1, 1, 1], 0], 'compteurs ; règles propres à la campagne');
+eq(d.comptes, [1, 1, 1], 'compteurs');
+eq(d.autre, [['2027-11-15'], 2026, {}, ['2026'], '2029-11-15', 0, null], 'campagne suivante sans règles : celles de 2026 reprises, dates décalées d\'un an (de trois en 2029), sans décisions, rien d\'écrit ; aucune reprise vers le passé');
+// décalage : 29/02 → 28/02, « entre » = les deux dates ; exceptions aussi ; valeurs multiples (repro, portée) ; ancienne règle à une valeur lue telle quelle
+const m = await page.evaluate(() => {
+  const ag = (classeMere, lactMere, date, origineNaissance, porteeNb) => ({ classeMere, lactMere, date, origineNaissance, porteeNb });
+  const dec = decalerReglesTri([{ id: 'r', conditions: [{ critere: 'naissance', op: 'entre', valeur: '2028-02-29', valeur2: '2028-03-10' }], exceptions: [{ id: 'e', conditions: [{ critere: 'naissance', op: 'avant', valeur: '2027-12-01' }, { critere: 'lactation', op: 'auMoins', valeur: '412.5' }] }] }], 1);
+  const multi = { critere: 'repro', op: 'egal', valeurs: ['RE', 'MN'] }, portee = { critere: 'portee', op: 'egal', valeurs: ['2', '3'] };
+  return { dec: [dec[0].conditions[0].valeur, dec[0].conditions[0].valeur2, dec[0].exceptions[0].conditions.map(c => c.valeur)],
+    multi: ['IA', 'EP', 'RE', 'MN', null].map(k => conditionTriRemplie(multi, ag(1, 1, '', k, 1))), portee: [1, 2, 3, 5].map(n => conditionTriRemplie(portee, ag(1, 1, '', 'IA', n))),
+    libs: [libelleConditionTri(multi), libelleConditionTri(portee), libelleConditionTri({ critere: 'repro', op: 'egal', valeurs: ['aucun'] })],
+    vide: conditionTriComplete({ critere: 'repro', op: 'egal', valeurs: [] }), ancienne: [conditionTriComplete({ critere: 'repro', op: 'egal', valeur: 'EP' }), conditionTriRemplie({ critere: 'repro', op: 'egal', valeur: 'EP' }, ag(1, 1, '', 'EP', 1)), libelleConditionTri({ critere: 'portee', op: 'egal', valeur: '1' })] };
+});
+eq(m.dec, ['2029-02-28', '2029-03-10', ['2028-12-01', '412.5']], 'décalage d\'un an : 29/02 → 28/02, les deux dates de « entre », exceptions comprises, litrage inchangé');
+eq([m.multi, m.portee], [[false, false, true, true, false], [false, true, true, true]], 'choix multiples : une des valeurs cochées suffit');
+eq(m.libs, ['Repro RE ou MN', 'Portée double ou triple et plus', 'Repro sans code'], 'libellés des choix multiples');
+eq([m.vide, m.ancienne], [false, [true, true, 'Portée simple']], 'aucune valeur cochée = incomplet ; ancienne règle à une valeur lue telle quelle');
 check(!erreurs.length, 'aucune erreur JS ' + erreurs.join(' | '));
 console.log('OK 1-2 moteur des critères');
 
@@ -94,6 +110,26 @@ console.log('OK 1-2 moteur des critères');
   await pc.selectOption('.tc-crit[data-i="0"]', 'naissance'); await pc.selectOption('.tc-op[data-i="0"]', 'apres'); await pc.fill('.tc-val[data-i="0"]', '2026-11-15'); await pc.click('#tc-enregistrer');
   eq(await res(), [['71003', 'A'], ['71006', 'A'], ['71009', 'R']], 'règle de date : l\'exception de la 1re règle ne la lève pas (classe 4, 318 L, née le 19/11 = refusée)');
   eq(await pc.evaluate(() => [...document.querySelectorAll('.tc-tuiles .tuile-pc')].map(t => t.innerText.replace(/\s+/g, ' ').trim())), ['Femelles nées à trier 3', 'Acceptées 2', 'Refusées 1', 'Décisions forcées 0'], 'tuiles');
+  // choix multiples à l'éditeur : repro RE ou MN (puces), puis retirée
+  await pc.selectOption('.tc-crit[data-i="0"]', 'repro'); await pc.selectOption('.tc-op[data-i="0"]', 'egal');
+  check(await pc.evaluate(() => [...document.querySelectorAll('.tc-multi .tc-mv')].map(b => b.textContent).join() === 'IA,EP,RE,MN,sans code'), 'repro : 5 puces');
+  await pc.click('.tc-mv[data-v="MN"]'); await pc.click('.tc-mv[data-v="RE"]'); await pc.click('.tc-mv[data-v="IA"]'); await pc.click('.tc-mv[data-v="IA"]');
+  await pc.click('#tc-enregistrer');
+  eq([await res(), await pc.evaluate(() => criteresTriCampagne(2026).regles[2].conditions)], [[['71003', 'A'], ['71006', 'R'], ['71009', 'R']], [{ critere: 'repro', op: 'egal', valeurs: ['MN', 'RE'] }]], 'règle à choix multiples : MN ou RE refusée');
+  check(/Repro MN ou RE/.test(await pc.textContent('#tc-regles')), 'libellé de la règle');
+  await pc.click('.tc-suppr >> nth=2');
+  // Modifier une exception : même éditeur, pré-rempli ; valeur changée (300 → 320 L) puis Annuler du bandeau
+  check(await pc.evaluate(() => document.querySelectorAll('.tc-exc .tc-modifier-exc').length === 1 && document.querySelector('.tc-exc .tc-modifier-exc').nextElementSibling.classList.contains('tc-suppr-exc')), 'exception : Modifier avant Suppr.');
+  await pc.click('.tc-modifier-exc');
+  eq(await pc.evaluate(() => [document.querySelector('.tc-editeur-titre').textContent.startsWith('Modifier l\'exception'), document.querySelector('.tc-val[data-i="0"]').value, document.getElementById('tc-enregistrer').textContent]), [true, '300', 'Enregistrer'], 'éditeur de l\'exception pré-rempli');
+  await pc.fill('.tc-val[data-i="0"]', '320'); await pc.click('#tc-enregistrer');
+  eq([await res(), await pc.evaluate(() => criteresTriCampagne(2026).regles[0].exceptions.map(e => e.conditions[0].valeur))], [[['71003', 'A'], ['71006', 'R'], ['71009', 'R']], ['320']], 'exception modifiée (au moins 320 L : 318 L plus repêchée), toujours rattachée à sa règle');
+  await pc.click('#sup-snack-annuler');
+  eq(await pc.evaluate(() => criteresTriCampagne(2026).regles[0].exceptions.map(e => e.conditions[0].valeur)), ['300'], 'Annuler : exception d\'avant');
+  // repli du panneau (écran sous 1800 px) : une ligne « 2 règles · 1 exception · Déplier »
+  await pc.click('#tc-replier');
+  eq(await pc.evaluate(() => [document.getElementById('tc-panneau-corps').offsetHeight, document.getElementById('tc-resume').textContent, document.getElementById('tc-replier').textContent]), [0, '2 règles · 1 exception', 'Déplier'], 'panneau replié');
+  await pc.click('#tc-replier'); check(await pc.isVisible('#tc-editeur'), 'panneau déplié');
   // supprimer puis Annuler
   await pc.click('.tc-suppr >> nth=1'); eq((await res())[2][1], 'A', 'règle supprimée');
   await pc.click('#sup-snack-annuler'); eq((await res())[2][1], 'R', 'Annuler : règle remise');
@@ -131,6 +167,19 @@ console.log('OK 1-2 moteur des critères');
   await pc.click('#sup-snack-annuler');
   eq(await pc.evaluate(a => [DB.agnelles.length, JSON.stringify(DB.brebis) === a], avant), [0, true], 'Annuler : état exact d\'avant');
   eq(dialogues, [], 'aucune boîte native (confirm / alert)');
+  // campagne suivante : règles reprises (ligne grise), écrites au 1er geste seulement ; Annuler = campagne de nouveau « sans règles »
+  await pc.evaluate(() => { DB.campagneDebut = 2027; triPcEtat = null; render('agnelles'); });
+  eq(await pc.evaluate(() => [document.getElementById('tc-reprise').textContent, document.getElementById('tc-regles').textContent.includes('Née après le 15-11-2027'), Object.keys(DB.criteresTriAgnelles)]),
+    ['Règles reprises de la campagne 2027 : modifiez-les au besoin.', true, ['2026']], 'reprise affichée, date décalée, rien d\'écrit');
+  await pc.click('.tc-modifier >> nth=1'); await pc.fill('.tc-val[data-i="0"]', '2027-11-14'); await pc.click('#tc-enregistrer');
+  eq(await pc.evaluate(() => [Object.keys(DB.criteresTriAgnelles), DB.criteresTriAgnelles[2027].regles[1].conditions[0].valeur, DB.criteresTriAgnelles[2026].regles[1].conditions[0].valeur, !!document.getElementById('tc-reprise')]),
+    [['2026', '2027'], '2027-11-14', '2026-11-15', false], '1er geste : règles écrites pour 2027 (modifiables), 2026 intacte');
+  await pc.click('#sup-snack-annuler');
+  eq(await pc.evaluate(() => [Object.keys(DB.criteresTriAgnelles), !!document.getElementById('tc-reprise')]), [['2026'], true], 'Annuler : 2027 de nouveau sans règles, reprise proposée');
+  await pc.click('#tc-valider'); await pc.click('#qc-oui');
+  eq(await pc.evaluate(() => Object.keys(DB.criteresTriAgnelles)), ['2026', '2027'], 'Valider le tri pendant une reprise : règles écrites pour 2027');
+  await pc.click('#sup-snack-annuler');
+  eq(await pc.evaluate(() => Object.keys(DB.criteresTriAgnelles)), ['2026'], 'Annuler la validation : 2027 de nouveau sans règles');
 }
 console.log('OK 3 écran PC : règles et exceptions, colonnes, tri, sélection, décisions forcées, exports, lot, Valider');
 
