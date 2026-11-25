@@ -133,5 +133,35 @@ console.log('OK 1-2 moteur des critères');
   eq(dialogues, [], 'aucune boîte native (confirm / alert)');
 }
 console.log('OK 3 écran PC : règles et exceptions, colonnes, tri, sélection, décisions forcées, exports, lot, Valider');
+
+// ---- 4. lot de recherche d'agnelles à trier : mobile (bip = trouvée, hors du lot = message), PC (tableau charte triable)
+for (const bureau of [false, true]) {
+  const nom = bureau ? 'PC' : 'mobile';
+  const p = await (await browser.newContext({ viewport: bureau ? { width: 1400, height: 950 } : { width: 400, height: 860 } })).newPage();
+  p.on('pageerror', e => erreurs.push(e.message));
+  if (bureau) await p.addInitScript(() => { window.electronAPI = { isDesktop: true, version: '1.0.test' }; });
+  await p.goto(URL_APP, { waitUntil: 'load' }); await p.waitForTimeout(300);
+  await p.evaluate(() => {
+    DB = migrateData({}); saveData = function () { return true; }; DB.campagneDebut = 2026; DB.campagneInitialisee = true;
+    const mere = (i, date, nb) => ({ id: 'm' + i, eid: '25000000451' + String(1000 + i), numeroCourtTravailSieol: String(600 + i), statut: 'active', mouvements: [], sanitaire: [],
+      agnelages: [{ id: 'a' + i, date, campagne: 2026, codeRepro: 'IA', lambs: Array.from({ length: nb }, (_, k) => ({ id: 'l' + i + k, eid: '2500000045' + String(71000 + i * 3 + k), sexe: 'Femelle' })) }] });
+    DB.brebis = [mere(1, '2026-11-02', 1), mere(2, '2026-11-04', 1), mere(3, '2026-11-19', 1)]; DB.agnelles = []; DB.lots = [];
+    const lot = creerLotJournalise({ id: 'L1', nom: 'Agnelles à écarter', dateCreation: '2026-11-25' }, ['250000004571006', '250000004571009']);
+    effacerTrouveesLot(lot.id); currentLotId = 'L1'; render('lot-search');
+  });
+  eq(await p.evaluate(() => [...document.querySelectorAll('#lot-tuiles .tuile-pc')].map(t => t.innerText.replace(/\s+/g, ' ').trim().toLowerCase())), ['trouvées 0', 'à trouver 2'], nom + ' : compteurs Trouvées / À trouver');
+  if (!bureau) {
+    check(/Née le 04-11-2026 · mère 602/.test(await p.textContent('#lot-cartes')), nom + ' : carte de l\'agnelle : née le, mère');
+    eq(await p.evaluate(() => [...document.querySelectorAll('.tt-trier-par[data-tt="lot-recherche"] option')].map(o => o.textContent)), ["Comme à l'écran", 'N°', 'Née le', 'Mère', 'Trouvée'], nom + ' : « Trier par »');
+  } else {
+    eq(await p.evaluate(() => [document.getElementById('lot-table').className, [...document.querySelectorAll('#lot-table th')].map(t => [t.textContent, !!t.querySelector('.tt-tete')])]), ['pc-t', [['Trouvée', false], ['N°', true], ['Née le', true], ['Mère', true]]], nom + ' : tableau de la charte, triable');
+  }
+  await p.fill('#scan-lot', '71006'); await p.press('#scan-lot', 'Enter');
+  check(/trouvée/.test(await p.textContent('#scan-feedback')) && /trouvées 1/.test(await p.evaluate(() => document.getElementById('lot-tuiles').innerText.replace(/\s+/g, ' ').toLowerCase())), nom + ' : n° d\'une agnelle du lot = trouvée');
+  await p.fill('#scan-lot', '71003'); await p.press('#scan-lot', 'Enter');
+  check(/pas dans ce lot/.test(await p.textContent('#scan-feedback')), nom + ' : agnelle hors du lot = « pas dans ce lot » : ' + await p.textContent('#scan-feedback'));
+  await p.context().close();
+}
+console.log('OK 4 lot de recherche d\'agnelles : compteurs, bip trouvé / hors du lot, carte et tableau triables');
 await browser.close();
 console.log('test_tri_criteres : OK');

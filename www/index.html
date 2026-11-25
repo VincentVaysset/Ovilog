@@ -22655,6 +22655,15 @@ function effacerTrouveesLot(lotId) {
   try { localStorage.removeItem(LOT_TROUVEES_PREFIX + lotId); } catch (e) { /* ignoré */ }
 }
 
+// Lot de recherche : agneau à trier (mise bas de sa mère) ou agnelle (fiche) -> date de naissance et mère ; null pour une brebis
+function infoAgnelleLot(eid) {
+  const k = cleanEid(eid);
+  for (const sh of DB.brebis || []) for (const ag of sh.agnelages || []) for (const l of ag.lambs || []) if (l && l.eid && cleanEid(l.eid) === k) return { date: ag.date || null, mereEid: sh.eid };
+  const a = (DB.agnelles || []).find(x => cleanEid(x.eid) === k);
+  if (a) { const n = (a.mouvements || []).find(m => m && m.type === 'Naissance'); return { date: n ? n.date : null, mereEid: a.motherEid || null }; }
+  return null;
+}
+const afficherSieolLot = lignes => lignes.some(l => l.sieol);
 function renderLotSearch(lotId) {
   const lot = DB.lots.find(l => l.id === lotId);
   if (!lot) { render('lots'); return; }
@@ -22673,14 +22682,20 @@ function renderLotSearch(lotId) {
     // inchangé) de reconnaître un n° SIEOL en plus de l'EID complet et du
     // numéro court -- il ne les cherche que sur des objets qui les portent,
     // jamais sur une simple chaîne d'EID (ancien pool de cet écran).
+    const ag = infoAgnelleLot(eid);   // agneau à trier ou agnelle : née le … · mère n°…
     return {
       eid,
       numeroCourtTravailSieol: (fiche && fiche.numeroCourtTravailSieol) || null,
       numeroLongTravailSieol: (fiche && fiche.numeroLongTravailSieol) || null,
-      sieol: (fiche && (fiche.numeroCourtTravailSieol || fiche.numeroLongTravailSieol)) || ''
+      sieol: (fiche && (fiche.numeroCourtTravailSieol || fiche.numeroLongTravailSieol)) || '',
+      naissance: ag ? ag.date : null, mereEid: ag ? ag.mereEid : null
     };
   }));
-  const afficherSieol = lignes.some(l => l.sieol);
+  const avecAgnelles = lignes.some(l => l.naissance || l.mereEid);
+  const afficherSieol = afficherSieolLot(lignes);
+  // Tri (composant commun) : en-têtes du tableau PC, « Trier par » des cartes mobiles ; sans choix = âge puis n° (règle des listes)
+  const COLS_LOT = [['num', 'N°'], ...(afficherSieol ? [['sieol', 'N° de travail']] : []), ...(avecAgnelles ? [['naissance', 'Née le'], ['mere', 'Mère']] : []), ['trouvee', 'Trouvée']];
+  const lignesTriees = trierDonneesTableau('lot-recherche', lignes, (l, k) => k === 'num' ? numeroAnimal(l.eid) : k === 'sieol' ? l.sieol : k === 'naissance' ? (l.naissance || '') : k === 'mere' ? (l.mereEid ? numeroAnimal(l.mereEid) : '') : (trouvees.has(cleanEid(l.eid)) ? 'Trouvée' : 'À trouver'));
   // Lot automatique « Attendues à la traite » : cocher les trouvées, PUIS « Mettre les trouvées à la traite » (enregistré, synchronisé ;
   // on peut encore écarter une brebis avant de valider). Les autres lots de recherche gardent leurs coches comme simple aide au repérage.
   const lotAttendues = lot.id === 'auto-attendues-traite';
@@ -22697,33 +22712,36 @@ function renderLotSearch(lotId) {
         <div id="lot-compteur" style="font-size:22px;font-weight:600;"></div>
         <button type="button" class="btn btn-secondary" id="btn-reset-lot-trouvees" style="width:auto;padding:6px 12px;font-size:13px;">Remettre à zéro</button>
       </div>
-      <label>${isDesktopMode() ? 'Saisir une brebis' : 'Scanner une brebis'}</label>
+      <div class="pc-kpis lot-tuiles" id="lot-tuiles"></div>
+      <label>${isDesktopMode() ? (avecAgnelles ? 'Saisir une agnelle' : 'Saisir une brebis') : (avecAgnelles ? 'Scanner une agnelle' : 'Scanner une brebis')}</label>
       <input type="text" id="scan-lot" data-bips="recherche" placeholder="${isDesktopMode() ? 'Saisir un n° / EID' : 'Scanner ou saisir l\'EID'}" autofocus>
       <div id="scan-feedback" style="margin-top:10px;font-size:14px;"></div>${lotAttendues ? `<button type="button" class="btn btn-primary" id="btn-mettre-traite" style="margin:14px 0 0;" disabled></button>${infoLigneHtml('Cochez les brebis trouvées, puis mettez-les à la traite : elles quittent les attendues à la traite.')}` : ''}
     </div>
     ${isDesktopMode() ? `<div class="card" style="padding:6px 0;">
       <div style="overflow-x:auto;">
-        <table style="width:100%;font-size:14px;border-collapse:collapse;">
-          <tr style="color:var(--text-muted);text-align:left;">
-            <th style="padding:6px 12px;font-weight:500;width:64px;">Trouvée</th>
-            <th style="padding:6px 8px;font-weight:500;">N°</th>
-            ${afficherSieol ? '<th style="padding:6px 8px;font-weight:500;">N° de travail</th>' : ''}
+        <table class="pc-t" id="lot-table" data-triable="lot-recherche-pc">
+          <tr>
+            <th class="cb" data-tri-non>Trouvée</th>
+            <th class="l">N°</th>
+            ${afficherSieol ? '<th class="l">N° de travail</th>' : ''}
+            ${avecAgnelles ? '<th class="l">Née le</th><th class="l">Mère</th>' : ''}
           </tr>
           ${lignes.map(l => `
-            <tr class="lot-ligne" data-eid="${cleanEid(l.eid)}" style="border-top:1px solid var(--border);">
+            <tr class="lot-ligne" data-eid="${cleanEid(l.eid)}">
               <td style="padding:0;"><label style="display:flex;align-items:center;justify-content:center;padding:10px 12px;"><input type="checkbox" class="lot-check" data-eid="${cleanEid(l.eid)}" style="width:20px;height:20px;margin:0;"></label></td>
-              <td style="padding:8px;font-weight:600;">${echapperHtml(numeroAnimal(l.eid))}</td>
-              ${afficherSieol ? `<td style="padding:8px;color:var(--text-muted);">${xlsxEscape(l.sieol) || '—'}</td>` : ''}
-            </tr>`).join('') || '<tr><td colspan="3" style="padding:12px;color:var(--text-muted);">Ce lot est vide.</td></tr>'}
+              <td class="l"><b>${echapperHtml(numeroAnimal(l.eid))}</b></td>
+              ${afficherSieol ? `<td class="l" style="color:var(--text-muted);">${xlsxEscape(l.sieol) || '—'}</td>` : ''}
+              ${avecAgnelles ? `<td class="l">${l.naissance ? formatDateFr(l.naissance) : '—'}</td><td class="l">${l.mereEid ? echapperHtml(numeroAnimal(l.mereEid)) : '—'}</td>` : ''}
+            </tr>`).join('') || '<tr><td colspan="5" style="padding:12px;color:var(--text-muted);">Ce lot est vide.</td></tr>'}
         </table>
       </div>
     </div>`
     // Mobile : une carte par membre du lot (n°, case « Trouvée », n° SIEOL) ; mêmes lignes, même tri, même case à cocher
-    : (lignes.length === 0 ? '<div class="empty">Ce lot est vide.</div>' : `<div class="cartes-liste" id="lot-cartes">${lignes.map(l => carteListeHtml({
+    : (lignes.length === 0 ? '<div class="empty">Ce lot est vide.</div>' : selecteurTriCartesHtml('lot-recherche', COLS_LOT) + `<div class="cartes-liste" id="lot-cartes">${lignesTriees.map(l => carteListeHtml({
       cls: 'lot-ligne', attrs: `data-eid="${cleanEid(l.eid)}"`,
       nm: echapperHtml(numeroAnimal(l.eid)),
       pastille: `<label class="lot-coche"><input type="checkbox" class="lot-check" data-eid="${cleanEid(l.eid)}"> Trouvée</label>`,
-      l2: afficherSieol ? 'N° de travail : ' + (xlsxEscape(l.sieol) || '—') : ''
+      l2: [afficherSieol ? 'N° de travail : ' + (xlsxEscape(l.sieol) || '—') : '', l.naissance ? 'Née le ' + formatDateFr(l.naissance) : '', l.mereEid ? 'mère ' + echapperHtml(numeroAnimal(l.mereEid)) : ''].filter(Boolean).join(' · ')
     })).join('')}</div>`)}
   `;
 
@@ -22742,6 +22760,8 @@ function renderLotSearch(lotId) {
     .filter(b => b && (b.statut || 'active') === 'active' && situationTraiteCampagne(b).code === 'attendue');
   function majCompteur() {
     document.getElementById('lot-compteur').textContent = nbTrouvees() + ' / ' + lot.membres.length + ' trouvée(s)';
+    const tu = document.getElementById('lot-tuiles');
+    if (tu) tu.innerHTML = pcKpi('Trouvées', nbTrouvees(), '', 'vert') + pcKpi('À trouver', lot.membres.length - nbTrouvees(), '', tonTuile(lot.membres.length - nbTrouvees(), 'ambre', true));
     const bt = document.getElementById('btn-mettre-traite');
     if (bt) { const n = trouveesAMettre().length; bt.disabled = n === 0; bt.textContent = 'Mettre les trouvées à la traite' + (n ? ' (' + n + ')' : ''); }
   }
@@ -22777,6 +22797,7 @@ function renderLotSearch(lotId) {
     scanInput.focus();
   };
 
+  brancherSelecteurTriCartes(app, 'lot-recherche', () => renderLotSearch(lotId));
   setActiveScanTarget(scanInput);
   scanInput.focus();
   wireEidLookupField(scanInput, {
