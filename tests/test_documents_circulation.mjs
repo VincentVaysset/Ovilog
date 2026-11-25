@@ -57,6 +57,11 @@ for (const pc of [true, false]) {
   eq(await page.evaluate(() => !!document.getElementById('card-mouvements-ede')), false, nom + ' : désactivé, pas de carte « Mouvements » dans Règles d\'élevage');
   eq(await page.evaluate(() => [DB.documentsCirculation === undefined, DB.delaiNotificationEde === undefined]), [true, true], nom + ' : désactivé, rien d\'écrit');
   if (pc) { await page.evaluate(() => render('import-nouveaux-animaux')); eq(await page.evaluate(() => !!document.getElementById('import-na-nature')), false, nom + ' : désactivé, import sans question'); }
+  // création à la main, désactivé : identique à avant (pas d'origine, entrée « Création (ajout manuel) »)
+  await page.evaluate(() => render('add-belier'));
+  eq(await page.evaluate(() => !!document.getElementById('cr-origine-bloc')), false, nom + ' : désactivé, création de bélier sans origine');
+  await page.fill('#input-eid', '250000004599001'); await page.click('#btn-save-belier');
+  eq(await page.evaluate(() => { const b = DB.beliers.find(x => x.eid === '250000004599001'); return [b.origine === undefined, b.mouvements[0].cause, Object.keys(b.mouvements[0]).filter(k => k !== 'id')]; }), [true, 'Création (ajout manuel)', ['type', 'cause', 'date', 'dateInconnue']], nom + ' : désactivé, entrée comme avant');
 
   // ACTIVÉ
   await page.evaluate(() => { window.__ede = true; render('home'); });
@@ -173,6 +178,20 @@ for (const pc of [true, false]) {
     eq(await page.evaluate(() => DB.acheteurs), ['Coop Exemple', 'Abattoir Test', 'Éleveur Test', 'Vendeur Nouveau'], nom + ' : provenance nouvelle ajoutée aux Partenaires');
     const ent = await page.evaluate(() => documentsCirculationCalcules({}).docs.filter(x => x.items.some(i => /4600[13]/.test(i.ref))).map(x => [x.partenaire, x.etat, x.manques]));
     check(ent.some(e => e[0] === 'Coop Exemple' && e[1] === 'complet') && ent.some(e => e[0] === 'Vendeur Nouveau' && e[1] === 'acompleter' && /date d'entrée/.test(e[2].join())), nom + ' : entrées à notifier ; sans date d\'entrée = à compléter : ' + JSON.stringify(ent));
+
+    // création à la main d'un bélier acheté (activé) : origine sans réponse par défaut, provenance de la liste
+    await page.evaluate(() => render('add-belier'));
+    eq(await page.evaluate(() => [!!document.getElementById('cr-origine-bloc'), document.querySelectorAll('.cr-origine.selected').length, document.getElementById('cr-achat').classList.contains('hidden')]), [true, 0, true], nom + ' : origine proposée, sans réponse par défaut');
+    await page.fill('#input-eid', '250000004599002'); await page.click('#btn-save-belier');
+    eq(await page.evaluate(() => [DB.beliers.some(b => b.eid === '250000004599002'), document.getElementById('err').textContent]), [false, "Choisissez l'origine : né ici ou acheté."], nom + ' : sans origine, rien de créé');
+    await page.click('.cr-origine[data-val="achetée"]');
+    await page.fill('#input-date-entree', '2026-11-20'); await page.selectOption('#cr-provenance', 'Éleveur Test');
+    await page.click('#btn-save-belier');
+    eq(await page.evaluate(() => { const b = DB.beliers.find(x => x.eid === '250000004599002'); return [b.origine, b.mouvements[0].cause, b.mouvements[0].provenance, b.mouvements[0].date]; }), ['achetée', 'Achat', 'Éleveur Test', '2026-11-20'], nom + ' : bélier acheté = entrée « Achat » avec provenance');
+    eq(await page.evaluate(() => documentsCirculationCalcules({}).docs.filter(x => x.items.some(i => i.ref.startsWith('beliers:250000004599002'))).map(x => [x.doc.sens, x.partenaire, x.etat])), [['entree', 'Éleveur Test', 'complet']], nom + ' : achat de bélier = entrée à notifier');
+    await page.evaluate(() => render('add-sheep'));
+    await page.fill('#input-eid', '250000004599003'); await page.click('.cr-origine[data-val="née"]'); await page.click('#btn-save-sheep');
+    eq(await page.evaluate(() => { const b = DB.brebis.find(x => x.eid === '250000004599003'); return [b.origine, b.mouvements[0].cause]; }), ['née', 'Création (ajout manuel)'], nom + ' : brebis née ici = pas d\'entrée à notifier');
 
     // délai de notification réglé
     await page.evaluate(() => { parametresTab = 'regles'; parametresRubrique = 'regles'; render('parametres'); });
