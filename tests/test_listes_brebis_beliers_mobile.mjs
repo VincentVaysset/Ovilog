@@ -44,7 +44,7 @@ const br = await mob.evaluate(() => ({
   champ: !!document.querySelector('.al-scan #scan-open'), icone: !!document.querySelector('.al-scan .al-scan-ic'), placeholder: document.getElementById('scan-open').placeholder,
   ancienLabel: /Scanner une brebis pour ouvrir/.test(document.getElementById('app').textContent), erreur: !!document.getElementById('scan-open-err'),
   info: (document.querySelector('.reg-info.al-info') || {}).textContent, cartes: document.querySelectorAll('.al-carte').length, lignes: document.querySelectorAll('.al-carte .al-ligne').length,
-  ancien: document.querySelectorAll('.sheep-item').length, filtres: document.querySelectorAll('#app select, .reg-tuile, .bc-filtres').length, fab: !!document.getElementById('fab-add') && !document.getElementById('fab-add').classList.contains('hidden'),
+  ancien: document.querySelectorAll('.sheep-item').length, filtres: document.querySelectorAll('#app select:not(.tt-trier-par select), .reg-tuile, .bc-filtres').length, fab: !!document.getElementById('fab-add') && !document.getElementById('fab-add').classList.contains('hidden'),
   chev: document.querySelectorAll('.al-ligne .bc-chev').length, debord: document.documentElement.scrollWidth > 390,
   ordre: [...document.querySelectorAll('.al-ligne .al-num')].map(x => x.firstChild.textContent.trim()),
   attendu: sortByAge(DB.brebis.filter(s => (s.statut || 'active') === 'active')).map(s => s.numeroCourtTravailSieol || 'n°' + numeroVisuel(s.eid)),
@@ -90,7 +90,7 @@ const be = await mob.evaluate(() => ({
   champ: !!document.querySelector('.al-scan #scan-open-belier'), erreur: !!document.getElementById('scan-open-belier-err'),
   info: (document.querySelector('.reg-info.al-info') || {}).textContent, cartes: document.querySelectorAll('.al-carte').length, lignes: document.querySelectorAll('.al-ligne').length, ancien: document.querySelectorAll('.sheep-item').length,
   ajout: (document.getElementById('btn-add-belier') || {}).textContent, pastilles: [...document.querySelectorAll('.al-ligne')].map(l => [l.querySelector('.reg-pastille').className.replace('reg-pastille ', ''), l.querySelector('.reg-pastille').textContent, getComputedStyle(l).opacity]),
-  sieol: [...document.querySelectorAll('.al-ligne')].map(l => !!l.querySelector('.compact-tag')), filtres: document.querySelectorAll('#app select, .reg-tuile').length
+  sieol: [...document.querySelectorAll('.al-ligne')].map(l => !!l.querySelector('.compact-tag')), filtres: document.querySelectorAll('#app select:not(.tt-trier-par select), .reg-tuile').length
 }));
 check(be.champ && be.erreur && be.cartes === 1 && be.lignes === 3 && be.ancien === 0 && be.filtres === 0, 'Béliers : champ nu, une carte, 3 lignes : ' + JSON.stringify(be));
 eq(be.info, 'Du plus âgé au plus jeune. Touche un bélier pour ouvrir sa fiche.', 'info Béliers');

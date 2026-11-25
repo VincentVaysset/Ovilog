@@ -63,7 +63,7 @@ check((await lignes()).length === 6 && /mise bas après le 12-11-2026/.test(awai
 await page.click('#btn-cl-reset');
 // tri
 await page.click('#cl-table th[data-key="numero"]');
-check(await page.evaluate(() => document.querySelector('#cl-table th[data-key="numero"]').textContent.includes('▼')) && (await lignes())[0][0] === '8135', 'tri N° court décroissant');
+check(await page.evaluate(() => document.querySelector('#cl-table th[data-key="numero"]').getAttribute('aria-sort') === 'descending') && (await lignes())[0][0] === '8135', 'tri N° court décroissant');
 await page.click('#cl-table th[data-key="c2"]');
 check((await lignes())[0][3] === '820', 'tri sur C2 croissant : 820 en tête');
 console.log('OK 2 tableau : colonnes N° court / MàB / C1 / C2 / C3 (pas de Moyenne), filtre C2 < 1000 = 3 brebis surlignées, > 1000 = 4, mise bas après le, Réinitialiser, tri.');
@@ -132,7 +132,7 @@ await page.click('#btn-cl-export-xlsx');
 await page.waitForFunction(() => window.__cap.some(c => c.t === 'file'));
 const ex = await page.evaluate(() => window.__cap);
 const feuille = ex.find(c => c.t === 'xlsx').s[0].rows;
-check(feuille.length === 4 && feuille[0][0] === 'N° de travail' && feuille.slice(1).map(r => r[0]).join() === '951,953,955', 'export Excel = lignes filtrées (3) : ' + JSON.stringify(feuille));
+check(feuille.length === 4 && feuille[0][0] === 'N° de travail' && feuille.slice(1).map(r => r[0]).join() === '953,951,955', 'export Excel = lignes filtrées (3), dans l\'ordre de l\'écran (tri C2 croissant gardé pendant la séance) : ' + JSON.stringify(feuille));
 await page.evaluate(() => { window.__cap.length = 0; });
 await page.click('#btn-cl-export-pdf');
 await page.waitForFunction(() => window.__cap.some(c => c.t === 'file'));
