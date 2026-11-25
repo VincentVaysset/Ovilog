@@ -35,14 +35,14 @@ const r = await page.evaluate(() => {
     libelles: [libelleConditionsTri(regles[0].conditions), libelleConditionsTri(regles[0].exceptions[0].conditions), libelleConditionsTri([C('naissance', 'entre', '2026-11-01', '2026-11-10'), C('portee', 'egal', '2')])]
   };
 });
-eq(r.exemple, { refusee: true, motifs: ['Née après le 15-11-2026'], repechages: ['Classe de la mère = 4 · repêchée (Lactation de la mère au moins 300 L)'] }, 'exemple : classe 4 à 318 L née le 19/11 = refusée par la règle de date');
+eq(r.exemple, { refusee: true, motifs: ['Née après le 15/11/2026'], repechages: ['Classe de la mère = 4 · repêchée (Lactation de la mère au moins 300 L)'] }, 'exemple : classe 4 à 318 L née le 19/11 = refusée par la règle de date');
 eq([r.repechee.refusee, r.classe4.refusee, r.classe4.motifs, r.acceptee.refusee], [false, true, ['Classe de la mère = 4'], false], 'classe 4 repêchée par sa propre exception, sinon refusée ; classe 1 acceptée');
 eq(r.inconnue.refusee, false, 'valeurs inconnues : aucune condition remplie');
 eq([r.et.refusee, r.etNon.refusee], [true, false], 'conditions liées par ET');
 eq(r.sans, [true, true, true, false], '« sans classe », « sans lactation connue », « sans code »');
 eq([r.entre, r.triple, r.reproCodes], [[true, false], [true, false], [false, false, true, false]], 'entre (bornes comprises), triple et plus, 4 codes repro séparés');
 eq(r.incomplete, [false, false, false], 'conditions incomplètes jamais remplies');
-eq(r.libelles, ['Classe de la mère = 4', 'Lactation de la mère au moins 300 L', 'Née entre le 01-11-2026 et le 10-11-2026 et Portée double'], 'libellés en mots');
+eq(r.libelles, ['Classe de la mère = 4', 'Lactation de la mère au moins 300 L', 'Née entre le 01/11/2026 et le 10/11/2026 et Portée double'], 'libellés en mots');
 
 // ---- 2. règles par campagne, décisions forcées, sur les agnelles à trier
 const d = await page.evaluate(() => {
@@ -109,7 +109,7 @@ console.log('OK 1-2 moteur des critères');
   eq(await res(), [['71003', 'A'], ['71006', 'A'], ['71009', 'A']], 'exception : classe 4 à 318 L repêchée');
   await pc.selectOption('.tc-crit[data-i="0"]', 'naissance'); await pc.selectOption('.tc-op[data-i="0"]', 'apres'); await pc.fill('.tc-val[data-i="0"]', '2026-11-15'); await pc.click('#tc-enregistrer');
   eq(await res(), [['71003', 'A'], ['71006', 'A'], ['71009', 'R']], 'règle de date : l\'exception de la 1re règle ne la lève pas (classe 4, 318 L, née le 19/11 = refusée)');
-  eq(await pc.evaluate(() => [...document.querySelectorAll('.tc-tuiles .tuile-pc')].map(t => t.innerText.replace(/\s+/g, ' ').trim())), ['Femelles nées à trier 3', 'Acceptées 2', 'Refusées 1', 'Décisions forcées 0'], 'tuiles');
+  eq(await pc.evaluate(() => [...document.querySelectorAll('.tc-tuiles .tuile-pc')].map(t => t.innerText.replace(/\s+/g, ' ').trim())), ['Acceptées 2', 'Refusées 1', 'Décisions forcées 0'], 'tuiles : Acceptées, Refusées, Décisions forcées (« À trier » est déjà en haut de l\'écran)');
   // choix multiples à l'éditeur : repro RE ou MN (puces), puis retirée
   await pc.selectOption('.tc-crit[data-i="0"]', 'repro'); await pc.selectOption('.tc-op[data-i="0"]', 'egal');
   check(await pc.evaluate(() => [...document.querySelectorAll('.tc-multi .tc-mv')].map(b => b.textContent).join() === 'IA,EP,RE,MN,sans code'), 'repro : 5 puces');
@@ -136,7 +136,7 @@ console.log('OK 1-2 moteur des critères');
   // colonnes : Motif masquée au départ, affichée au clic
   check(await pc.evaluate(() => ![...document.querySelectorAll('#ta-table-atrier th')].some(t => t.textContent === 'Motif')), 'Motif masquée au départ');
   await pc.click('.tc-chip[data-col="motif"]');
-  check(/Née après le 15-11-2026/.test(await pc.evaluate(() => document.querySelector('#ta-table-atrier tr[data-eid="' + DB.brebis[2].agnelages[0].lambs[0].eid + '"]').textContent)), 'Motif affiché : la règle qui refuse');
+  check(/Née après le 15\/11\/2026/.test(await pc.evaluate(() => document.querySelector('#ta-table-atrier tr[data-eid="' + DB.brebis[2].agnelages[0].lambs[0].eid + '"]').textContent)), 'Motif affiché : la règle qui refuse');
   // tri par en-tête (composant commun)
   await pc.click('#ta-table-atrier .tt-tete[data-col="res"]');
   eq((await res()).map(r => r[1]), ['A', 'A', 'R'], 'tri par Résultat');
@@ -167,9 +167,30 @@ console.log('OK 1-2 moteur des critères');
   await pc.click('#sup-snack-annuler');
   eq(await pc.evaluate(a => [DB.agnelles.length, JSON.stringify(DB.brebis) === a], avant), [0, true], 'Annuler : état exact d\'avant');
   eq(dialogues, [], 'aucune boîte native (confirm / alert)');
+  // trois agnelles de plus (jeu fictif) et la règle « Repro MN et portée simple », exception « classe de la mère au moins 3 » :
+  // MN + simple de mère classe 2 = refusée ; MN + simple de mère classe 3 = repêchée ; mère classe 4 sous 300 L = refusée (règle 1, exception non remplie)
+  await pc.evaluate(() => {
+    const mere = (i, date, code, nb) => ({ id: 'm' + i, eid: '25000000451' + String(1000 + i), numeroCourtTravailSieol: String(600 + i), statut: 'active', mouvements: [], sanitaire: [],
+      agnelages: [{ id: 'a' + i, date, campagne: 2026, codeRepro: code, lambs: Array.from({ length: nb }, (_, k) => ({ id: 'l' + i + k, eid: '2500000045' + String(71000 + i * 3 + k), sexe: k === 0 ? 'Femelle' : 'Mâle' })) }] });
+    DB.brebis.push(mere(4, '2026-11-06', 'MN', 1), mere(5, '2026-11-07', 'MN', 1), mere(6, '2026-11-08', 'IA', 2));
+    DB.lactationModele.push({ eid: DB.brebis[3].eid, campagne: 2025, lactationTotale: 350, classeParQuart: 2 }, { eid: DB.brebis[4].eid, campagne: 2025, lactationTotale: 350, classeParQuart: 3 }, { eid: DB.brebis[5].eid, campagne: 2025, lactationTotale: 280, classeParQuart: 4 });
+    render('agnelles');
+  });
+  await pc.selectOption('.tc-crit[data-i="0"]', 'repro'); await pc.selectOption('.tc-op[data-i="0"]', 'egal'); await pc.click('.tc-mv[data-v="MN"]');
+  await pc.click('#tc-ajout-cond'); await pc.selectOption('.tc-crit[data-i="1"]', 'portee'); await pc.selectOption('.tc-op[data-i="1"]', 'egal'); await pc.click('.tc-multi[data-i="1"] .tc-mv[data-v="1"]');
+  await pc.click('#tc-enregistrer');
+  await pc.click('.tc-ajout-exc >> nth=2');
+  await pc.selectOption('.tc-crit[data-i="0"]', 'classe'); await pc.selectOption('.tc-op[data-i="0"]', 'auMoins'); await pc.selectOption('.tc-val[data-i="0"]', '3'); await pc.click('#tc-enregistrer');
+  const motifs = await pc.evaluate(() => Object.fromEntries(triCriteresDonnees().lignes.map(l => [l.numero, [l.refusee ? 'R' : 'A', l.motifs.join(' | '), l.repechages.join(' | ')]])));
+  eq([motifs['71012'], motifs['71015'], motifs['71018']], [
+    ['R', 'Repro MN et Portée simple', ''],
+    ['A', '', 'Repro MN et Portée simple · repêchée (Classe de la mère au moins 3)'],
+    ['R', 'Classe de la mère = 4', '']], 'MN + simple classe 2 refusée, MN + simple classe 3 repêchée, classe 4 sous 300 L refusée');
+  eq(motifs['71006'][0], 'A', 'MN + simple de mère classe 4 à 318 L : repêchée par les deux exceptions');
+  check(await pc.evaluate(() => [...document.querySelectorAll('#tc-regles .tc-exc')].every(e => { const t = e.querySelector('.tc-lib').getBoundingClientRect(), b = e.querySelector('.tc-btns').getBoundingClientRect(); return b.top < t.bottom && b.bottom > t.top && b.left >= t.right - 1; })), 'exceptions : Modifier et Suppr. sur la ligne du libellé, à droite');
   // campagne suivante : règles reprises (ligne grise), écrites au 1er geste seulement ; Annuler = campagne de nouveau « sans règles »
   await pc.evaluate(() => { DB.campagneDebut = 2027; triPcEtat = null; render('agnelles'); });
-  eq(await pc.evaluate(() => [document.getElementById('tc-reprise').textContent, document.getElementById('tc-regles').textContent.includes('Née après le 15-11-2027'), Object.keys(DB.criteresTriAgnelles)]),
+  eq(await pc.evaluate(() => [document.getElementById('tc-reprise').textContent, document.getElementById('tc-regles').textContent.includes('Née après le 15/11/2027'), Object.keys(DB.criteresTriAgnelles)]),
     ['Règles reprises de la campagne 2027 : modifiez-les au besoin.', true, ['2026']], 'reprise affichée, date décalée, rien d\'écrit');
   await pc.click('.tc-modifier >> nth=1'); await pc.fill('.tc-val[data-i="0"]', '2027-11-14'); await pc.click('#tc-enregistrer');
   eq(await pc.evaluate(() => [Object.keys(DB.criteresTriAgnelles), DB.criteresTriAgnelles[2027].regles[1].conditions[0].valeur, DB.criteresTriAgnelles[2026].regles[1].conditions[0].valeur, !!document.getElementById('tc-reprise')]),
@@ -200,7 +221,7 @@ for (const bureau of [false, true]) {
   });
   eq(await p.evaluate(() => [...document.querySelectorAll('#lot-tuiles .tuile-pc')].map(t => t.innerText.replace(/\s+/g, ' ').trim().toLowerCase())), ['trouvées 0', 'à trouver 2'], nom + ' : compteurs Trouvées / À trouver');
   if (!bureau) {
-    check(/Née le 04-11-2026 · mère 602/.test(await p.textContent('#lot-cartes')), nom + ' : carte de l\'agnelle : née le, mère');
+    check(/Née le 04\/11\/2026 · mère 602/.test(await p.textContent('#lot-cartes')), nom + ' : carte de l\'agnelle : née le, mère');
     eq(await p.evaluate(() => [...document.querySelectorAll('.tt-trier-par[data-tt="lot-recherche"] option')].map(o => o.textContent)), ["Comme à l'écran", 'N°', 'Née le', 'Mère', 'Trouvée'], nom + ' : « Trier par »');
   } else {
     eq(await p.evaluate(() => [document.getElementById('lot-table').className, [...document.querySelectorAll('#lot-table th')].map(t => [t.textContent, !!t.querySelector('.tt-tete')])]), ['pc-t', [['Trouvée', false], ['N°', true], ['Née le', true], ['Mère', true]]], nom + ' : tableau de la charte, triable');
