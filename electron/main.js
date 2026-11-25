@@ -14,6 +14,11 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const log = require('electron-log');
 
+// Langue de Chromium : français, AVANT le démarrage de l'appli. Le format affiché des champs date (jj/mm/aaaa) suit la langue du
+// programme, pas l'attribut lang de la page : sans ce réglage, un Windows en anglais montrait 11/25/2026. Les dates enregistrées
+// restent en aaaa-mm-jj (valeur du champ), rien ne change dans les données.
+app.commandLine.appendSwitch('lang', 'fr-FR');
+
 // Fichier de log consultable (par défaut sous Windows :
 // %APPDATA%/Ovilog/logs/main.log) -- tant que l'auto-update n'est pas
 // stabilisé, mieux vaut un résultat inspectable qu'un .catch(() => {})
