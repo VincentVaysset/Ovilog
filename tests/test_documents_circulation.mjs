@@ -13,6 +13,7 @@ const browser = await chromium.launch(LAUNCH);
 const donnees = () => {
   DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; return true; };
   DB.campagneDebut = 2026; DB.campagneInitialisee = true;
+  DB.exploitation = Object.assign(DB.exploitation || {}, { indicatifMarquage: '000045' });   // agneau né ici sans n° = compté avec cet indicatif
   DB.acheteurs = ['Coop Exemple', 'Abattoir Test', 'Éleveur Test'];
   DB.partenairesInfo = { 'Coop Exemple': { categorie: 'cooperative', numero: 'FR 12345678' }, 'Abattoir Test': { categorie: 'abattoir', numero: 'FR 12.000.001' }, 'Éleveur Test': { categorie: 'eleveur', numero: 'FR12000001' } };
   DB.produitsInfo = { ProdX: { delaiViande: 28, delaiAttente: 0 } };
@@ -97,7 +98,7 @@ for (const pc of [true, false]) {
   eq(x0.notif, { ton: 'rouge', texte: 'Délai dépassé : à notifier avant le 17\/11\/2026' }, nom + ' : échéance date + 7 jours, dépassée = rouge');
 
   await page.evaluate(() => render('documents-circulation'));
-  eq(await page.evaluate(() => document.querySelectorAll('.dc-carte').length), 3, nom + ' : 3 cartes de documents');
+  eq(await page.evaluate(pc => document.querySelectorAll(pc ? '.dc-ligne' : '.dc-carte').length, pc), 3, nom + ' : 3 documents dans la liste');
   check(/Vente d'agneaux|hors document/.test(await page.evaluate(() => document.body.innerText)), nom + ' : liste affichée');
   check(!/(^|\s)[BEMCAHP](\s|$)|catégorie \d\d/.test(await page.evaluate(() => document.querySelector('.dc-page').innerText)), nom + ' : aucun code officiel affiché');
 
@@ -108,8 +109,20 @@ for (const pc of [true, false]) {
     await page.click('#sup-snack-annuler');
     eq(await page.evaluate(() => ['abattoir' in DB.brebis[3].mouvements[0], documentsCirculationCalcules({}).hors.length]), [false, 2], nom + ' : Annuler = mouvement exact d\'avant');
 
-    // fiche de la vente
+    // PC : liste et fiche côte à côte sur un seul écran, tri rapide, tableaux de la charte
     await page.evaluate(() => { dcEtat.id = documentsCirculationCalcules({}).docs[0].doc.id; render('document-circulation'); });
+    eq(await page.evaluate(() => { const l = document.getElementById('dc-liste-pc').getBoundingClientRect(), f = document.getElementById('dc-fiche').getBoundingClientRect(); return [currentView, f.left > l.right - 1, Math.abs(f.top - l.top) < 2, !!document.querySelector('.dc-ligne.sel[aria-current="true"]')]; }), ['documents-circulation', true, true, true], nom + ' : PC, liste à gauche et fiche du document ouvert à droite');
+    eq(await page.evaluate(() => [...document.querySelectorAll('.dc-filtre button')].map(b => b.textContent)), ['Tous', 'À compléter', 'Complets', 'Validés'], nom + ' : tri rapide');
+    await page.click('.dc-filtre button[data-val="complet"]');
+    eq(await page.evaluate(() => [document.querySelectorAll('.dc-ligne').length, documentsCirculationCalcules({}).docs.filter(x => x.etat === 'complet').length, document.querySelector('.dc-ligne.sel') && document.querySelector('.dc-ligne.sel').dataset.doc === dcEtat.id]), [1, 1, true], nom + ' : « Complets » = seulement les complets, le 1er ouvert');
+    await page.click('.dc-filtre button[data-val="tous"]');
+    await page.evaluate(() => { dcEtat.id = documentsCirculationCalcules({}).docs[0].doc.id; render('documents-circulation'); });
+    eq(await page.evaluate(() => [...document.querySelectorAll('#dc-animaux table.pc-t')[0].querySelectorAll('th')].map(t => t.textContent.trim()).slice(0, 3)), ['N° national', 'N° de travail', 'Catégorie'], nom + ' : animaux listés : n° national, n° de travail, catégorie');
+    eq(await page.evaluate(() => [...document.querySelectorAll('#dc-animaux .dc-animal-ligne')].map(r => [...r.cells].slice(0, 3).map(c => c.textContent))), [['FR 000045 61001', '601', 'Brebis'], ['FR 000045 61002', '—', 'Brebis']], nom + ' : n° national et n° de travail, rien d\'autre');
+    check(!/mère|naissance/i.test(await page.textContent('#dc-animaux')), nom + ' : ni n° de mère ni naissance sur le document');
+    eq(await page.evaluate(() => [[...document.querySelectorAll('#dc-animaux .dc-comptes tr')].slice(1).map(r => [...r.cells].map(c => c.textContent)), (document.getElementById('dc-sans-numero') || {}).textContent]), [[['FR 000045', '3']], 'dont 1 sans n° saisi dans Ovilog'], nom + ' : agneaux de boucherie = un nombre par indicatif, « dont 1 sans n° saisi dans Ovilog » en gris');
+    eq(await page.evaluate(() => { const ex = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = ''; const x = documentsCirculationCalcules({}).docs[0]; const g = agneauxParIndicatifDc(x.comptes); DB.exploitation.indicatifMarquage = ex; return [g.groupes.map(r => r.indicatif + ':' + r.n), g.inconnus.length, x.aVerifier.length, x.etat]; }), [['000045:1'], 2, 2, 'acompleter'], nom + ' : indicatif inconnu = « À vérifier »');
+    // fiche de la vente
     eq(await page.evaluate(() => [document.getElementById('dc-ica').checked, document.getElementById('dc-camion-vide').checked, document.getElementById('dc-valider').disabled, !!document.getElementById('dc-dest-a-confirmer')]), [false, false, true, true], nom + ' : ICA et camion vide jamais cochés d\'office, Valider bloqué, ligne ambre « à confirmer »');
     check(/boucherie par défaut, à confirmer/.test(await page.textContent('#dc-dest-a-confirmer')), nom + ' : texte de la ligne ambre');
     check(await page.isVisible('#dc-alerte-viande'), nom + ' : alerte rouge délai viande');
@@ -127,7 +140,8 @@ for (const pc of [true, false]) {
     await page.click('#dc-rattacher');
     eq(await page.evaluate(([a, b]) => [b in DB.documentsCirculation, documentsCirculationCalcules({}).docs.find(x => x.doc.id === a).items.length], [id1, idPart]), [false, 5], nom + ' : remis avec les autres');
     await page.evaluate(id => { dcEtat.id = id; render('document-circulation'); }, id1);
-    // agneaux : l1 et l3 en reproduction (brouillon), confirmer
+    // agneaux : l1 et l3 en reproduction (brouillon, « Choisir agneau par agneau »), confirmer
+    await page.click('#dc-detail-toggle');
     await page.click('.dc-dest[data-ref="agneaux:l1:m11"] button[data-val="reproduction"]');
     await page.click('.dc-dest[data-ref="agneaux:l3:m13"] button[data-val="reproduction"]');
     eq(await page.evaluate(() => DB.brebis[1].agnelages[0].lambs.map(l => l.mouvements[0].destination || null)), [null, null, null], nom + ' : rien d\'écrit avant « Confirmer »');
@@ -223,6 +237,8 @@ for (const pc of [true, false]) {
     eq(await page.evaluate(() => currentView), 'documents-circulation', nom + ' : la carte ouvre la liste');
     await page.click('.dc-carte');
     eq(await page.evaluate(() => [currentView, document.querySelectorAll('#app input, #app select').length, document.querySelectorAll('#app .btn-primary').length]), ['document-circulation', 0, 0], nom + ' : fiche en consultation seule');
+    check(!/mère|naissance/i.test(await page.textContent('#dc-animaux')) && /FR 000045 61001 Brebis · n° de travail 601/.test(await page.textContent('#dc-animaux')), nom + ' : mobile, n° national et n° de travail seulement');
+    eq(await page.evaluate(() => [[...document.querySelectorAll('#dc-animaux .dc-compte')].map(e => e.textContent.replace(/\s+/g, ' ').trim()), (document.getElementById('dc-sans-numero') || {}).textContent]), [['FR 000045 3 agneaux'], 'dont 1 sans n° saisi dans Ovilog'], nom + ' : mobile, un nombre par indicatif');
   }
   check(!erreurs.length, nom + ' : aucune erreur JS ' + erreurs.join(' | '));
   await ctx.close();

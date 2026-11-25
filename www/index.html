@@ -925,6 +925,30 @@
   .pc-t th.l, .pc-t td.l { text-align: left; }
   .pc-t th.sortable { cursor: pointer; }
   /* Tri des agnelles par critères (PC) */
+  .dc-grille { display: grid; grid-template-columns: minmax(380px, 460px) minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 16px; }
+  .dc-liste-tete { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .dc-filtre { display: flex; margin-bottom: 10px; }
+  .dc-filtre .opt-btn { flex: 1 1 0; padding: 7px 6px; font-size: 13px; }
+  .dc-ligne { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 3px 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid transparent; cursor: pointer; margin-bottom: 4px; }
+  .dc-ligne:nth-child(even) { background: var(--ch-ligne-alt); }
+  .dc-ligne:hover { border-color: var(--ch-bord-champ); }
+  .dc-ligne.sel { background: var(--ch-vert-pastel); border-color: var(--ch-vert); }
+  .dc-ligne:focus-visible { outline: 2px solid var(--ch-vert); outline-offset: 2px; }
+  .dc-l-date { font-weight: 700; color: var(--ch-vert-fonce); white-space: nowrap; }
+  .dc-l-titre { font-weight: 500; min-width: 0; }
+  .dc-l-sous { grid-column: 2 / 4; color: var(--ch-texte2); font-size: 13px; }
+  .dc-l-ech { grid-column: 2 / 4; font-size: 12.5px; color: var(--ch-texte2); }
+  .dc-l-ech.ambre { color: var(--ch-ambre-texte); } .dc-l-ech.rouge, .dc-l-rouge { color: var(--ch-rouge); }
+  .dc-fiche { display: flex; flex-direction: column; gap: 4px; }
+  .dc-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; margin-top: 14px; }
+  .dc-cols.dc-cols-1 { grid-template-columns: minmax(0, 1fr); }
+  .dc-sect { margin: 18px 0 8px; }
+  .dc-acts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+  .dc-comptes { max-width: 420px; }
+  .dc-detail { margin-top: 8px; border-top: 1px solid var(--ch-separateur); }
+  .dc-fiche-pc .prm-actions { margin-top: 16px; }
+  @media (max-width: 1299px) { .dc-grille { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 1599px) { .dc-cols { grid-template-columns: minmax(0, 1fr); } }
   .rg-grille { justify-content: stretch; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); margin-top: 4px; align-items: stretch; }
   .rg-carte { cursor: pointer; display: flex; flex-direction: column; gap: 12px; }
   .rg-carte:hover { border-color: var(--ch-vert); }
@@ -33347,6 +33371,7 @@ function etatDocumentCirculation(x, brouillon) {
     const dest = i.cat === 'agneaux' ? destinationAgneauDc(i, brouillon) : null;
     if (sortie && i.cat === 'agneaux' && dest !== 'reproduction') comptes.push(i); else listes.push(i);
     if (sortie && i.cat === 'agneaux' && dest === 'reproduction' && !numeroNationalComplet(i.eid)) aVerifier.push(i);
+    if (sortie && i.cat === 'agneaux' && dest !== 'reproduction' && !indicatifAgneauDc(i)) aVerifier.push(i);   // compté sans indicatif connu
     if (sortie && (i.code === 'C' || (i.code === 'B' && dest !== 'reproduction') || (i.cat === 'agneaux' && dest === 'boucherie'))) {
       const p = delaiViandeAuMouvement(i);
       if (p.length) alertesViande.push({ it: i, produits: p });
@@ -33446,14 +33471,42 @@ function ligneHorsDocumentHtml(it, avecAbattoir) {
     ? `<select class="dc-abattoir" data-ref="${echapperHtml(it.ref)}" aria-label="Abattoir"><option value="">Abattoir : aucun</option>${abattoirs.map(n => `<option value="${echapperHtml(n)}">${echapperHtml(n)}</option>`).join('')}</select>` : '';
   return `<div class="dc-hors" data-ref="${echapperHtml(it.ref)}"><span>${echapperHtml(formatDateFr(it.date))} · ${echapperHtml(LIBELLE_CAT_DC[it.cat])} ${echapperHtml(it.cat === 'agneaux' ? numeroAgneauTexte(it.animal) : numeroAnimal(it.animal))} · ${echapperHtml(it.hors)}</span>${choix}<span class="dc-hors-pastille">hors document</span></div>`;
 }
+// PC : tri rapide de la liste (Validés = validés et envoyés)
+const FILTRES_DC = [['tous', 'Tous'], ['acompleter', 'À compléter'], ['complet', 'Complets'], ['valide', 'Validés']];
+function filtreDocumentDc(x, f) { return f === 'acompleter' ? x.etat === 'acompleter' : f === 'complet' ? x.etat === 'complet' : f === 'valide' ? (x.etat === 'valide' || x.etat === 'envoye') : true; }
+// Une ligne de la liste PC : date, sens et partenaire, état, animaux, échéance
+function ligneDocumentPcHtml(x, sel) {
+  const [lib, ton] = LIBELLE_ETAT_DC[x.etat];
+  const tonEch = x.notif.ton === 'rouge' ? 'rouge' : x.notif.ton === 'ambre' ? 'ambre' : '';
+  return `<div class="dc-ligne${sel ? ' sel' : ''}" role="button" tabindex="0" data-doc="${echapperHtml(x.doc.id)}"${sel ? ' aria-current="true"' : ''}>
+    <span class="dc-l-date">${echapperHtml(formatDateFr(x.doc.date))}</span><span class="dc-l-titre">${titreDocumentCirculation(x)}</span>${cartePastille(lib, ton)}
+    <span class="dc-l-sous">${resumeAnimauxDc(x)}${x.alertesViande.length ? ' · <span class="dc-l-rouge">sous délai viande</span>' : ''}${x.change ? ' · modifié depuis la validation' : ''}</span>
+    <span class="dc-l-ech ${tonEch}">${echapperHtml(x.notif.texte)}</span></div>`;
+}
 function renderDocumentsCirculation() {
   pageTitle.textContent = 'Documents de circulation';
   const r = documentsCirculationCalcules(dcEtat.brouillon), c = compteursDocumentsCirculation(r), pc = isDesktopMode();
   const aClasser = importsAClasserEde();
+  if (!FILTRES_DC.some(f => f[0] === dcEtat.filtre)) dcEtat.filtre = 'tous';
+  const docsFiltres = r.docs.filter(x => filtreDocumentDc(x, dcEtat.filtre));
+  const ouvert = pc ? (docsFiltres.find(x => x.doc.id === dcEtat.id) || docsFiltres[0] || null) : null;
+  if (ouvert) dcEtat.id = ouvert.doc.id;
   const bloc = document.createElement('div');
   bloc.className = 'dc-page';
-  bloc.innerHTML = `<div class="prm-note" style="margin:0 0 12px;">Ventes et achats saisis depuis le ${echapperHtml(formatDateFr(dateReferenceEde()))}, regroupés par date et partenaire. ${pc ? 'Ouvrez un document pour le compléter.' : 'Consultation : les documents se complètent sur le PC.'}</div>
+  bloc.innerHTML = `<div class="prm-note" style="margin:0 0 12px;">Ventes et achats saisis depuis le ${echapperHtml(formatDateFr(dateReferenceEde()))}, regroupés par date et partenaire. ${pc ? 'Choisissez un document à gauche pour le compléter.' : 'Consultation : les documents se complètent sur le PC.'}</div>
     <div class="pc-kpis" id="dc-tuiles">${pcKpi('À compléter', c.acompleter, '', 'ambre')}${pcKpi('Complets', c.complets, 'à valider', 'vert')}${pcKpi('Validés', c.valides, '', 'vert')}${pcKpi('À notifier', c.anotifier, 'délai de ' + delaiNotificationEde() + ' jours', 'ambre')}${pcKpi('Délai dépassé', c.depasses, '', tonTuile(c.depasses, 'rouge'))}</div>
+    ${pc ? `<div class="dc-grille"><div class="dc-col-liste">
+      <section class="card" id="dc-liste-pc"><div class="dc-liste-tete"><span class="prm-titre" style="margin:0;">Documents</span><span class="dc-gris">${docsFiltres.length}</span></div>
+        <div class="pc-seg2 dc-filtre" role="group" aria-label="Filtrer les documents">${FILTRES_DC.map(([k, l]) => `<button type="button" class="opt-btn${dcEtat.filtre === k ? ' selected' : ''}" data-val="${k}">${l}</button>`).join('')}</div>
+        <div id="dc-liste">${docsFiltres.length ? docsFiltres.map(x => ligneDocumentPcHtml(x, ouvert && x.doc.id === ouvert.doc.id)).join('') : `<div class="prm-note" style="margin:8px 0 0;">${r.docs.length ? 'Aucun document dans ce filtre.' : 'Aucune vente ni aucun achat depuis cette date.'}</div>`}</div></section>
+    ${aClasser.length ? `<div class="card" id="dc-a-classer" style="margin-top:16px;border-left:5px solid var(--ch-ambre);"><div class="prm-titre" style="margin-bottom:4px;">Imports à classer : achat ou inventaire ? · ${aClasser.length}</div>
+      <div class="prm-note" style="margin:0 0 8px;">Animaux « achetés » importés avant cette question. Rien n'est classé sans vous : achat = entrée à notifier ; inventaire de départ = jamais.</div>
+      ${pc ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;"><button type="button" class="btn btn-secondary btn-petit dc-classer-tous" data-val="achat">Tous en achat</button><button type="button" class="btn btn-secondary btn-petit dc-classer-tous" data-val="inventaire">Tous en inventaire</button></div>` : ''}
+      ${aClasser.map((c, i) => `<div class="dc-hors"><span>${echapperHtml(formatDateFr(c.m.date))} · ${echapperHtml(LIBELLE_CAT_DC[c.cat])} ${echapperHtml(numeroAnimal(c.animal))}</span>${pc ? `<span style="display:flex;gap:8px;"><button type="button" class="btn btn-secondary btn-petit dc-classer" data-i="${i}" data-val="achat">Achat</button><button type="button" class="btn btn-secondary btn-petit dc-classer" data-i="${i}" data-val="inventaire">Inventaire</button></span>` : ''}</div>`).join('')}</div>` : ''}
+    ${r.hors.length ? `<div class="card" id="dc-hors-carte" style="margin-top:16px;"><div class="prm-titre" style="margin-bottom:4px;">Hors document · ${r.hors.length}</div>
+      <div class="prm-note" style="margin:0 0 8px;">Morts (l'équarrisseur notifie le ramassage) et autoconsommation sans abattoir. Ils restent au registre.${pc ? ' Une autoconsommation partie à l\'abattoir : choisissez l\'abattoir, un document est proposé.' : ''}</div>
+      ${r.hors.map(it => ligneHorsDocumentHtml(it, pc)).join('')}</div>` : ''}
+      </div><div class="dc-col-fiche" id="dc-fiche">${ouvert ? '' : '<div class="card"><div class="prm-note" style="margin:0;">Aucun document à afficher.</div></div>'}</div></div>` : `
     ${aClasser.length ? `<div class="card" id="dc-a-classer" style="margin-top:14px;border-left:5px solid var(--ch-ambre);"><div class="prm-titre" style="margin-bottom:4px;">Imports à classer : achat ou inventaire ? · ${aClasser.length}</div>
       <div class="prm-note" style="margin:0 0 8px;">Animaux « achetés » importés avant cette question. Rien n'est classé sans vous : achat = entrée à notifier ; inventaire de départ = jamais.</div>
       ${pc ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;"><button type="button" class="btn btn-secondary btn-petit dc-classer-tous" data-val="achat">Tous en achat</button><button type="button" class="btn btn-secondary btn-petit dc-classer-tous" data-val="inventaire">Tous en inventaire</button></div>` : ''}
@@ -33461,9 +33514,14 @@ function renderDocumentsCirculation() {
     <div id="dc-liste" style="margin-top:14px;">${r.docs.length ? r.docs.map(carteDocumentCirculationHtml).join('') : '<div class="card"><div class="prm-note" style="margin:0;">Aucune vente ni aucun achat depuis cette date.</div></div>'}</div>
     ${r.hors.length ? `<div class="card" id="dc-hors-carte" style="margin-top:14px;"><div class="prm-titre" style="margin-bottom:4px;">Hors document · ${r.hors.length}</div>
       <div class="prm-note" style="margin:0 0 8px;">Morts (l'équarrisseur notifie le ramassage) et autoconsommation sans abattoir. Ils restent au registre.${pc ? ' Une autoconsommation partie à l\'abattoir : choisissez l\'abattoir, un document est proposé.' : ''}</div>
-      ${r.hors.map(it => ligneHorsDocumentHtml(it, pc)).join('')}</div>` : ''}`;
+      ${r.hors.map(it => ligneHorsDocumentHtml(it, pc)).join('')}</div>` : ''}`}`;
   app.appendChild(bloc);
   brancherCartesListe(bloc, carte => { dcEtat.id = carte.dataset.doc; render('document-circulation'); });
+  if (pc) {
+    bloc.querySelectorAll('.dc-ligne').forEach(l => { const ouvrir = () => { dcEtat.id = l.dataset.doc; dcEtat.detailAgneaux = false; render('documents-circulation'); }; l.onclick = ouvrir; l.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); ouvrir(); } }; });
+    bloc.querySelectorAll('.dc-filtre button').forEach(b => b.onclick = () => { dcEtat.filtre = b.dataset.val; render('documents-circulation'); });
+    if (ouvert) ficheDocumentCirculation(bloc.querySelector('#dc-fiche'), ouvert, () => render('documents-circulation'));
+  }
   const classer = (liste, val) => {
     liste.forEach(c => { c.m.importNature = val; });
     saveData(DB); render('documents-circulation');
@@ -33480,27 +33538,79 @@ function renderDocumentsCirculation() {
     afficherSnackAnnuler('Abattoir indiqué · document proposé', () => { if (avant === undefined) delete it.m.abattoir; else it.m.abattoir = avant; saveData(DB); if (currentView === 'documents-circulation') render('documents-circulation'); });
   });
 }
+// N° de travail d'un animal qui sort (brebis, bélier) ; agnelles et agneaux n'en ont pas
+function numeroTravailDc(it) { return it.cat === 'brebis' || it.cat === 'beliers' ? (numeroCourtSieol(it.animal) || '') : ''; }
+// Indicatif d'un agneau compté : celui de son n° national ; n° court ou sans n° saisi : né ici = indicatif de l'exploitation ; inconnu = null (« À vérifier »)
+function indicatifAgneauDc(it) {
+  const c = cleanEid(it.eid || '');
+  const nat = c.length === 15 && c.startsWith('250') ? c.slice(4) : c.length === 11 ? c : null;
+  if (nat) return nat.slice(0, 6);
+  return indicatifMarquageElevage();   // n° court ou sans n° : agneau né ici
+}
+// Agneaux de boucherie comme sur le papier : un nombre par indicatif ; « sans n° » = seulement une ligne grise dans l'appli
+function agneauxParIndicatifDc(comptes) {
+  const parInd = new Map(); let sansNumero = 0; const inconnus = [];
+  comptes.forEach(it => {
+    const ind = indicatifAgneauDc(it);
+    if (!ind) { inconnus.push(it); return; }
+    if (!it.eid) sansNumero++;
+    parInd.set(ind, (parInd.get(ind) || 0) + 1);
+  });
+  return { groupes: [...parInd.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([indicatif, n]) => ({ indicatif, n })), sansNumero, inconnus };
+}
+// Choix Boucherie | Reproduction d'un agneau vendu (PC, document modifiable)
+function choixDestinationDcHtml(x, it, modifiable) {
+  const dest = destinationAgneauDc(it, dcEtat.brouillon);
+  if (agneauVenduDc(it) && x.doc.sens === 'sortie' && modifiable && it.vivant)
+    return `<span class="pc-seg2 dc-dest" data-ref="${echapperHtml(it.ref)}"><button type="button" class="opt-btn${dest === 'boucherie' ? ' selected' : ''}" data-val="boucherie">Boucherie</button><button type="button" class="opt-btn${dest === 'reproduction' ? ' selected' : ''}" data-val="reproduction">Reproduction</button></span>`;
+  return dest ? `<span class="mb-pastille">${dest === 'reproduction' ? 'Reproduction' : 'Boucherie'}</span>` : '';
+}
+// Un animal qui sort (ou qui entre) : n° national, n° de travail, catégorie ; rien d'autre (ni mère, ni naissance)
 function ligneAnimalDcHtml(x, it, modifiable) {
-  const num = it.cat === 'agneaux' ? (it.eid ? numeroOfficielTexte(it.eid) : 'sans n°') : numeroOfficielTexte(it.eid);
-  const travail = it.cat === 'agneaux' ? '' : (numeroCourtSieol(it.animal) || '');
-  const annee = it.eid ? anneeNaissance(it.eid) : null;
-  const dest = it.cat === 'agneaux' ? destinationAgneauDc(it, dcEtat.brouillon) : null;
-  const choixDest = agneauVenduDc(it) && x.doc.sens === 'sortie' && modifiable && it.vivant
-    ? `<span class="pc-seg2 dc-dest" data-ref="${echapperHtml(it.ref)}"><button type="button" class="opt-btn${dest === 'boucherie' ? ' selected' : ''}" data-val="boucherie">Boucherie</button><button type="button" class="opt-btn${dest === 'reproduction' ? ' selected' : ''}" data-val="reproduction">Reproduction</button></span>`
-    : (dest ? `<span class="mb-pastille">${dest === 'reproduction' ? 'Reproduction' : 'Boucherie'}</span>` : '');
+  const num = it.eid ? numeroOfficielTexte(it.eid) : 'sans n°';
+  const travail = numeroTravailDc(it);
   const aVerif = x.aVerifier.includes(it) ? '<span class="mb-pastille ambre">À vérifier : n° national manquant</span>' : '';
   const viande = x.alertesViande.find(a => a.it === it);
   const aPart = modifiable && x.items.length > 1 ? `<button type="button" class="btn btn-secondary btn-petit dc-apart" data-ref="${echapperHtml(it.ref)}">Mettre à part</button>` : '';
-  return `<div class="dc-animal" data-ref="${echapperHtml(it.ref)}"><div><b>${echapperHtml(num || '—')}</b> <span class="dc-gris">${echapperHtml([LIBELLE_CAT_DC[it.cat], travail ? 'n° de travail ' + travail : '', annee ? 'naissance ' + annee : '', it.mereEid && it.cat === 'agneaux' ? 'mère ' + numeroAnimal(it.mereEid) : ''].filter(Boolean).join(' · '))}</span>
+  return `<div class="dc-animal" data-ref="${echapperHtml(it.ref)}"><div><b>${echapperHtml(num || '—')}</b> <span class="dc-gris">${echapperHtml([LIBELLE_CAT_DC[it.cat], travail ? 'n° de travail ' + travail : ''].filter(Boolean).join(' · '))}</span>
     ${viande ? `<div class="dc-alerte-rouge">Sous délai d'attente viande : ${echapperHtml(viande.produits.map(p => p.produit + ' jusqu\'au ' + formatDateFr(p.fin)).join(', '))}</div>` : ''}</div>
-    <div class="dc-animal-acts">${choixDest}${aVerif}${aPart}</div></div>`;
+    <div class="dc-animal-acts">${it.cat === 'agneaux' ? choixDestinationDcHtml(x, it, modifiable) : ''}${aVerif}${aPart}</div></div>`;
+}
+// Même contenu en tableau de la charte (PC)
+function tableauAnimauxDcHtml(x, liste, modifiable) {
+  if (!liste.length) return '<div class="prm-note" style="margin:0;">Aucun.</div>';
+  return `<table class="pc-t dc-table" data-triable="dc-animaux"><tr><th class="l">N° national</th><th class="l">N° de travail</th><th class="l">Catégorie</th><th class="l" data-tri-non></th></tr>
+    ${liste.map(it => {
+      const viande = x.alertesViande.find(a => a.it === it);
+      const acts = [it.cat === 'agneaux' ? choixDestinationDcHtml(x, it, modifiable) : '', x.aVerifier.includes(it) ? '<span class="mb-pastille ambre">À vérifier : n° national manquant</span>' : '',
+        viande ? `<span class="mb-pastille rouge" title="${echapperHtml(viande.produits.map(p => p.produit + ' jusqu\'au ' + formatDateFr(p.fin)).join(', '))}">Sous délai viande</span>` : '',
+        modifiable && x.items.length > 1 ? `<button type="button" class="btn btn-secondary btn-petit dc-apart" data-ref="${echapperHtml(it.ref)}">Mettre à part</button>` : ''].join('');
+      return `<tr class="dc-animal-ligne" data-ref="${echapperHtml(it.ref)}"><td class="l">${echapperHtml(it.eid ? numeroOfficielTexte(it.eid) : 'sans n°')}</td><td class="l">${echapperHtml(numeroTravailDc(it) || '—')}</td><td class="l">${echapperHtml(LIBELLE_CAT_DC[it.cat])}</td><td class="l dc-acts-td"><div class="dc-acts">${acts}</div></td></tr>`;
+    }).join('')}</table>`;
+}
+// Agneaux de boucherie comptés : tableau Indicatif | Nombre (PC) ou lignes (mobile), « dont X sans n° saisi dans Ovilog » en gris, inconnus = à vérifier
+function comptesAgneauxDcHtml(x, pc) {
+  if (!x.comptes.length) return '';
+  const g = agneauxParIndicatifDc(x.comptes);
+  const ind = i => 'FR ' + i;
+  const corps = pc
+    ? `<table class="pc-t dc-table dc-comptes"><tr><th class="l">Indicatif</th><th class="l">Nombre</th></tr>${g.groupes.map(r => `<tr><td class="l">${ind(r.indicatif)}</td><td class="l">${r.n}</td></tr>`).join('')}</table>`
+    : g.groupes.map(r => `<div class="dc-animal dc-compte"><div><b>${ind(r.indicatif)}</b> <span class="dc-gris">${r.n} agneau${r.n > 1 ? 'x' : ''}</span></div></div>`).join('');
+  return `<div class="prm-titre dc-sect">Agneaux de boucherie · ${x.comptes.length}</div>${corps}
+    ${g.sansNumero ? `<div class="dc-gris" id="dc-sans-numero" style="margin-top:6px;">dont ${g.sansNumero} sans n° saisi dans Ovilog</div>` : ''}
+    ${g.inconnus.length ? `<div class="prm-alerte" id="dc-indicatif-inconnu" style="margin:8px 0 0;">À vérifier : ${g.inconnus.length} agneau${g.inconnus.length > 1 ? 'x' : ''} sans indicatif connu (n° à saisir).</div>` : ''}`;
 }
 function renderDocumentCirculation() {
-  const pc = isDesktopMode();
+  if (isDesktopMode()) { render('documents-circulation'); return; }   // PC : liste et fiche côte à côte sur un seul écran
+  pageTitle.textContent = 'Document de circulation';
   const r = documentsCirculationCalcules(dcEtat.brouillon);
   const x = r.docs.find(d => d.doc.id === dcEtat.id);
-  pageTitle.textContent = 'Document de circulation';
   if (!x) { app.innerHTML = '<div class="card"><div class="prm-note" style="margin:0;">Ce document n\'existe plus (mouvements annulés ou regroupés autrement).</div></div>'; return; }
+  ficheDocumentCirculation(app, x, () => render('document-circulation'));
+}
+// Fiche d'un document : mobile = consultation en cartes ; PC = une carte, Transport et Agneaux vendus côte à côte, tableaux de la charte
+function ficheDocumentCirculation(cible, x, redessiner) {
+  const pc = isDesktopMode();
   const d = x.doc, sortie = d.sens === 'sortie', fige = !!(d.valideLe || d.envoyeLe), modifiable = pc && !fige;
   const [lib, ton] = LIBELLE_ETAT_DC[x.etat];
   const partenaires = (DB.acheteurs || []).slice().sort((a, b) => a.localeCompare(b, 'fr'));
@@ -33508,45 +33618,54 @@ function renderDocumentCirculation() {
     ? `<label for="dc-partenaire">${sortie ? 'Acheteur ou destination' : 'Provenance (vendeur)'}</label><select id="dc-partenaire"><option value="">— à choisir —</option>${partenaires.map(n => `<option value="${echapperHtml(n)}"${x.partenaire === n ? ' selected' : ''}>${echapperHtml(n)}</option>`).join('')}<option value="${OPTION_AJOUTER}">Ajouter…</option></select>` : '';
   const val = (v, defaut) => v ? echapperHtml(v) : (defaut || '—');
   const champsSortie = modifiable ? `
-      <div class="prm-champs2"><div><label for="dc-heure">Heure de départ</label><input type="time" id="dc-heure" value="${echapperHtml(d.heure || '')}"></div>
+      <div class="prm-champs2 dc-transport"><div><label for="dc-heure">Heure de départ</label><input type="time" id="dc-heure" value="${echapperHtml(d.heure || '')}"></div>
         <div><label for="dc-transporteur">Transporteur (n° ou nom)</label><div style="display:flex;gap:8px;"><input type="text" id="dc-transporteur" value="${echapperHtml(d.transporteur || '')}" autocomplete="off" style="flex:1;"><button type="button" class="btn btn-secondary btn-petit" id="dc-inconnu" style="width:auto;">Inconnu</button></div></div></div>
       <label for="dc-immat">Immatriculation (facultatif)</label><input type="text" id="dc-immat" value="${echapperHtml(d.immatriculation || '')}" autocomplete="off">
       <label class="dc-case"><input type="checkbox" id="dc-camion-vide"${d.camionVide === true ? ' checked' : ''}><span>Camion vide avant chargement</span></label>
       <label class="dc-case"><input type="checkbox" id="dc-ica"${d.ica === true ? ' checked' : ''}><span>Informations sur la chaîne alimentaire (ICA) transmises</span></label>`
     : `<div class="dc-gris">Heure : ${val(d.heure)} · Transporteur : ${val(d.transporteur)} · Immatriculation : ${val(d.immatriculation)}<br>Camion vide : ${d.camionVide === true ? 'oui' : 'non renseigné'} · ICA : ${d.ica === true ? 'transmises' : 'non cochée'}</div>`;
   const champsEntree = modifiable || (!fige && pc) ? `<label for="dc-heure">Heure d'arrivée (facultatif)</label><input type="time" id="dc-heure" value="${echapperHtml(d.heure || '')}">` : `<div class="dc-gris">Heure d'arrivée : ${val(d.heure)}</div>`;
-  const agneauxModif = sortie && modifiable && x.agneaux.some(i => agneauVenduDc(i) && i.vivant);
-  const lignesListes = x.listes.map(it => ligneAnimalDcHtml(x, it, modifiable)).join('');
-  const lignesComptes = x.comptes.map(it => ligneAnimalDcHtml(x, it, modifiable)).join('');
-  const blocDest = agneauxModif ? `<div class="card" id="dc-destination"><div class="prm-titre" style="margin-bottom:4px;">Agneaux vendus · ${x.agneaux.length}</div>
-      <div class="prm-note" style="margin:0 0 8px;">Boucherie : comptés (un nombre). Reproduction : listés avec leur n° national complet.</div>
+  const vendus = x.agneaux.filter(i => agneauVenduDc(i) && i.vivant);
+  const agneauxModif = sortie && modifiable && vendus.length > 0;
+  const detailAgneaux = agneauxModif && dcEtat.detailAgneaux
+    ? `<div id="dc-detail-agneaux" class="dc-detail">${vendus.map(it => `<div class="dc-animal" data-ref="${echapperHtml(it.ref)}"><div><b>${echapperHtml(it.eid ? numeroOfficielTexte(it.eid) : 'sans n°')}</b></div><div class="dc-animal-acts">${choixDestinationDcHtml(x, it, modifiable)}${x.items.length > 1 ? `<button type="button" class="btn btn-secondary btn-petit dc-apart" data-ref="${echapperHtml(it.ref)}">Mettre à part</button>` : ''}</div></div>`).join('')}</div>` : '';
+  const blocDest = agneauxModif ? `<div id="dc-destination"><div class="prm-titre dc-sect" style="margin-top:0;">Agneaux vendus · ${x.agneaux.length}</div>
+      <div class="prm-note" style="margin:0 0 8px;">Boucherie : comptés par indicatif. Reproduction : listés avec leur n° national.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;"><span>Tous :</span><button type="button" class="btn btn-secondary btn-petit dc-dest-tous" data-val="boucherie" style="width:auto;">Boucherie</button><button type="button" class="btn btn-secondary btn-petit dc-dest-tous" data-val="reproduction" style="width:auto;">Reproduction</button>
         ${x.destAConfirmer ? '<button type="button" class="btn btn-primary btn-petit" id="dc-dest-confirmer" style="width:auto;">Confirmer la destination</button>' : ''}</div>
-      ${x.destAConfirmer ? '<div class="prm-alerte" id="dc-dest-a-confirmer" style="margin:10px 0 0;">Vente d\'agneaux : boucherie par défaut, à confirmer.</div>' : ''}</div>` : (sortie && x.destAConfirmer ? '<div class="prm-alerte" id="dc-dest-a-confirmer">Vente d\'agneaux : boucherie par défaut, à confirmer.</div>' : '');
+      ${x.destAConfirmer ? '<div class="prm-alerte" id="dc-dest-a-confirmer" style="margin:10px 0 0;">Vente d\'agneaux : boucherie par défaut, à confirmer.</div>' : ''}
+      <button type="button" class="tc-lien" id="dc-detail-toggle" style="margin-top:10px;" aria-expanded="${!!dcEtat.detailAgneaux}">${dcEtat.detailAgneaux ? 'Masquer le détail agneau par agneau' : 'Choisir agneau par agneau'}</button>${detailAgneaux}</div>`
+    : (sortie && x.destAConfirmer ? '<div class="prm-alerte" id="dc-dest-a-confirmer">Vente d\'agneaux : boucherie par défaut, à confirmer.</div>' : '');
   const boutons = !pc ? '' : sortie
     ? (d.envoyeLe ? `<button type="button" class="btn btn-secondary" id="dc-annuler-envoi">Annuler « Envoyé »</button>`
       : d.valideLe ? `${x.delegataire ? '' : '<button type="button" class="btn btn-primary" id="dc-envoye">Envoyé à l\'EDE</button>'}<button type="button" class="btn btn-secondary" id="dc-rouvrir">Rouvrir</button>`
       : `<button type="button" class="btn btn-primary" id="dc-valider"${x.etat === 'complet' ? '' : ' disabled'}>Valider</button>`)
     : (d.envoyeLe ? `<button type="button" class="btn btn-secondary" id="dc-annuler-envoi">Annuler « Envoyé »</button>` : `<button type="button" class="btn btn-primary" id="dc-envoye"${x.etat === 'complet' ? '' : ' disabled'}>Envoyé</button>`);
   const aPartRattacher = pc && d.aPart && !fige ? '<button type="button" class="btn btn-secondary" id="dc-rattacher">Remettre avec les autres</button>' : '';
-  const bloc = document.createElement('div');
-  bloc.className = 'dc-page';
-  bloc.innerHTML = `<div class="card" id="dc-entete">
-      <div class="pc-cardhead"><p class="brd-ttl" style="margin:0;">${echapperHtml(formatDateFr(d.date))} · ${titreDocumentCirculation(x)}</p>${cartePastille(lib, ton)}</div>
+  const nbViande = x.alertesViande.length;
+  const entete = `<div class="pc-cardhead"><p class="brd-ttl" style="margin:0;">${echapperHtml(formatDateFr(d.date))} · ${titreDocumentCirculation(x)}</p>${cartePastille(lib, ton)}</div>
       <div class="dc-gris" style="margin-top:4px;">${x.def ? echapperHtml(x.def.court) + (numeroPartenaireTexte(x.partenaire) ? ' · ' + echapperHtml(numeroPartenaireTexte(x.partenaire)) : '') : ''}${x.partenaire && pc ? ` <button type="button" class="btn btn-secondary btn-petit" id="dc-fiche-partenaire" style="width:auto;">Fiche partenaire</button>` : ''}</div>
       <div style="margin-top:8px;">${cartePastille(echapperHtml(x.notif.texte), x.notif.ton === 'neutre' ? '' : x.notif.ton)}</div>
-      ${x.etat === 'acompleter' ? `<div class="prm-alerte" id="dc-manques" style="margin:10px 0 0;">Manque : ${echapperHtml(x.manques.concat(x.aVerifier.length ? [x.aVerifier.length + ' agneau' + (x.aVerifier.length > 1 ? 'x' : '') + ' à vérifier (n° national)'] : []).join(', '))}.</div>` : ''}
+      ${x.etat === 'acompleter' ? `<div class="prm-alerte" id="dc-manques" style="margin:10px 0 0;">Manque : ${echapperHtml(x.manques.concat(x.aVerifier.length ? [x.aVerifier.length + ' agneau' + (x.aVerifier.length > 1 ? 'x' : '') + ' à vérifier (n° national ou indicatif)'] : []).join(', '))}.</div>` : ''}
       ${x.change ? '<div class="prm-alerte" style="margin:10px 0 0;">Des mouvements ont changé depuis la validation : rouvrez le document pour le relire.</div>' : ''}
-      ${x.alertesViande.length ? `<div class="dc-alerte-rouge" id="dc-alerte-viande">${x.alertesViande.length} animal${x.alertesViande.length > 1 ? 'ux' : ''} encore sous délai d'attente viande.</div>` : ''}
-    </div>
+      ${nbViande ? `<div class="dc-alerte-rouge" id="dc-alerte-viande">${nbViande} animal${nbViande > 1 ? 'ux' : ''} encore sous délai d'attente viande : ${echapperHtml(x.alertesViande.map(a => a.it.eid ? numeroOfficielTexte(a.it.eid) : 'agneau sans n°').join(', '))}.</div>` : ''}`;
+  const titreAnimaux = sortie ? 'Animaux listés · ' + x.listes.length : 'Animaux achetés · ' + x.items.length;
+  const bloc = document.createElement('div');
+  bloc.className = 'dc-page' + (pc ? ' dc-fiche-pc' : '');
+  bloc.innerHTML = pc
+    ? `<div class="card dc-fiche" id="dc-entete">${entete}
+        <div class="dc-cols${blocDest ? '' : ' dc-cols-1'}"><div id="dc-champs"><div class="prm-titre dc-sect" style="margin-top:0;">${sortie ? 'Transport' : 'Arrivée'}</div>${champPartenaire}${sortie ? champsSortie : champsEntree}</div>${blocDest ? `<div>${blocDest}</div>` : ''}</div>
+        <div id="dc-animaux"><div class="prm-titre dc-sect">${titreAnimaux}</div>${tableauAnimauxDcHtml(x, sortie ? x.listes : x.items, modifiable)}${sortie ? comptesAgneauxDcHtml(x, true) : ''}</div>
+        ${boutons || aPartRattacher ? `<div class="prm-actions prm-actions-fin" id="dc-actions">${aPartRattacher}${boutons}</div>` : ''}</div>`
+    : `<div class="card" id="dc-entete">${entete}</div>
     <div class="card" id="dc-champs">${champPartenaire}${sortie ? champsSortie : champsEntree}</div>
-    ${blocDest}
-    <div class="card" id="dc-animaux"><div class="prm-titre" style="margin-bottom:6px;">${sortie ? 'Animaux listés · ' + x.listes.length : 'Animaux achetés · ' + x.items.length}</div>${lignesListes || '<div class="prm-note" style="margin:0;">Aucun.</div>'}
-      ${sortie && x.comptes.length ? `<div class="prm-titre" style="margin:14px 0 6px;">Agneaux de boucherie comptés · ${x.comptes.length}</div>${lignesComptes}` : ''}</div>
-    ${boutons || aPartRattacher ? `<div class="prm-actions prm-actions-fin" id="dc-actions">${aPartRattacher}${boutons}</div>` : ''}`;
-  app.appendChild(bloc);
+    ${blocDest ? `<div class="card">${blocDest}</div>` : ''}
+    <div class="card" id="dc-animaux"><div class="prm-titre" style="margin-bottom:6px;">${titreAnimaux}</div>${(sortie ? x.listes : x.items).map(it => ligneAnimalDcHtml(x, it, modifiable)).join('') || '<div class="prm-note" style="margin:0;">Aucun.</div>'}
+      ${sortie ? comptesAgneauxDcHtml(x, false) : ''}</div>`;
+  cible.appendChild(bloc);
+  if (pc) brancherEntetesTriables(bloc, 'dc-animaux', redessiner);
+  if (bloc.querySelector('#dc-detail-toggle')) bloc.querySelector('#dc-detail-toggle').onclick = () => { dcEtat.detailAgneaux = !dcEtat.detailAgneaux; redessiner(); };
   const $d = id => bloc.querySelector('#' + id);
-  const redessiner = () => render('document-circulation');
   const instant = () => copieProfonde(documentsCirculationStock());
   const restaurer = (g, msg) => afficherSnackAnnuler(msg, () => { DB.documentsCirculation = g; saveData(DB); if (['document-circulation', 'documents-circulation'].includes(currentView)) render(currentView); });
   const ecrireChamps = champs => { const nd = materialiserDocumentCirculation(x, champs); dcEtat.id = nd.id; x.doc = nd; x.enregistre = true; saveData(DB); };
@@ -33568,7 +33687,7 @@ function renderDocumentCirculation() {
     if (destinationConfirmeeDc(it)) {
       const avant = it.m.destination, g = instant();
       it.m.destination = b.dataset.val; saveData(DB); redessiner();
-      afficherSnackAnnuler('Destination changée', () => { it.m.destination = avant; DB.documentsCirculation = g; saveData(DB); if (currentView === 'document-circulation') render('document-circulation'); });
+      afficherSnackAnnuler('Destination changée', () => { it.m.destination = avant; DB.documentsCirculation = g; saveData(DB); if (['document-circulation', 'documents-circulation'].includes(currentView)) render(currentView); });
       return;
     }
     dcEtat.brouillon = Object.assign({}, dcEtat.brouillon, { [ref]: b.dataset.val }); redessiner();
@@ -33583,7 +33702,7 @@ function renderDocumentCirculation() {
     x.agneaux.forEach(i => { if (agneauVenduDc(i) && i.vivant && !destinationConfirmeeDc(i)) { touches.push(i); i.m.destination = destinationAgneauDc(i, dcEtat.brouillon); } });
     if (!x.enregistre) ecrireChamps({}); else saveData(DB);
     redessiner();
-    afficherSnackAnnuler('Destination confirmée · ' + touches.length + ' agneau' + (touches.length > 1 ? 'x' : ''), () => { touches.forEach(i => { delete i.m.destination; }); DB.documentsCirculation = g; saveData(DB); if (currentView === 'document-circulation') render('document-circulation'); });
+    afficherSnackAnnuler('Destination confirmée · ' + touches.length + ' agneau' + (touches.length > 1 ? 'x' : ''), () => { touches.forEach(i => { delete i.m.destination; }); DB.documentsCirculation = g; saveData(DB); if (['document-circulation', 'documents-circulation'].includes(currentView)) render(currentView); });
   };
   bloc.querySelectorAll('.dc-apart').forEach(b => b.onclick = () => {
     const ref = b.dataset.ref, it = x.items.find(i => i.ref === ref);
