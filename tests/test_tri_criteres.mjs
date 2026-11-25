@@ -58,5 +58,80 @@ eq(d.lignes, [['71001', false, 'garder', 'ecarter', true], ['71003', true, 'ecar
 eq([d.comptes, d.autre], [[1, 1, 1], 0], 'compteurs ; règles propres à la campagne');
 check(!erreurs.length, 'aucune erreur JS ' + erreurs.join(' | '));
 console.log('OK 1-2 moteur des critères');
+
+// ---- 3. écran PC : règles, exceptions, colonnes, sélection, décisions, Valider, exports, lot de recherche
+{
+  const pc = await (await browser.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
+  pc.on('pageerror', e => erreurs.push(e.message));
+  const dialogues = []; pc.on('dialog', d => { dialogues.push(d.type()); d.accept(); });
+  await pc.addInitScript(() => { window.electronAPI = { isDesktop: true, version: '1.0.test' }; });
+  await pc.goto(URL_APP, { waitUntil: 'load' }); await pc.waitForTimeout(300);
+  await pc.evaluate(() => {
+    DB = migrateData({}); window.__saves = 0; saveData = function () { window.__saves++; return true; }; DB.campagneDebut = 2026; DB.campagneInitialisee = true;
+    const mere = (i, date, code, nb) => ({ id: 'm' + i, eid: '25000000451' + String(1000 + i), numeroCourtTravailSieol: String(600 + i), statut: 'active', mouvements: [], sanitaire: [],
+      agnelages: [{ id: 'a' + i, date, campagne: 2026, codeRepro: code, lambs: Array.from({ length: nb }, (_, k) => ({ id: 'l' + i + k, eid: '2500000045' + String(71000 + i * 3 + k), sexe: k === 0 ? 'Femelle' : 'Mâle' })) }] });
+    DB.brebis = [mere(1, '2026-11-02', 'IA', 2), mere(2, '2026-11-04', 'MN', 1), mere(3, '2026-11-19', 'IA', 1)];
+    DB.lactationModele = [{ eid: DB.brebis[0].eid, campagne: 2025, lactationTotale: 412, classeParQuart: 1 }, { eid: DB.brebis[1].eid, campagne: 2025, lactationTotale: 318, classeParQuart: 4 }, { eid: DB.brebis[2].eid, campagne: 2025, lactationTotale: 318, classeParQuart: 4 }];
+    DB.agnelles = []; DB.lots = [];
+    window.__xl = []; window.__f = [];
+    buildXlsxWorkbook = async (f) => { window.__xl.push(JSON.parse(JSON.stringify(f))); return new Uint8Array([1]); };
+    saveOrShareBinaryFile = async (n, b) => { window.__f.push({ n, b: Array.from(b) }); };
+    triPcEtat = null; render('agnelles');
+  });
+  const res = () => pc.evaluate(() => [...document.querySelectorAll('#ta-table-atrier tr[data-eid]')].map(r => [r.children[1].textContent, r.className.includes('tc-refusee') ? 'R' : 'A']));
+  eq(await res(), [['71003', 'A'], ['71006', 'A'], ['71009', 'A']], 'sans règle : toutes acceptées');
+  eq(await pc.evaluate(() => DB.criteresTriAgnelles === undefined), true, 'aucun seuil préréglé, rien d\'écrit');
+  // règle « classe = 4 » par l'éditeur
+  await pc.selectOption('.tc-crit[data-i="0"]', 'classe'); await pc.selectOption('.tc-op[data-i="0"]', 'egale');
+  await pc.click('#tc-enregistrer');
+  check(await pc.isVisible('#tc-editeur-err'), 'condition incomplète : message, rien d\'ajouté');
+  await pc.selectOption('.tc-val[data-i="0"]', '4'); await pc.click('#tc-enregistrer');
+  eq([await res(), await pc.evaluate(() => criteresTriCampagne(2026).regles.length)], [[['71003', 'A'], ['71006', 'R'], ['71009', 'R']], 1], 'règle ajoutée : classe 4 refusées');
+  // exception de CETTE règle : lactation au moins 300 L ; puis règle de date sans exception
+  await pc.click('.tc-ajout-exc');
+  await pc.selectOption('.tc-crit[data-i="0"]', 'lactation'); await pc.selectOption('.tc-op[data-i="0"]', 'auMoins'); await pc.fill('.tc-val[data-i="0"]', '300'); await pc.click('#tc-enregistrer');
+  eq(await res(), [['71003', 'A'], ['71006', 'A'], ['71009', 'A']], 'exception : classe 4 à 318 L repêchée');
+  await pc.selectOption('.tc-crit[data-i="0"]', 'naissance'); await pc.selectOption('.tc-op[data-i="0"]', 'apres'); await pc.fill('.tc-val[data-i="0"]', '2026-11-15'); await pc.click('#tc-enregistrer');
+  eq(await res(), [['71003', 'A'], ['71006', 'A'], ['71009', 'R']], 'règle de date : l\'exception de la 1re règle ne la lève pas (classe 4, 318 L, née le 19/11 = refusée)');
+  eq(await pc.evaluate(() => [...document.querySelectorAll('.tc-tuiles .tuile-pc')].map(t => t.innerText.replace(/\s+/g, ' ').trim())), ['Femelles nées à trier 3', 'Acceptées 2', 'Refusées 1', 'Décisions forcées 0'], 'tuiles');
+  // supprimer puis Annuler
+  await pc.click('.tc-suppr >> nth=1'); eq((await res())[2][1], 'A', 'règle supprimée');
+  await pc.click('#sup-snack-annuler'); eq((await res())[2][1], 'R', 'Annuler : règle remise');
+  // colonnes : Motif masquée au départ, affichée au clic
+  check(await pc.evaluate(() => ![...document.querySelectorAll('#ta-table-atrier th')].some(t => t.textContent === 'Motif')), 'Motif masquée au départ');
+  await pc.click('.tc-chip[data-col="motif"]');
+  check(/Née après le 15-11-2026/.test(await pc.evaluate(() => document.querySelector('#ta-table-atrier tr[data-eid="' + DB.brebis[2].agnelages[0].lambs[0].eid + '"]').textContent)), 'Motif affiché : la règle qui refuse');
+  // tri par en-tête (composant commun)
+  await pc.click('#ta-table-atrier .tt-tete[data-col="res"]');
+  eq((await res()).map(r => r[1]), ['A', 'A', 'R'], 'tri par Résultat');
+  // décision forcée (bleu), sans rien écrire sur les agnelles
+  await pc.click('.tc-dec[data-eid="' + await pc.evaluate(() => DB.brebis[0].agnelages[0].lambs[0].eid) + '"] button[data-val="ecarter"]');
+  check(await pc.evaluate(() => document.querySelectorAll('.tc-force').length === 1 && getComputedStyle(document.querySelector('.tc-force')).color === getComputedStyle(document.body).getPropertyValue('--ch-bleu').trim().replace(/^#(..)(..)(..)$/, (m, r, g, b) => `rgb(${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)})`) && DB.agnelles.length === 0 && !DB.brebis[0].agnelages[0].lambs[0].triStatut), 'décision forcée affichée en bleu, rien d\'écrit sur l\'agnelle');
+  // sélection : 2 cochées, impression « Sélectionnées (2) », exports
+  await pc.click('.tc-sel >> nth=0'); await pc.click('.tc-sel >> nth=1');
+  check(/Sélectionnées \(2\)/.test(await pc.textContent('.tc-imprimer')), 'Sélectionnées (2)');
+  await pc.click('.tc-imprimer button[data-val="sel"]');
+  await pc.click('#tc-export'); await pc.click('#tc-export-pdf'); await pc.waitForTimeout(150);
+  const xl = await pc.evaluate(() => window.__xl[0][0]);
+  eq([xl.rows[0], xl.rows.length], [['Agnelle', 'Née le', 'Portée', 'Repro', 'Mère', 'Classe', 'Lact. mère', 'Résultat', 'Motif', 'Décision'], 3], 'Excel : colonnes affichées, les 2 sélectionnées');
+  const pdf = await pc.evaluate(() => { const f = window.__f.find(x => /\.pdf$/.test(x.n)); return { n: f.n, t: new TextDecoder('latin1').decode(new Uint8Array(f.b)) }; });
+  check(/tri-agnelles-criteres_.*\.pdf/.test(pdf.n) && /MediaBox \[0 0 595/.test(pdf.t), 'PDF en portrait A4 : ' + pdf.n);
+  check(await pc.evaluate(() => [...document.querySelectorAll('.tc-actions .btn')].map(b => b.textContent + ':' + (b.classList.contains('btn-primary') ? 'vert' : 'blanc')).join('|')) === 'Export Excel:blanc|Export PDF:blanc|Créer un lot de recherche:blanc|Valider le tri:vert', 'boutons : Export Excel puis Export PDF (blancs), Valider le tri seul bouton vert');
+  // lot de recherche à partir des cochées
+  await pc.click('#tc-lot'); check(await pc.isVisible('#creer-lot-recherche'), 'fenêtre « Créer un lot de recherche »');
+  await pc.click('#lr-ok');
+  eq(await pc.evaluate(() => DB.lots.map(l => [l.nom, l.membres.length])), [['Agnelles du tri ' + await pc.evaluate(() => { const d = new Date(); return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0'); }), 2]], 'lot créé avec les 2 agnelles cochées (décisions mêlées : nom daté)');
+  await pc.click('#sup-snack-annuler'); eq(await pc.evaluate(() => DB.lots.length), 0, 'Annuler : lot retiré');
+  // Valider le tri : message de la charte, puis Annuler = état exact d'avant
+  const avant = await pc.evaluate(() => JSON.stringify(DB.brebis));
+  await pc.click('#tc-valider');
+  check(/1 agnelle gardée, 2 écartées/.test(await pc.textContent('#question-charte')), 'Valider : 1 gardée (71006), 2 écartées (71003 forcée, 71009 refusée)');
+  await pc.click('#qc-oui');
+  eq(await pc.evaluate(() => [DB.agnelles.map(a => a.eid.slice(-5)), DB.brebis.flatMap(b => b.agnelages[0].lambs).filter(l => l.sexe === 'Femelle').map(l => l.triStatut)]), [['71006'], ['écartée', 'gardée', 'écartée']], 'tri appliqué');
+  await pc.click('#sup-snack-annuler');
+  eq(await pc.evaluate(a => [DB.agnelles.length, JSON.stringify(DB.brebis) === a], avant), [0, true], 'Annuler : état exact d\'avant');
+  eq(dialogues, [], 'aucune boîte native (confirm / alert)');
+}
+console.log('OK 3 écran PC : règles et exceptions, colonnes, tri, sélection, décisions forcées, exports, lot, Valider');
 await browser.close();
 console.log('test_tri_criteres : OK');

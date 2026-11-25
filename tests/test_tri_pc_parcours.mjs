@@ -45,7 +45,7 @@ for (const largeur of [1200, 1400]) {
   // pas de scan sur PC : aucun libellé « Scanner » ni « bip »
   check(await page.evaluate(() => !/scann|bip/i.test(document.getElementById('app').innerText)), largeur + ' px : aucun libellé « Scanner » ni « bip » sur PC');
   // origine en code seul (aucune légende, aucune infobulle), « — » pour une mère vendue
-  const orig = await page.evaluate(() => [...document.querySelectorAll('#ta-table-atrier tr[data-eid]')].map(r => [r.children[0].textContent, r.children[4].textContent.trim(), r.children[4].querySelector('[title]') ? 'title' : '']));
+  const orig = await page.evaluate(() => [...document.querySelectorAll('#ta-table-atrier tr[data-eid]')].map(r => [r.children[1].textContent, r.children[4].textContent.trim(), r.children[4].querySelector('[title]') ? 'title' : '']));   // À trier = tri par critères : case, Agnelle, Née le, Portée, Repro
   check(JSON.stringify(orig) === JSON.stringify([['60003', 'IA', ''], ['60004', 'EP', ''], ['60006', 'RE', ''], ['60008', '—', '']]), largeur + ' px : origine IA / EP / RE, « — » mère vendue, sans infobulle : ' + JSON.stringify(orig));
   check(await page.evaluate(() => !/Insémination|Monte naturelle|Éponge/.test(document.getElementById('app').innerText) && !!document.querySelector('.tri-origine[aria-label="Insémination artificielle"]')), 'libellé complet seulement en accessibilité (aria-label), aucune légende à l\'écran');
   // saisie : Entrée sélectionne sans valider
@@ -55,21 +55,23 @@ for (const largeur of [1200, 1400]) {
   check(await page.evaluate(() => document.querySelectorAll('tr.sel').length) === 1 && await page.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), largeur + ' px : Entrée sélectionne la ligne, rien n\'est validé');
   await page.fill('#ta-q', await page.evaluate(() => E(6, 7))); await page.press('#ta-q', 'Enter');
   check(/Écartées/.test(await page.evaluate(() => document.querySelector('.tri-onglet.active').textContent)) && await page.evaluate(() => document.querySelector('tr.sel').dataset.eid === E(6, 7)), 'un EID complet saisi trouve l\'écartée dans son onglet');
-  // Garder / Écarter / Annuler
+  // À trier = tri par critères : décision forcée (Écarter), puis Valider le tri (message de la charte) et Annuler
   await ouvrir(); confirms.length = 0;
-  await page.click('.ta-garder >> nth=0');
-  check(confirms.length === 0 && await page.evaluate(() => DB.agnelles.length) === 3 && /gardée/.test(await page.evaluate(() => document.getElementById('tri-toast').textContent)), largeur + ' px : Garder en un geste, bandeau « Annuler »');
-  await page.click('#tri-toast-annuler'); check(await page.evaluate(() => DB.agnelles.length) === 2, 'Annuler');
-  await page.click('.ta-ecarter >> nth=0'); check(await page.evaluate(() => DB.brebis.flatMap(b => b.agnelages.flatMap(a => a.lambs)).filter(x => x.triStatut === 'écartée').length) === 2, 'Écarter');
-  await page.click('#tri-toast-annuler'); check(await page.evaluate(() => DB.brebis.flatMap(b => b.agnelages.flatMap(a => a.lambs)).filter(x => x.triStatut === 'écartée').length) === 1, 'Annuler l\'écartement');
+  await page.click('.tc-dec button[data-val="ecarter"] >> nth=0');
+  check(await page.evaluate(() => DB.agnelles.length) === 2 && await page.isVisible('.tc-force'), largeur + ' px : décision forcée, rien d\'écrit sur les agnelles');
+  await page.click('#tc-valider'); await page.click('#qc-oui');
+  const ecartees = () => page.evaluate(() => DB.brebis.flatMap(b => b.agnelages.flatMap(a => a.lambs)).filter(x => x.triStatut === 'écartée').length);
+  check(confirms.length === 0 && await page.evaluate(() => DB.agnelles.length) === 5 && await ecartees() === 2, largeur + ' px : Valider applique les décisions (3 gardées, 1 écartée de plus)');
+  await page.click('#sup-snack-annuler');
+  check(await page.evaluate(() => DB.agnelles.length) === 2 && await ecartees() === 1, 'Annuler : état d\'avant');
   // RESTAURATION EXACTE : Reconsidérer une gardée qui porte des saisies (confirmation) puis Annuler
   await ouvrir('gardees'); await sansCoupure('Gardées');
   await page.evaluate(() => { window.__fiches = JSON.stringify(DB.agnelles); window.__lambs = JSON.stringify([1, 2].map(n => findLambByEid(E(6, n)))); });
-  reponse = false; confirms.length = 0;
+  confirms.length = 0;
   await page.click('.ta-reconsiderer[data-eid="' + await page.evaluate(() => E(6, 2)) + '"]');
-  check(confirms.length === 1 && await page.evaluate(() => DB.agnelles.length) === 2, largeur + ' px : fiche avec soins, notes, mouvements : confirmation ; refus = rien');
-  reponse = true;
-  await page.click('.ta-reconsiderer[data-eid="' + await page.evaluate(() => E(6, 2)) + '"]');
+  check(confirms.length === 0 && await page.isVisible('#question-charte') && await page.evaluate(() => DB.agnelles.length) === 2, largeur + ' px : fiche avec soins, notes, mouvements : message de la charte ; rien avant la réponse');
+  await page.click('#qc-non'); check(await page.evaluate(() => DB.agnelles.length) === 2, 'refus = rien');
+  await page.click('.ta-reconsiderer[data-eid="' + await page.evaluate(() => E(6, 2)) + '"]'); await page.click('#qc-oui');
   check(await page.evaluate(() => DB.agnelles.map(a => a.id).join()) === 'a1', 'accord : la fiche quitte les gardées');
   await page.click('#tri-toast-annuler');
   const apres = await page.evaluate(() => ({ fiches: JSON.stringify(DB.agnelles) === window.__fiches, lambs: JSON.stringify([1, 2].map(n => findLambByEid(E(6, n)))) === window.__lambs, ordre: DB.agnelles.map(a => a.id).join() }));
@@ -79,17 +81,19 @@ for (const largeur of [1200, 1400]) {
   const labels = await page.evaluate(() => [...document.querySelectorAll('.tri-pc-exports button')].map(b => [b.textContent, b.className]));
   check(JSON.stringify(labels) === JSON.stringify([['Export Excel', 'btn btn-secondary'], ['Export PDF', 'btn btn-primary']]), 'boutons : « Export Excel » (blanc) puis « Export PDF » (vert)');
   await page.evaluate(() => { window.__noms = []; window.__xl = []; buildXlsxWorkbook = async (f) => { window.__xl.push(f); return new Uint8Array([1]); }; saveOrShareBinaryFile = async (nom, bytes) => { window.__noms.push(nom); window.__pdf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes); }; });
-  for (const [onglet, xlsx, pdf] of [['aTrier', 'feuille-de-tri-agnelles_2026-10-03.xlsx', 'feuille-de-tri-agnelles_2026-10-03.pdf'], ['gardees', 'agnelles-gardees-sieol_2026-10-03.xlsx', 'agnelles-gardees-sieol_2026-10-03.pdf'], ['ecartees', 'agnelles-ecartees_2026-10-03.xlsx', 'chantier-de-tri_ecartees_2026-10-03.pdf']]) {
+  for (const [onglet, xlsx, pdf] of [['aTrier', 'tri-agnelles-criteres_2026-10-03.xlsx', 'tri-agnelles-criteres_2026-10-03.pdf'], ['gardees', 'agnelles-gardees-sieol_2026-10-03.xlsx', 'agnelles-gardees-sieol_2026-10-03.pdf'], ['ecartees', 'agnelles-ecartees_2026-10-03.xlsx', 'chantier-de-tri_ecartees_2026-10-03.pdf']]) {
     await page.evaluate((o) => { triPcEtat.onglet = o; render('agnelles'); window.__noms = []; }, onglet);
-    await page.click('#ta-export'); await page.waitForTimeout(80); await page.click('#ta-export-pdf'); await page.waitForTimeout(150);
+    const [bx, bp] = onglet === 'aTrier' ? ['#tc-export', '#tc-export-pdf'] : ['#ta-export', '#ta-export-pdf'];   // À trier = tri par critères
+    await page.click(bx); await page.waitForTimeout(80); await page.click(bp); await page.waitForTimeout(150);
     check(JSON.stringify(await page.evaluate(() => window.__noms)) === JSON.stringify([xlsx, pdf]), largeur + ' px : exports de l\'onglet ' + onglet + ' : ' + JSON.stringify(await page.evaluate(() => window.__noms)));
     const octets = await page.evaluate(() => Array.from(window.__pdf));
     const r = lirePdfMots(octets);
     const txt = r.mots.join(' ');
-    const titre = { aTrier: /Feuille de tri des agnelles/, gardees: /Agnelles gardées · liste SIEOL/, ecartees: /Chantier de tri · Agnelles écartées/ }[onglet];
+    const titre = { aTrier: /Tri des agnelles par critères/, gardees: /Agnelles gardées · liste SIEOL/, ecartees: /Chantier de tri · Agnelles écartées/ }[onglet];
     const tuiles = /À trier/.test(txt) && /Gardées/.test(txt) && /Écartées/.test(txt);
     check(r.pages === 1 && r.tailles[0][0] < r.tailles[0][1] && titre.test(txt) && (onglet === 'ecartees' ? tuiles : !/Écartées/.test(txt)) && /Page 1\/1/.test(txt) && /Campagne 2027/.test(txt) && /Ovilog/.test(txt) && r.vert > 0, largeur + ' px : PDF « ' + onglet + ' » : portrait (feuille A4 remplie), titre de l\'onglet (feuille de tri, liste SIEOL, écartées), tuiles seulement pour les écartées, pied « Page 1/1 », bandeau vert : ' + txt.slice(0, 200));
-    if (onglet === 'aTrier') { check(['N°', 'Naissance', 'Mode', 'Portée', 'Mère', 'classe', 'lact', 'Père', 'ISOL', 'Garder', 'Écarter', 'Notes'].every(m => r.mots.some(w => w.startsWith(m))) && r.mots.includes('IA') && r.mots.includes('EP') && r.mots.includes('RE'), 'PDF À trier (feuille de tri) : en-têtes, cases Garder / Écarter, Notes, codes d\'origine IA / EP / RE'); if (largeur === 1200) pdfPc = octets; }
+    if (onglet === 'aTrier') { check(['Agnelle', 'Née', 'Portée', 'Repro', 'Mère', 'Classe', 'Lact', 'Résultat', 'Décision'].every(m => r.mots.some(w => w.startsWith(m))) && r.mots.includes('IA') && r.mots.includes('EP') && r.mots.includes('RE'), 'PDF À trier (feuille de tri) : en-têtes, cases Garder / Écarter, Notes, codes d\'origine IA / EP / RE'); }
+    if (onglet === 'gardees' && largeur === 1200) pdfPc = octets;   // même PDF PC / mobile : la Liste SIEOL (À trier PC = tri par critères, sans équivalent mobile)
   }
   await page.context().close();
   console.log('OK ' + largeur + ' px : saisie clavier (Entrée = sélection), tableau sans coupure, origine en code seul, Garder / Écarter / Reconsidérer + Annuler, fiche restaurée exactement, exports Excel par onglet et PDF charte.');
@@ -99,7 +103,7 @@ const mob = await (await browser.newContext({ viewport: { width: 390, height: 90
 await mob.clock.setFixedTime(new Date('2026-10-03T09:00:00'));
 await mob.goto(URL_APP, { waitUntil: 'load' }); await mob.waitForTimeout(300);
 await mob.evaluate(JEU);
-const octetsMob = await mob.evaluate(() => Array.from(buildTriAgnellesPdfBytes('aTrier', triAgnellesDonnees())));
+const octetsMob = await mob.evaluate(() => { const D = triAgnellesDonnees(); return Array.from(buildTriAgnellesPdfBytes('gardees', D, D.gardees)); });
 check(octetsMob.length === pdfPc.length && octetsMob.every((v, i) => v === pdfPc[i]), 'le PDF est identique octet pour octet sur PC et sur mobile');
 console.log('OK PDF identique sur PC et mobile.');
 await browser.close();

@@ -36,7 +36,7 @@ for (const bureau of [true, false]) {
   await p.evaluate(() => { window.__xl = []; window.__f = []; buildXlsxWorkbook = async (f) => { window.__xl.push(JSON.parse(JSON.stringify(f))); return new Uint8Array([1]); }; saveOrShareBinaryFile = async (n, b) => { window.__f.push({ n, b: Array.from(b) }); }; });
   for (const onglet of ['aTrier', 'gardees', 'ecartees']) {
     await p.evaluate((o) => { if (isDesktopMode()) { triPcEtat = null; render('agnelles'); triPcEtat.onglet = o; } else triMobileOnglet = o; render('agnelles'); window.__xl = []; window.__f = []; }, onglet);
-    const ids = bureau ? ['#ta-export', '#ta-export-pdf'] : ['#tm-export-xlsx', '#tm-export-pdf'];
+    const ids = bureau ? (onglet === 'aTrier' ? ['#tc-export', '#tc-export-pdf'] : ['#ta-export', '#ta-export-pdf']) : ['#tm-export-xlsx', '#tm-export-pdf'];   // PC À trier : tri par critères
     const actif = await p.evaluate((i) => !document.querySelector(i[0]).disabled && !document.querySelector(i[1]).disabled, ids);
     if (onglet === 'ecartees') { check(!actif, nom + ' : aucune écartée, exports inactifs'); continue; }
     check(actif, nom + ' : exports présents et actifs (' + onglet + ')');
@@ -45,7 +45,9 @@ for (const bureau of [true, false]) {
   }
   await p.context().close();
 }
-const T = tables.PCaTrier, G = tables.PCgardees;
+const T = tables.mobileaTrier, G = tables.PCgardees;
+// PC À trier : tri par critères (colonnes affichées, ordre de l'écran)
+eq([tables.PCaTrier.feuille, tables.PCaTrier.noms, tables.PCaTrier.rows[0]], ['Tri des agnelles', ['tri-agnelles-criteres_2026-11-20.xlsx', 'tri-agnelles-criteres_2026-11-20.pdf'], ['Agnelle', 'Née le', 'Portée', 'Repro', 'Mère', 'Classe', 'Lact. mère', 'Résultat', 'Décision']], 'PC À trier : export du tri par critères');
 eq([T.feuille, T.noms], ['Feuille de tri', ['feuille-de-tri-agnelles_2026-11-20.xlsx', 'feuille-de-tri-agnelles_2026-11-20.pdf']], 'À trier : feuille « Feuille de tri », fichiers');
 eq(T.rows, [["N° d'ordre", 'Naissance', 'Mode repro', 'Portée', 'Mère n° de travail', 'Mère classe', 'Mère lact. N-1 (L)', 'Père code IA', 'ISOL père', 'Garder', 'Écarter', 'Notes'],
   ['71024', '05-10-2026', 'IA', '2', '902', '—', '—', '12345', '112', '', '', ''],
@@ -56,7 +58,7 @@ eq(G.rows, [["N° d'ordre", 'N° officiel', 'Naissance', 'Mode repro', 'Portée'
   ['70045', 'FR 000123 70045', '—', '—', '—', '—', 'FR 000123 60012', '—', '—'],
   ['71032', 'FR 000456 71032', '06-10-2026', 'MN', '2', '—', 'FR 000456 68117', '—', '—']],
   'Liste SIEOL : 9 colonnes, même ordre que l\'écran (achetée entrée le 01-10, puis née le 06-10) ; achetée : n° de la mère saisi à l\'achat, le reste « — »');
-for (const o of ['aTrier', 'gardees']) {
+for (const o of ['gardees']) {
   eq(tables['mobile' + o].rows, tables['PC' + o].rows, 'mobile = PC, mêmes lignes (' + o + ')');
   eq(tables['mobile' + o].pdf, tables['PC' + o].pdf, 'mobile = PC, même PDF (' + o + ')');
 }

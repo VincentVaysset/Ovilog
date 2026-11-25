@@ -62,7 +62,7 @@ async function ouvrir(bureau) {
   return p;
 }
 const ids = { mobile: ['#tm-export-pdf', '#tm-export-xlsx'], PC: ['#ta-export-pdf', '#ta-export'] };
-for (const bureau of [false, true]) {
+for (const bureau of [false]) {   // feuille de tri à imprimer : onglet À trier du MOBILE (sur PC, l'onglet À trier est le tri par critères : test_tri_criteres)
   const nom = bureau ? 'PC' : 'mobile', p = await ouvrir(bureau);
   // 1. page d'export : « Colonnes à afficher », toutes cochées
   await p.click(ids[nom][0]);

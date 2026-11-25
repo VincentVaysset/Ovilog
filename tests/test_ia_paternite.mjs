@@ -92,13 +92,15 @@ const gen = await p.evaluate(() => { const d = document.createElement('div'); d.
 check(/Mère\s*n°69001\s*Classe 2 · Lactation \S+ : 312 L\s*Père \(IA\)\s*FR 000012 40731\s*ISOL 98/.test(gen), 'généalogie : ' + gen);
 check(await p.evaluate(() => !genealogieNaissanceHtml({ pere: 'Bélier <b>' }, null, null, null).includes('<b>')), 'père déclaré à la main : texte échappé');
 
-// ================================================================ 6. tri des agnelles PC : colonne « ISOL père » triable, export
-await p.evaluate(() => { triPcEtat = null; render('agnelles'); });
+// ================================================================ 6. tri des agnelles PC : colonne « ISOL père » triable (onglet Écartées ; À trier = tri par critères), export
+const etatsTriAvant = await p.evaluate(() => triAgnellesDonnees().aTrier.map(x => x.eid));
+await p.evaluate(() => { triAgnellesDonnees().aTrier.forEach(x => { x.lamb.triStatut = 'écartée'; }); triPcEtat = null; render('agnelles'); triPcEtat.onglet = 'ecartees'; render('agnelles'); });
 await p.waitForSelector('#pc-tri-agnelles');
 check(/ISOL père/.test(await p.evaluate(() => document.querySelector('#pc-tri-agnelles table tr').textContent)), 'tri PC : en-tête « ISOL père »');
 eq(await p.evaluate(() => [...document.querySelectorAll('#pc-tri-agnelles table tr[data-eid]')].map(tr => [tr.cells[0].textContent, tr.cells[tr.cells.length - 1].textContent])), [['61001', '98'], ['61003', '98']], 'tri PC : ISOL du père par agnelle');
-await p.click('.ta-tri-col[data-cle="isolPere"]');
-check(/ISOL père ▼/.test(await p.evaluate(() => document.querySelector('#pc-tri-agnelles table tr').textContent)), 'tri PC : clic = tri par ISOL');
+await p.click('#pc-tri-agnelles .tt-tete[data-col="isolPere"]');
+check(await p.evaluate(() => document.querySelector('#pc-tri-agnelles th[aria-sort="ascending"]') && document.querySelector('#pc-tri-agnelles th[aria-sort="ascending"]').textContent === 'ISOL père'), 'tri PC : clic = tri par ISOL (composant commun)');
+await p.evaluate(eids => { eids.forEach(e => { delete findLambByEid(e).triStatut; }); }, etatsTriAvant);
 eq(await p.evaluate(() => { const t = triExportTableau('aTrier', triAgnellesDonnees().aTrier), i = t.entete.indexOf('ISOL père'); return [t.entete[i], t.lignes.map(l => l[i])]; }), ['ISOL père', ['98', '98']], 'export du tri (feuille de tri) : colonne ISOL père');
 
 // ================================================================ 7. panneau du lot IA (PC) : père et ISOL
