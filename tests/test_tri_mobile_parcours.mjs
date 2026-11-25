@@ -81,11 +81,13 @@ for (const largeur of [360, 390]) {
     window.__fiches = JSON.stringify(DB.agnelles); window.__lambs = JSON.stringify([1, 2, 3].map(n => findLambByEid(E(6, n))));
   });
   await ouvrir('gardees');
-  reponse = false; confirms.length = 0;
+  confirms.length = 0;
   await page.click('.btn-reconsiderer >> nth=1');
-  check(confirms.length === 1 && await page.evaluate(() => DB.agnelles.length) === 3, largeur + ' px : la fiche avec soins, notes et mouvements demande une confirmation ; refus = rien');
-  reponse = true;
+  check(confirms.length === 0 && await page.isVisible('#question-charte') && await page.evaluate(() => DB.agnelles.length) === 3, largeur + ' px : la fiche avec soins, notes et mouvements demande une confirmation (message de la charte, jamais confirm()) ; rien avant la réponse');
+  await page.click('#qc-non');
+  check(await page.evaluate(() => DB.agnelles.length) === 3, largeur + ' px : refus = rien');
   await page.click('.btn-reconsiderer >> nth=1');
+  await page.click('#qc-oui');
   check(await page.evaluate(() => DB.agnelles.length) === 2 && await page.evaluate(() => !findLambByEid(E(6, 2)).triStatut), 'accord : la fiche quitte les gardées, l\'agnelle repasse à trier');
   await page.click('#tri-toast-annuler');
   const apres = await page.evaluate(() => ({ fiches: JSON.stringify(DB.agnelles) === window.__fiches, lambs: JSON.stringify([1, 2, 3].map(n => findLambByEid(E(6, n)))) === window.__lambs, ordre: DB.agnelles.map(a => a.id).join() }));

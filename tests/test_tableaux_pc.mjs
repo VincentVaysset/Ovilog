@@ -41,7 +41,8 @@ for (const [nom, code, n] of VUES) {
     const m = nom + ' (' + t.id + ')';
     eq(t.th, ['rgb(53, 127, 75)', BLANC, '700', 'none'], m + ' : en-tête vert #357f4b, texte blanc gras, sans majuscules forcées');
     if (/\b(pc-t|table-desktop|brd-t|rs-t)\b/.test(t.cls)) check(parseFloat(t.rayon) >= 12, m + ' : coin haut gauche arrondi (' + t.rayon + ')');
-    if (t.l1 && t.l2) { check(t.l1 !== t.l2 && [t.l1, t.l2].every(c => c === BEIGE || c === BLANC), m + ' : lignes alternées #f6f1e4 / blanc : ' + t.l1 + ' / ' + t.l2); if (t.nEntetes === 1) eq(t.l1, BEIGE, m + ' : 1re ligne de données #f6f1e4'); }
+    // EXCEPTION VOULUE (Tri des agnelles par critères, CLAUDE.md) : lignes colorées par le résultat (vert pâle acceptée, ambre pâle refusée), pas alternées
+    if (t.l1 && t.l2 && t.id !== 'ta-table-atrier') { check(t.l1 !== t.l2 && [t.l1, t.l2].every(c => c === BEIGE || c === BLANC), m + ' : lignes alternées #f6f1e4 / blanc : ' + t.l1 + ' / ' + t.l2); if (t.nEntetes === 1) eq(t.l1, BEIGE, m + ' : 1re ligne de données #f6f1e4'); }
     if (t.col1 && t.cellules > 1) eq(t.col1, ['rgb(47, 110, 68)', '700'], m + ' : 1re colonne en vert foncé gras');
     total++;
   }

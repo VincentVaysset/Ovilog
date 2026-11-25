@@ -55,21 +55,21 @@ for (const bureau of [true, false]) {
   await page.waitForFunction(() => /exportée le|vérifiée le/.test(document.getElementById('prm-etat-sauvegarde').textContent), null, { timeout: 10000 });
   const ligne = await page.evaluate(() => document.getElementById('prm-etat-sauvegarde').textContent.trim());
   check(telechargement && /^troupeau-sauvegarde-\d{4}-\d\d-\d\d\.json$/.test(telechargement.suggestedFilename()), nom + ' : fichier téléchargé : ' + (telechargement && telechargement.suggestedFilename()));
-  check(/^Dernière sauvegarde exportée le \d\d-\d\d-\d{4} \(contrôlée avant téléchargement\)$/.test(ligne), nom + ' : ligne honnête hors Android : ' + ligne);
+  check(/^Dernière sauvegarde exportée le \d\d\/\d\d\/\d{4} \(contrôlée avant téléchargement\)$/.test(ligne), nom + ' : ligne honnête hors Android : ' + ligne);
   check(await page.evaluate(() => JSON.parse(localStorage.getItem('ovilog_derniere_sauvegarde')).mode === 'telechargement'), nom + ' : mémorisée sur l\'appareil');
   // contrôle qui échoue : rien n'est téléchargé, échec affiché
   await page.evaluate(() => { window.__cs = compteursSauvegarde; compteursSauvegarde = (d) => d === DB ? { brebis: 1, beliers: 0, agnelles: 0 } : { brebis: 2, beliers: 0, agnelles: 0 }; });
   let aTelecharge = false; page.once('download', () => { aTelecharge = true; });
   alertes.length = 0; await page.click('#btn-export'); await page.waitForTimeout(500);
   const ligne2 = await page.evaluate(() => document.getElementById('prm-etat-sauvegarde').textContent.replace(/\s+/g, ' ').trim());
-  check(!aTelecharge && /Dernier export échoué le \d\d-\d\d-\d{4} : les compteurs/.test(ligne2) && /Dernière sauvegarde exportée le/.test(ligne2) && /Export non effectué/.test(alertes[0] || ''), nom + ' : contrôle en échec = rien téléchargé, échec affiché clairement (dernière réussite conservée) : ' + ligne2);
+  check(!aTelecharge && /Dernier export échoué le \d\d\/\d\d\/\d{4} : les compteurs/.test(ligne2) && /Dernière sauvegarde exportée le/.test(ligne2) && /Export non effectué/.test(alertes[0] || ''), nom + ' : contrôle en échec = rien téléchargé, échec affiché clairement (dernière réussite conservée) : ' + ligne2);
   await page.evaluate(() => { compteursSauvegarde = window.__cs; });
   await page.click('#btn-export'); await page.waitForFunction(() => !/échoué/.test(document.getElementById('prm-etat-sauvegarde').textContent), null, { timeout: 8000 });
   console.log('OK ' + nom + ' : export contrôlé avant téléchargement, ligne « exportée le … », échec clair sans téléchargement, réussite suivante efface l\'échec.');
   // ---- écran d'arrivée mobile : résumé
   if (!bureau) {
     await page.evaluate(() => { parametresRubrique = null; render('parametres'); });
-    check(/^Dernière sauvegarde exportée le \d\d-\d\d-\d{4}/.test(await page.evaluate(() => document.querySelector('.prm-rub[data-rub="sauvegarde"] .prm-rub-resume').textContent)), 'mobile : résumé de la rubrique Sauvegarde');
+    check(/^Dernière sauvegarde exportée le \d\d\/\d\d\/\d{4}/.test(await page.evaluate(() => document.querySelector('.prm-rub[data-rub="sauvegarde"] .prm-rub-resume').textContent)), 'mobile : résumé de la rubrique Sauvegarde');
   }
   // ---- application : mise à jour (PC)
   if (bureau) {
