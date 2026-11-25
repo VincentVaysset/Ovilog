@@ -43,7 +43,7 @@ console.log('OK 1 : seuil par défaut, lecture des nombres et des unités, dates
 
 // ================================================================ 2. import : aperçu, unité obligatoire, brebis retrouvées / à choisir / à retrouver, conflit, ligne mal remplie
 await p.evaluate(() => render('import-cellules'));
-check(await p.evaluate(() => document.querySelector('#import-cel-controle').value === '2'), 'pendant un contrôle : le dernier contrôle de la campagne est proposé (C2 · 14-03-2027)');
+check(await p.evaluate(() => document.querySelector('#import-cel-controle').value === '2'), 'pendant un contrôle : le dernier contrôle de la campagne est proposé (C2 · 14\/03\/2027)');
 await p.setInputFiles('#import-cel-file', { name: 'cel.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(await xlsx(p, [
   ['574', '101', '1850'], ['FR 000045 51071', '102', '320'], ['588', '104', '610'], ['6087', '112', '1250'], ['590', '131', '420'], ['', '133', '200'], ['51071', '134', ''], ['574', '135', '900']])) });
 await p.waitForSelector('#import-cel-table');
@@ -79,7 +79,7 @@ console.log('OK 2 : import (unité obligatoire, retrouver / choisir / associer, 
 
 // ================================================================ 3. fiche, seuil, écran Contrôle laitier PC, exports, Lots PC
 await p.evaluate(() => { currentSheepId = 'b51071'; ficheBrebisTabSheepId = 'b51071'; ficheBrebisTab = 'ctrl'; render('detail', 'b51071'); });
-eq(await p.evaluate(() => [...document.querySelectorAll('.cl-echantillon-fiche')].map(x => x.innerText.replace(/\s+/g, ' ').trim())), ['Échantillon du 02-04-2027 hors contrôle 540 000 cell./mL'], 'fiche : échantillon hors contrôle sur sa ligne, à sa date');
+eq(await p.evaluate(() => [...document.querySelectorAll('.cl-echantillon-fiche')].map(x => x.innerText.replace(/\s+/g, ' ').trim())), ['Échantillon du 02\/04\/2027 hors contrôle 540 000 cell./mL'], 'fiche : échantillon hors contrôle sur sa ligne, à sa date');
 check(/cellules 320 000/.test((await p.textContent('#app')).replace(/ /g, ' ')), 'fiche : cellules sous le contrôle du même jour (C2)');
 check(!(await p.$('.cl-cellules-hautes')), 'fiche : 540 000 sous le seuil, pas de pastille');
 await p.evaluate(() => { parametresTab = 'regles'; render('parametres'); });
@@ -97,7 +97,7 @@ eq((await valsPc()).map(r => r[0]), ['574', '6087'], 'seuil changé pour ce tri 
 eq(await p.evaluate(() => DB.seuilCellules), 500000, 'le réglage du compte ne change pas');
 await p.evaluate(() => { window.__xl = []; window.__pdf = []; buildXlsxWorkbook = async (f) => { window.__xl.push(JSON.parse(JSON.stringify(f))); return new Uint8Array([1]); }; const b = buildPdfTableCharte; buildPdfTableCharte = o => { window.__pdf.push({ title: o.title, columns: o.columns.map(c => c.label), rows: o.rows, tuiles: (o.tuiles || []).map(t => t.label + ' ' + t.valeur) }); return b(o); }; saveOrShareBinaryFile = async () => {}; });
 await p.click('#btn-cl-export-xlsx'); await p.waitForFunction(() => window.__xl.length === 1);
-eq(await p.evaluate(() => window.__xl[0][0].rows), [['N° de travail', 'Date de mise bas', 'C1 (mL)', 'C2 (mL)', 'Cellules'], ['574', '20-11-2026', 1650, 1420, 1850000], ['6087', '20-11-2026', 1650, 1420, 1250000]], 'Export Excel : colonne « Cellules » en fin, suit le filtre');
+eq(await p.evaluate(() => window.__xl[0][0].rows), [['N° de travail', 'Date de mise bas', 'C1 (mL)', 'C2 (mL)', 'Cellules'], ['574', '20\/11\/2026', 1650, 1420, 1850000], ['6087', '20\/11\/2026', 1650, 1420, 1250000]], 'Export Excel : colonne « Cellules » en fin, suit le filtre');
 await p.click('#btn-cl-export-pdf'); await p.waitForFunction(() => window.__pdf.length === 1);
 eq(await p.evaluate(() => { const x = window.__pdf[0]; return [x.title, x.columns, x.rows.map(r => r[r.length - 1]), x.tuiles]; }),
   ['Contrôle laitier · cellules au-dessus de 1 000 000', ['N° de travail', 'Date de mise bas', 'C1 (mL)', 'C2 (mL)', 'Cellules'], ['1 850 000', '1 250 000'], ['Cellules au-dessus de 500 000 2', 'Brebis 2']],
@@ -117,7 +117,7 @@ await p.context().close();
 // ================================================================ 4. mobile : cartes, filtre, lot de recherche ; sans échantillon, rien ne change
 const m = await ouvrir(false);
 await m.evaluate(() => { DB.brebis[0].cellules = [{ date: '2027-03-14', campagne: 2026, cellules: 1850000, controle: 2, source: 'import' }]; render('controle-laitier'); });
-check(/Cellules · 14-03-2027/.test(await m.textContent('#cl-table')), 'mobile : ligne « Cellules · date » sur la carte');
+check(/Cellules · 14\/03\/2027/.test(await m.textContent('#cl-table')), 'mobile : ligne « Cellules · date » sur la carte');
 await m.click('#btn-cl-filtre-cellules');
 eq(await m.evaluate(() => [...document.querySelectorAll('#cl-table .cl-num')].map(x => x.textContent)), ['574'], 'mobile : filtre au seuil de 800 000 (588 à 640 000 en dessous)');
 await m.click('#btn-cl-toggle-all');

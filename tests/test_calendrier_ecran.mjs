@@ -53,7 +53,7 @@ async function ouvrir(bureau, largeur) {
   check(await page.evaluate(() => getComputedStyle(document.querySelector('.cal-etiq')).backgroundColor === 'rgb(227, 243, 230)'), 'étiquette verte');
   // ---- 3. liste du mois
   const lignes = await page.evaluate(() => [...document.querySelectorAll('#cal-liste .cal-ev')].map(r => [r.querySelector('.cal-ev-date').textContent, r.querySelector('b').textContent, (r.querySelector('.cal-ev-note') || r.querySelector('.cal-badge-auto')).textContent, r.tagName]));
-  const attendu = [['07-10', 'Visite vétérinaire', 'sans note', 'BUTTON'], ['15-10', 'Tonte', 'lot des agnelles de 2025', 'BUTTON'], ['15-10', 'Vermifuge collectif', 'sans note', 'BUTTON'], ['15-10', 'Lutte', 'x', 'BUTTON']];
+  const attendu = [['07/10', 'Visite vétérinaire', 'sans note', 'BUTTON'], ['15/10', 'Tonte', 'lot des agnelles de 2025', 'BUTTON'], ['15/10', 'Vermifuge collectif', 'sans note', 'BUTTON'], ['15/10', 'Lutte', 'x', 'BUTTON']];
   eq(lignes.slice(0, 4), attendu, 'Évènements du mois : date, type, note (les 4 premiers)');
   const autos = lignes.filter(r => r[3] === 'DIV');
   eq(autos.map(r => r[1]), derives, 'évènements automatiques de la liste = fonction de données');

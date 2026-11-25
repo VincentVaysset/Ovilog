@@ -91,7 +91,7 @@ const courbe = await page.evaluate(() => ({
   note: document.querySelectorAll('.brd-note')[1].textContent.replace(/\s+/g, ' ')
 }));
 check(courbe.barres.join(',') === '12,38,71,84,63,41,26,15,9,4' && courbe.pic === 1 && courbe.semaines.join(',') === 'S1,S2,S3,S4,S5,S6,S7,S8,S9,S10', 'courbe SVG : 10 semaines, une seule barre « pic » : ' + JSON.stringify(courbe));
-check(/pic en S4 : 84/.test(courbe.note) && /S1 = semaine du 05-01-2026/.test(courbe.note), 'légende de la courbe : ' + courbe.note);
+check(/pic en S4 : 84/.test(courbe.note) && /S1 = semaine du 05\/01\/2026/.test(courbe.note), 'légende de la courbe : ' + courbe.note);
 const portees = await page.evaluate(() => [...document.querySelectorAll('.brd-porteerow')].map(r => r.textContent.replace(/\s+/g, ' ').trim()));
 check(portees.join('|') === 'Simples299|Doubles64|Triples0', 'répartition des portées (nombres, sans pourcentage) : ' + portees);
 const mill = await page.evaluate(() => [...document.querySelectorAll('.brd-t')[2].querySelectorAll('tr')].slice(1).map(r => [...r.cells].map(c => c.textContent.replace(/\s+/g, ' ').trim())));

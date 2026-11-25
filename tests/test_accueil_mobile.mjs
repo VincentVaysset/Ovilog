@@ -151,7 +151,7 @@ const lignesEcho = () => m.evaluate(() => [...document.querySelectorAll('#ac-ech
 eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo-seg button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : ''))), ['Résultat*', 'Comptage'], 'segmenté Résultat / Comptage, Résultat actif');
 eq(await lignesEcho(), ['Pleine = 11 (73 %) [vert]', '> Détail par stade ▾ [false]', 'Vide = 1 (7 %) [rouge-clair]', 'Vide définitive = 1 (7 %) [rouge]', 'Avortée / pseudogestation = 2 (13 %) [ambre]'],
   'Résultat figé, détail replié par défaut : Pleine (mise bas et vendue après l\'écho comprises), « Détail par stade », Vide, Vide définitive et Avortée / pseudogestation (> 0) ; plus de « Sans échographie »');
-eq(await m.evaluate(() => document.querySelector('#ac-echo .ac-tete .reg-pastille').textContent), '2 passages · dernier le 01-08-2026', 'pastille « N passages · dernier le … »');
+eq(await m.evaluate(() => document.querySelector('#ac-echo .ac-tete .reg-pastille').textContent), '2 passages · dernier le 01\/08\/2026', 'pastille « N passages · dernier le … »');
 eq(await m.evaluate(() => document.querySelectorAll('#ac-echo .ac-detail').length), 0, 'détail replié : aucune ligne de stade dans la page');
 await m.click('#ac-echo-detail-btn');
 eq(await lignesEcho(), ['Pleine = 11 (73 %) [vert]', '> Détail par stade ▴ [true]', '# Monte naturelle', 'Début = 1 (7 %) [vert]', 'Milieu = 2 (13 %) [vert]', 'Fin = 3 (20 %) [vert]', '# Lots IA / Éponge', 'IA = 1 (7 %) [vert]', 'Stade non précisé = 4 (27 %) [vert]',

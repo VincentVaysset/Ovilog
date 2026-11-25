@@ -52,11 +52,11 @@ await p.evaluate(() => { DB = JSON.parse(window.__avant); window.__saves = 0; re
 // 3. Passages et détail d'un passage
 await p.click('#em-onglets [data-o="passages"]');
 eq(await p.evaluate(() => [...document.querySelectorAll('#em-passages .carte-liste')].map(c => [c.querySelector('.carte-liste-nm').textContent, c.querySelector('.carte-liste-l2').textContent])),
-  [['Passage du 28-11-2026', '3 passées · 2 pleines · 1 vide · réussite 67 %'], ['Passage du 15-10-2026', '5 passées · 3 pleines · 2 vides · réussite 60 %']], 'passages figés, le plus récent d\'abord (la vendue comptée)');
+  [['Passage du 28\/11\/2026', '3 passées · 2 pleines · 1 vide · réussite 67 %'], ['Passage du 15\/10\/2026', '5 passées · 3 pleines · 2 vides · réussite 60 %']], 'passages figés, le plus récent d\'abord (la vendue comptée)');
 await p.click('#em-passages .carte-liste >> nth=0');
 const PA = await p.evaluate(() => ({ vue: currentView, titre: pageTitle.textContent, vues: [...document.querySelectorAll('#em-vue .tab-btn')].map(b => b.textContent), brebis: [...document.querySelectorAll('#em-passage-brebis .carte-liste')].map(c => [c.querySelector('.carte-liste-nm').textContent, c.querySelector('.mb-pastille').textContent, c.querySelector('.em-gris').textContent]) }));
-eq([PA.vue, PA.titre, PA.vues], ['passage-echo', 'Passage du 28-11-2026', ['Toutes 3', 'Repassées 2', '1re écho 1']], 'détail du passage');
-check(PA.brebis.some(b => b[0] === 'n°19003' && b[1] === 'À mettre bas' && b[2] === 'Vide le 15-10-2026') && PA.brebis.some(b => b[0] === 'n°26010' && b[2] === '1re écho · antenaise'), 'brebis : devenir et écho précédente : ' + JSON.stringify(PA.brebis));
+eq([PA.vue, PA.titre, PA.vues], ['passage-echo', 'Passage du 28\/11\/2026', ['Toutes 3', 'Repassées 2', '1re écho 1']], 'détail du passage');
+check(PA.brebis.some(b => b[0] === 'n°19003' && b[1] === 'À mettre bas' && b[2] === 'Vide le 15\/10\/2026') && PA.brebis.some(b => b[0] === 'n°26010' && b[2] === '1re écho · antenaise'), 'brebis : devenir et écho précédente : ' + JSON.stringify(PA.brebis));
 await p.click('#em-vue [data-v="premiere"]');
 eq(await p.evaluate(() => document.querySelectorAll('#em-passage-brebis .carte-liste').length), 1, 'sous-onglet 1re écho');
 await p.click('#em-passage-brebis .carte-liste');

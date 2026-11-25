@@ -64,7 +64,7 @@ console.log('OK 2 Tank : litrage du mois / de la campagne, graphique, relevé du
 
 // ================================================================ 3. écrasement avec confirmation, note de doublon, case verrouillée si le prélèvement existe
 await page.fill('#f-lait-date', '2026-10-03'); await page.dispatchEvent('#f-lait-date', 'input');
-check(/existe déjà pour le 03-10-2026 \(412,5 L\)/.test(await $t('#lait-doublon-note')) && await page.evaluate(() => document.getElementById('q-checkbox').checked && document.getElementById('q-checkbox').disabled) && /Un prélèvement qualité existe déjà/.test(await $t('#q-doublon-note')), 'note de doublon ; case cochée et verrouillée (prélèvement existant)');
+check(/existe déjà pour le 03\/10\/2026 \(412,5 L\)/.test(await $t('#lait-doublon-note')) && await page.evaluate(() => document.getElementById('q-checkbox').checked && document.getElementById('q-checkbox').disabled) && /Un prélèvement qualité existe déjà/.test(await $t('#q-doublon-note')), 'note de doublon ; case cochée et verrouillée (prélèvement existant)');
 await page.fill('#f-lait-qte', '420'); confirms.length = 0; reponse = false; await page.click('#btn-save-lait');
 check(confirms.length === 1 && /412,5 L\)\. Le remplacer par 420 L/.test(confirms[0]) && await page.evaluate(() => DB.laitTank.find(l => l.date === '2026-10-03').quantite) === 412.5, 'écrasement : confirmation, refus = rien');
 reponse = true; await page.click('#btn-save-lait'); await page.waitForTimeout(100);
@@ -75,13 +75,13 @@ console.log('OK 3 relevé existant : note, confirmation avant écrasement, volum
 eq(await page.evaluate(() => [...document.querySelectorAll('#pl-derniers-releves .btn-releve')].map(b => b.dataset.date)), ['2026-10-03', '2026-10-02', '2026-10-01', '2026-09-30'], 'les 4 derniers relevés, du plus récent');
 check(/Analyse/.test(await page.evaluate(() => document.querySelector('.btn-releve[data-date="2026-10-03"]').textContent)) && /Analyse/.test(await page.evaluate(() => document.querySelector('.btn-releve[data-date="2026-09-30"]').textContent)), 'badge « Analyse » sur les jours de prélèvement');
 await page.click('.btn-releve[data-date="2026-10-01"]');
-check(/Relevé du 01-10-2026/.test(await $t('.sheet-card')), 'fiche du relevé');
+check(/Relevé du 01\/10\/2026/.test(await $t('.sheet-card')), 'fiche du relevé');
 await page.fill('#rs-litres', '505'); await page.click('#rs-save'); await page.waitForTimeout(100);
 check(await page.evaluate(() => DB.laitTank.find(l => l.date === '2026-10-01').quantite) === 505 && !(await page.evaluate(() => !!document.querySelector('.sheet-card'))), 'fiche : litres modifiés');
 // suppression d'un relevé qui a un prélèvement : conservé, indiqué dans la confirmation
 await page.click('.btn-releve[data-date="2026-10-03"]');
 confirms.length = 0; reponse = false; await page.click('#rs-del');
-check(confirms.length === 1 && /Supprimer le relevé du 03-10-2026 \(420 L\)/.test(confirms[0]) && /prélèvement qualité : il est conservé/.test(confirms[0]) && await page.evaluate(() => DB.laitTank.some(l => l.date === '2026-10-03')), 'confirmation avec mention du prélèvement conservé ; refus = rien supprimé');
+check(confirms.length === 1 && /Supprimer le relevé du 03\/10\/2026 \(420 L\)/.test(confirms[0]) && /prélèvement qualité : il est conservé/.test(confirms[0]) && await page.evaluate(() => DB.laitTank.some(l => l.date === '2026-10-03')), 'confirmation avec mention du prélèvement conservé ; refus = rien supprimé');
 reponse = true; await page.click('#rs-del'); await page.waitForTimeout(100);
 check(await page.evaluate(() => !DB.laitTank.some(l => l.date === '2026-10-03') && DB.prelevementsQualite.some(p => p.date === '2026-10-03')), 'relevé supprimé, prélèvement conservé');
 console.log('OK 4 fiche relevé : modifier, supprimer avec confirmation (mention du prélèvement conservé), badge Analyse.');
@@ -125,8 +125,8 @@ eq(moy[1], ['TB g/L', '90,00', '74,50'], 'TB : mois = 90 ; campagne 2026 = (70 �
 eq(moy[4], ['Cellules milliers/mL', '300', '350'], 'cellules en milliers/mL (moyenne simple de la campagne : 400 et 300)');
 check(await page.evaluate(() => { const d = qualiteCampagneData(2025).total; return d.tb === 74.5 && d.cellules === 350000; }), 'Campagne = qualiteCampagneData');
 const lg = await page.evaluate(() => [...document.querySelectorAll('.pl-prelev')].map(b => b.textContent.replace(/\s+/g, ' ').trim()));
-check(lg.length === 1 && /30-09-2026\s*90 LPositif TB 90,00 · TP 70,00 · MSU 160,00 Cellules 300 · Flore 10 000 · Colif\. 30 · Butyr\. 50 Listéria — · Salmonelles Positif/.test(lg[0]) && !/Super A/.test(lg[0]), 'prélèvement : lignes, cellules en milliers, Salmonelles positif, pas de Super A (positif) : ' + lg[0]);
-check(await page.evaluate(() => !!document.getElementById('qualite-banner')) && /Salmonelles \(30-09-2026\)/.test(await $t('#qualite-banner')), 'bandeau « résultat positif » en haut de l\'onglet');
+check(lg.length === 1 && /30\/09\/2026\s*90 LPositif TB 90,00 · TP 70,00 · MSU 160,00 Cellules 300 · Flore 10 000 · Colif\. 30 · Butyr\. 50 Listéria — · Salmonelles Positif/.test(lg[0]) && !/Super A/.test(lg[0]), 'prélèvement : lignes, cellules en milliers, Salmonelles positif, pas de Super A (positif) : ' + lg[0]);
+check(await page.evaluate(() => !!document.getElementById('qualite-banner')) && /Salmonelles \(30\/09\/2026\)/.test(await $t('#qualite-banner')), 'bandeau « résultat positif » en haut de l\'onglet');
 await page.click('#pl-mois-suiv');                                                              // Octobre 2026
 check(await page.evaluate(() => !document.getElementById('qualite-banner')) && /résultats à saisir/.test(await $t('#pl-prelevements')) && !/TB —/.test(await $t('#pl-prelevements')), 'prélèvement sans analyses : « résultats à saisir », pas de bandeau');
 console.log('OK 7 Qualité : flèches de mois (toutes campagnes), tableau Moyennes Mois / Campagne, prélèvements avec Positif / « résultats à saisir », cellules en milliers/mL, bandeau positif.');

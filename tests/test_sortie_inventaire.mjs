@@ -129,7 +129,7 @@ for (const bureau of [false, true]) {
     render('confirmation-nouvelle-campagne');
   });
   const carte = await page.evaluate(() => { const c = document.getElementById('carte-agneaux-sans-devenir'); return c ? c.innerText : null; });
-  check(carte && /Agneaux sans devenir \(2\)/.test(carte) && /30-09-2027/.test(carte) && /n°61001/.test(carte) && /n°61006/.test(carte) && !/61007|61002|61004/.test(carte), nom + ' : écran de vérification : 2 agneaux listés, date de sortie : ' + carte);
+  check(carte && /Agneaux sans devenir \(2\)/.test(carte) && /30\/09\/2027/.test(carte) && /n°61001/.test(carte) && /n°61006/.test(carte) && !/61007|61002|61004/.test(carte), nom + ' : écran de vérification : 2 agneaux listés, date de sortie : ' + carte);
   const avant = await page.evaluate(() => JSON.stringify(DB.brebis));
   const r = await page.evaluate(async () => await executerChangementCampagne({ debut: '2027-10-01', fin: '2028-09-30' }));
   check(r.ok && r.agneauxSortisInventaire === 2, nom + ' : bascule réussie, 2 agneaux sortis : ' + JSON.stringify(r));

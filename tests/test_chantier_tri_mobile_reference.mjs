@@ -38,7 +38,7 @@ const res = await page.evaluate(() => {
   DB.brebis = [A, fiche(9, 59), fiche(9, 69), fiche(0, 33)];
   DB.agnelles = [{ id: 'ag2', eid: eid(6, 2), origine: 'née', motherEid: eid(8, 133), dateEntree: '2026-09-01', mouvements: [{ type: 'Naissance', date: '2026-01-14' }, { type: 'Entrée', date: '2026-09-01' }], sanitaire: [] },
     { id: 'ag3', eid: eid(5, 42), origine: 'achetée', dateEntree: '2026-09-10', mouvements: [{ type: 'Entrée', date: '2026-09-10' }], sanitaire: [] }];
-  DB.lots = [{ id: '1700000000001', nom: 'Brebis doubles', dateCreation: '2026-10-01', membres: [eid(9, 59), eid(9, 69)] }, { id: '1700000000002', nom: 'Réforme du 28-09-2026', type: 'reforme', dateCreation: '2026-09-28', membres: [eid(0, 33)] }];
+  DB.lots = [{ id: '1700000000001', nom: 'Brebis doubles', dateCreation: '2026-10-01', membres: [eid(9, 59), eid(9, 69)] }, { id: '1700000000002', nom: 'Réforme du 28\/09\/2026', type: 'reforme', dateCreation: '2026-09-28', membres: [eid(0, 33)] }];
   // marquage technique du clavier Ovilog (inputmode « none » posé sur les champs de chiffres, valeur d'origine gardée dans data-im-orig) : retiré avant comparaison,
   // rien d'affiché ne change
   const app = () => { const c = document.getElementById('app').cloneNode(true); c.querySelectorAll('[data-im-orig]').forEach(i => { const o = i.getAttribute('data-im-orig'); if (o) i.setAttribute('inputmode', o); else i.removeAttribute('inputmode'); i.removeAttribute('data-im-orig'); }); return c.innerHTML; };

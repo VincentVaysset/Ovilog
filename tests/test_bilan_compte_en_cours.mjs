@@ -71,7 +71,7 @@ const reg = await p.evaluate(() => {
   const mine = rows.find(r => r.eid === '250000045600999'), old = rows.find(r => r.eid === DB.brebis[0].eid), achat = rows.find(r => r.eid === DB.brebis[11].eid);
   return [dateMouvementRegistreTexte(mine), dateMouvementRegistreTexte(old), dateMouvementRegistreTexte(achat)];
 });
-eq(reg, ['18-11-2026 (date de saisie)', '15-11-2026 (date de saisie)', '20-09-2026'], 'registre : date de saisie signalée (nouvelle et ancienne donnée), vraie date inchangée');
+eq(reg, ['18\/11\/2026 (date de saisie)', '15\/11\/2026 (date de saisie)', '20\/09\/2026'], 'registre : date de saisie signalée (nouvelle et ancienne donnée), vraie date inchangée');
 await p.evaluate(() => { currentSheepId = DB.brebis.find(x => x.eid === '250000045600999').id; render('detail'); }); await p.waitForTimeout(300);
 check(/Date d'entrée : inconnue/.test(await p.textContent('#app')), 'fiche : « Date d\'entrée : inconnue »');
 

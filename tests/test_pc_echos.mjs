@@ -77,7 +77,7 @@ const info = await $t('#lt-echo-resume');
 check(info === 'Dernière écho de la campagne 2027 : vides 1 · simples 3 · doubles 3 · gestantes sans comptage 1 · cas particuliers 2 · sans écho 3 (13 brebis actives) — dont 1 avec des échos sans campagne, non rattachées', 'ligne d\'information : ' + info);
 check(/dont 1 avec des échos sans campagne/.test(info), 'les échos sans campagne sont signalés, jamais rattachés : ' + info);
 const ligne1 = await page.evaluate(() => [...document.querySelector('#lt-table tr[data-eid="' + E(8, 3) + '"]').children].slice(1, -1).map(c => c.textContent.replace(/\s+/g, ' ').trim()).join('|'));
-check(/80003\|.*\|01-09-2026\|Stades\|Milieu\|2\+\|—/.test(ligne1), 'ligne : date, type, stade, agneaux « 2+ », cas : ' + ligne1);
+check(/80003\|.*\|01\/09\/2026\|Stades\|Milieu\|2\+\|—/.test(ligne1), 'ligne : date, type, stade, agneaux « 2+ », cas : ' + ligne1);
 const ligne9 = await page.evaluate(() => [...document.querySelector('#lt-table tr[data-eid="' + E(0, 9) + '"]').children].slice(1, -1).map(c => c.textContent.replace(/\s+/g, ' ').trim()).join('|'));
 check(/PARASIT\. Avortée/.test(ligne9), 'pastilles de cas particuliers : ' + ligne9);
 console.log('OK 2 colonnes, ordre, ligne d\'information (vides · simples · doubles · … · sans écho, échos sans campagne signalés).');
@@ -136,7 +136,7 @@ await page.click('#lt-echo-au', { position: { x: 14, y: 14 } }); await page.keyb
 await att(1500);                                                   // le redessin attend la fin de la frappe dans un champ date
 check(await page.evaluate(() => document.activeElement && document.activeElement.id) === 'lt-echo-au' && await page.evaluate(() => document.getElementById('lt-echo-du').value + '|' + document.getElementById('lt-echo-au').value) === '2026-09-01|2026-09-01', 'dates tapées au clavier, focus resté dans le 2e champ : ' + await page.evaluate(() => document.getElementById('lt-echo-du').value + '|' + document.getElementById('lt-echo-au').value));
 eq(await nums(), ['80001', '80002', '80003', '90004', '90005', '90006'], 'écho du 01/09 au 01/09 : la dernière écho de la brebis 90006 est du 01/09 (son Vide du 01/08 est ignoré)');
-check(/Écho du 01-09-2026 au 01-09-2026/.test(await $t('#lt-tags')), 'étiquette des dates');
+check(/Écho du 01\/09\/2026 au 01\/09\/2026/.test(await $t('#lt-tags')), 'étiquette des dates');
 await page.click('#lt-q'); await page.keyboard.type('9000', { delay: 60 }); await att(600);
 check(await page.evaluate(() => document.activeElement.id) === 'lt-q' && await page.evaluate(() => document.getElementById('lt-q').value) === '9000', 'n° tapé caractère par caractère, focus conservé');
 eq(await nums(), ['90004', '90005', '90006'], 'recherche n° « 9000 » combinée aux dates');

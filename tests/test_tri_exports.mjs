@@ -50,13 +50,13 @@ const T = tables.mobileaTrier, G = tables.PCgardees;
 eq([tables.PCaTrier.feuille, tables.PCaTrier.noms, tables.PCaTrier.rows[0]], ['Tri des agnelles', ['tri-agnelles-criteres_2026-11-20.xlsx', 'tri-agnelles-criteres_2026-11-20.pdf'], ['Agnelle', 'Née le', 'Portée', 'Repro', 'Mère', 'Classe', 'Lact. mère', 'Résultat', 'Décision']], 'PC À trier : export du tri par critères');
 eq([T.feuille, T.noms], ['Feuille de tri', ['feuille-de-tri-agnelles_2026-11-20.xlsx', 'feuille-de-tri-agnelles_2026-11-20.pdf']], 'À trier : feuille « Feuille de tri », fichiers');
 eq(T.rows, [["N° d'ordre", 'Naissance', 'Mode repro', 'Portée', 'Mère n° de travail', 'Mère classe', 'Mère lact. N-1 (L)', 'Père code IA', 'ISOL père', 'Garder', 'Écarter', 'Notes'],
-  ['71024', '05-10-2026', 'IA', '2', '902', '—', '—', '12345', '112', '', '', ''],
-  ['71031', '06-10-2026', 'MN', '2', '—', '—', '—', '—', '—', '', '', '']],
+  ['71024', '05\/10\/2026', 'IA', '2', '902', '—', '—', '12345', '112', '', '', ''],
+  ['71031', '06\/10\/2026', 'MN', '2', '—', '—', '—', '—', '—', '', '', '']],
   'Feuille de tri : agnelle = n° de boucle (5 derniers chiffres, même si un n° de travail existe), mère = n° court SIEOL sinon « — », portée en nombre, père de l\'IA, cases et notes vides');
 eq([G.feuille, G.noms], ['Liste SIEOL', ['agnelles-gardees-sieol_2026-11-20.xlsx', 'agnelles-gardees-sieol_2026-11-20.pdf']], 'Gardées : feuille « Liste SIEOL », fichiers');
 eq(G.rows, [["N° d'ordre", 'N° officiel', 'Naissance', 'Mode repro', 'Portée', 'Mère n° de travail', 'Mère n° officiel', 'Père code IA', 'Père n° officiel'],
   ['70045', 'FR 000123 70045', '—', '—', '—', '—', 'FR 000123 60012', '—', '—'],
-  ['71032', 'FR 000456 71032', '06-10-2026', 'MN', '2', '—', 'FR 000456 68117', '—', '—']],
+  ['71032', 'FR 000456 71032', '06\/10\/2026', 'MN', '2', '—', 'FR 000456 68117', '—', '—']],
   'Liste SIEOL : 9 colonnes, même ordre que l\'écran (achetée entrée le 01-10, puis née le 06-10) ; achetée : n° de la mère saisi à l\'achat, le reste « — »');
 for (const o of ['gardees']) {
   eq(tables['mobile' + o].rows, tables['PC' + o].rows, 'mobile = PC, mêmes lignes (' + o + ')');

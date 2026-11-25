@@ -59,7 +59,7 @@ check(/Suppression impossible/.test(await p.textContent('#message-charte')) && /
 await p.click('#mc-ok');
 await p.evaluate(() => { const b = DB.brebis.find(s => s.id === 'b'); b.agnelages.push({ date: '2026-11-10', campagne: 2027, codeRepro: 'MN', lambs: [{ sexe: 'Femelle', eid: '' }, { sexe: 'Mort-né' }] }); window.__avant = JSON.stringify(DB); render('detail', 'b'); deleteItem('agnelages', 1); });
 eq(await p.evaluate(() => DB.brebis.find(s => s.id === 'b').agnelages.length), 1, 'mise bas sans agneau bouclé (saisie sur la mauvaise brebis) : supprimée sans boîte native');
-check(/Mise bas du 10-11-2026 supprimée/.test(await snack()), 'bandeau de la mise bas : ' + await snack());
+check(/Mise bas du 10\/11\/2026 supprimée/.test(await snack()), 'bandeau de la mise bas : ' + await snack());
 await p.click('#sup-snack-annuler');
 eq(await pareil(), true, 'Annuler : mise bas exacte');
 

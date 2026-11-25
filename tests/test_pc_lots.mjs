@@ -58,20 +58,20 @@ await jeu();
 check(await page.evaluate(() => !!document.getElementById('pc-lots')) && /Lots/.test(await $t('.pc-onglets')) && /Tri des agnelles/.test(await $t('.pc-onglets')), 'page à 2 onglets : Lots et Tri des agnelles');
 check(!/Créer une liste/.test(await $t('#pc-lots')), 'pas d\'onglet « Créer une liste » sur PC');
 const f1 = await page.evaluate(() => ({ type: document.querySelector('#lt-type .selected').dataset.val, cible: document.querySelector('#lt-cible .selected').dataset.val, mode: document.querySelector('#lt-mode .selected').dataset.val, camp: document.querySelector('#lt-campagne .selected').dataset.val, nom: document.getElementById('lt-nom').value, date: document.getElementById('lt-date').value, camps: [...document.querySelectorAll('#lt-campagne .opt-btn')].map(b => b.textContent) }));
-check(f1.type === 'reproduction' && f1.cible === 'Brebis' && f1.mode === 'IA' && f1.camp === 'avenir' && f1.nom === 'IA du 03-10-2026' && f1.date === '2026-10-03', 'défauts : reproduction / Brebis / IA / campagne à venir / « IA du 03-10-2026 » : ' + JSON.stringify(f1));
+check(f1.type === 'reproduction' && f1.cible === 'Brebis' && f1.mode === 'IA' && f1.camp === 'avenir' && f1.nom === 'IA du 03\/10\/2026' && f1.date === '2026-10-03', 'défauts : reproduction / Brebis / IA / campagne à venir / « IA du 03\/10\/2026 » : ' + JSON.stringify(f1));
 check(f1.camps.join() === '2027 · en cours,2028 · à venir', 'campagnes des mises bas affichées : 2027 en cours, 2028 à venir : ' + f1.camps.join());
 await remplir('#lt-date', '2027-06-15');
-check(await page.evaluate(() => document.getElementById('lt-nom').value) === 'IA du 15-06-2027', 'le nom par défaut suit la date');
+check(await page.evaluate(() => document.getElementById('lt-nom').value) === 'IA du 15\/06\/2027', 'le nom par défaut suit la date');
 await page.click('#lt-creer'); await page.waitForSelector('#lt-table');
 const l1 = await page.evaluate(() => { const l = DB.lots[DB.lots.length - 1]; return { type: l.type, mode: l.mode, cible: l.cible, nom: l.nom, journal: l.journal, membres: l.membres.length, date: l.dateEvenement, cmb: l.campagneMisesBas, camp: l.campagne, events: DB.evenementsLots.length, saves: window.__saves, mr: DB.brebis.reduce((n, s) => n + s.modesRepro.length, 0) }; });
-check(l1.type === 'reproduction' && l1.mode === 'IA' && l1.cible === 'Brebis' && l1.nom === 'IA du 15-06-2027' && l1.journal === 1 && l1.membres === 0 && l1.date === '2027-06-15' && l1.cmb === 2027 && l1.camp === 2026 && l1.events === 0 && l1.saves === 1 && l1.mr === 0, 'lot de reproduction créé VIDE (journalisé, campagne des mises bas 2027 stockée = « 2028 », aucun évènement, aucun modesRepro) : ' + JSON.stringify(l1));
+check(l1.type === 'reproduction' && l1.mode === 'IA' && l1.cible === 'Brebis' && l1.nom === 'IA du 15\/06\/2027' && l1.journal === 1 && l1.membres === 0 && l1.date === '2027-06-15' && l1.cmb === 2027 && l1.camp === 2026 && l1.events === 0 && l1.saves === 1 && l1.mr === 0, 'lot de reproduction créé VIDE (journalisé, campagne des mises bas 2027 stockée = « 2028 », aucun évènement, aucun modesRepro) : ' + JSON.stringify(l1));
 check(/Étape 2/.test(await $t('#pc-lots')) && /0 brebis/.test(await $t('#lt-nb-membres')), 'on passe à l\'étape 2, lot vide');
 console.log('OK 1 étape 1 : deux onglets, défauts, nom par défaut, campagne à venir, lot de reproduction créé vide et journalisé.');
 
 // ================================================================ 2. éponge, recherche, réforme
 await jeu();
 await page.click('#lt-type .opt-btn[data-val="reproduction"]'); await page.click('#lt-mode .opt-btn[data-val="EP"]'); await page.click('#lt-campagne .opt-btn[data-val="encours"]');
-check(/Date de pose/.test(await $t('label[for="lt-date"]')) && await page.evaluate(() => document.getElementById('lt-nom').value) === 'Éponge du 03-10-2026', 'éponge : « Date de pose », nom « Éponge du … »');
+check(/Date de pose/.test(await $t('label[for="lt-date"]')) && await page.evaluate(() => document.getElementById('lt-nom').value) === 'Éponge du 03\/10\/2026', 'éponge : « Date de pose », nom « Éponge du … »');
 await remplir('#lt-date', '2026-10-10');
 await page.click('#lt-creer'); await page.waitForSelector('#lt-table');
 const ep = await page.evaluate(() => { const l = DB.lots[DB.lots.length - 1]; return [l.mode, l.datePose, l.dateEvenement, l.campagneMisesBas]; });
@@ -84,7 +84,7 @@ const rch = await page.evaluate(() => { const l = DB.lots[DB.lots.length - 1]; r
 check(rch[0] && rch[1] === 'Brebis à voir' && rch[2] === 0 && rch[3] === '2026-10-03' && rch[4] === 1, 'lot de recherche créé vide, journalisé : ' + JSON.stringify(rch));
 await jeu();
 await page.click('#lt-type .opt-btn[data-val="reforme"]');
-check(await $t('#lt-creer') === 'Créer le lot de réforme' && await page.evaluate(() => document.getElementById('lt-nom').value) === 'Réforme du 03-10-2026' && !await page.evaluate(() => !!document.getElementById('lt-date')), 'réforme : bouton rouge « Créer le lot de réforme », nom « Réforme du … », pas de date');
+check(await $t('#lt-creer') === 'Créer le lot de réforme' && await page.evaluate(() => document.getElementById('lt-nom').value) === 'Réforme du 03\/10\/2026' && !await page.evaluate(() => !!document.getElementById('lt-date')), 'réforme : bouton rouge « Créer le lot de réforme », nom « Réforme du … », pas de date');
 await page.click('#lt-creer'); await page.waitForSelector('#lt-table');
 check(await page.evaluate(() => { const l = DB.lots[DB.lots.length - 1]; return l.type === 'reforme' && l.membres.length === 0; }), 'lot de réforme créé vide');
 await jeu(); await page.fill('#lt-nom', ''); await page.click('#lt-creer');
@@ -99,10 +99,10 @@ check(JSON.stringify(n0) === JSON.stringify(['70005', '80133', '90059', '90069',
 const ent = await page.evaluate(() => [...document.querySelectorAll('#lt-table th')].map(x => x.textContent.replace(/[▲▼]/g, '').trim()).join('|'));
 check(ent === '|N°|Millésime · âge|Statut de reproduction|Dernière mise bas|Délai mise bas → IA|Lots', 'colonnes de l\'onglet Mises bas : ' + ent);
 const l0 = await lignes();
-check(l0[1] === '80133|2018 · 8 ans|Aucune info repro|15-02-2026|16 mois', 'A : dernière mise bas 15-02-2026 (campagne précédente), délai mise bas → IA 16 mois : ' + l0[1]);
+check(l0[1] === '80133|2018 · 8 ans|Aucune info repro|15\/02\/2026|16 mois', 'A : dernière mise bas 15\/02\/2026 (campagne précédente), délai mise bas → IA 16 mois : ' + l0[1]);
 check(l0[0].endsWith('|-|-') && l0[3].includes('Vide définitive'), 'F sans mise bas : « - » ; C : Vide définitive');
 await page.click('#lt-mb-mode .opt-btn[data-val="avant"]'); await remplir('#lt-mb-du', '2026-02-01');
-check((await nums()).join() === '90059' && /Dernière mise bas avant le 01-02-2026/.test(await $t('#lt-tags')), 'filtre « Avant le 01/02/2026 » : B seule (les sans mise bas ne comptent pas) + étiquette');
+check((await nums()).join() === '90059' && /Dernière mise bas avant le 01\/02\/2026/.test(await $t('#lt-tags')), 'filtre « Avant le 01/02/2026 » : B seule (les sans mise bas ne comptent pas) + étiquette');
 await page.click('#lt-mb-mode .opt-btn[data-val="entre"]'); await remplir('#lt-mb-du', '2026-02-01'); await remplir('#lt-mb-au', '2026-03-31');
 check((await nums()).join() === '80133,00033', 'filtre « Entre le 01/02 et le 31/03/2026 » : A et E');
 await page.click('#lt-mb-mode .opt-btn[data-val="aucune"]');
@@ -168,7 +168,7 @@ check(await page.evaluate(() => window.__saves === 1 && DB.evenementsLots.length
 await ouvrirOnglet('lactations'); await page.click('#lt-tout');
 reponse = false; confirms.length = 0; const sv = await page.evaluate(() => window.__saves);
 await page.click('#lt-affecter');
-check(confirms.length === 1 && /Affecter 2 brebis au lot « IA du 15-06-2027 »/.test(confirms[0]) && /AJOUTE au lot/.test(confirms[0]) && await page.evaluate(s => window.__saves === s && DB.evenementsLots.length === 0, sv), 'confirmation avant écriture ; refus = rien n\'est écrit');
+check(confirms.length === 1 && /Affecter 2 brebis au lot « IA du 15\/06\/2027 »/.test(confirms[0]) && /AJOUTE au lot/.test(confirms[0]) && await page.evaluate(s => window.__saves === s && DB.evenementsLots.length === 0, sv), 'confirmation avant écriture ; refus = rien n\'est écrit');
 reponse = true;
 await page.click('#lt-affecter');
 const af = await page.evaluate(() => { const l = DB.lots[DB.lots.length - 1]; return { membres: l.membres.length, ev: DB.evenementsLots.length, eids: DB.evenementsLots[0].eids.length, type: DB.evenementsLots[0].type, src: DB.evenementsLots[0].source, mr: DB.brebis.filter(s => s.modesRepro.length).map(s => [s.modesRepro[0].mode, s.modesRepro[0].date, s.modesRepro[0].campagne, s.modesRepro[0].lotId === l.id]) }; });
@@ -213,7 +213,7 @@ const xs = await page.evaluate(() => ({ nom: window.__xlNom, f: window.__xl[0][0
 check(/^selection-lot_2026-10-03\.xlsx$/.test(xs.nom) && xs.f.rows.length === 7 && xs.f.rows[0].join() === 'N°,Millésime,Âge,Statut de reproduction,Lots', 'Exporter la sélection (.xlsx) : 6 brebis + en-têtes : ' + xs.nom + ' ' + xs.f.rows.length);
 await page.click('#lt-affecter'); await page.waitForTimeout(100); await page.click('#lt-export-lot'); await page.waitForTimeout(100);
 const xl = await page.evaluate(() => ({ nom: window.__xlNom, f: window.__xl[window.__xl.length - 1][0] }));
-check(/^lot-IA_du_15-06-2027_2026-10-03\.xlsx$/.test(xl.nom) && xl.f.rows.length === 7, 'Exporter (.xlsx) du lot : ' + xl.nom + ' ' + xl.f.rows.length);
+check(/^lot-IA_du_15_06_2027_2026-10-03\.xlsx$/.test(xl.nom) && xl.f.rows.length === 7, 'Exporter (.xlsx) du lot : ' + xl.nom + ' ' + xl.f.rows.length);
 console.log('OK 8 exports Excel : sélection en cours et lot.');
 
 // ================================================================ 9. lot cible Agnelles
@@ -246,10 +246,10 @@ console.log('OK 11 routes : PC redirigé vers la page Lots ; mobile inchangé.')
 // ================================================================ 12. lots existants : tableau unique, filtres, Modifier, Excel, Suppr.
 await jeu();
 await page.evaluate(() => {
-  const l1 = creerLotReproductionJournalise({ id: 'L-IA', nom: 'IA du 15-06-2027', mode: 'IA', cible: 'Brebis', dateCreation: '2026-10-02', dateEvenement: '2027-06-15', campagne: 2026, campagneMisesBas: 2027 }, [E(8, 133), E(9, 59)]);
+  const l1 = creerLotReproductionJournalise({ id: 'L-IA', nom: 'IA du 15\/06\/2027', mode: 'IA', cible: 'Brebis', dateCreation: '2026-10-02', dateEvenement: '2027-06-15', campagne: 2026, campagneMisesBas: 2027 }, [E(8, 133), E(9, 59)]);
   const l2 = creerLotReproductionJournalise({ id: 'L-EP', nom: 'Éponge juin', mode: 'EP', cible: 'Agnelles', dateCreation: '2026-10-02', dateEvenement: '2027-06-28', datePose: '2027-06-12', campagne: 2026, campagneMisesBas: 2027 }, [E(5, 41)]);
   const l3 = creerLotReproductionJournalise({ id: 'L-EPOLD', nom: 'Éponge ancienne', mode: 'EP', cible: 'Brebis', dateCreation: '2026-05-02', dateEvenement: '2026-10-26', campagne: 2025, campagneMisesBas: 2026, campagneMisesBasDeduite: true }, [E(0, 33)]);
-  DB.lots.push({ id: 'L-REF', nom: 'Réforme du 28-09-2026', type: 'reforme', dateCreation: '2026-09-28', membres: [E(7, 5), E(9, 152)] });
+  DB.lots.push({ id: 'L-REF', nom: 'Réforme du 28\/09\/2026', type: 'reforme', dateCreation: '2026-09-28', membres: [E(7, 5), E(9, 152)] });
   [E(8, 133), E(9, 59)].forEach(e => DB.brebis.find(b => b.eid === e).modesRepro.push({ date: '2027-06-15', mode: 'IA', campagne: 2027, lotId: 'L-IA' }));
   lotsPcEtat = null; render('lots');
 });
@@ -257,7 +257,7 @@ await page.waitForSelector('#le-table');
 const th = await page.evaluate(() => [...document.querySelectorAll('#le-table th')].map(x => x.textContent).join('|'));
 check(th === 'Nom|Type|Cible|Animaux|Date|Mises bas (campagne)|Actions', 'colonnes des lots existants (sans « En bergerie », état non synchronisé) : ' + th);
 const rows = await page.evaluate(() => [...document.querySelectorAll('#le-table tr[data-id]')].map(r => [...r.children].slice(0, 6).map(c => c.textContent.replace(/\s+/g, ' ').trim()).join('|')));
-check(rows.length === 5 && rows[0] === 'Réforme du 28-09-2026|Réforme|Brebis|2|28-09-2026|—' && rows.some(r => r === 'Éponge juin|Éponge|Agnelles|1|12-06-2027|2028') && rows.some(r => r === 'Éponge ancienne|Éponge|Brebis|1|26-10-2026 (lutte)|2027 (déduite)') && rows.some(r => r === 'IA du 15-06-2027|IA|Brebis|2|15-06-2027|2028'), 'tableau : pose affichée si connue, « (lutte) » pour un ancien lot, campagne « déduite » signalée : ' + JSON.stringify(rows));
+check(rows.length === 5 && rows[0] === 'Réforme du 28\/09\/2026|Réforme|Brebis|2|28\/09\/2026|—' && rows.some(r => r === 'Éponge juin|Éponge|Agnelles|1|12\/06\/2027|2028') && rows.some(r => r === 'Éponge ancienne|Éponge|Brebis|1|26\/10\/2026 (lutte)|2027 (déduite)') && rows.some(r => r === 'IA du 15\/06\/2027|IA|Brebis|2|15\/06\/2027|2028'), 'tableau : pose affichée si connue, « (lutte) » pour un ancien lot, campagne « déduite » signalée : ' + JSON.stringify(rows));
 check(await page.evaluate(() => [...document.querySelectorAll('.le-type small')].map(x => x.textContent).join()) === '1,1,1,2', 'effectifs par type (recherche 1, réforme 1, IA 1, éponge 2) : ' + await page.evaluate(() => [...document.querySelectorAll('.le-type small')].map(x => x.textContent).join()));
 await page.click('.le-type[data-k="recherche"]'); await page.click('.le-type[data-k="reforme"]'); await page.click('.le-type[data-k="EP"]');
 check(await page.evaluate(() => [...document.querySelectorAll('#le-table tr[data-id]')].map(r => r.dataset.id).join()) === 'L-IA', 'filtre type : IA seulement');
@@ -272,16 +272,16 @@ await page.click('#le-export'); await page.waitForTimeout(100);
 check(await page.evaluate(() => window.__xl[0][0].rows.length) === 3 && /^lots_2026-10-03\.xlsx$/.test(await page.evaluate(() => window.__xlNom)), 'Exporter les lots (.xlsx) suit les filtres : 2 lots + en-têtes');
 await remplir('#le-q', '');
 await page.click('.le-excel[data-id="L-IA"]'); await page.waitForTimeout(100);
-check(await page.evaluate(() => window.__xl[window.__xl.length - 1][0].rows.length) === 3 && /^lot-IA_du_15-06-2027_/.test(await page.evaluate(() => window.__xlNom)), 'Excel d\'un lot : ses 2 brebis + en-têtes');
+check(await page.evaluate(() => window.__xl[window.__xl.length - 1][0].rows.length) === 3 && /^lot-IA_du_15_06_2027_/.test(await page.evaluate(() => window.__xlNom)), 'Excel d\'un lot : ses 2 brebis + en-têtes');
 // Modifier : rouvre l'étape 2 avec la carte du lot (mode et cible verrouillés)
 await page.click('.le-modifier[data-id="L-IA"]');
-check(await page.evaluate(() => !!document.getElementById('lt-edition') && !!document.getElementById('lt-table') && document.querySelectorAll('#lt-edition input[disabled]').length === 2) && /Lot « IA du 15-06-2027 »/.test(await $t('#lt-panneau')), 'Modifier rouvre les 2 étapes ; cible et mode verrouillés');
+check(await page.evaluate(() => !!document.getElementById('lt-edition') && !!document.getElementById('lt-table') && document.querySelectorAll('#lt-edition input[disabled]').length === 2) && /Lot « IA du 15\/06\/2027 »/.test(await $t('#lt-panneau')), 'Modifier rouvre les 2 étapes ; cible et mode verrouillés');
 check(await page.evaluate(() => document.getElementById('lt-ed-date').value) === '2027-06-15' && await page.evaluate(() => document.getElementById('lt-ed-campagne').value) === '2027', 'carte du lot préremplie (date 15/06/2027, campagne des mises bas 2028)');
 await page.evaluate(() => { DB.brebis.find(b => b.eid === E(8, 133)).agnelages.push({ campagne: 2027, date: '2027-11-14', codeRepro: 'IA', lambs: [{}] }); });     // mise bas rattachée pour A (dans la fenêtre 144-152 j de l'ancienne ET de la nouvelle date)
-await remplir('#lt-ed-nom', 'IA du 20-06-2027'); await remplir('#lt-ed-date', '2027-06-20'); await page.selectOption('#lt-ed-campagne', { value: '2026' });
+await remplir('#lt-ed-nom', 'IA du 20\/06\/2027'); await remplir('#lt-ed-date', '2027-06-20'); await page.selectOption('#lt-ed-campagne', { value: '2026' });
 await page.click('#lt-ed-save');
 const ed = await page.evaluate(() => { const l = DB.lots.find(x => x.id === 'L-IA'); const a = DB.brebis.find(b => b.eid === E(8, 133)), b = DB.brebis.find(x => x.eid === E(9, 59)); return { nom: l.nom, date: l.dateEvenement, cmb: l.campagneMisesBas, deduite: l.campagneMisesBasDeduite, a: [a.modesRepro[0].date, a.modesRepro[0].campagne], b: [b.modesRepro[0].date, b.modesRepro[0].campagne], membres: l.membres.length }; });
-check(ed.nom === 'IA du 20-06-2027' && ed.date === '2027-06-20' && ed.cmb === 2026 && ed.membres === 2, 'nom, date et campagne des mises bas modifiés : ' + JSON.stringify(ed));
+check(ed.nom === 'IA du 20\/06\/2027' && ed.date === '2027-06-20' && ed.cmb === 2026 && ed.membres === 2, 'nom, date et campagne des mises bas modifiés : ' + JSON.stringify(ed));
 check(JSON.stringify(ed.b) === '["2027-06-20",2026]' && JSON.stringify(ed.a) === '["2027-06-15",2027]', 'répercuté sur l\'évènement modesRepro des membres, SAUF celui qui a une mise bas rattachée (A inchangé) : ' + JSON.stringify(ed));
 check(/mise bas est déjà rattachée/.test(await $t('#lt-ed-msg')) && /n°80133/.test(await $t('#lt-ed-msg')), 'le blocage est signalé (n°80133), jamais silencieux : ' + await $t('#lt-ed-msg'));
 // Suppr. : confirmation, refus puis accord

@@ -97,7 +97,7 @@ for (const mobile of [true, false]) {
   await p.click('#te-exporter'); await p.waitForFunction(() => window.__fichiers.length === 3);
   const feuille = await p.evaluate(() => window.__lignes.find(t => t.labels.includes('Date')));
   const iD = feuille.labels.indexOf('Date');
-  eq(feuille.lignes.map(r => r[iD]), ['02-11-2026', '05-11-2026', '10-11-2026'].map(x => x), T + ' : Excel trié ancien → récent');
+  eq(feuille.lignes.map(r => r[iD]), ['02\/11\/2026', '05\/11\/2026', '10\/11\/2026'].map(x => x), T + ' : Excel trié ancien → récent');
 
   // 4. export exclu (Registre) : direct, sans page
   await p.evaluate(() => { registreView = 'sanitaire'; render('registre'); });

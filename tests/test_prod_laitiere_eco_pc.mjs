@@ -60,7 +60,7 @@ console.log('OK 2 clic (et Entrée) sur un mois : son détail.');
 // ================================================================ 3. carte Pénalités bactério : liste existante, à côté de la composition du gain
 const place = await page.evaluate(() => { const p = document.getElementById('pc-eco-penalites'), c = [...document.querySelectorAll('#pc-economique .card')].find(x => /Composition du gain/.test(x.textContent)); return { memeRangee: p.parentElement === c.parentElement, texte: p.textContent.replace(/\s+/g, ' ').replace(/ /g, ' ').trim() }; });
 check(place.memeRangee, 'carte Pénalités à côté de « Composition du gain qualité »');
-check(/Pénalités bactério/.test(place.texte) && /1 pénalité sur la campagne/.test(place.texte) && /10-01-2027/.test(place.texte) && /Autre · 1 000 L · labo/.test(place.texte) && /−200,00 €/.test(place.texte) && /Total des pénalités/.test(place.texte), 'liste des pénalités : ' + place.texte);
+check(/Pénalités bactério/.test(place.texte) && /1 pénalité sur la campagne/.test(place.texte) && /10\/01\/2027/.test(place.texte) && /Autre · 1 000 L · labo/.test(place.texte) && /−200,00 €/.test(place.texte) && /Total des pénalités/.test(place.texte), 'liste des pénalités : ' + place.texte);
 console.log('OK 3 carte Pénalités bactério : à côté de la composition du gain, liste + total.');
 
 // ================================================================ 4. ajout au clavier : tableau, carte, gain mis à jour

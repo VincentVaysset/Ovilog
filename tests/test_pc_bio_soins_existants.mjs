@@ -54,9 +54,9 @@ const k = await page.evaluate(() => Object.fromEntries([...document.querySelecto
 check(k['Soins concernés'] === '4' && k['À vérifier'] === '1' && k['Déjà passés en bio'] === '0', 'indicateurs : 4 soins, 1 à vérifier : ' + JSON.stringify(k));
 // aperçu avant / après sur le soin du 20/09 : lait 28/09 → 05/10, viande 19/10 → 16/11
 const l1 = await page.evaluate(() => [...document.querySelectorAll('#sb-table tr[data-i]')].map(r => r.textContent.replace(/\s+/g, ' ').trim()));
-const s1 = l1.find(t => /20-09-2026/.test(t));
-check(/7 j \/ 28 j/.test(s1) && /14 j \/ 56 j/.test(s1) && /28-09-2026 → 05-10-2026/.test(s1) && /19-10-2026 → 16-11-2026/.test(s1) && /identique à la fiche/.test(s1), 'aperçu : 7/28 → 14/56 ; reprise 28/09 → 05/10 ; vente 19/10 → 16/11 : ' + s1);
-const s2 = l1.find(t => /25-09-2026/.test(t) && /Intramicine/.test(t));
+const s1 = l1.find(t => /20\/09\/2026/.test(t));
+check(/7 j \/ 28 j/.test(s1) && /14 j \/ 56 j/.test(s1) && /28\/09\/2026 → 05\/10\/2026/.test(s1) && /19\/10\/2026 → 16\/11\/2026/.test(s1) && /identique à la fiche/.test(s1), 'aperçu : 7/28 → 14/56 ; reprise 28/09 → 05/10 ; vente 19/10 → 16/11 : ' + s1);
+const s2 = l1.find(t => /25\/09\/2026/.test(t) && /Intramicine/.test(t));
 check(/différent de la fiche : à vérifier/.test(s2), 'soin dont le délai diffère de la fiche : « à vérifier »');
 check(l1.some(t => /archivé/.test(t)) && l1.some(t => /Agneau n°00801/.test(t) && /Séléphérol/.test(t) && /identique à la fiche/.test(t)), 'soin archivé et Séléphérol d\'agneau listés');
 const cochesDefaut = await page.evaluate(() => [...document.querySelectorAll('#sb-table tr[data-i]')].map(r => r.querySelector('.sb-chk').checked));

@@ -6,7 +6,7 @@ import { LAUNCH, URL_APP } from './lib/config.mjs';
 function check(cond, msg) { if (!cond) throw new Error('FAIL: ' + msg); }
 const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + ' : ' + JSON.stringify(a) + ' attendu ' + JSON.stringify(b));
 const browser = await chromium.launch(LAUNCH);
-const ATTENDU = ['n°00045671024', 'Mort-né', 'À boucler', 'Mort avant bouclage · 10-11-2026'];
+const ATTENDU = ['n°00045671024', 'Mort-né', 'À boucler', 'Mort avant bouclage · 10\/11\/2026'];
 for (const bureau of [true, false]) {
   const nom = bureau ? 'PC' : 'mobile';
   const p = await (await browser.newContext(bureau ? { viewport: { width: 1400, height: 1000 } } : { viewport: { width: 390, height: 844 } })).newPage();
@@ -40,8 +40,8 @@ for (const bureau of [true, false]) {
     if (pc) { const d = document.createElement('div'); d.innerHTML = registrePcTableHtml('agnelage').html; return [...d.querySelectorAll('tr')].slice(1).map(tr => tr.children[1].textContent); }
     const V = registreMobileVue('agnelage', '', registreColFiltres.agnelage); const d = document.createElement('div'); d.innerHTML = V.rows.map(V.carte).join(''); return d.textContent;
   }, bureau);
-  if (bureau) eq(ecran.slice().sort(), ['Mort avant bouclage · 10-11-2026', 'Mort-né', 'À boucler', 'n°71024'].sort(), 'PC : colonne N° agneau du tableau');
-  else check(['Agneau n°71024', 'Mort-né', 'À boucler', 'Mort avant bouclage · 10-11-2026'].every(t => ecran.includes(t)) && (ecran.match(/Mort-né/g) || []).length === 2, 'mobile : cartes du registre (« Mort-né » seulement sur la carte du mort-né : pastille + ligne) : ' + ecran);
+  if (bureau) eq(ecran.slice().sort(), ['Mort avant bouclage · 10\/11\/2026', 'Mort-né', 'À boucler', 'n°71024'].sort(), 'PC : colonne N° agneau du tableau');
+  else check(['Agneau n°71024', 'Mort-né', 'À boucler', 'Mort avant bouclage · 10\/11\/2026'].every(t => ecran.includes(t)) && (ecran.match(/Mort-né/g) || []).length === 2, 'mobile : cartes du registre (« Mort-né » seulement sur la carte du mort-né : pastille + ligne) : ' + ecran);
   // Excel
   await p.evaluate(() => exportRegistreXlsx());
   const xl = await p.evaluate(() => window.__xlsx.find(f => f.name === 'Agnelage').rows.slice(1).map(r => r[1]));

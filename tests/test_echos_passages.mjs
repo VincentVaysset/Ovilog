@@ -38,7 +38,7 @@ const J = await p.evaluate(() => { const d = donneesEchoJour(2026); return { T: 
 eq(J.T, { brebis: 9, aMettreBas: 3, misBas: 1, vide: 1, videDef: 1, cas: 0, pasPassee: 2, sortie: 1 }, 'Aujourd\'hui : 9 brebis comptées une fois (la morte sans écho exclue)');
 eq([J.stades['IA'], J.stades['Retour 1'], J.stades['Début'], J.comptage], [1, 1, 1, { un: 2, deux: 1, troisEtPlus: 0, sans: 0 }], 'stades et comptage des seules pleines à mettre bas (dernière écho)');
 eq(J.parLot, [['Monte naturelle', 6, 1, 0, 1, 1, 1, 2], ['Lot IA 1', 3, 2, 1, 0, 0, 0, 0]], 'par lot, chiffres réels');
-check(J.lignes.some(l => l[0] === 'n°19001' && l[2] === 'Mise bas le 02-11-2026') && J.lignes.some(l => l[0] === 'n°19005' && l[2] === 'Vendue le 20-10-2026'), 'pastilles « Mise bas le … » et « Vendue le … » : ' + JSON.stringify(J.lignes));
+check(J.lignes.some(l => l[0] === 'n°19001' && l[2] === 'Mise bas le 02\/11\/2026') && J.lignes.some(l => l[0] === 'n°19005' && l[2] === 'Vendue le 20\/10\/2026'), 'pastilles « Mise bas le … » et « Vendue le … » : ' + JSON.stringify(J.lignes));
 eq(await p.evaluate(() => donneesEchoJour(2026, 'L1').T.brebis), 3, 'filtre lot');
 eq(await p.evaluate(() => brebisAPasserEcho(2026).map(s => numeroVisuel(s.eid)).sort()), ['19004', '19008', '19010'], 'à passer : vides non définitives et jamais passées (présentes)');
 
@@ -50,7 +50,7 @@ eq(P[1].dev, { misBas: 1, restent: 1, sorties: 1 }, '15-10 : devenir des pleines
 eq(P[1].lots, [['Monte naturelle', 3, 1, 2, 33], ['Lot IA 1', 3, 2, 1, 67]], '15-10 : par lot au jour de l\'écho');
 eq(P[0].t, [3, 2, 1, 67], '28-11 : 3 passées, 2 pleines, 1 vide');
 eq([P[0].rep, P[0].pre], [[2, 1, 1], [1, 1, 1]], '28-11 : repassées (2 → 1 pleine) et 1re écho (antenaise)');
-check(P[0].prec.some(x => x[0] === '19003' && x[1] === 'Vide le 15-10-2026') && P[0].prec.some(x => x[0] === '26010' && x[1] === '1re écho · antenaise'), 'écho précédente / 1re écho · antenaise : ' + JSON.stringify(P[0].prec));
+check(P[0].prec.some(x => x[0] === '19003' && x[1] === 'Vide le 15\/10\/2026') && P[0].prec.some(x => x[0] === '26010' && x[1] === '1re écho · antenaise'), 'écho précédente / 1re écho · antenaise : ' + JSON.stringify(P[0].prec));
 eq(await p.evaluate(() => passagesEchoCampagne(2025).map(x => x.date)), ['2025-10-10'], 'campagne 2025 à part');
 
 // 3. lecture seule

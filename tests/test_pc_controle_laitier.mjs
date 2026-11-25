@@ -59,7 +59,7 @@ await page.click('.op-filtre-opt[data-val="<"]');
 await page.click('#btn-cl-reset');
 check(await page.evaluate(() => document.getElementById('f-seuil').value === '' && document.querySelectorAll('.ctrl-filtre-opt.selected').length === 0 && document.getElementById('cl-count').textContent === '10 brebis correspondantes sur 10'), 'Réinitialiser : filtres remis à zéro');
 await page.fill('#f-date-apres', '2026-11-12');
-check((await lignes()).length === 6 && /mise bas après le 12-11-2026/.test(await page.evaluate(() => document.getElementById('cl-filtre-actif').textContent)), 'mise bas après le 12/11 : 6 brebis (4 contrôlées + 2 sans contrôle)');
+check((await lignes()).length === 6 && /mise bas après le 12\/11\/2026/.test(await page.evaluate(() => document.getElementById('cl-filtre-actif').textContent)), 'mise bas après le 12/11 : 6 brebis (4 contrôlées + 2 sans contrôle)');
 await page.click('#btn-cl-reset');
 // tri
 await page.click('#cl-table th[data-key="numero"]');

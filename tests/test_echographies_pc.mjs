@@ -115,7 +115,7 @@ const T = await pc.evaluate(() => ({
   thFond: getComputedStyle(document.querySelector('table.ep-table th')).backgroundColor, thTexte: getComputedStyle(document.querySelector('table.ep-table th')).color }));
 eq(T.onglets, ['Aujourd\'hui', 'Passages', 'Historique'], 'trois onglets');
 eq(T.tuiles, [['pleines, à mettre bas', '8'], ['ont mis bas', '2'], ['vides', '1'], ['pas encore passées', '1']], 'quatre tuiles');
-check(/^Situation au 03-10-2026 · chaque brebis une fois, d'après sa dernière écho de la campagne · 16 brebis\.$/.test(T.ligne), 'ligne « Situation au … » : ' + T.ligne);
+check(/^Situation au 03\/10\/2026 · chaque brebis une fois, d'après sa dernière écho de la campagne · 16 brebis\.$/.test(T.ligne), 'ligne « Situation au … » : ' + T.ligne);
 eq(T.aussi, 'Aussi : 1 vide définitive · 2 avortées / pseudo. · 1 sortie.', 'ligne grise des autres situations');
 eq(T.anneau, ['Pleines, à mettre bas 8 · 50 %', 'Ont mis bas 2 · 13 %', 'Vides 1 · 6 %', 'Vides définitives 1 · 6 %', 'Avortées / pseudo. 2 · 13 %', 'Pas encore passées 1 · 6 %', 'Sorties 1 · 6 %'], 'légende de l\'anneau (catégories du jour, « Sans échographie » disparue)');
 eq(T.centre, ['16', 'brebis'], 'total au centre');
@@ -137,7 +137,7 @@ await pc.selectOption('#ep-f-campagne', '2026');
 await pc.selectOption('#ep-f-cat', 'misBas');
 const mbRows = await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => [...r.children].slice(0, 5).map(c => c.textContent.replace(/\s+/g, ' ').trim())));
 eq(mbRows.length, 2, 'filtre « Ont mis bas » : 2 brebis');
-check(mbRows.some(r => r[2] === 'Mise bas le 25-09-2026' && r[3] === '01-08-2026 · Pleine'), 'pastille « Mise bas le … » et dernière écho en gris : ' + JSON.stringify(mbRows));
+check(mbRows.some(r => r[2] === 'Mise bas le 25\/09\/2026' && r[3] === '01\/08\/2026 · Pleine'), 'pastille « Mise bas le … » et dernière écho en gris : ' + JSON.stringify(mbRows));
 await pc.selectOption('#ep-f-cat', 'sortie');
 eq(await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => r.children[2].textContent)), ['Vendue'], 'la vendue : pastille de statut');
 await pc.selectOption('#ep-f-cat', '');
@@ -176,15 +176,15 @@ const PA = await pc.evaluate(() => ({
   lignes: [...document.querySelectorAll('#ep-passages tbody tr')].map(r => [...r.children].map(c => c.textContent.trim()).join('|')), sel: document.querySelector('#ep-passages tr.ep-sel').dataset.date,
   titre: document.querySelector('#ep-panneau-passage h3').textContent, vues: [...document.querySelectorAll('#ep-vue-passage button')].map(b => b.textContent),
   lots: [...document.querySelectorAll('#ep-parlot-passage tbody tr')].map(r => [...r.children].map(c => c.textContent.trim()).join('|')), brebis: document.querySelectorAll('#ep-brebis-passage tbody tr').length }));
-eq(PA.lignes, ['01-08-2026|15|11|2|85 %|3|2|2|2 → 2 pleines|13 → 9 pleines|1|9|1', '01-07-2026|2|2|0|100 %|0|1|0|—|2 → 2 pleines|0|2|0'], 'tableau des passages');
-eq([PA.sel, PA.titre, PA.vues], ['2026-08-01', 'Passage du 01-08-2026', ['Toutes 15', 'Repassées 2', '1re écho 13']], 'le plus récent est ouvert, sous-onglets avec effectifs');
+eq(PA.lignes, ['01\/08\/2026|15|11|2|85 %|3|2|2|2 → 2 pleines|13 → 9 pleines|1|9|1', '01\/07\/2026|2|2|0|100 %|0|1|0|—|2 → 2 pleines|0|2|0'], 'tableau des passages');
+eq([PA.sel, PA.titre, PA.vues], ['2026-08-01', 'Passage du 01\/08\/2026', ['Toutes 15', 'Repassées 2', '1re écho 13']], 'le plus récent est ouvert, sous-onglets avec effectifs');
 eq(PA.lots, ['Monte naturelle|11|8|1|89 %|2|1|2', 'IA septembre|4|3|1|75 %|1|1|0'], 'par lot au jour de l\'écho');
 eq(PA.brebis, 15, 'toutes les brebis du passage');
 await pc.click('#ep-vue-passage button[data-v="repassees"]');
 const rep = await pc.evaluate(() => [...document.querySelectorAll('#ep-brebis-passage tbody tr')].map(r => [...r.children].slice(0, 5).map(c => c.textContent.trim())));
-eq(rep.map(r => r[3]), ['Pleine · Milieu le 01-07-2026', 'Pleine le 01-07-2026'], 'repassées : écho précédente en gris');
+eq(rep.map(r => r[3]), ['Pleine · Milieu le 01\/07\/2026', 'Pleine le 01\/07\/2026'], 'repassées : écho précédente en gris');
 await pc.click('#ep-passages tr[data-date="2026-07-01"]');
-eq(await pc.evaluate(() => [document.querySelector('#ep-panneau-passage h3').textContent, document.querySelectorAll('#ep-brebis-passage tbody tr').length]), ['Passage du 01-07-2026', 2], 'cliquer sur un passage l\'ouvre');
+eq(await pc.evaluate(() => [document.querySelector('#ep-panneau-passage h3').textContent, document.querySelectorAll('#ep-brebis-passage tbody tr').length]), ['Passage du 01\/07\/2026', 2], 'cliquer sur un passage l\'ouvre');
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'onglet Passages : aucune écriture');
 console.log('OK 9 bis Passages : tableau, passage ouvert, sous-onglets, par lot, brebis.');
 // ================================================================ 10. onglet Historique : n° d'ordre de repli, campagne, comptage, pastille Vide définitive, filtre par date
@@ -203,15 +203,15 @@ const H = await pc.evaluate(() => ({
 eq(H.cols, ['N° de travail', 'Date', 'Campagne', 'Résultat', ''], 'colonnes de l\'historique (avec Campagne)');
 eq(H.compte, '20 échographies', 'toutes les échos de toutes les brebis (la vendue comprise)');
 const ligne = (num, date) => H.lignes.filter(l => l[0] === num && l[1] === date);
-check(ligne('8001', '01-08-2026')[0][3] === 'Début 1' && ligne('8002', '01-08-2026')[0][3] === 'Milieu 2 et +' && ligne('8003', '01-08-2026')[0][3] === 'Fin 3 et + Parasitisme', 'comptage : 1, « 2 et + » (Double), « 3 et + » : ' + JSON.stringify(H.lignes.slice(0, 3)));
+check(ligne('8001', '01\/08\/2026')[0][3] === 'Début 1' && ligne('8002', '01\/08\/2026')[0][3] === 'Milieu 2 et +' && ligne('8003', '01\/08\/2026')[0][3] === 'Fin 3 et + Parasitisme', 'comptage : 1, « 2 et + » (Double), « 3 et + » : ' + JSON.stringify(H.lignes.slice(0, 3)));
 check(H.lignes.some(l => /^n°\d{5}$/.test(l[0])), 'n° d\'ordre à la place d\'un n° court absent (plus de cellule vide) : ' + JSON.stringify(H.lignes.map(l => l[0])));
 check(H.lignes.every(l => l[0] !== ''), 'aucune cellule N° vide');
-eq(H.lignes.filter(l => l[1] === '05-05-2025').map(l => l[2]), ['—'], 'ancienne écho sans campagne : « — »');
-eq(H.lignes.filter(l => l[1] === '01-08-2026')[0][2], '2027', 'campagne de l\'écho (2026 en interne = campagne 2027)');
+eq(H.lignes.filter(l => l[1] === '05\/05\/2025').map(l => l[2]), ['—'], 'ancienne écho sans campagne : « — »');
+eq(H.lignes.filter(l => l[1] === '01\/08\/2026')[0][2], '2027', 'campagne de l\'écho (2026 en interne = campagne 2027)');
 const vdl = H.lignes.filter(l => /Vide définitive/.test(l[3]));
 eq(vdl.length, 1, 'pastille « Vide définitive » sur UNE seule ligne : la dernière écho Vide de la campagne');
-check(/Vide Vide définitive · 2027 · 01-10-2026/.test(vdl[0][3]) && vdl[0][1] === '01-08-2026', 'pastille avec campagne et date de marquage, sur l\'écho du 01/08 (pas sur celle du 01/06) : ' + vdl[0].join(' | '));
-check(H.lignes.filter(l => l[1] === '01-06-2026')[0][3] === 'Vide', 'l\'écho Vide plus ancienne n\'a pas la pastille');
+check(/Vide Vide définitive · 2027 · 01\/10\/2026/.test(vdl[0][3]) && vdl[0][1] === '01\/08\/2026', 'pastille avec campagne et date de marquage, sur l\'écho du 01/08 (pas sur celle du 01/06) : ' + vdl[0].join(' | '));
+check(H.lignes.filter(l => l[1] === '01\/06\/2026')[0][3] === 'Vide', 'l\'écho Vide plus ancienne n\'a pas la pastille');
 eq([H.thFond, H.bulles], ['rgb(53, 127, 75)', 0], 'tableau charte (en-tête vert), aucune bulle « ? »');
 await pc.fill('#ep-histo-date', '2026-07-01'); await pc.dispatchEvent('#ep-histo-date', 'change');
 eq(await pc.evaluate(() => [document.getElementById('ep-histo-compte').textContent, document.querySelectorAll('#ep-histo-table tbody tr').length]), ['2 échographies', 2], 'filtre par date');
@@ -236,7 +236,7 @@ const xl = await pc.evaluate(() => window.__xlsx[0]);
 eq(xl.map(f => f.name), ['Résumé', 'Détail'], 'Excel Aujourd\'hui : deux feuilles');
 eq(xl[1].rows[0], ['N° de travail', 'Millésime', 'Aujourd\'hui', 'Dernière écho', 'Résultat', 'Comptage', 'Lots'], 'Excel Détail : colonnes');
 eq(xl[1].rows.length, 17, 'Excel Détail : toutes les brebis de la vue (16 + en-tête)');
-eq(xl[1].rows.find(r => r[0] === '8002'), ['8002', 2018, 'À mettre bas', '01-08-2026', 'Pleine · Milieu', '2 et +', 'IA septembre'], 'Excel : ligne d\'une pleine à mettre bas');
+eq(xl[1].rows.find(r => r[0] === '8002'), ['8002', 2018, 'À mettre bas', '01\/08\/2026', 'Pleine · Milieu', '2 et +', 'IA septembre'], 'Excel : ligne d\'une pleine à mettre bas');
 const txt = xl[0].rows.map(r => r.join(' | '));
 check(txt.some(r => /^Filtres \| Campagne 2027 · en cours · Lot : tous/.test(r)) && txt.some(r => /^Pleines, à mettre bas \| 8 \| 50 %/.test(r)) && txt.some(r => /^Monte naturelle \| {2}\| 12 \| 5 \| 2/.test(r)) && !txt.some(r => /semaine/i.test(r)), 'Excel Résumé : filtres, situations, par lot, aucune semaine : ' + txt.slice(0, 12).join(' / '));
 await pc.fill('#ep-q', '8002');
@@ -276,13 +276,13 @@ await pc.click('#ep-onglets button[data-o="passages"]');
 await pc.evaluate(() => { window.__xlsx = []; window.__fich = []; });
 await pc.click('#ep-export-xlsx'); await pc.waitForTimeout(100);
 const xp = await pc.evaluate(() => window.__xlsx[0]);
-eq(xp.map(f => f.name), ['Passages', 'Passage 01-08-2026'], 'Excel Passages : tableau + passage ouvert');
-check(xp[0].rows.some(r => r[0] === '01-08-2026' && r[1] === 15 && r[4] === '85 %') && xp[1].rows.length === 17, 'Excel Passages : lignes : ' + JSON.stringify(xp[0].rows.slice(0, 6)));
+eq(xp.map(f => f.name), ['Passages', 'Passage 01\/08\/2026'], 'Excel Passages : tableau + passage ouvert');
+check(xp[0].rows.some(r => r[0] === '01\/08\/2026' && r[1] === 15 && r[4] === '85 %') && xp[1].rows.length === 17, 'Excel Passages : lignes : ' + JSON.stringify(xp[0].rows.slice(0, 6)));
 await pc.click('#ep-export-pdf'); await pc.waitForTimeout(300);
 const pdf2 = await pc.evaluate(() => window.__fich.find(f => f.mime === 'application/pdf'));
 eq(pdf2.nom, 'echographies_passage_2026-08-01.pdf', 'PDF Passages : nom');
 L = lirePdf(pdf2.b64); TXT = L.txt.join('\n');
-for (const motif of ['Échographies · passages', 'Passage du 01-08-2026', 'Par lot · le 01-08-2026', 'Brebis du passage · Toutes', 'Écho précédente', 'Ovilog — Échographies · passages'])
+for (const motif of ['Échographies · passages', 'Passage du 01\/08\/2026', 'Par lot · le 01\/08\/2026', 'Brebis du passage · Toutes', 'Écho précédente', 'Ovilog — Échographies · passages'])
   check(TXT.includes(motif), 'PDF Passages contient « ' + motif + ' »');
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'les exports n\'écrivent rien');
 console.log('OK 11 Exports : Aujourd\'hui et Passages, Excel et PDF charte, aucune écriture.');

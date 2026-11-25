@@ -70,10 +70,10 @@ eq(await cells('#pc-tank-mois'), [['Octobre 2025', '1', '200', '', '200'], ['Dé
 eq(K[ks[0]][0], '90 L', 'dernier mois = septembre 2026 (90 L)');
 eq(await $t('#pc-tank-releves .brd-ttl'), 'Septembre 2026', 'relevés du dernier mois affichés à droite');
 await page.click('.pc-mois-row[data-cle="2025-12"]');
-eq(await $$t('#pc-tank-releves .pc-rel'), ['04-12-2025 300 L', '05-12-2025 Analyse310 L'], 'clic sur un mois : ses relevés, pastille Analyse sur le jour du prélèvement');
-eq(await $t('#pc-releve-fiche .brd-ttl'), 'Relevé du 05-12-2025', 'dernier relevé du mois ouvert dans la fiche');
+eq(await $$t('#pc-tank-releves .pc-rel'), ['04\/12\/2025 300 L', '05\/12\/2025 Analyse310 L'], 'clic sur un mois : ses relevés, pastille Analyse sur le jour du prélèvement');
+eq(await $t('#pc-releve-fiche .brd-ttl'), 'Relevé du 05\/12\/2025', 'dernier relevé du mois ouvert dans la fiche');
 await page.click('.pc-rel[data-date="2025-12-04"]');
-eq(await $t('#pc-releve-fiche .brd-ttl'), 'Relevé du 04-12-2025', 'clic sur un relevé : sa fiche');
+eq(await $t('#pc-releve-fiche .brd-ttl'), 'Relevé du 04\/12\/2025', 'clic sur un relevé : sa fiche');
 check(await page.evaluate(() => document.getElementById('pc-rel-date').disabled && document.getElementById('pc-rel-qte').value === '300' && !document.getElementById('pc-rel-prelev').checked), 'fiche : date figée, litres 300, case décochée');
 console.log('OK 2 campagne passée : « Dernier mois », tableau de la seule campagne, clic mois -> relevés, clic relevé -> fiche.');
 
@@ -84,11 +84,11 @@ await page.click('#pc-rel-prelev'); await page.click('#pc-rel-save'); await page
 const r3 = await page.evaluate(() => ({ r: DB.laitTank.find(l => l.date === '2025-12-04'), p: DB.prelevementsQualite.find(x => x.date === '2025-12-04'), s: window.__saves }));
 eq(r3.r, { date: '2025-12-04', quantite: 333.5 }, 'relevé modifié');
 check(r3.p && r3.p.volumeLait === 333.5 && r3.p.tb === null && r3.p.cellules === null && r3.p.listeria === null && r3.s === 1, 'prélèvement créé sans analyses, un seul enregistrement : ' + JSON.stringify(r3));
-eq(await $$t('#pc-tank-releves .pc-rel'), ['04-12-2025 Analyse333,5 L', '05-12-2025 Analyse310 L'], 'liste mise à jour (pastille Analyse)');
+eq(await $$t('#pc-tank-releves .pc-rel'), ['04\/12\/2025 Analyse333,5 L', '05\/12\/2025 Analyse310 L'], 'liste mise à jour (pastille Analyse)');
 eq((await cells('#pc-tank-mois'))[1], ['Décembre 2025', '2', '643,5', '', '843,5'], 'tableau mis à jour');
 await page.click('#pl-onglets [data-onglet="qualite"]');
 await page.click('.pc-qmois-row[data-cle="2025-12"]');
-check((await $$t('.pc-prelev')).some(x => x.includes('04-12-2025') && x.includes('résultats à saisir')), 'dans Qualité : mention « résultats à saisir »');
+check((await $$t('.pc-prelev')).some(x => x.includes('04\/12\/2025') && x.includes('résultats à saisir')), 'dans Qualité : mention « résultats à saisir »');
 await page.click('#pl-onglets [data-onglet="tank"]');
 console.log('OK 3 fiche relevé : litres au clavier, case prélèvement (sans analyses, « résultats à saisir » dans Qualité), tableau mis à jour.');
 
@@ -100,7 +100,7 @@ await page.click('#pc-rel-qte'); await page.keyboard.type('250', { delay: 40 });
 check(await page.evaluate(() => document.getElementById('pc-rel-date').value === '2025-12-06' && document.getElementById('pc-rel-qte').value === '250'), 'date et litres tapés au clavier : ' + await page.evaluate(() => document.getElementById('pc-rel-date').value));
 await page.click('#pc-rel-save'); await page.waitForTimeout(100);
 eq(await page.evaluate(() => DB.laitTank.find(l => l.date === '2025-12-06')), { date: '2025-12-06', quantite: 250 }, 'nouveau relevé enregistré');
-eq(await $t('#pc-releve-fiche .brd-ttl'), 'Relevé du 06-12-2025', 'la fiche affiche le relevé créé');
+eq(await $t('#pc-releve-fiche .brd-ttl'), 'Relevé du 06\/12\/2025', 'la fiche affiche le relevé créé');
 await page.click('#pc-rel-nouveau');
 await page.fill('#pc-rel-date', ''); await page.focus('#pc-rel-date'); await page.keyboard.type('12062025', { delay: 40 });
 check(/existe déjà/.test(await $t('#pc-rel-note')) && await page.evaluate(() => document.getElementById('pc-rel-qte').value === '250'), 'date déjà saisie : note + litres préremplis');
@@ -114,7 +114,7 @@ console.log('OK 4 nouveau relevé : date au clavier, doublon signalé, confirmat
 // ================================================================ 5. suppression avec confirmation ; prélèvement conservé
 await page.click('.pc-rel[data-date="2025-12-04"]');
 confirms.length = 0; reponse = false; await page.click('#pc-rel-del');
-check(confirms.length === 1 && /04-12-2025/.test(confirms[0]) && /prélèvement qualité.*conservé/.test(confirms[0]), 'message de confirmation : ' + confirms[0]);
+check(confirms.length === 1 && /04\/12\/2025/.test(confirms[0]) && /prélèvement qualité.*conservé/.test(confirms[0]), 'message de confirmation : ' + confirms[0]);
 check(await page.evaluate(() => DB.laitTank.some(l => l.date === '2025-12-04')), 'refus : relevé conservé');
 reponse = true; await page.click('#pc-rel-del'); await page.waitForTimeout(100);
 check(await page.evaluate(() => !DB.laitTank.some(l => l.date === '2025-12-04') && DB.prelevementsQualite.some(p => p.date === '2025-12-04')), 'accord : relevé supprimé, prélèvement qualité conservé');
@@ -145,7 +145,7 @@ const fr = (v, d) => v.toFixed(d).replace('.', ',');
 eq([K[ks[0]][0], K[ks[1]][0], K[ks[2]][0]], [fr(q.tb, 2), fr(q.tp, 2), fr(q.msu, 2)], 'TB / TP / MSU = fonction de données commune');
 eq(K[ks[3]][0], String(Math.round(q.cel / 1000)), 'cellules en milliers/mL (valeur ÷ 1000)');
 eq(K[ks[4]][0], q.sa + ' sur ' + q.n, 'Super A « x sur y » mois');
-check(/Résultat positif : Salmonelles \(31-07-2026\)/.test(await $t('#qualite-banner')) && /Juillet 2026/.test(await $t('#qualite-banner')), 'bandeau positif sobre en haut : ' + await $t('#qualite-banner'));
+check(/Résultat positif : Salmonelles \(31\/07\/2026\)/.test(await $t('#qualite-banner')) && /Juillet 2026/.test(await $t('#qualite-banner')), 'bandeau positif sobre en haut : ' + await $t('#qualite-banner'));
 eq(await cells('#pc-qualite-mois'), await page.evaluate(() => {
   const d = qualiteCampagneData(2025), f = (v, n) => v === null ? '—' : v.toFixed(n).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   const l = d.mois.filter(m => m.nbPrelevements > 0).map(m => [m.libelle, m.volume === null ? '—' : String(Math.round(m.volume * 10) / 10).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, ' '), String(m.nbPrelevements), f(m.tb, 2), f(m.tp, 2), f(m.msu, 2), String(Math.round(m.cellules / 1000)), m.superA ? 'Obtenu' : 'Non obtenu']);
@@ -155,10 +155,10 @@ eq(await cells('#pc-qualite-mois'), await page.evaluate(() => {
 eq(await $t('#pc-qualite-prelevs .brd-ttl'), 'Juillet 2026', 'dernier mois à prélèvements affiché à droite');
 check(await nb('.pc-prelev') === 1, 'un prélèvement en juillet 2026');
 let pt = await $t('.pc-prelev');
-check(/31-07-2026/.test(pt) && /120 L/.test(pt) && /TB 90,00|TB90,00/.test(pt) && /MSU160,00|MSU 160,00/.test(pt) && /Cellules300/.test(pt.replace(/\s/g, '')) && /Salmonelles/.test(pt) && /positif/i.test(pt) && !/Super A/.test(pt), 'toutes les analyses, Super A annulé (salmonelles positif) : ' + pt);
+check(/31\/07\/2026/.test(pt) && /120 L/.test(pt) && /TB 90,00|TB90,00/.test(pt) && /MSU160,00|MSU 160,00/.test(pt) && /Cellules300/.test(pt.replace(/\s/g, '')) && /Salmonelles/.test(pt) && /positif/i.test(pt) && !/Super A/.test(pt), 'toutes les analyses, Super A annulé (salmonelles positif) : ' + pt);
 await page.click('.pc-qmois-row[data-cle="2025-12"]');
 pt = await $t('.pc-prelev');
-check(/05-12-2025/.test(pt) && /Super A/.test(pt) && /Cellules400/.test(pt.replace(/\s/g, '')) && !/400 000/.test(pt), 'décembre 2025 : Super A obtenu, cellules en milliers (400, pas 400 000) : ' + pt);
+check(/05\/12\/2025/.test(pt) && /Super A/.test(pt) && /Cellules400/.test(pt.replace(/\s/g, '')) && !/400 000/.test(pt), 'décembre 2025 : Super A obtenu, cellules en milliers (400, pas 400 000) : ' + pt);
 await page.click('#qualite-banner'); eq(await $t('#pc-qualite-prelevs .brd-ttl'), 'Juillet 2026', 'clic sur le bandeau : mois du résultat positif');
 console.log('OK 7 Qualité PC : bandeau positif, 5 tuiles, tableau Moyennes par mois (= fonctions communes), prélèvements du mois avec toutes les analyses, cellules en milliers/mL.');
 
@@ -178,7 +178,7 @@ eq([rap.nom, rap.mime, rap.n], [rapRef.nom, rapRef.mime, rapRef.n], 'rapport de 
 await page.selectOption('#pl-pc-campagne', '2026');
 eq(await $$t('#pc-qualite-mois tbody tr td:first-child'), ['Octobre 2026', 'Campagne 2027'], 'autre campagne : uniquement ses mois');
 check(!/Salmonelles/.test(await $t('#app')) && !/Super A \(/.test(await $t('#app')), 'aucun résultat d\'une autre campagne (bandeau positif absent)');
-check(/résultats à saisir/.test(await $t('.pc-prelev')), 'prélèvement du 02-10-2026 sans analyses : « résultats à saisir »');
+check(/résultats à saisir/.test(await $t('.pc-prelev')), 'prélèvement du 02\/10\/2026 sans analyses : « résultats à saisir »');
 console.log('OK 8 Modifier / + Nouveau prélèvement / rapport de campagne ; changement de campagne sans mélange.');
 
 // ================================================================ 9. nouveau prélèvement saisi au clavier : la page se place sur son mois et sa campagne
@@ -191,7 +191,7 @@ await page.click('#qs-tb'); await page.keyboard.type('71.5', { delay: 40 });
 await page.click('#qs-save'); await page.waitForTimeout(150);
 check(await page.evaluate(() => { const p = DB.prelevementsQualite.find(x => x.date === '2025-12-04'); return !!p && p.tb === 71.5 && p.volumeLait === 300; }), 'prélèvement créé avec le volume du relevé du jour');
 eq(await page.evaluate(() => [plPcCampagne, plPcMoisQual]), [2025, '2025-12'], 'la page suit : campagne 2026, décembre 2025');
-check(/04-12-2025/.test(await $t('#pc-qualite-prelevs')) && /71,50/.test(await $t('#pc-qualite-prelevs')), 'le prélèvement est visible dans son mois');
+check(/04\/12\/2025/.test(await $t('#pc-qualite-prelevs')) && /71,50/.test(await $t('#pc-qualite-prelevs')), 'le prélèvement est visible dans son mois');
 console.log('OK 9 nouveau prélèvement : date et TB au clavier, volume repris du relevé, la page affiche son mois.');
 
 // ================================================================ 10. données réelles (lecture seule), PC

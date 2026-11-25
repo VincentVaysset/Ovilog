@@ -22,7 +22,7 @@ const jeu = () => page.evaluate(() => {
   window.E = (d, n) => '2500000121' + d + String(n).padStart(4, '0');
   const f = (d, n, extra) => Object.assign({ id: 'b' + d + n, eid: E(d, n), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], mouvements: [{ type: 'Entrée', date: '2024-01-01' }], controleLaitier: [], modesRepro: [], videesDefinitives: [] }, extra || {});
   DB.brebis = [f(8, 133), f(9, 59, { agnelages: [{ campagne: 2027, date: '2027-11-10', codeRepro: 'IA', lambs: [{}] }] }), f(9, 69, { statut: 'vendue' }), f(9, 152), f(0, 33), f(9, 77, { statut: 'vendue' })];
-  const lot = creerLotReproductionJournalise({ id: 'LR', nom: 'IA du 15-06-2027', mode: 'IA', cible: 'Brebis', dateCreation: '2026-10-02', dateEvenement: '2027-06-15', campagne: 2026, campagneMisesBas: 2027 }, [E(8, 133), E(9, 59), E(9, 69)], { source: 'PC' });
+  const lot = creerLotReproductionJournalise({ id: 'LR', nom: 'IA du 15\/06\/2027', mode: 'IA', cible: 'Brebis', dateCreation: '2026-10-02', dateEvenement: '2027-06-15', campagne: 2026, campagneMisesBas: 2027 }, [E(8, 133), E(9, 59), E(9, 69)], { source: 'PC' });
   DB.brebis.filter(b => [E(8, 133), E(9, 59), E(9, 69)].includes(b.eid)).forEach(b => b.modesRepro.push({ date: '2027-06-15', mode: 'IA', campagne: 2027, lotId: 'LR' }));
   creerLotReproductionJournalise({ id: 'LV', nom: 'Éponge vide', mode: 'EP', cible: 'Brebis', dateCreation: '2026-10-02', dateEvenement: '2027-06-28', datePose: '2027-06-12', campagne: 2026, campagneMisesBas: 2027 }, []);
   DB.lots.push({ id: 'LS', nom: 'Brebis doubles', dateCreation: '2026-10-01', membres: [E(9, 152)] });
@@ -46,9 +46,9 @@ console.log('OK 1 liste mobile : bouton de création supprimé, « Ouvrir » / �
 
 // ================================================================ 2. détail du lot
 await ouvrir();
-check(await page.evaluate(() => document.getElementById('page-title').textContent) === 'Lot IA du 15-06-2027', 'titre : « Lot IA du 15-06-2027 »');
+check(await page.evaluate(() => document.getElementById('page-title').textContent) === 'Lot IA du 15\/06\/2027', 'titre : « Lot IA du 15\/06\/2027 »');
 const det = await $t('#app');
-check(/IA · Brebis/.test(det) && /IA le 15-06-2027 · mises bas campagne 2028/.test(det) && /3 brebis/.test(await $t('#lr-compteur')), 'carte : mode, cible, date, campagne des mises bas (lecture seule), compteur : ' + det.slice(0, 120));
+check(/IA · Brebis/.test(det) && /IA le 15\/06\/2027 · mises bas campagne 2028/.test(det) && /3 brebis/.test(await $t('#lr-compteur')), 'carte : mode, cible, date, campagne des mises bas (lecture seule), compteur : ' + det.slice(0, 120));
 check(await page.evaluate(() => document.querySelectorAll('#app input:not(#lr-scan)').length) === 0, 'aucun champ modifiable : mode, cible, campagne en lecture seule');
 const lignes = await page.evaluate(() => [...document.querySelectorAll('#app .card[data-eid]')].map(r => r.textContent.replace(/\s+/g, ' ').trim()));
 check(lignes.length === 3 && lignes[0].startsWith('n°80133') && lignes[1].startsWith('n°90059') && /n°90069.*vendue — reste dans le lot \(hors taux\)/.test(lignes[2]), 'liste : âge décroissant puis n° ; la brebis vendue reste dans le lot, signalée : ' + JSON.stringify(lignes));
@@ -109,7 +109,7 @@ await page.evaluate(() => {
   creerLotReproductionJournalise({ id: 'LA', nom: 'Éponge antenaises', mode: 'EP', cible: 'Agnelles', dateCreation: '2026-10-02', dateEvenement: '2027-06-28', datePose: '2027-06-12', campagne: 2026, campagneMisesBas: 2027 }, [E(5, 41)]);
   currentLotId = 'LA'; render('lot-repro-detail');
 });
-check(/Éponge · Agnelles/.test(await $t('#app')) && /Pose le 12-06-2027 · lutte le 28-06-2027/.test(await $t('#app')) && /1 antenaise/.test(await $t('#lr-compteur')), 'lot Éponge cible Agnelles : pose et lutte, compteur en antenaises');
+check(/Éponge · Agnelles/.test(await $t('#app')) && /Pose le 12\/06\/2027 · lutte le 28\/06\/2027/.test(await $t('#app')) && /1 antenaise/.test(await $t('#lr-compteur')), 'lot Éponge cible Agnelles : pose et lutte, compteur en antenaises');
 await scanner('50042');
 check(await page.evaluate(() => DB.lots.find(x => x.id === 'LA').membres.length) === 2 && await page.evaluate(() => DB.agnelles[1].modesRepro.length) === 1, 'ajout d\'une antenaise par n° : membre + évènement modesRepro sur l\'agnelle');
 console.log('OK 6 lot cible Agnelles : pose / lutte, antenaises, ajout par n°.');

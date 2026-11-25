@@ -195,7 +195,7 @@ const dbAvantExport = await page.evaluate(() => JSON.stringify(DB));
 await fermerModales(); await page.click('#btn-export');
 await page.waitForFunction(() => /Dernière sauvegarde vérifiée le/.test(document.getElementById('prm-etat-sauvegarde').textContent), null, { timeout: 8000 });
 let t = await ligneEtat();
-check(/^Dernière sauvegarde vérifiée le \d\d-\d\d-\d{4}$/.test(t), 'ligne de succès attendue, obtenu : ' + t);
+check(/^Dernière sauvegarde vérifiée le \d\d\/\d\d\/\d{4}$/.test(t), 'ligne de succès attendue, obtenu : ' + t);
 const mem = await page.evaluate(() => JSON.parse(localStorage.getItem('ovilog_derniere_sauvegarde')));
 check(mem.mode === 'saf' && mem.nom === 'Sauvegarde choisie.json' && mem.taille > 0 && mem.echec === null, 'état mémorisé sur l\'appareil (nom, taille, mode saf) : ' + JSON.stringify(mem));
 await ouvrirSauvegarde();
@@ -212,7 +212,7 @@ await page.evaluate(() => { window.__mode = 'fail'; });
 await fermerModales(); await page.click('#btn-export');
 await page.waitForFunction(() => /Dernier export échoué/.test(document.getElementById('prm-etat-sauvegarde').textContent), null, { timeout: 8000 });
 t = await ligneEtat();
-check(/⚠️ Dernier export échoué le \d\d-\d\d-\d{4} : .*simulé/.test(t) && /Dernière sauvegarde vérifiée le/.test(t), 'échec affiché clairement avec la raison, dernière sauvegarde réussie conservée : ' + t);
+check(/⚠️ Dernier export échoué le \d\d\/\d\d\/\d{4} : .*simulé/.test(t) && /Dernière sauvegarde vérifiée le/.test(t), 'échec affiché clairement avec la raison, dernière sauvegarde réussie conservée : ' + t);
 check(await page.evaluate(() => !!document.querySelector('#prm-etat-sauvegarde .prm-etat-echec')), 'l\'échec a son style d\'alerte');
 console.log('OK K (échec) : raison réelle affichée, dernière réussite conservée.');
 // un export réussi efface l'échec

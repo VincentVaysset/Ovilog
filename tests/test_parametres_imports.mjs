@@ -93,12 +93,12 @@ if (modeleCorr) {
   const mem = await page.evaluate(() => JSON.parse(localStorage.getItem('ovilog_derniers_imports')));
   check(mem['correspondance-sieol'] && mem['correspondance-sieol'].lignes === 2 && mem['correspondance-sieol'].campagne === null, 'état mémorisé (2 lignes, pas de campagne) : ' + JSON.stringify(mem));
   await page.evaluate(() => { parametresTab = 'imports'; render('parametres'); }); await attendreApercus();
-  check(/^\d\d-\d\d-\d{4} · 2 lignes$/.test(await page.evaluate(() => document.getElementById('dernier-correspondance-sieol').textContent)), 'dernier import affiché : ' + await page.evaluate(() => document.getElementById('dernier-correspondance-sieol').textContent));
+  check(/^\d\d\/\d\d\/\d{4} · 2 lignes$/.test(await page.evaluate(() => document.getElementById('dernier-correspondance-sieol').textContent)), 'dernier import affiché : ' + await page.evaluate(() => document.getElementById('dernier-correspondance-sieol').textContent));
   console.log('OK 5 : import réel du modèle Correspondance SIEOL -> « dernier import » mémorisé et affiché.');
 } else console.log('SKIP 5 : modèles d\'origine absents de ce poste');
 // ---- 6. mémoire directe avec campagne
 await page.evaluate(() => { noterDernierImport('lactation', 2026, 1); noterDernierImport('controle-laitier', 2026, 351); parametresTab = 'imports'; render('parametres'); }); await attendreApercus();
-eq(await page.evaluate(() => [document.getElementById('dernier-lactation').textContent.replace(/^\d\d-\d\d-\d{4}/, 'D'), document.getElementById('dernier-controle-laitier').textContent.replace(/^\d\d-\d\d-\d{4}/, 'D')]), ['D · campagne 2027 · 1 ligne', 'D · campagne 2027 · 351 lignes'], 'format avec campagne et pluriel');
+eq(await page.evaluate(() => [document.getElementById('dernier-lactation').textContent.replace(/^\d\d\/\d\d\/\d{4}/, 'D'), document.getElementById('dernier-controle-laitier').textContent.replace(/^\d\d\/\d\d\/\d{4}/, 'D')]), ['D · campagne 2027 · 1 ligne', 'D · campagne 2027 · 351 lignes'], 'format avec campagne et pluriel');
 console.log('OK 6 : format « date · campagne · lignes ».');
 
 // ---- 7. mobile : pas de rubrique Imports

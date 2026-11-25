@@ -51,7 +51,7 @@ for (const bureau of [false, true]) {
   eq(await groupes(p, 'agnelles'), [['66001', ['Vermi V/viande/2026-10-30'], '2026-10-30']], nom + ' : agnelles, délai viande');
   eq(await groupes(p, 'agneaux'), [['61001', ['Vermi V/viande/2026-11-05'], '2026-11-05']], nom + ' : agneaux, délai viande (le délai lait d\'un agneau ne compte pas)');
   eq(await groupes(p, 'beliers'), [['68001', ['Vermi V/viande/2026-11-06'], '2026-11-06']], nom + ' : béliers, délai viande');
-  eq(await p.evaluate(() => [nbBrebisSousDelai(), new Set(sousDelaiBrebisRows().map(r => r.sheepId)).size, sanitaireDateHtml(DB.brebis[0].sanitaire[0])]), [2, 1, '27-10-2026'],
+  eq(await p.evaluate(() => [nbBrebisSousDelai(), new Set(sousDelaiBrebisRows().map(r => r.sheepId)).size, sanitaireDateHtml(DB.brebis[0].sanitaire[0])]), [2, 1, '27\/10\/2026'],
     nom + ' : accueil = brebis (lait ou viande) ; Contrôle de lot = délai lait des brebis ; fiche sans « délai jusqu\'au » pour un délai 0');
   await p.context().close();
 
@@ -69,14 +69,14 @@ for (const bureau of [false, true]) {
     lignes: bureau ? [...document.querySelectorAll('.table-desktop tbody tr')].map(tr => tr.children[0].textContent + '|' + tr.children[2].textContent) : [...document.querySelectorAll('#sous-delai-cartes .carte-liste')].map(c => c.querySelector('.carte-liste-nm').textContent + '|' + c.querySelectorAll('.sd-soin').length),
     txt: document.getElementById('app').innerText, scan: !!document.getElementById('btn-controle-lot-delai') }), bureau);
   eq(ecran.onglets, ['Brebis (4)', 'Agnelles (1)', 'Agneaux (2)', 'Béliers (1)'], nom + ' : onglets avec effectifs');
-  eq(ecran.lignes, bureau ? ['n°69001|29-10-2026', 'n°69004|29-10-2026', 'n°69002|01-11-2026', 'n°69005|14-11-2026'] : ['n°69001|2', 'n°69004|2', 'n°69002|4', 'n°69005|2'], nom + ' : une ligne / une carte par brebis, une ligne par produit et type de délai');
+  eq(ecran.lignes, bureau ? ['n°69001|29\/10\/2026', 'n°69004|29\/10\/2026', 'n°69002|01\/11\/2026', 'n°69005|14\/11\/2026'] : ['n°69001|2', 'n°69004|2', 'n°69002|4', 'n°69005|2'], nom + ' : une ligne / une carte par brebis, une ligne par produit et type de délai');
   check(/4 brebis sous délai d'attente/.test(ecran.txt) && ecran.scan === !bureau, nom + ' : compteur de l\'onglet ; Contrôle de lot (scan) sur l\'onglet Brebis du mobile');
   // onglet Agneaux : écran, PDF et lot suivent l'onglet
   await p.click('.sd-onglets .tab-btn[data-tab="agneaux"]');
   const ag = await p.evaluate(() => ({ actif: document.querySelector('.sd-onglets .tab-btn.active').dataset.tab, txt: document.getElementById('app').innerText, scan: !!document.getElementById('btn-controle-lot-delai') }));
   check(ag.actif === 'agneaux' && /2 agneaux sous délai d'attente/.test(ag.txt) && /Délai viande/.test(ag.txt) && !ag.scan, nom + ' : onglet Agneaux (délai viande, pas de Contrôle de lot)');
   const pdf = await p.evaluate(() => { let a = null; const o = buildPdfTableCharte; buildPdfTableCharte = x => { a = x; return new Uint8Array(1); }; let fic = null; saveOrShareBinaryFile = n => { fic = n; }; document.getElementById('btn-export-sous-delai-pdf').click(); buildPdfTableCharte = o; return { titre: a.title, n: a.rows.length, ligne: a.rows[0][1], fic }; });
-  eq([pdf.titre, pdf.n, pdf.ligne, /^sous-delai-attente_agneaux_/.test(pdf.fic)], ["Sous délai d'attente · Agneaux", 2, 'Antibio A — viande — soin 26-10-2026 — fin 28-10-2026', true], nom + ' : PDF de l\'onglet affiché, même texte que l\'écran');
+  eq([pdf.titre, pdf.n, pdf.ligne, /^sous-delai-attente_agneaux_/.test(pdf.fic)], ["Sous délai d'attente · Agneaux", 2, 'Antibio A — viande — soin 26\/10\/2026 — fin 28\/10\/2026', true], nom + ' : PDF de l\'onglet affiché, même texte que l\'écran');
   await p.evaluate(() => { sousDelaiOnglet = 'brebis'; });
   await p.context().close();
 }

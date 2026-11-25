@@ -42,7 +42,7 @@ eq(await tuiles(), [['Mises bas', '2', 'vert'], ['Agneaux nés', '3', 'vert'], [
 const depart = await page.evaluate(() => ({ champ: !!document.getElementById('scan-misebas'), form: !!document.getElementById('mb-formulaire'), barre: !!document.querySelector('.mn-barre'),
   der: [...document.querySelectorAll('#mb-dernieres .mb-der')].map(r => r.innerText.replace(/\s+/g, ' ').trim()), info: /Toucher une ligne pour la modifier/.test(document.getElementById('app').textContent), table: !!document.querySelector('table'), annulerLigne: !!document.querySelector('.btn-annuler-mb-campagne') }));
 eq([depart.champ, depart.form, depart.barre, depart.table], [true, false, false, false], 'départ : champ de scan seul, pas de tableau coupé');
-eq(depart.der, ['n°00200 01-10-2026 · 1 mâle, 1 femelle Double', 'n°00201 30-09-2026 · 1 mâle Simple'], 'Dernières saisies (récentes en premier) avec résumé et portée'); check(depart.info, 'phrase « Toucher une ligne pour la modifier »');
+eq(depart.der, ['n°00200 01\/10\/2026 · 1 mâle, 1 femelle Double', 'n°00201 30\/09\/2026 · 1 mâle Simple'], 'Dernières saisies (récentes en premier) avec résumé et portée'); check(depart.info, 'phrase « Toucher une ligne pour la modifier »');
 
 // ================================================================ 2. brebis trouvée : formulaire
 await saisir(E_(101));
@@ -95,7 +95,7 @@ eq(c1.txt, 'Mise bas enregistrée n°00101 · 1 mâle, 1 femelle mort-née Annul
 check(c1.fond === 'rgb(227, 243, 230)', 'confirmation sur fond vert pastel de la charte : ' + c1.fond);
 eq([c1.scan, c1.actif, c1.form, c1.barre], ['', 'scan-misebas', false, false], 'enchaînement : champ de scan vidé et actif, plus de formulaire ni de barre');
 eq(await tuiles(), [['Mises bas', '3', 'vert'], ['Agneaux nés', '5', 'vert'], ['Restantes', '5', 'ambre']], 'tuiles mises à jour (3 mises bas, 5 agneaux nés, 5 restantes)');
-eq(await page.evaluate(() => [...document.querySelectorAll('#mb-dernieres .mb-der')].map(r => r.innerText.replace(/\s+/g, ' ').trim())), ['n°00101 02-10-2026 · 1 mâle, 1 femelle mort-née Double', 'n°00200 01-10-2026 · 1 mâle, 1 femelle Double', 'n°00201 30-09-2026 · 1 mâle Simple'], 'Dernières saisies : la nouvelle mise bas en tête');
+eq(await page.evaluate(() => [...document.querySelectorAll('#mb-dernieres .mb-der')].map(r => r.innerText.replace(/\s+/g, ' ').trim())), ['n°00101 02\/10\/2026 · 1 mâle, 1 femelle mort-née Double', 'n°00200 01\/10\/2026 · 1 mâle, 1 femelle Double', 'n°00201 30\/09\/2026 · 1 mâle Simple'], 'Dernières saisies : la nouvelle mise bas en tête');
 
 // ================================================================ 4. « Annuler cette saisie » : un geste, sans confirmation
 dialogues.length = 0;
@@ -123,7 +123,7 @@ check((await ag(103))[0].lambs[0].eid === L_(2) && (await ag(103))[0].lambs[0].s
 await saisir(E_(200)); await page.waitForSelector('#mb-blocage');
 const bl = await page.evaluate(() => ({ txt: document.getElementById('mb-blocage').innerText.replace(/\s+/g, ' ').trim(), fond: getComputedStyle(document.getElementById('mb-blocage')).backgroundColor, form: !!document.getElementById('mb-formulaire'), barre: !!document.querySelector('.mn-barre'),
   boutons: [document.getElementById('btn-ouvrir-fiche-mb').textContent, document.getElementById('btn-autre-brebis-mb').textContent] }));
-check(/Blocage/.test(bl.txt) && /n°00200 a déjà mis bas cette campagne/.test(bl.txt) && /Le 01-10-2026 · 2 agneaux\. Une seule mise bas par campagne\./.test(bl.txt), 'blocage : message de la maquette : ' + bl.txt);
+check(/Blocage/.test(bl.txt) && /n°00200 a déjà mis bas cette campagne/.test(bl.txt) && /Le 01\/10\/2026 · 2 agneaux\. Une seule mise bas par campagne\./.test(bl.txt), 'blocage : message de la maquette : ' + bl.txt);
 eq([bl.fond, bl.form, bl.barre, bl.boutons], ['rgb(251, 227, 224)', false, false, ['Ouvrir la fiche', 'Autre brebis']], 'blocage rouge pastel, aucun formulaire, boutons Ouvrir la fiche / Autre brebis');
 await page.click('#btn-autre-brebis-mb');
 check(await page.evaluate(() => !document.getElementById('mb-blocage') && !document.getElementById('mb-formulaire') && document.getElementById('scan-misebas').value === ''), '« Autre brebis » : retour au champ de scan');

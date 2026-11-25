@@ -57,7 +57,7 @@ check(geo.ths.join('|') === 'N°|Catégorie|Type de soin|Produit|Date|Dose|N° o
 check(geo.sw <= geo.cw + 1 && geo.largeur >= geo.conteneur - 2 && geo.derniereDroite <= geo.conteneurDroite + 1 && geo.scrollX, 'tableau pleine largeur, colonne Campagne visible, aucun défilement horizontal : ' + JSON.stringify(geo));
 check(await page.evaluate(() => document.getElementById('pc-registre-compte').textContent) === '8 soins affichés', 'compteur : 8 soins affichés');
 const l1 = await page.evaluate(() => [...document.querySelectorAll('#registre-body tr')].slice(1, 2).map(r => [...r.cells].map(c => c.textContent.trim())));
-check(JSON.stringify(l1[0]) === JSON.stringify(['n°00017', 'Brebis', 'Traitement · Antibiotique', 'Intramicine', '20-09-2026', '8 cc', '—', 'Campagne 2026']), 'ligne la plus récente (n°, catégorie, soin, produit, date, dose, ordonnance, campagne) : ' + JSON.stringify(l1[0]));
+check(JSON.stringify(l1[0]) === JSON.stringify(['n°00017', 'Brebis', 'Traitement · Antibiotique', 'Intramicine', '20\/09\/2026', '8 cc', '—', 'Campagne 2026']), 'ligne la plus récente (n°, catégorie, soin, produit, date, dose, ordonnance, campagne) : ' + JSON.stringify(l1[0]));
 // filtres : une seule barre
 check(await page.evaluate(() => { const f = document.querySelector('.pc-filtres-ligne'); const tops = [...f.querySelectorAll('input, select, button')].map(x => Math.round(x.getBoundingClientRect().top)); return tops.every(t => Math.abs(t - tops[0]) < 8); }), 'recherche, catégorie, type de soin, campagne et Réinitialiser sur une seule ligne');
 await page.fill('#registre-filtre', '17');

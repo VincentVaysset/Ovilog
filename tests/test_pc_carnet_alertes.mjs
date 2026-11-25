@@ -69,7 +69,7 @@ const t = type => page.click(`.type-opt[data-val="${type}"]`);
 await t('Vente');
 await page.fill('#f-date', '2026-10-10');
 let al = await page.evaluate(() => { const e = document.getElementById('alerte-vente-delai'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
-check(al && /n°00001 est encore sous délai d'attente viande/.test(al) && /Intramicine/.test(al) && /30-09-2026/.test(al) && /29-10-2026/.test(al) && /rien n'est bloqué/.test(al), 'alerte de vente : ' + al);
+check(al && /n°00001 est encore sous délai d'attente viande/.test(al) && /Intramicine/.test(al) && /30\/09\/2026/.test(al) && /29\/10\/2026/.test(al) && /rien n'est bloqué/.test(al), 'alerte de vente : ' + al);
 await page.fill('#f-date', '2026-10-29');
 check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'le 29/10 : alerte disparue');
 await page.fill('#f-date', '2026-10-28');
@@ -94,7 +94,7 @@ await page.waitForSelector('#mv-table');
 await page.click('.mv-type[data-val="Vente"]'); await page.fill('#mv-date', '2026-10-10');
 await page.click('tr.clic[data-id="B"]'); await page.click('tr.clic[data-id="C"]');
 al = await page.evaluate(() => { const e = document.getElementById('alerte-vente-delai'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
-check(al && /n°00003 est encore sous délai/.test(al) && /Ivomec/.test(al) && /30-10-2026/.test(al) && !/n°00002/.test(al), 'collectif : seul n°00003 (sélectionné ET sous délai) est signalé : ' + al);
+check(al && /n°00003 est encore sous délai/.test(al) && /Ivomec/.test(al) && /30\/10\/2026/.test(al) && !/n°00002/.test(al), 'collectif : seul n°00003 (sélectionné ET sous délai) est signalé : ' + al);
 await page.click('tr.clic[data-id="A"]');
 al = await page.evaluate(() => { const e = document.getElementById('alerte-vente-delai'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
 check(/2 animaux sont encore sous délai/.test(al) && /n°00001/.test(al) && /n°00003/.test(al), 'collectif : 2 animaux listés après ajout à la sélection : ' + al);
@@ -110,7 +110,7 @@ check(await page.evaluate(() => !JSON.stringify(DB.produitsInfo).includes('Sél�
 await page.evaluate(() => { DB.produits.autres.push('Séléphérol'); ecrireFicheProduit('Séléphérol', { posologie: '', delaiLait: 0, delaiViande: 28, surOrdonnance: false, reserveVeterinaire: false }); });
 await page.fill('#lambsortie-date', '2026-10-05');
 al = await page.evaluate(() => { const e = document.getElementById('alerte-vente-delai'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
-check(al && /Agneau n°00801 est encore sous délai/.test(al) && /Séléphérol/.test(al) && /24-10-2026/.test(al), 'fiche créée par l\'éleveur (viande 28, lait 0) : l\'ancien soin est lu d\'après la fiche, alerte de vente de l\'agneau : ' + al);
+check(al && /Agneau n°00801 est encore sous délai/.test(al) && /Séléphérol/.test(al) && /24\/10\/2026/.test(al), 'fiche créée par l\'éleveur (viande 28, lait 0) : l\'ancien soin est lu d\'après la fiche, alerte de vente de l\'agneau : ' + al);
 await page.fill('#lambsortie-date', '2026-10-24');
 check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'le 23/10 : plus d\'alerte');
 await page.fill('#lambsortie-date', '2026-10-05');
@@ -153,14 +153,14 @@ await page.evaluate(() => { window.__ag = DB.agnelles[0]; showVendreAgnelleModal
 await page.waitForSelector('#vendre-date');
 await page.fill('#vendre-date', '2026-10-10');
 al = await page.evaluate(() => { const e = document.getElementById('alerte-vente-delai'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
-check(al && /Agnelle n°00070 est encore sous délai/.test(al) && /27-10-2026/.test(al), 'agnelle : alerte de vente, vente dès le 27/10 : ' + al);
+check(al && /Agnelle n°00070 est encore sous délai/.test(al) && /27\/10\/2026/.test(al), 'agnelle : alerte de vente, vente dès le 27/10 : ' + al);
 await page.click('#vendre-cancel');
 const mob = await page.evaluate(() => {
   window.electronAPI.isDesktop = false;       // écrans MOBILE
   const r = {};
   const vente = (date) => { document.querySelector('.type-opt[data-val="Vente"]').click(); document.getElementById('f-date').value = date; document.getElementById('f-date').dispatchEvent(new Event('input')); };
   currentSheepId = 'C'; editContext = null; render('add-mouvement'); vente('2026-10-10');
-  r.individuel = !!document.getElementById('alerte-vente-delai') && /n°00003 est encore sous délai/.test(document.getElementById('zone-alerte-vente-delai').textContent) && /30-10-2026/.test(document.getElementById('zone-alerte-vente-delai').textContent);
+  r.individuel = !!document.getElementById('alerte-vente-delai') && /n°00003 est encore sous délai/.test(document.getElementById('zone-alerte-vente-delai').textContent) && /30\/10\/2026/.test(document.getElementById('zone-alerte-vente-delai').textContent);
   document.getElementById('f-date').value = '2026-10-30'; document.getElementById('f-date').dispatchEvent(new Event('input'));
   r.disparaitLe30 = !document.getElementById('zone-alerte-vente-delai');
   currentSheepId = 'B'; render('add-mouvement'); vente('2026-10-10');
@@ -220,7 +220,7 @@ const cl = await page.evaluate(() => {
   return { n: l.length, premier: l[0] && [numeroVisuel(l[0].sheep.eid), l[0].controle, l[0].repriseLait], h: h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), intact, hm };
 });
 check(cl.n === 1 && JSON.stringify(cl.premier) === '["00001",1,"2026-10-09"]', 'seul le contrôle 1 du n°00001 (05/10, reprise du lait 09/10) est signalé : ' + JSON.stringify(cl));
-check(/Contrôles pendant un délai d'attente du lait \(1\)/.test(cl.h) && /contrôle 1 du 05-10-2026/.test(cl.h) && /reprise du lait le 09-10-2026/.test(cl.h) && /rien n'est modifié ni retiré/.test(cl.h), 'liste affichée : ' + cl.h);
+check(/Contrôles pendant un délai d'attente du lait \(1\)/.test(cl.h) && /contrôle 1 du 05\/10\/2026/.test(cl.h) && /reprise du lait le 09\/10\/2026/.test(cl.h) && /rien n'est modifié ni retiré/.test(cl.h), 'liste affichée : ' + cl.h);
 check(cl.intact && cl.hm === '', 'aucune donnée modifiée ; mobile : rien');
 // imports réels (fichier chargé) : le bloc d'alerte s'affiche dans l'aperçu, rien n'est écrit
 const apercu = await page.evaluate(() => { const A = DB.brebis[0]; A.sanitaire = [soinModele({ date: '2026-10-01' })]; A.numeroCourtTravailSieol = '1234'; window.__avant9 = JSON.stringify(DB); window.__saves = 0; return eidAffichageCourt(A.eid); });
@@ -231,7 +231,7 @@ await page.setInputFiles('#import-cl-resume-file', { name: 'resume.csv', mimeTyp
 await page.setInputFiles('#import-cl-cahier-file', { name: 'cahier.csv', mimeType: 'text/csv', buffer: Buffer.from('numero_visuel_sieol;ctl1_ml;ctl1_anomalie\n1234;800;\n') });
 await page.waitForSelector('#alerte-cl-delai-lait', { timeout: 5000 });
 let blocCl = await page.evaluate(() => document.getElementById('alerte-cl-delai-lait').textContent.replace(/\s+/g, ' '));
-check(/\(1\)/.test(blocCl) && /n°00001 — contrôle 1 du 05-10-2026/.test(blocCl) && /reprise du lait le 09-10-2026/.test(blocCl), 'import SIEOL : contrôle du 05/10 listé : ' + blocCl);
+check(/\(1\)/.test(blocCl) && /n°00001 — contrôle 1 du 05\/10\/2026/.test(blocCl) && /reprise du lait le 09\/10\/2026/.test(blocCl), 'import SIEOL : contrôle du 05/10 listé : ' + blocCl);
 check(await page.evaluate(() => JSON.stringify(DB) === window.__avant9 && window.__saves === 0), 'import SIEOL : aperçu seul, rien modifié');
 // b) import « modèle Ovilog » (xlsx)
 const xlsx = await page.evaluate(async (eidCourt) => {
@@ -244,7 +244,7 @@ await page.waitForSelector('#import-cl-modele-file');
 await page.setInputFiles('#import-cl-modele-file', { name: 'modele.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(xlsx) });
 await page.waitForSelector('#alerte-cl-delai-lait', { timeout: 5000 });
 blocCl = await page.evaluate(() => document.getElementById('alerte-cl-delai-lait').textContent.replace(/\s+/g, ' '));
-check(/n°00001 — contrôle 1 du 05-10-2026/.test(blocCl), 'import modèle : contrôle du 05/10 listé : ' + blocCl);
+check(/n°00001 — contrôle 1 du 05\/10\/2026/.test(blocCl), 'import modèle : contrôle du 05/10 listé : ' + blocCl);
 check(await page.evaluate(() => JSON.stringify(DB) === window.__avant9 && window.__saves === 0), 'import modèle : aperçu seul, rien modifié');
 // mobile : même import, aucun bloc
 await page.evaluate(() => { window.electronAPI.isDesktop = false; render('import-controle-laitier-modele'); });

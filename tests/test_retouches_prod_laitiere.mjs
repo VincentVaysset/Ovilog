@@ -100,15 +100,15 @@ let x = lireXlsx(s.octets);
 eq(x.feuilles, ['Prélèvements'], 'Excel qualité : feuille');
 eq(x.lignes.length, 4, 'Excel qualité : en-tête + 3 prélèvements de la campagne 2027 (celui de la campagne précédente est exclu)');
 eq(Object.values(x.lignes[0]), ['Date', 'Volume (L)', 'TB (g/L)', 'TP (g/L)', 'MSU (g/L)', 'Cellules (/mL)', 'Flore totale (UFC/mL)', 'Coliformes (milliers/mL)', 'Butyriques (spores/L)', 'Listéria', 'Salmonelles'], 'Excel qualité : en-têtes');
-eq(Object.values(x.lignes[1]), ['08-10-2026', 388, 68.2, 54.1, 122.3, 410000, 18000, 40, 90, 'Négatif', 'Négatif'], 'Excel qualité : 1er prélèvement (MSU = TB + TP, cellules brutes)');
-eq(Object.values(x.lignes[2]).slice(0, 5).concat([x.lignes[2].J, x.lignes[2].K]), ['08-01-2027', 463, 72, 56, 128, 'Négatif', 'Positif'], 'Excel qualité : prélèvement positif');
-eq([x.lignes[3].A, x.lignes[3].C, x.lignes[3].F, x.lignes[3].J], ['03-03-2027', '', '', ''], 'Excel qualité : « résultats à saisir » = cases vides');
+eq(Object.values(x.lignes[1]), ['08\/10\/2026', 388, 68.2, 54.1, 122.3, 410000, 18000, 40, 90, 'Négatif', 'Négatif'], 'Excel qualité : 1er prélèvement (MSU = TB + TP, cellules brutes)');
+eq(Object.values(x.lignes[2]).slice(0, 5).concat([x.lignes[2].J, x.lignes[2].K]), ['08\/01\/2027', 463, 72, 56, 128, 'Négatif', 'Positif'], 'Excel qualité : prélèvement positif');
+eq([x.lignes[3].A, x.lignes[3].C, x.lignes[3].F, x.lignes[3].J], ['03\/03\/2027', '', '', ''], 'Excel qualité : « résultats à saisir » = cases vides');
 // la campagne choisie dans le sélecteur est celle de l'export
 await pc.selectOption('#pl-pc-campagne', '2025'); await pc.waitForTimeout(150);
 await pc.evaluate(() => { window.__saisies.length = 0; });
 await pc.click('#btn-export-qualite-xlsx'); await pc.waitForFunction(() => window.__saisies.length >= 1);
 s = await pc.evaluate(() => window.__saisies[0]); x = lireXlsx(s.octets);
-eq([s.nom, x.lignes.length, x.lignes[1].A], ['qualite_campagne-2026_2027-03-15.xlsx', 2, '05-02-2026'], 'Excel qualité : suit la campagne choisie au sélecteur');
+eq([s.nom, x.lignes.length, x.lignes[1].A], ['qualite_campagne-2026_2027-03-15.xlsx', 2, '05\/02\/2026'], 'Excel qualité : suit la campagne choisie au sélecteur');
 // Export PDF : même rapport qu'avant (octets inchangés), seul le libellé a changé
 await pc.selectOption('#pl-pc-campagne', '2026'); await pc.waitForTimeout(150);
 await pc.evaluate(() => { window.__saisies.length = 0; });

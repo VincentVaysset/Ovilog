@@ -105,7 +105,7 @@ check(/Intramicine · 20\/09/.test(ligneD) && /viande dès le 16\/11/.test(ligne
 await page.click('.mv-type[data-val="Vente"]');
 await page.click('tr.clic[data-id="D"]');       // 00152
 let al = await $t('#zone-alerte-vente-delai');
-check(al && /n°00152 est encore sous délai d'attente viande/.test(al) && /16-11-2026/.test(al) && /rien n'est bloqué/.test(al), 'carte d\'information (Vente, sous délai) : ' + al);
+check(al && /n°00152 est encore sous délai d'attente viande/.test(al) && /16\/11\/2026/.test(al) && /rien n'est bloqué/.test(al), 'carte d\'information (Vente, sous délai) : ' + al);
 await page.click('.mv-type[data-val="Morte"]');
 check(await page.evaluate(() => !document.getElementById('zone-alerte-vente-delai')), 'Morte : aucune alerte de vente');
 console.log('OK 4 délai viande : pastille dans la liste, carte d\'information pour une vente, jamais bloquante.');
@@ -125,7 +125,7 @@ check(/date est obligatoire/.test(await $t('#mv-erreurs')), 'date obligatoire');
 await page.fill('#mv-date', '2026-10-01');
 await page.click('tr.clic[data-id="B"]'); await page.click('tr.clic[data-id="H"]');       // décoche B ; coche la brebis H (entrée le 02/10)
 await page.click('#mv-valider');
-check(/N°00600 est entré\(e\) le 02-10-2026, après la date de sortie choisie \(01-10-2026\)/.test(await $t('#mv-erreurs')), 'chronologie : entrée postérieure à la date de sortie : ' + await $t('#mv-erreurs'));
+check(/N°00600 est entré\(e\) le 02\/10\/2026, après la date de sortie choisie \(01\/10\/2026\)/.test(await $t('#mv-erreurs')), 'chronologie : entrée postérieure à la date de sortie : ' + await $t('#mv-erreurs'));
 check(await page.evaluate(() => window.__saves === 0 && JSON.stringify(DB) === window.__avant) && confirms.length === 0, 'aucune écriture, aucune confirmation tant que la saisie est incomplète');
 console.log('OK 5 validation : type, acheteur, date, animal, chronologie ; rien d\'écrit.');
 
@@ -133,10 +133,10 @@ console.log('OK 5 validation : type, acheteur, date, animal, chronologie ; rien 
 await ouvrir();
 await page.click('.mv-type[data-val="Vente"]'); await page.selectOption('#mv-acheteur', 'Acheteur A');
 await page.click('tr.clic[data-id="F"]'); await page.click('tr.clic[data-id="B"]'); await page.click('tr.clic[data-id="D"]');   // 00005, 00059, 00152
-check(await $t('#mv-resume') === 'Vente · 3 brebis · Acheteur A · 03-10-2026' && await $t('#mv-valider') === 'Valider 3 mouvements', 'barre de validation : ' + await $t('#mv-resume'));
+check(await $t('#mv-resume') === 'Vente · 3 brebis · Acheteur A · 03\/10\/2026' && await $t('#mv-valider') === 'Valider 3 mouvements', 'barre de validation : ' + await $t('#mv-resume'));
 reponse = false; confirms.length = 0;
 await page.click('#mv-valider');
-check(confirms.length === 1 && /Vente · 3 brebis · Acheteur A · 03-10-2026/.test(confirms[0]) && /N° : 00005, 00059, 00152/.test(confirms[0]) && /encore sous délai d'attente viande/.test(confirms[0]), 'confirmation récapitulative (type, nombre, acheteur, date, n°, information de délai) : ' + confirms[0]);
+check(confirms.length === 1 && /Vente · 3 brebis · Acheteur A · 03\/10\/2026/.test(confirms[0]) && /N° : 00005, 00059, 00152/.test(confirms[0]) && /encore sous délai d'attente viande/.test(confirms[0]), 'confirmation récapitulative (type, nombre, acheteur, date, n°, information de délai) : ' + confirms[0]);
 check(await page.evaluate(() => window.__saves === 0 && JSON.stringify(DB) === window.__avant), 'confirmation refusée : rien écrit');
 reponse = true;
 await page.click('#mv-valider');
@@ -202,7 +202,7 @@ check(!await page.evaluate(() => document.querySelector('#mvp-carte') === null) 
 const optP = await page.evaluate(() => [...document.querySelectorAll('#mvp-periode option')].map(o => o.textContent).join('|'));
 check(/^Campagne en cours\|/.test(optP) && /Toutes$/.test(optP), 'période : campagne en cours par défaut, « Toutes » en dernier : ' + optP);
 let lp = await page.evaluate(() => [...document.querySelectorAll('#mvp-table tr[data-eid]')].map(r => [...r.children].slice(0, 5).map(c => c.textContent.trim()).join('/')));
-check(lp.length === 1 && /^01-10-2026\/.*803\/Agneau\/Vendu\/Acheteur A$/.test(lp[0]), 'campagne en cours : seul l\'agneau vendu le 01/10 : ' + JSON.stringify(lp));
+check(lp.length === 1 && /^01\/10\/2026\/.*803\/Agneau\/Vendu\/Acheteur A$/.test(lp[0]), 'campagne en cours : seul l\'agneau vendu le 01/10 : ' + JSON.stringify(lp));
 await page.selectOption('#mvp-periode', 'toutes');
 lp = await page.evaluate(() => [...document.querySelectorAll('#mvp-table tr[data-eid]')].map(r => r.children[2].textContent + ':' + r.children[3].textContent.trim()));
 check(lp.length === 2 && lp.join() === 'Agneau:Vendu,Brebis:Vente', 'Toutes : l\'agneau (01/10) puis la brebis vendue le 01/09 (date décroissante) : ' + lp.join());
@@ -241,7 +241,7 @@ await ouvrir();
 check(await page.evaluate(() => document.querySelectorAll('.mv-annuler').length) === 3 && await page.evaluate(() => document.querySelectorAll('.mv-modifier').length) === 3, 'mouvements individuels (2 brebis + 1 agneau) : « Modifier » et « Annuler » sur chaque ligne');
 reponse = false; confirms.length = 0;
 await page.click('tr[data-eid="' + await page.evaluate(() => E(0, 33)) + '"] .mv-annuler');
-check(confirms.length === 1 && /Annuler ce mouvement \?/.test(confirms[0]) && /Vente · Acheteur B · 02-10-2026/.test(confirms[0]) && /repasse « active »/.test(confirms[0]), 'confirmation (mouvement) : ' + confirms[0]);
+check(confirms.length === 1 && /Annuler ce mouvement \?/.test(confirms[0]) && /Vente · Acheteur B · 02\/10\/2026/.test(confirms[0]) && /repasse « active »/.test(confirms[0]), 'confirmation (mouvement) : ' + confirms[0]);
 check(await page.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'refus : rien modifié');
 reponse = true;
 await page.click('tr[data-eid="' + await page.evaluate(() => E(0, 33)) + '"] .mv-annuler');

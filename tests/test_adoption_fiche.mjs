@@ -34,7 +34,7 @@ await ouvrir('b2', 'Repro');
 const d2 = await devenir();
 check(/n°71047/.test(d2) && /n°71045/.test(d2) && /Adopté/.test(d2) && /né de n°69002/.test(d2) && d2.startsWith('2:'), 'mère adoptive : devenir de son agneau ET de l\'adopté (Adopté, né de n°69002, Vendu) : ' + d2);
 const t2 = await texte();
-check(/1 agneau\(x\)/.test(t2) && /Adopté : n°71045/.test(t2) && /né de n°69002 le 05-11-2026 · ne compte pas dans sa portée/.test(t2), 'agnelage : portée « 1 agneau », adopté noté à part');
+check(/1 agneau\(x\)/.test(t2) && /Adopté : n°71045/.test(t2) && /né de n°69002 le 05\/11\/2026 · ne compte pas dans sa portée/.test(t2), 'agnelage : portée « 1 agneau », adopté noté à part');
 // régler le devenir chez la mère adoptive : même fiche d'agneau (dans la mise bas de la vraie mère)
 await p.evaluate(() => { const c = [...document.querySelectorAll('.card')].find(x => /Devenir des agneaux/.test(x.textContent)); [...c.querySelectorAll('.btn-lamb-vendu')].find(b => /71045/.test(b.closest('div[style*="justify-content:space-between"]').textContent)).click(); });
 await p.waitForTimeout(150);

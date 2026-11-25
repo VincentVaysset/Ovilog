@@ -71,7 +71,7 @@ console.log('OK 1 campagne 2027 (vivante) vs 2026 (résumé) : écarts KPI et ta
 await page.evaluate(() => afficher(2025));
 await page.waitForSelector('#btn-saisie-resume');
 const src = await txt('.brd-alert.info');
-check(/Chiffres du résumé de la campagne 2026/.test(src) && /Bilan externe édité le 23\/09\/2026/.test(src) && /période source du 01-09-2025 au 01-09-2026/.test(src), 'mention de source : ' + src);
+check(/Chiffres du résumé de la campagne 2026/.test(src) && /Bilan externe édité le 23\/09\/2026/.test(src) && /période source du 01\/09\/2025 au 01\/09\/2026/.test(src), 'mention de source : ' + src);
 check(!/Aucune mise bas enregistrée/.test(src), 'pas de « aucune mise bas » quand le résumé existe');
 check(/Remplacer le résumé/.test(await txt('#btn-saisie-resume')), 'bouton « Remplacer le résumé »');
 const g = await lignes(0);

@@ -196,9 +196,9 @@ check(/Campagne en cours/.test(await mob.textContent('#mm-info')), 'campagne en 
 await mob.click('#mm-plus'); const n2 = await nbCartes();
 check(n2 > 20 && /Campagne en cours/.test(await mob.textContent('#mm-info')), 'puis la suite de la campagne en cours : ' + n2);
 const dernier = async () => (await mob.evaluate(() => [...document.querySelectorAll('#mm-liste .mm-dt')].map(d => d.textContent.slice(0, 10)))).pop();
-check(await dernier() >= '01-10-2026' || /^0[1-3]-10-2026$/.test(await dernier()), 'aucune carte antérieure à la campagne tant qu\'on est dans la campagne en cours : ' + await dernier());
+check(await dernier() >= '01\/10\/2026' || /^0[1-3]-10-2026$/.test(await dernier()), 'aucune carte antérieure à la campagne tant qu\'on est dans la campagne en cours : ' + await dernier());
 await mob.click('#mm-plus');
-check(/Toutes les campagnes/.test(await mob.textContent('#mm-info')) && (await dernier()) === '01-09-2026', 'quand la campagne en cours est épuisée : les campagnes précédentes (dernière carte : 01-09-2026) : ' + await dernier());
+check(/Toutes les campagnes/.test(await mob.textContent('#mm-info')) && (await dernier()) === '01\/09\/2026', 'quand la campagne en cours est épuisée : les campagnes précédentes (dernière carte : 01\/09\/2026) : ' + await dernier());
 check(await mob.evaluate(() => !document.getElementById('mm-plus')), 'plus de bouton une fois tout affiché');
 console.log('OK 6 plus anciens : 20 cartes à la fois, campagne en cours d\'abord, puis les campagnes précédentes, bouton retiré à la fin.');
 
@@ -282,7 +282,7 @@ console.log('OK 10 bip en série : coche l\'animal, « déjà sélectionnée » 
 const zone = () => mob.evaluate(() => { const z = document.getElementById('zone-alerte-vente-delai'); return z ? z.textContent.replace(/\s+/g, ' ').trim() : null; });
 await mob.click('#mn-types [data-val="Vente"]');
 const zVente = await zone();
-check(zVente && /n°152 est encore sous délai d'attente viande à la date de la vente/.test(zVente) && /16-11-2026/.test(zVente) && /rien n'est bloqué/.test(zVente) && !/quand même/.test(zVente), 'Vente d\'un animal sous délai : bandeau avec la date de fin (16-11-2026), non bloquant : ' + zVente);
+check(zVente && /n°152 est encore sous délai d'attente viande à la date de la vente/.test(zVente) && /16\/11\/2026/.test(zVente) && /rien n'est bloqué/.test(zVente) && !/quand même/.test(zVente), 'Vente d\'un animal sous délai : bandeau avec la date de fin (16\/11\/2026), non bloquant : ' + zVente);
 check(await mob.evaluate(() => { const z = document.querySelector('#zone-alerte-vente-delai .brd-alert.warn'); return !!z && getComputedStyle(z).borderLeftWidth === '5px'; }), 'bandeau ambre');
 // même texte que la page PC avec la même sélection
 await pc.evaluate(() => { mvPcEtat = null; render('inventaire'); });
@@ -314,7 +314,7 @@ await mob.fill('#mn-q', '600'); await mob.click('#mn-liste .mn-it >> nth=0'); aw
 await mob.selectOption('#mn-acheteur', 'Acheteur C');
 await mob.evaluate(() => { const d = document.getElementById('mn-date'); d.value = '2026-10-01'; d.dispatchEvent(new Event('input')); });
 await mob.click('#mn-valider');
-check(await mob.evaluate(() => [...document.querySelectorAll('#mn-erreurs li')].some(l => /est entré\(e\) le 02-10-2026, après la date de sortie choisie \(01-10-2026\)/.test(l.textContent))), 'animal entré après la date choisie : erreur (comme sur PC)');
+check(await mob.evaluate(() => [...document.querySelectorAll('#mn-erreurs li')].some(l => /est entré\(e\) le 02\/10\/2026, après la date de sortie choisie \(01\/10\/2026\)/.test(l.textContent))), 'animal entré après la date choisie : erreur (comme sur PC)');
 await mob.evaluate(() => { const d = document.getElementById('mn-date'); d.value = '2026-10-03'; d.dispatchEvent(new Event('input')); document.getElementById('mn-erreurs').innerHTML = ''; });
 await mob.fill('#mn-q', '600'); await mob.click('#mn-liste .mn-it >> nth=0'); await mob.fill('#mn-q', '');   // décoche
 // parcours complet identique sur les deux pages : 2 brebis vendues à Boucherie Martin

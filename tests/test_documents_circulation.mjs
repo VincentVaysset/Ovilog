@@ -81,7 +81,7 @@ for (const pc of [true, false]) {
   const x0 = await page.evaluate(() => { const x = documentsCirculationCalcules({}).docs[0]; return { manques: x.manques, listes: x.listes.length, comptes: x.comptes.length, viande: x.alertesViande.map(a => a.it.ref), notif: x.notif }; });
   eq(x0.manques, ['heure de départ', 'transporteur', 'destination des agneaux à confirmer'], nom + ' : ce qui manque à la vente');
   eq([x0.listes, x0.comptes, x0.viande], [2, 3, ['brebis:250000004561001:m1']], nom + ' : 2 brebis listées, 3 agneaux comptés (boucherie présumée), une brebis sous délai viande');
-  eq(x0.notif, { ton: 'rouge', texte: 'Délai dépassé : à notifier avant le 17-11-2026' }, nom + ' : échéance date + 7 jours, dépassée = rouge');
+  eq(x0.notif, { ton: 'rouge', texte: 'Délai dépassé : à notifier avant le 17\/11\/2026' }, nom + ' : échéance date + 7 jours, dépassée = rouge');
 
   await page.evaluate(() => render('documents-circulation'));
   eq(await page.evaluate(() => document.querySelectorAll('.dc-carte').length), 3, nom + ' : 3 cartes de documents');
@@ -142,7 +142,7 @@ for (const pc of [true, false]) {
     // achat sans provenance : à compléter, puis provenance choisie, Envoyé
     const idA = await page.evaluate(() => documentsCirculationCalcules({}).docs.find(x => x.doc.date === '2026-11-02').doc.id);
     await page.evaluate(id => { dcEtat.id = id; render('document-circulation'); }, idA);
-    check(/feuillet d'arrivée du document du vendeur à l'EDE avant le 09-11-2026/.test(await page.evaluate(() => document.body.innerText)), nom + ' : rappel du feuillet d\'arrivée avec l\'échéance');
+    check(/feuillet d'arrivée du document du vendeur à l'EDE avant le 09\/11\/2026/.test(await page.evaluate(() => document.body.innerText)), nom + ' : rappel du feuillet d\'arrivée avec l\'échéance');
     eq(await page.evaluate(() => [document.getElementById('dc-envoye').disabled, /provenance/.test(document.getElementById('dc-manques').textContent)]), [true, true], nom + ' : achat sans provenance à compléter');
     await page.selectOption('#dc-partenaire', 'Éleveur Test');
     eq(await page.evaluate(() => [documentsCirculationCalcules({}).docs.find(x => x.doc.id === dcEtat.id).etat, document.getElementById('dc-envoye').disabled]), ['complet', false], nom + ' : provenance indiquée = complet');
@@ -163,7 +163,7 @@ for (const pc of [true, false]) {
     const entete = [[], [], [], []];
     await page.evaluate(() => render('import-nouveaux-animaux'));
     await page.setInputFiles('#import-nouveaux-animaux-file', await fichier([
-      { name: 'Brebis', rows: [...entete, ['achetée', '00000046001', '10-11-2026', 'actif', '', '', '', '', 'coop exemple'], ['née', '00000046002', '10-11-2026', 'actif', '', '', '', ''], ['achetée', '00000046003', '', 'actif', '', '', '', '', 'Vendeur Nouveau']] },
+      { name: 'Brebis', rows: [...entete, ['achetée', '00000046001', '10\/11\/2026', 'actif', '', '', '', '', 'coop exemple'], ['née', '00000046002', '10\/11\/2026', 'actif', '', '', '', ''], ['achetée', '00000046003', '', 'actif', '', '', '', '', 'Vendeur Nouveau']] },
       { name: 'Béliers', rows: [...entete] }, { name: 'Agnelles', rows: [...entete] }]));
     await page.waitForTimeout(500);
     check(await page.isVisible('#import-na-nature'), nom + ' : question « Ce fichier est : » affichée');

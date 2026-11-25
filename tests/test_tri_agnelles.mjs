@@ -61,14 +61,14 @@ check(JSON.stringify(tuilesPc) === JSON.stringify([['ambre', 'À trier 2'], ['ve
 const th1 = await page.evaluate(() => [...document.querySelectorAll('#ta-table-atrier th')].map(x => x.textContent).join('|'));
 check(th1 === '|Agnelle|Née le|Portée|Repro|Mère|Classe|Lact. mère|Résultat|Décision', 'colonnes À trier (tri par critères, Motif masquée) : ' + th1);
 const r1 = await page.evaluate(() => [...document.querySelectorAll('#ta-table-atrier tr[data-eid]')].map(r => [...r.children].slice(1, -1).map(c => c.textContent.replace(/\s+/g, ' ').trim()).join('|')));
-check(r1[0] === '60001|14-01-2026|Triple|IA|n°80133|1|452 L|Acceptée' && r1[1] === '60004|19-01-2026|Simple|MN|n°90059|—|—|Acceptée', 'lignes À trier (portée, mère, origine = code de la mise bas de la mère, classe et lactation de la mère, « — » sans donnée) : ' + JSON.stringify(r1));
+check(r1[0] === '60001|14\/01\/2026|Triple|IA|n°80133|1|452 L|Acceptée' && r1[1] === '60004|19\/01\/2026|Simple|MN|n°90059|—|—|Acceptée', 'lignes À trier (portée, mère, origine = code de la mise bas de la mère, classe et lactation de la mère, « — » sans donnée) : ' + JSON.stringify(r1));
 check(await page.evaluate(() => document.querySelectorAll('#pc-tri-agnelles .pc-t td')[0].getBoundingClientRect().height) >= 47, 'lignes du tableau de 48 px');
 check(/Incohérences à trancher/.test(await $t('#ta-incoherences')) && /n°60007/.test(await $t('#ta-incoherences')) && await page.evaluate(() => document.getElementById('ta-incoherences').classList.contains('alerte')), 'incohérence affichée en ambre, non corrigée');
 // onglets : Gardées (Reconsidérer sauf achetée) et Écartées
 await page.click('.tri-onglet[data-onglet="gardees"]');
 check(await page.evaluate(() => !document.querySelector('.ta-reconsiderer[data-eid="' + E(5, 42) + '"]') && !!document.querySelector('.ta-reconsiderer[data-eid="' + E(6, 2) + '"]') && !!document.getElementById('ta-ajout')), 'Gardées : Reconsidérer pour une née, pas pour une achetée ; « Ajouter une agnelle » conservé');
 const g2 = await page.evaluate(() => [...document.querySelectorAll('#ta-table-gardees tr[data-eid]')].map(r => [...r.children].filter((c, i) => i !== 6).map(c => c.textContent.replace(/\s+/g, ' ').trim()).join('|')));
-check(g2[0] === '60002|14-01-2026|Triple|n°80133|IA|Gardée|1|452,0 L|—' && g2[1] === '50042|—|—|—|—|Achetéeentrée le 10-09-2026|—|—|—', 'Gardées (née : portée, mère, origine ; achetée : « — » et date d\'entrée) : ' + JSON.stringify(g2));
+check(g2[0] === '60002|14\/01\/2026|Triple|n°80133|IA|Gardée|1|452,0 L|—' && g2[1] === '50042|—|—|—|—|Achetéeentrée le 10\/09\/2026|—|—|—', 'Gardées (née : portée, mère, origine ; achetée : « — » et date d\'entrée) : ' + JSON.stringify(g2));
 await page.click('.tri-onglet[data-onglet="ecartees"]');
 check(await page.evaluate(() => !!document.querySelector('.ta-reconsiderer[data-eid="' + E(6, 5) + '"]')), 'Écartées : Reconsidérer');
 await page.click('.tri-onglet[data-onglet="aTrier"]');
@@ -145,7 +145,7 @@ check(JSON.stringify(tu) === JSON.stringify([['ambre', 'À trier 2'], ['vert', '
 check(await mob.evaluate(() => [...document.querySelectorAll('.tri-onglet')].map(b => b.textContent).join('|')) === 'À trier|Gardées|Écartées', 'onglets segmentés');
 check(await mob.evaluate(() => document.querySelectorAll('table').length === 0 && document.querySelectorAll('.carte-liste').length === 2), 'cartes (jamais de tableau) : 2 agnelles à trier');
 const c1 = await mob.evaluate(() => document.querySelector('.carte-liste').textContent.replace(/\s+/g, ' ').trim());
-check(/n°60001/.test(c1) && /À trier/.test(c1) && /Née le 14-01-2026 · Triple · mère n°80133 IA/.test(c1) && /Garder/.test(c1) && /Écarter/.test(c1), 'carte À trier : n°, pastille, « Née le … · Triple · mère n°… » + code d\'origine IA, Garder / Écarter : ' + c1);
+check(/n°60001/.test(c1) && /À trier/.test(c1) && /Née le 14\/01\/2026 · Triple · mère n°80133 IA/.test(c1) && /Garder/.test(c1) && /Écarter/.test(c1), 'carte À trier : n°, pastille, « Née le … · Triple · mère n°… » + code d\'origine IA, Garder / Écarter : ' + c1);
 // toucher une carte : sélection + carte Généalogie (mère, classe, lactation N-1), rien de validé
 await mob.click('#tri-carte-' + await mob.evaluate(() => cleanEid(E(6, 1))) + ' .carte-liste-l1');
 const gen = await $m('#tri-genealogie');
@@ -191,7 +191,7 @@ check(await mob.evaluate(() => findLambByEid(E(6, 5)).triStatut) === undefined &
 await mob.click('#tri-toast-annuler'); check(await mob.evaluate(() => findLambByEid(E(6, 5)).triStatut) === 'écartée', 'Annuler : l\'écartée l\'est de nouveau');
 // achetée : carte Achetée sans Reconsidérer, ouvre la fiche ; Ajouter une agnelle conservé
 await scanner(await mob.evaluate(() => E(5, 42)));
-check(/Achetée/.test(await $m('.carte-liste')) && /Entrée le 10-09-2026/.test(await $m('.carte-liste')) && await mob.evaluate(() => !document.querySelector('.carte-liste .btn-reconsiderer')), 'achetée scannée : carte « Achetée », pas de Reconsidérer');
+check(/Achetée/.test(await $m('.carte-liste')) && /Entrée le 10\/09\/2026/.test(await $m('.carte-liste')) && await mob.evaluate(() => !document.querySelector('.carte-liste .btn-reconsiderer')), 'achetée scannée : carte « Achetée », pas de Reconsidérer');
 await ouvrirM('gardees');
 check(!!await mob.evaluate(() => document.getElementById('btn-add-agnelle')) && /Ajouter une agnelle/.test(await $m('#btn-add-agnelle')), '« Ajouter une agnelle » conservé sous la liste des gardées');
 await mob.click('#tri-carte-' + await mob.evaluate(() => cleanEid(E(5, 42))) + ' .carte-liste-l1');

@@ -1,5 +1,5 @@
 /* Première configuration en assistant (mobile : 3 étapes, PC : 2 étapes sans lecteur) et dates de campagne SAISIES : champs vides et obligatoires, fin postérieure au début, avertissements AMBRE sans blocage
-   (fin ≠ veille du même jour l'an suivant ; nom de la campagne ≠ année de fin), nom d'après l'année de fin (« Campagne 2027 » pour 01-10-2026 → 30-09-2027), jour et mois du début = démarrage des campagnes suivantes,
+   (fin ≠ veille du même jour l'an suivant ; nom de la campagne ≠ année de fin), nom d'après l'année de fin (« Campagne 2027 » pour 01\/10\/2026 → 30\/09\/2027), jour et mois du début = démarrage des campagnes suivantes,
    étape lecteur ignorable, rien d'écrit avant « Terminer », options de l'étape 2 (zéro / Nouveaux animaux / sauvegarde JSON : campagne masquée), changement de campagne (début proposé = lendemain de la fin, fin = veille
    du même jour l'an suivant, modifiables, à confirmer). Faux plugin Bluetooth, jeu synthétique, aucune donnée réelle. Logique de première connexion (compte lu avant toute écriture) : test_premiere_connexion. */
 import { chromium } from 'playwright';
@@ -65,11 +65,11 @@ for (const pc of [false, true]) {
   // campagne normale : nom d'après l'année de fin, aucun avertissement
   await dates(page, '2026-10-01', '2027-09-30');
   m = await lire(page, () => ({ nom: document.getElementById('premconf-nom-campagne').textContent, cache: document.getElementById('premconf-nom-campagne').classList.contains('hidden'), msgs: document.querySelectorAll('#premconf-dates-msg > *').length }));
-  eq([m.nom, m.cache, m.msgs], ['Campagne 2027', false, 0], nom + ' : 01-10-2026 → 30-09-2027 = « Campagne 2027 » (année de fin), aucun avertissement');
+  eq([m.nom, m.cache, m.msgs], ['Campagne 2027', false, 0], nom + ' : 01\/10\/2026 → 30\/09\/2027 = « Campagne 2027 » (année de fin), aucun avertissement');
   // fin inhabituelle : avertissement ambre, jamais bloquant
   await dates(page, '2026-10-01', '2027-12-31');
   m = await lire(page, () => ({ avert: [...document.querySelectorAll('#premconf-dates-msg [data-avertissement]')].map(e => e.textContent), fond: getComputedStyle(document.querySelector('#premconf-dates-msg [data-avertissement]')).backgroundColor, erreurs: document.querySelectorAll('#premconf-dates-msg [data-erreur]').length }));
-  check(m.avert.length >= 1 && /veille du même jour l'an suivant \(30-09-2027\)/.test(m.avert[0]) && /restera?ont sur 12 mois/.test(m.avert[0]) && m.fond === 'rgb(251, 238, 215)' && m.erreurs === 0, nom + ' : fin inhabituelle : avertissement ambre : ' + JSON.stringify(m));
+  check(m.avert.length >= 1 && /veille du même jour l'an suivant \(30\/09\/2027\)/.test(m.avert[0]) && /restera?ont sur 12 mois/.test(m.avert[0]) && m.fond === 'rgb(251, 238, 215)' && m.erreurs === 0, nom + ' : fin inhabituelle : avertissement ambre : ' + JSON.stringify(m));
   // campagne dans une seule année civile : le nom donné par Ovilog est l'année de début + 1, signalé
   await dates(page, '2027-01-01', '2027-12-31');
   m = await lire(page, () => ({ nom: document.getElementById('premconf-nom-campagne').textContent, avert: [...document.querySelectorAll('#premconf-dates-msg [data-avertissement]')].map(e => e.textContent) }));
@@ -169,7 +169,7 @@ for (const pc of [false, true]) {
 {
   const { page } = await ouvrir(false);
   await page.evaluate(() => { DB.exploitation.campagneMoisDebut = 10; DB.exploitation.campagneJourDebut = 1; DB.campagneDebut = 2026; DB.campagneDateDebut = '2026-10-01'; DB.campagneDateFin = '2027-12-31'; parametresTab = 'campagne'; parametresRubrique = 'campagne'; render('parametres'); });
-  check(/du 01-10-2026 au 31-12-2027/.test(await lire(page, () => document.getElementById('prm-campagne-periode').textContent)), 'Paramètres › Campagne : période = dates saisies');
+  check(/du 01\/10\/2026 au 31\/12\/2027/.test(await lire(page, () => document.getElementById('prm-campagne-periode').textContent)), 'Paramètres › Campagne : période = dates saisies');
   await page.click('#btn-modifier-dates-campagne');
   await page.fill('#f-prm-fin', '2026-09-01');
   check(await lire(page, () => document.getElementById('btn-enregistrer-dates-campagne').disabled), 'Paramètres › Campagne : fin avant le début : enregistrement impossible');

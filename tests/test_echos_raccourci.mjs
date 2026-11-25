@@ -35,7 +35,7 @@ const jeu = () => page.evaluate(() => {
     b(0, 10, []),                                                                                     // sans écho
     b(0, 11, [e('2026-09-01', { stade: 'Vide' })], { statut: 'vendue' })                              // non active
   ];
-  DB.lots = [{ id: 'LX', nom: 'Doubles du 03-10-2026', dateCreation: '2026-10-01', membres: [E(9, 6)], journal: 1 }];
+  DB.lots = [{ id: 'LX', nom: 'Doubles du 03\/10\/2026', dateCreation: '2026-10-01', membres: [E(9, 6)], journal: 1 }];
   DB.evenementsLots = [{ id: 'EL-init-LX', lotId: 'LX', type: 'initial', eids: [E(9, 6)], date: '2026-10-01T00:00:00.000Z', source: 'migration' }];
   materialiserMembresLot(DB.lots[0]);
   DB.lots.push({ id: 'LCUR', nom: 'Lot en cours', dateCreation: '2026-10-03', membres: [], journal: 1, membresEmpreinte: empreinteMembresLot([]), journalN: 0 });
@@ -52,12 +52,12 @@ const plan = await page.evaluate(() => {
   const p1 = echoPlanLotsRaccourci(act, 2026, { noms, inclureVidesDefinitives: true }, DB.lots).map(l => [l.cle, l.nom, l.eids.length, l.nbVidesDefinitives, l.creer, l.raison]);
   const p2 = echoPlanLotsRaccourci(act, 2026, { noms, inclureVidesDefinitives: false }, DB.lots).map(l => [l.cle, l.eids.length]);
   const p3 = echoPlanLotsRaccourci(act, 2027, { noms, inclureVidesDefinitives: true }, DB.lots).map(l => [l.cle, l.eids.length, l.creer, l.raison]);
-  const p4 = echoPlanLotsRaccourci(act, 2026, { noms: { vides: ' vides  du 03-10-2026 ', simples: 'vides du 03-10-2026', doubles: '' }, inclureVidesDefinitives: true }, []).map(l => [l.creer, l.raison]);
+  const p4 = echoPlanLotsRaccourci(act, 2026, { noms: { vides: ' vides  du 03\/10\/2026 ', simples: 'vides du 03\/10\/2026', doubles: '' }, inclureVidesDefinitives: true }, []).map(l => [l.creer, l.raison]);
   return { noms, p1, p2, p3, p4 };
 });
-eq(plan.noms, { vides: 'Vides du 03-10-2026', simples: 'Simples du 03-10-2026', doubles: 'Doubles du 03-10-2026' }, 'noms par défaut avec la date du jour');
-eq(plan.p1[0].slice(0, 5), ['vides', 'Vides du 03-10-2026', 3, 1, true], 'Vides : 3 brebis dont 1 vide définitive');
-eq(plan.p1[1].slice(0, 5), ['simples', 'Simples du 03-10-2026', 2, 0, true], 'Simples : 2');
+eq(plan.noms, { vides: 'Vides du 03\/10\/2026', simples: 'Simples du 03\/10\/2026', doubles: 'Doubles du 03\/10\/2026' }, 'noms par défaut avec la date du jour');
+eq(plan.p1[0].slice(0, 5), ['vides', 'Vides du 03\/10\/2026', 3, 1, true], 'Vides : 3 brebis dont 1 vide définitive');
+eq(plan.p1[1].slice(0, 5), ['simples', 'Simples du 03\/10\/2026', 2, 0, true], 'Simples : 2');
 check(plan.p1[2][2] === 2 && plan.p1[2][4] === false && /existe déjà/.test(plan.p1[2][5]), 'Doubles : le nom existe déjà → lot écarté, raison donnée : ' + JSON.stringify(plan.p1[2]));
 eq(plan.p2, [['vides', 2], ['simples', 2], ['doubles', 2]], 'sans les vides définitives : Vides = 2');
 check(plan.p3.every(l => l[1] === 0 && l[2] === false && /aucune brebis/.test(l[3])), 'campagne sans écho : aucun lot (0 brebis) : ' + JSON.stringify(plan.p3));
@@ -71,7 +71,7 @@ check(await page.evaluate(() => document.querySelectorAll('.lot-existant-test, t
 eq([await $t('#rl-nb-vides'), await $t('#rl-nb-simples'), await $t('#rl-nb-doubles')], ['· 3 brebis', '· 2 brebis', '· 2 brebis'], 'effectifs affichés');
 check(/dont 1 vide définitive/.test(await $t('#rl-modal')) && await page.evaluate(() => document.getElementById('rl-inclure').checked), 'case « Inclure les vides définitives » cochée par défaut, « dont 1 vide définitive »');
 check(/gestantes sans comptage 1 · cas particuliers 1 · sans écho 1/.test(await $t('#rl-apart')), 'laissées à part : ' + await $t('#rl-apart'));
-check(/Ce lot ne sera pas créé : un lot « Doubles du 03-10-2026 » existe déjà/.test(await $t('#rl-av-doubles')) && /Créer 2 lots \(3 \+ 2 brebis\)/.test(await $t('#rl-creer')), 'avertissement de nom pris, 2 lots seulement : ' + await $t('#rl-creer'));
+check(/Ce lot ne sera pas créé : un lot « Doubles du 03\/10\/2026 » existe déjà/.test(await $t('#rl-av-doubles')) && /Créer 2 lots \(3 \+ 2 brebis\)/.test(await $t('#rl-creer')), 'avertissement de nom pris, 2 lots seulement : ' + await $t('#rl-creer'));
 await page.click('#rl-inclure');
 check(/· 2 brebis \(sans les vides définitives\)/.test(await $t('#rl-nb-vides')) && /Créer 2 lots \(2 \+ 2 brebis\)/.test(await $t('#rl-creer')), 'décocher : Vides = 2');
 await page.click('#rl-inclure');
@@ -79,7 +79,7 @@ await page.click('#rl-inclure');
 await page.click('#rl-nom-doubles', { clickCount: 3 }); await page.keyboard.type('Doubles à suivre', { delay: 30 });
 check(await page.evaluate(() => document.activeElement.id + '|' + document.getElementById('rl-nom-doubles').value) === 'rl-nom-doubles|Doubles à suivre', 'nom tapé au clavier, focus conservé (le récapitulatif n\'est pas redessiné pendant la frappe)');
 check(await $t('#rl-av-doubles') === '' && /Créer 3 lots \(3 \+ 2 \+ 2 brebis\)/.test(await $t('#rl-creer')), 'nom libre : 3 lots : ' + await $t('#rl-creer'));
-await page.click('#rl-nom-simples', { clickCount: 3 }); await page.keyboard.type('Vides du 03-10-2026', { delay: 20 });
+await page.click('#rl-nom-simples', { clickCount: 3 }); await page.keyboard.type('Vides du 03\/10\/2026', { delay: 20 });
 check(/même nom qu'un autre des 3 lots/.test(await $t('#rl-av-simples')) && /Créer 2 lots/.test(await $t('#rl-creer')), 'même nom que Vides : écarté : ' + await $t('#rl-av-simples'));
 await page.click('#rl-nom-simples', { clickCount: 3 }); await page.keyboard.type('Simples du jour', { delay: 20 });
 console.log('OK 2 récapitulatif : effectifs, vides définitives (cochée par défaut, décochable), brebis laissées à part, avertissement de nom pris, saisie réelle des noms.');
@@ -96,7 +96,7 @@ const lots = await page.evaluate(() => DB.lots.slice(2).map(l => ({ nom: l.nom, 
 eq(lots.map(l => [l.nom, l.type, l.date, l.j, l.n, l.ev]), [['Vides test', null, '2026-10-03', 1, 3, 1], ['Simples test', null, '2026-10-03', 1, 2, 1], ['Doubles test', null, '2026-10-03', 1, 2, 1]], '3 lots de recherche créés, journalisés (1 événement chacun)');
 check(new Set(lots.map(l => l.id)).size === 3 && await page.evaluate(() => DB.evenementsLots.filter(e => e.type === 'affectation').every(e => DB.lots.some(l => l.id === e.lotId))), 'ids distincts même créés dans la même milliseconde (horloge figée) : ' + lots.map(l => l.id).join(','));
 const existant = await page.evaluate(() => { const l = DB.lots.find(x => x.id === 'LX'); return [l.nom, l.membres.length]; });
-eq(existant, ['Doubles du 03-10-2026', 1], 'le lot existant de même nom par défaut n\'est pas touché');
+eq(existant, ['Doubles du 03\/10\/2026', 1], 'le lot existant de même nom par défaut n\'est pas touché');
 check(/3 lots créés : « Vides test » \(3\), « Simples test » \(2\), « Doubles test » \(2\)/.test(await $t('#lt-msg-raccourci')), 'message : ' + await $t('#lt-msg-raccourci'));
 check(await page.evaluate(() => { const r = document.querySelector('tr[data-eid="' + E(8, 1) + '"]'); return r.textContent.includes('Vides test'); }), 'les lots créés apparaissent aussitôt dans la colonne Lots');
 console.log('OK 3 Annuler ne crée rien ; Créer : 3 lots de recherche journalisés, ids distincts, message, lot existant intact.');

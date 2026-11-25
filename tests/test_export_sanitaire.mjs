@@ -82,9 +82,9 @@ await page.evaluate(() => {
 const apres = await capture();
 const lignes = apres.sans_filtre_xlsx;
 const ln = (produit, date) => lignes.find(l => l[3] === produit && l[4] === date);
-const recent = ln('Intramicine', '30-09-2026'), vaccin = ln('Bravoxin 10', '01-10-2026'), ancien = ln('Intramicine', '20-09-2026'), plaie = lignes.find(l => l[3] === 'Aluspray');
-check(JSON.stringify(recent.slice(N)) === JSON.stringify(['Intramusculaire', 3, '02-10-2026', 'Dr Martin', '10-10-2026', '31-10-2026']), 'soin récent (30/09, 3 jours, lait 7, viande 28) : dernière 02/10, lait 10/10, viande 31/10 : ' + JSON.stringify(recent.slice(N)));
-check(JSON.stringify(vaccin.slice(N)) === JSON.stringify(['Sous-cutanée', 1, '01-10-2026', 'Éleveur', 'aucune attente', 'aucune attente']), 'délai 0 : « aucune attente » : ' + JSON.stringify(vaccin.slice(N)));
+const recent = ln('Intramicine', '30\/09\/2026'), vaccin = ln('Bravoxin 10', '01\/10\/2026'), ancien = ln('Intramicine', '20\/09\/2026'), plaie = lignes.find(l => l[3] === 'Aluspray');
+check(JSON.stringify(recent.slice(N)) === JSON.stringify(['Intramusculaire', 3, '02\/10\/2026', 'Dr Martin', '10\/10\/2026', '31\/10\/2026']), 'soin récent (30/09, 3 jours, lait 7, viande 28) : dernière 02/10, lait 10/10, viande 31/10 : ' + JSON.stringify(recent.slice(N)));
+check(JSON.stringify(vaccin.slice(N)) === JSON.stringify(['Sous-cutanée', 1, '01\/10\/2026', 'Éleveur', 'aucune attente', 'aucune attente']), 'délai 0 : « aucune attente » : ' + JSON.stringify(vaccin.slice(N)));
 check(ancien && ancien.slice(N).every(v => v === '—'), 'ancien soin (sans voie, durée ni intervenant) : les 6 valeurs ajoutées en « — » : ' + JSON.stringify(ancien && ancien.slice(N)));
 check(plaie.slice(N).every(v => v === '—'), 'ancien soin de plaie : toutes les valeurs ajoutées en « — » : ' + JSON.stringify(plaie.slice(N)));
 const sele = lignes.find(l => l[3] === 'Séléphérol');

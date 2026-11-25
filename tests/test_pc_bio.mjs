@@ -28,7 +28,7 @@ const jeu = (bio) => page.evaluate((bio) => {
   window.E = eid;
 }, bio);
 const $t = sel => page.evaluate(s => document.querySelector(s) ? document.querySelector(s).textContent.replace(/\s+/g, ' ').trim() : null, sel);
-const dates = async () => ((await $t('#cs-dates')).match(/\d{2}-\d{2}-\d{4}/g) || []);
+const dates = async () => ((await $t('#cs-dates')).match(/\d{2}\/\d{2}\/\d{4}/g) || []);
 const ouvrir = async () => { await page.evaluate(() => { carnetSanitairePcEtat = null; carnetDernierLot = null; carnetOnglet = 'nouveau'; render('sanitaire'); }); await page.waitForSelector('#cs-produit'); };
 const preparer = async (type, categorie, produit) => {
   await page.click(`.cs-type[data-val="${type}"]`);
@@ -67,20 +67,20 @@ console.log('OK 2 options du produit : défauts de la catégorie, non écrits.')
 await ouvrir();
 await preparer('Traitement', 'Antibiotique', 'Intramicine');
 check(await page.evaluate(() => document.getElementById('cs-lait').value === '7' && document.getElementById('cs-viande').value === '28'), 'les champs gardent les délais LÉGAUX (7 / 28), pas les doubles');
-check((await dates()).join() === '20-09-2026,05-10-2026,16-11-2026', 'dates bio : dernière 20/09, reprise du lait 05/10, vente dès le 16/11 : ' + (await dates()).join());
+check((await dates()).join() === '20\/09\/2026,05\/10\/2026,16\/11\/2026', 'dates bio : dernière 20/09, reprise du lait 05/10, vente dès le 16/11 : ' + (await dates()).join());
 const dtxt = await $t('#cs-dates');
 check(/20\/09 \+ 14 jours \(7 × 2, bio\), reprise le lendemain/.test(dtxt) && /20\/09 \+ 56 jours \(28 × 2, bio\), vente le lendemain/.test(dtxt) && /Élevage bio : délais légaux ×2/.test(dtxt), 'formules bio et pastille : ' + dtxt);
 check(/Délais légaux/.test(await $t('.pc-main')) && /Délai viande \(légal\)/.test(await $t('#cs-fiche')) && /Minimum 48 h bio[^a-z]*Oui/.test(await $t('#cs-fiche')) && /Compte dans les 3 traitements[^a-z]*Oui/.test(await $t('#cs-fiche')), 'libellés « légal », options du produit sur la fiche');
 // modification d'un délai dans le formulaire : suit en direct
 await page.fill('#cs-lait', '3');
-check((await dates())[1] === '27-09-2026', 'lait légal modifié à 3 → 6 j appliqués : reprise 27/09 : ' + (await dates())[1]);
+check((await dates())[1] === '27\/09\/2026', 'lait légal modifié à 3 → 6 j appliqués : reprise 27/09 : ' + (await dates())[1]);
 await page.fill('#cs-lait', '7');
 console.log('OK 3 écran 1 : maquette exacte (05/10 et 16/11), formules « × 2, bio », pastille, libellés légaux, délais modifiables.');
 
 // ================================================================ 4. légal 0 : minimum 48 h oui / à confirmer / non ; soin de plaie sans produit
 await ouvrir();
 await preparer('Traitement', 'Antibiotique', 'Zero');
-check((await dates()).join() === '20-09-2026,23-09-2026,23-09-2026' && /minimum 48 h bio\), le lendemain/.test(await $t('#cs-dates')) && !/minimum 48 h bio à confirmer/.test(await $t('#cs-dates')), 'antibiotique légal 0 / 0, minimum 48 h = oui (défaut) : 20/09 + 2 j → 23/09 : ' + (await dates()).join());
+check((await dates()).join() === '20\/09\/2026,23\/09\/2026,23\/09\/2026' && /minimum 48 h bio\), le lendemain/.test(await $t('#cs-dates')) && !/minimum 48 h bio à confirmer/.test(await $t('#cs-dates')), 'antibiotique légal 0 / 0, minimum 48 h = oui (défaut) : 20/09 + 2 j → 23/09 : ' + (await dates()).join());
 await ouvrir();
 await preparer('Vaccin', null, 'Bravoxin 10');
 let dv = await $t('#cs-dates');
@@ -99,7 +99,7 @@ await page.fill('#cs-date', '2026-09-20');
 check(/minimum 48 h bio à confirmer/.test(await $t('#cs-dates')) && (await dates()).length === 1, 'soin de plaie sans délai : à confirmer, aucune date de reprise inventée : ' + (await dates()).join());
 await page.evaluate(() => { DB.produitsInfo.Zero.minimum48hBio = 'non'; });
 await ouvrir(); await preparer('Traitement', 'Antibiotique', 'Zero');
-check((await dates()).join() === '20-09-2026' && /aucune attente/.test(await $t('#cs-dates')), 'minimum 48 h = non : aucune attente');
+check((await dates()).join() === '20\/09\/2026' && /aucune attente/.test(await $t('#cs-dates')), 'minimum 48 h = non : aucune attente');
 console.log('OK 4 légal 0 : minimum 48 h appliqué si oui, rien si non, mention « à confirmer » visible (dates, alertes, récapitulatif), soin de plaie sans date.');
 
 // ================================================================ 5. enregistrement : délais appliqués et indicateur bio FIGÉS dans le soin
@@ -196,7 +196,7 @@ await page.evaluate(() => { DB.exploitation.elevageBio = true; });
 const rowsBio = await page.evaluate(() => sousDelaiBrebisRows().map(r => [numeroVisuel(r.eid), r.finDelai]));
 check(JSON.stringify(rowsBio) === JSON.stringify([['00003', '2026-10-03'], ['00001', '2026-10-04'], ['00002', '2026-10-09']]), 'en bio : figé (00001 : 20/09 + 14 = 04/10), figé hors bio conservé (00003 : 03/10), ancien soin = légal doublé (00002 : 25/09 + 14 = 09/10) : ' + JSON.stringify(rowsBio));
 await page.evaluate(() => { ficheBrebisTab = 'sanit'; ficheBrebisTabSheepId = DB.brebis[0].id; render('detail', DB.brebis[0].id); });
-check(/délai d'attente lait jusqu'au 04-10-2026/.test(await page.evaluate(() => document.getElementById('app').textContent.replace(/\s+/g, ' '))), 'fiche brebis : « jusqu\'au 04-10-2026 » (délai appliqué figé)');
+check(/délai d'attente lait jusqu'au 04\/10\/2026/.test(await page.evaluate(() => document.getElementById('app').textContent.replace(/\s+/g, ' '))), 'fiche brebis : « jusqu\'au 04\/10\/2026 » (délai appliqué figé)');
 await page.evaluate(() => { window.electronAPI.isDesktop = true; });
 console.log('OK 9 mobile : en bio, délai appliqué figé dans le soin, ancien soin = légal doublé ; hors bio calcul d\'origine.');
 

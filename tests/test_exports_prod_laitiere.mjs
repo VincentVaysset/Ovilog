@@ -80,13 +80,13 @@ console.log('OK 3 Calendrier du tank : une page, mois de traite seulement, jours
 // ================================================================ 4. Rapport de campagne (PDF)
 const rp = textePages(m.rap);
 check(rp.length === 2, 'Rapport : 2 pages (peu de prélèvements) : ' + rp.length);
-['Bilan économique', 'Campagne 2026 · du 01-10-2025 au 30-09-2026 · coefficient MSU 12,0000', 'Montant hors qualité', 'Grades bactério', 'Bonus Super A', 'Pénalités bactério', 'Montant avec qualité', 'Mois par mois', 'Prix hors qualité', 'Total du mois', 'Pénalités bactério', '1 pénalité sur la campagne', 'Du 30-07-2026 au 31-07-2026', 'Salmonelles', '1 200 L', 'Page 1/2'].forEach(x => check(rp[0].includes(x), 'Rapport p.1 contient « ' + x + ' »'));
-check(!rp[0].includes('15-09-2025'), 'Rapport p.1 : la pénalité de la campagne précédente est absente');
-['Production laitière · Qualité du lait', 'TB moyen', 'Cellules moyennes', 'milliers/mL', 'Moyennes par mois', 'Détail des prélèvements', 'Juillet 2026 · Salmonelles : résultat positif le 31-07-2026', 'Bonus Super A non obtenu pour ce mois.', 'résultats à saisir', '05-12-2025', '31-07-2026', 'positif', 'Page 2/2'].forEach(x => check(rp[1].includes(x), 'Rapport p.2 contient « ' + x + ' »'));
-check(!rp[1].includes('30-09-2025'), 'Rapport p.2 : le prélèvement du 30/09/2025 (campagne précédente) est absent');
+['Bilan économique', 'Campagne 2026 · du 01\/10\/2025 au 30\/09\/2026 · coefficient MSU 12,0000', 'Montant hors qualité', 'Grades bactério', 'Bonus Super A', 'Pénalités bactério', 'Montant avec qualité', 'Mois par mois', 'Prix hors qualité', 'Total du mois', 'Pénalités bactério', '1 pénalité sur la campagne', 'Du 30\/07\/2026 au 31\/07\/2026', 'Salmonelles', '1 200 L', 'Page 1/2'].forEach(x => check(rp[0].includes(x), 'Rapport p.1 contient « ' + x + ' »'));
+check(!rp[0].includes('15\/09\/2025'), 'Rapport p.1 : la pénalité de la campagne précédente est absente');
+['Production laitière · Qualité du lait', 'TB moyen', 'Cellules moyennes', 'milliers/mL', 'Moyennes par mois', 'Détail des prélèvements', 'Juillet 2026 · Salmonelles : résultat positif le 31\/07\/2026', 'Bonus Super A non obtenu pour ce mois.', 'résultats à saisir', '05\/12\/2025', '31\/07\/2026', 'positif', 'Page 2/2'].forEach(x => check(rp[1].includes(x), 'Rapport p.2 contient « ' + x + ' »'));
+check(!rp[1].includes('30\/09\/2025'), 'Rapport p.2 : le prélèvement du 30/09/2025 (campagne précédente) est absent');
 check(/\| 400 \|/.test(rp[1]) && /\| 300 \|/.test(rp[1]) && !rp[1].includes('400 000') && !rp[1].includes('300 000'), 'cellules affichées en milliers/mL (400, 300), jamais 400 000');
 const rp24 = textePages(m.rap24);
-check(rp24.join(' ').includes('Campagne 2025') && rp24.join(' ').includes('15-09-2025') && !rp24.join(' ').includes('30-07-2026'), 'Rapport campagne 2024 : sa pénalité du 15/09/2025, pas celle de 2026');
+check(rp24.join(' ').includes('Campagne 2025') && rp24.join(' ').includes('15\/09\/2025') && !rp24.join(' ').includes('30\/07\/2026'), 'Rapport campagne 2024 : sa pénalité du 15/09/2025, pas celle de 2026');
 console.log('OK 4 Rapport de campagne : 2 pages (Bilan économique, Qualité du lait), pénalités, encadré résultat positif, « résultats à saisir », cellules en milliers/mL, une seule campagne.');
 
 // ================================================================ 5. Excel Tank
@@ -96,8 +96,8 @@ eq(xl[0].rows[0], ['Mois', 'Relevés', 'Litres', 'Moyenne par relevé (L)', 'Cum
 eq(xl[0].rows.length, 14, '12 mois + en-tête + total');
 eq(xl[0].rows[1], ['Octobre 2025', 2, 350.5, 175.3, 350.5], 'octobre');
 eq(xl[0].rows[13], ['Campagne 2026', 6, 1180.5, 196.8, 1180.5], 'total de campagne');
-eq(xl[1].rows.map(r => r[0]), ['Date', '01-10-2025', '02-10-2025', '04-12-2025', '05-12-2025', '31-07-2026', '30-09-2026'], 'feuille Relevés : tous les relevés de la campagne et eux seuls');
-eq(xl[1].rows.find(r => r[0] === '05-12-2025'), ['05-12-2025', 310, 'Oui'], 'jour de prélèvement marqué');
+eq(xl[1].rows.map(r => r[0]), ['Date', '01\/10\/2025', '02\/10\/2025', '04\/12\/2025', '05\/12\/2025', '31\/07\/2026', '30\/09\/2026'], 'feuille Relevés : tous les relevés de la campagne et eux seuls');
+eq(xl[1].rows.find(r => r[0] === '05\/12\/2025'), ['05\/12\/2025', 310, 'Oui'], 'jour de prélèvement marqué');
 console.log('OK 5 Excel Tank : mêmes colonnes que le PDF, feuille Relevés de la campagne seulement.');
 
 // ================================================================ 6. noms de fichier, aucune écriture, validité

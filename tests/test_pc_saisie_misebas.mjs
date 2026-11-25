@@ -54,7 +54,7 @@ check(!/bip|Scanner|scanner/i.test(texte), 'aucune mention de bip ni de scan sur
 check(/Saisir le n° de la brebis \(court ou EID complet\)/.test(texte), 'consigne : saisir le n°');
 check(await page.evaluate(() => !document.getElementById('lamb-list-rapide') && !!document.querySelector('.btn-annuler-mb-campagne') && /Total \(2 mises bas\)/.test(document.getElementById('mb-totaux').textContent)), 'tableau des mises bas de la campagne et ligne de totaux');
 const rowsTxt = await page.evaluate(() => [...document.querySelectorAll('#pc-saisie-misebas table.brd-t tr')].slice(1, 3).map(r => r.textContent.replace(/\s+/g, ' ').trim()));
-check(rowsTxt.some(t => /31-12-2099 date à vérifier/.test(t)), 'mise bas à date future : « date à vérifier » sans correction : ' + JSON.stringify(rowsTxt));
+check(rowsTxt.some(t => /31\/12\/2099 date à vérifier/.test(t)), 'mise bas à date future : « date à vérifier » sans correction : ' + JSON.stringify(rowsTxt));
 // plus de carte « Contrôles automatiques » (les contrôles restent actifs : messages seulement quand ils se déclenchent) ; « Terminer la session » : pilule visible de 44 px, contour et texte verts, en haut à droite
 {
   const r = await page.evaluate(() => { const b = document.getElementById('btn-fin-session-mb'), c = getComputedStyle(b), R = b.getBoundingClientRect(), A = document.getElementById('app').getBoundingClientRect(); return { carte: /Contrôles automatiques|Blocage|Alerte/.test(document.getElementById('pc-saisie-misebas').textContent), h: Math.round(R.height), rayon: parseFloat(c.borderTopLeftRadius), bord: c.borderTopColor, bordL: c.borderTopWidth, texte: c.color, fond: c.backgroundColor, droite: Math.round(A.right - R.right), haut: Math.round(R.top - A.top) }; });
@@ -121,7 +121,7 @@ check(ag[0].lambs.map(l => l.sexe).join() === 'Mâle,Femelle' && ag[0].lambs.eve
 k = await kpis();
 check(k['Mises bas'][0] === '3' && k['Agneaux nés'][0] === '5' && k['Restantes'][0] === '5', 'indicateurs mis à jour : 3 mises bas, 5 agneaux, 5 restantes : ' + JSON.stringify(k));
 check(await page.evaluate(() => /1 mise bas saisie dans cette session/.test(document.querySelector('.brd-sub').textContent)), 'compteur de session');
-const ligneNouvelle = await page.evaluate(() => [...document.querySelectorAll('#pc-saisie-misebas table.brd-t tr')].some(r => /15-11-2026/.test(r.textContent)));
+const ligneNouvelle = await page.evaluate(() => [...document.querySelectorAll('#pc-saisie-misebas table.brd-t tr')].some(r => /15\/11\/2026/.test(r.textContent)));
 check(ligneNouvelle, 'la mise bas apparaît dans le tableau');
 const av = await page.evaluate(() => document.querySelector('#pc-saisie-misebas .pc-legend').parentElement.textContent.replace(/\s+/g, ' '));
 check(/37,5 % réalisé/.test(av) && !/brebis à mettre bas/.test(av) && /Portées : 1 simple, 2 doubles/.test(av), 'avancement (« restantes / attendues » n\'est dit que par la tuile) : ' + av);
@@ -130,7 +130,7 @@ console.log('OK 4 validation : agnelage enregistré (campagne, date, repro IA, 2
 // ================================================================ 5. contrôles : déjà une mise bas, inconnue, vide définitive
 await saisir('00200');
 const dej = await page.evaluate(() => ({ blocage: document.getElementById('mb-blocage').innerText.replace(/\s+/g, ' '), form: !!document.getElementById('f-date-rapide'), edit: !!document.getElementById('btn-edit-existing-agnelage-rapide'), boutons: [document.getElementById('btn-ouvrir-fiche-mb').textContent, document.getElementById('btn-autre-brebis-mb').textContent] }));
-check(/a déjà mis bas cette campagne/.test(dej.blocage) && /Le 10-11-2026 · 1 agneau\. Une seule mise bas par campagne\./.test(dej.blocage) && !dej.form && dej.edit && dej.boutons.join() === 'Ouvrir la fiche,Autre brebis', 'blocage : déjà mis bas : ' + JSON.stringify(dej));
+check(/a déjà mis bas cette campagne/.test(dej.blocage) && /Le 10\/11\/2026 · 1 agneau\. Une seule mise bas par campagne\./.test(dej.blocage) && !dej.form && dej.edit && dej.boutons.join() === 'Ouvrir la fiche,Autre brebis', 'blocage : déjà mis bas : ' + JSON.stringify(dej));
 await saisir('99999');
 check(await page.evaluate(() => /Brebis inconnue/.test(document.getElementById('pc-saisie-misebas').textContent) && !document.getElementById('f-date-rapide')), 'brebis inconnue : blocage, rien n\'est créé sans accord');
 await page.click('#btn-cancel-unknown-mb');

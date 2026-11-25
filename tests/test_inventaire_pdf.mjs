@@ -82,7 +82,7 @@ for (const [nom, page] of [['PC', pc], ['mobile', mob]]) {
     check(s.nom === 'inventaire_' + (onglet) + '_2026-10-09.pdf' && s.mime === 'application/pdf', nom + ' : nom de fichier ' + s.nom);
     const pdf = lire(nom + '_' + onglet + '.pdf', s.b64);
     const t = norm(pdf.texte.join(' '));
-    for (const x of ['OVILOG', 'Inventaire · ' + titre, 'Campagne 2027', 'Situation au 09-10-2026', 'Ferme du Test', 'Édité le 09-10-2026', 'Brebis actives', 'Agnelles actives', 'Béliers actifs', 'Ovilog — Inventaire des ' + pied + ' · Campagne 2027', ...entetes])
+    for (const x of ['OVILOG', 'Inventaire · ' + titre, 'Campagne 2027', 'Situation au 09\/10\/2026', 'Ferme du Test', 'Édité le 09\/10\/2026', 'Brebis actives', 'Agnelles actives', 'Béliers actifs', 'Ovilog — Inventaire des ' + pied + ' · Campagne 2027', ...entetes])
       check(t.includes(x), nom + ' ' + onglet + ' : contient « ' + x + ' »');
     check(!/Béliers actifs 2 Agneaux (actifs )?\d/.test(t) && !/Agneaux actifs \d+ (Brebis|Agnelles)/.test(t), nom + ' ' + onglet + ' : pas de tuile Agneaux');
     // les 3 tuiles : effectifs actifs, identiques quel que soit l'onglet
