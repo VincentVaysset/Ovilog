@@ -49,6 +49,9 @@ for (const pc of [true, false]) {
   await page.evaluate(donnees);
   await page.evaluate(() => render('home'));
   eq(await page.evaluate(() => document.querySelector('.nav-item[data-view="reglementaire"]').classList.contains('hidden')), true, nom + ' : désactivé, pas de ligne « Réglementaire »');
+  eq(await page.evaluate(() => ['registre', 'declaration-annuelle'].map(v => document.querySelector('.nav-item[data-view="' + v + '"]').classList.contains('hidden'))), [false, false], nom + ' : désactivé, Registre et Déclaration au menu comme avant');
+  { const ic = await page.evaluate(() => [...document.querySelectorAll('.nav-item')].map(b => [b.dataset.view, (b.querySelector('svg') || {}).outerHTML || ''])); const vus = new Map(); ic.forEach(([v, h]) => { if (vus.has(h) && !['list', 'beliers', 'agneaux', 'agnelles-inventaire', 'misebas-rapide', 'controle-laitier', 'qualite', 'home'].includes(v)) throw new Error('FAIL: ' + nom + ' : icône en double au menu : ' + v + ' = ' + vus.get(h)); vus.set(h, v); });
+    eq(new Set(['journal', 'bilan-campagne', 'reglementaire', 'registre', 'declaration-annuelle'].map(v => (ic.find(x => x[0] === v) || [])[1])).size, 5, nom + ' : Calendrier, Bilan, Réglementaire, Registre, Déclaration : 5 icônes différentes'); }
   await page.evaluate(() => render('documents-circulation'));
   eq(await page.evaluate(() => currentView), 'home', nom + ' : désactivé, le module renvoie à l\'Accueil');
   await page.evaluate(() => render('inventaire'));
@@ -66,9 +69,19 @@ for (const pc of [true, false]) {
   // ACTIVÉ
   await page.evaluate(() => { window.__ede = true; render('home'); });
   eq(await page.evaluate(() => document.querySelector('.nav-item[data-view="reglementaire"]').classList.contains('hidden')), false, nom + ' : activé, ligne « Réglementaire » au menu');
-  eq(await page.evaluate(() => ['registre', 'declaration-annuelle'].map(v => !!document.querySelector('.nav-item[data-view="' + v + '"]'))), [true, true], nom + ' : Registre et Déclaration restent à leur place');
+  eq(await page.evaluate(() => ['registre', 'declaration-annuelle'].map(v => document.querySelector('.nav-item[data-view="' + v + '"]').classList.contains('hidden'))), [true, true], nom + ' : activé, Registre et Déclaration seulement dans Réglementaire (pas de doublon au menu)');
   await page.evaluate(() => render('reglementaire'));
-  eq(await page.evaluate(() => [...document.querySelectorAll('.rg-ligne .carte-liste-nm')].map(e => e.textContent)), ['Documents de circulation', "Registre d'élevage", 'Déclaration annuelle'], nom + ' : Réglementaire = 3 lignes dans l\'ordre');
+  if (pc) {
+    eq(await page.evaluate(() => [!!document.querySelector('.fiche-desktop-grid.rg-grille'), [...document.querySelectorAll('.rg-carte .brd-ttl')].map(e => e.textContent)]), [true, ['Documents de circulation', "Registre d'élevage", 'Déclaration annuelle']], nom + ' : Réglementaire PC = grille de 3 cartes dans l\'ordre');
+    const rg = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.rg-carte')].map(c => [c.dataset.vue, { tuiles: [...c.querySelectorAll('.tuile-pc')].map(t => [t.querySelector('.brd-kpi-l').textContent, t.querySelector('.brd-kpi-v').textContent, ['vert', 'bleu', 'ambre', 'rouge', 'neutre'].find(k => t.classList.contains(k))]), note: (c.querySelector('.rg-note') || {}).textContent }])));
+    const C = await page.evaluate(() => chiffresReglementaire());
+    eq(rg['documents-circulation'].tuiles.map(t => t[0]), ['À compléter', 'À notifier', 'Délai dépassé'], nom + ' : carte Documents : à compléter, à notifier, délai dépassé');
+    eq(rg['documents-circulation'].tuiles[2], ['Délai dépassé', String(C.dc.depasses), C.dc.depasses ? 'rouge' : 'neutre'], nom + ' : délai dépassé en rouge seulement s\'il y en a');
+    eq([rg.registre.tuiles[0][0], rg.registre.tuiles[0][1], /^Dernier mouvement le \d\d\/\d\d\/\d{4}$/.test(rg.registre.note)], ['Effectif présent', String(C.registre.present), true], nom + ' : carte Registre : effectif présent, date du dernier mouvement');
+    eq([rg['declaration-annuelle'].tuiles.map(t => t[0]), rg['declaration-annuelle'].note.startsWith('Recensement au 1er janvier ' + (new Date().getFullYear() + 1))], [['Brebis', 'Béliers', 'Agnelles'], true], nom + ' : carte Déclaration : « Recensement au 1er janvier … » et effectifs à déclarer');
+    await page.click('#rg-registre'); eq(await page.evaluate(() => currentView), 'registre', nom + ' : une carte ouvre son écran');
+    await page.evaluate(() => render('reglementaire'));
+  } else eq(await page.evaluate(() => [...document.querySelectorAll('.rg-ligne .carte-liste-nm')].map(e => e.textContent)), ['Documents de circulation', "Registre d'élevage", 'Déclaration annuelle'], nom + ' : Réglementaire mobile = 3 lignes dans l\'ordre');
 
   // calculs
   const r = await page.evaluate(() => { const r = documentsCirculationCalcules({}); return { docs: r.docs.map(x => [x.doc.sens, x.doc.date, x.partenaire, x.items.map(i => i.ref).sort(), x.etat]), hors: r.hors.map(i => [i.ref, i.hors]) }; });
