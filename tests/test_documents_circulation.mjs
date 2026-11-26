@@ -160,6 +160,14 @@ for (const pc of [true, false]) {
     check(!(await page.isVisible('#question-charte')), nom + ' : « risque » choisi : pas de question « Valider quand même ? »');
     eq(await page.evaluate(id => !!DB.documentsCirculation[id].valideLe, id1), true, nom + ' : « risque » : validé directement');
     await page.click('#dc-rouvrir');
+    // vers un abattoir : la question s'affiche toujours, même avec « risque »
+    await page.evaluate(() => { DB.partenairesInfo['Coop Exemple'].categorie = 'abattoir'; render(currentView); });
+    eq(await page.evaluate(() => document.getElementById('dc-valider').disabled), false, nom + ' : partenaire abattoir, « risque » : document complet');
+    await page.click('#dc-valider');
+    check(await page.isVisible('#question-charte'), nom + ' : abattoir + délai viande : « Valider quand même ? » même avec « risque »');
+    await page.click('#qc-non');
+    eq(await page.evaluate(id => DB.documentsCirculation[id].valideLe || null, id1), null, nom + ' : abattoir, Revenir = rien de validé');
+    await page.evaluate(() => { DB.partenairesInfo['Coop Exemple'].categorie = 'cooperative'; render(currentView); });
     await page.check('input[name="dc-ica"][value="aucunRisque"]'); await page.waitForTimeout(100);
     eq(await page.evaluate(id => [DB.documentsCirculation[id].icaAttestation, document.getElementById('dc-valider').disabled, !!document.getElementById('dc-ica-rappel')], id1), ['aucunRisque', false, false], nom + ' : « aucun risque » choisi : document complet, pas de rappel');
     // valider : délai viande = question de la charte
