@@ -93,7 +93,7 @@ for (const pc of [true, false]) {
   ], nom + ' : documents proposés par sens, date et partenaire ; vente d\'avant « Notifier à partir du » et import d\'inventaire absents');
   eq(r.hors, [['brebis:250000004561004:m4', 'Autoconsommation'], ['brebis:250000004561003:m3', 'Mort']], nom + ' : mort et autoconsommation sans abattoir hors document');
   const x0 = await page.evaluate(() => { const x = documentsCirculationCalcules({}).docs[0]; return { manques: x.manques, listes: x.listes.length, comptes: x.comptes.length, viande: x.alertesViande.map(a => a.it.ref), notif: x.notif }; });
-  eq(x0.manques, ['heure de départ', 'transporteur', 'destination des agneaux à confirmer'], nom + ' : ce qui manque à la vente');
+  eq(x0.manques, ['heure de départ', 'transporteur', 'choix sur la chaîne alimentaire (ICA)', 'destination des agneaux à confirmer'], nom + ' : ce qui manque à la vente');
   eq([x0.listes, x0.comptes, x0.viande], [2, 3, ['brebis:250000004561001:m1']], nom + ' : 2 brebis listées, 3 agneaux comptés (boucherie présumée), une brebis sous délai viande');
   eq(x0.notif, { ton: 'rouge', texte: 'Délai dépassé : à notifier avant le 17\/11\/2026' }, nom + ' : échéance date + 7 jours, dépassée = rouge');
 
@@ -123,7 +123,7 @@ for (const pc of [true, false]) {
     eq(await page.evaluate(() => [[...document.querySelectorAll('#dc-animaux .dc-comptes tr')].slice(1).map(r => [...r.cells].map(c => c.textContent)), (document.getElementById('dc-sans-numero') || {}).textContent]), [[['FR 000045', '3']], 'dont 1 sans n° saisi dans Ovilog'], nom + ' : agneaux de boucherie = un nombre par indicatif, « dont 1 sans n° saisi dans Ovilog » en gris');
     eq(await page.evaluate(() => { const ex = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = ''; const x = documentsCirculationCalcules({}).docs[0]; const g = agneauxParIndicatifDc(x.comptes); DB.exploitation.indicatifMarquage = ex; return [g.groupes.map(r => r.indicatif + ':' + r.n), g.inconnus.length, x.aVerifier.length, x.etat]; }), [['000045:1'], 2, 2, 'acompleter'], nom + ' : indicatif inconnu = « À vérifier »');
     // fiche de la vente
-    eq(await page.evaluate(() => [document.getElementById('dc-ica').checked, document.getElementById('dc-camion-vide').checked, document.getElementById('dc-valider').disabled, !!document.getElementById('dc-dest-a-confirmer')]), [false, false, true, true], nom + ' : ICA et camion vide jamais cochés d\'office, Valider bloqué, ligne ambre « à confirmer »');
+    eq(await page.evaluate(() => [[...document.querySelectorAll('input[name="dc-ica"]')].some(r => r.checked), document.getElementById('dc-camion-vide').checked, document.getElementById('dc-valider').disabled, !!document.getElementById('dc-dest-a-confirmer')]), [false, false, true, true], nom + ' : ICA et camion vide jamais cochés d\'office, Valider bloqué, ligne ambre « à confirmer »');
     check(/boucherie par défaut, à confirmer/.test(await page.textContent('#dc-dest-a-confirmer')), nom + ' : texte de la ligne ambre');
     check(await page.isVisible('#dc-alerte-viande'), nom + ' : alerte rouge délai viande');
     eq(await page.evaluate(() => DB.documentsCirculation === undefined), true, nom + ' : rien d\'écrit avant le premier geste');
@@ -152,10 +152,19 @@ for (const pc of [true, false]) {
     eq(await page.evaluate(() => { const x = documentsCirculationCalcules({}).docs[0]; return [x.listes.map(i => i.ref).sort(), x.comptes.map(i => i.ref)]; }),
       [['agneaux:l1:m11', 'agneaux:l3:m13', 'brebis:250000004561001:m1', 'brebis:250000004561002:m2'], ['agneaux:l2:m12']], nom + ' : agneaux de reproduction listés, boucherie comptés');
     await page.click('.dc-dest[data-ref="agneaux:l3:m13"] button[data-val="boucherie"]');
-    eq(await page.evaluate(() => [DB.brebis[1].agnelages[0].lambs[2].mouvements[0].destination, document.getElementById('dc-valider').disabled]), ['boucherie', false], nom + ' : agneau repassé en boucherie, document complet');
+    eq(await page.evaluate(() => [DB.brebis[1].agnelages[0].lambs[2].mouvements[0].destination, document.getElementById('dc-valider').disabled, /chaîne alimentaire \(ICA\)/.test(document.getElementById('dc-manques').textContent)]), ['boucherie', true, true], nom + ' : agneau repassé en boucherie ; ICA sans choix = « Manque », Valider impossible');
+    eq(await page.evaluate(() => [...document.querySelectorAll('#dc-ica label')].map(l => l.textContent)), ["J'atteste que ces animaux ne présentent aucun risque nécessitant la transmission d'informations sur la chaîne alimentaire", 'Des animaux présentent un risque : document dédié à joindre'], nom + ' : ICA = deux choix, textes du modèle');
+    await page.check('input[name="dc-ica"][value="risque"]'); await page.waitForTimeout(100);
+    check(await page.isVisible('#dc-ica-rappel'), nom + ' : « risque » = rappel ambre du document dédié');
+    await page.click('#dc-valider');
+    check(!(await page.isVisible('#question-charte')), nom + ' : « risque » choisi : pas de question « Valider quand même ? »');
+    eq(await page.evaluate(id => !!DB.documentsCirculation[id].valideLe, id1), true, nom + ' : « risque » : validé directement');
+    await page.click('#dc-rouvrir');
+    await page.check('input[name="dc-ica"][value="aucunRisque"]'); await page.waitForTimeout(100);
+    eq(await page.evaluate(id => [DB.documentsCirculation[id].icaAttestation, document.getElementById('dc-valider').disabled, !!document.getElementById('dc-ica-rappel')], id1), ['aucunRisque', false, false], nom + ' : « aucun risque » choisi : document complet, pas de rappel');
     // valider : délai viande = question de la charte
     await page.click('#dc-valider');
-    check(await page.isVisible('#question-charte'), nom + ' : « Valider quand même ? » (délai viande)');
+    check(await page.isVisible('#question-charte'), nom + ' : « aucun risque » + délai viande = « Valider quand même ? »');
     await page.click('#qc-non');
     eq(await page.evaluate(id => DB.documentsCirculation[id].valideLe || null, id1), null, nom + ' : Revenir = rien de validé');
     await page.click('#dc-valider'); await page.click('#qc-oui');

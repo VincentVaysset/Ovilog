@@ -79,9 +79,9 @@ await page.evaluate(() => { dcEtat.brouillon = {}; DB.exploitation.indicatifMarq
 eq(await page.evaluate(() => [document.getElementById('dc-annexe').disabled, /agneau sans n° \(mère/.test(document.getElementById('dc-annexe-bloquee').textContent)]), [true, true], 'indicatif inconnu : bloquée, agneau nommé par sa mère');
 await page.evaluate(() => { DB.exploitation.indicatifMarquage = '000045'; render('documents-circulation'); });
 // 5. rappel ICA « risque »
-check(!(await page.isVisible('#dc-ica-rappel')), 'pas de rappel ICA sans la case « risque »');
-await page.check('#dc-ica-risque'); await page.waitForTimeout(100);
-eq(await page.textContent('#dc-ica-rappel'), "Joindre le document dédié à l'information sur la chaîne alimentaire, à remettre au détenteur d'arrivée.", 'case « risque » cochée : rappel ambre avant la validation');
+check(!(await page.isVisible('#dc-ica-rappel')), 'pas de rappel ICA sans le choix « risque »');
+await page.check('input[name="dc-ica"][value="risque"]'); await page.waitForTimeout(100);
+eq(await page.textContent('#dc-ica-rappel'), "Joindre le document dédié à l'information sur la chaîne alimentaire, à remettre au détenteur d'arrivée.", '« risque » choisi : rappel ambre avant la validation');
 // 6. achat : pas de liste annexe ; mobile : pas de bouton
 const idA = await page.evaluate(() => documentsCirculationCalcules({}).docs.find(x => x.doc.sens === 'entree').doc.id);
 await page.evaluate(id => { dcEtat.id = id; render('documents-circulation'); }, idA);

@@ -33382,6 +33382,7 @@ function etatDocumentCirculation(x, brouillon) {
   if (sortie) {
     if (!d.heure) manques.push('heure de départ');
     if (!String(d.transporteur || '').trim()) manques.push('transporteur');
+    if (!ICA_CHOIX_DC.some(([v]) => v === d.icaAttestation)) manques.push('choix sur la chaîne alimentaire (ICA)');
   } else if (items.some(i => i.dateInconnue)) manques.push("date d'entrée (à corriger sur la fiche de l'animal)");
   const destAConfirmer = sortie && agneaux.some(i => agneauVenduDc(i) && !destinationConfirmeeDc(i));
   if (destAConfirmer) manques.push('destination des agneaux à confirmer');
@@ -33705,6 +33706,11 @@ async function imprimerListeAnnexe(x) {
   await saveOrShareBinaryFile(nom, buildListeAnnexePdfBytes(x), 'application/pdf');
 }
 // Fiche d'un document : mobile = consultation en cartes ; PC = une carte, Transport et Agneaux vendus côte à côte, tableaux de la charte
+// ICA : choix obligatoire, jamais par défaut (`icaAttestation`) ; l'ancienne case `ica` reste sur les documents déjà écrits, plus lue
+const ICA_CHOIX_DC = [
+  ['aucunRisque', "J'atteste que ces animaux ne présentent aucun risque nécessitant la transmission d'informations sur la chaîne alimentaire"],
+  ['risque', 'Des animaux présentent un risque : document dédié à joindre'],
+];
 function ficheDocumentCirculation(cible, x, redessiner) {
   const pc = isDesktopMode();
   const d = x.doc, sortie = d.sens === 'sortie', fige = !!(d.valideLe || d.envoyeLe), modifiable = pc && !fige;
@@ -33718,9 +33724,9 @@ function ficheDocumentCirculation(cible, x, redessiner) {
         <div><label for="dc-transporteur">Transporteur (n° ou nom)</label><div style="display:flex;gap:8px;"><input type="text" id="dc-transporteur" value="${echapperHtml(d.transporteur || '')}" autocomplete="off" style="flex:1;"><button type="button" class="btn btn-secondary btn-petit" id="dc-inconnu" style="width:auto;">Inconnu</button></div></div></div>
       <label for="dc-immat">Immatriculation (facultatif)</label><input type="text" id="dc-immat" value="${echapperHtml(d.immatriculation || '')}" autocomplete="off">
       <label class="dc-case"><input type="checkbox" id="dc-camion-vide"${d.camionVide === true ? ' checked' : ''}><span>Camion vide avant chargement</span></label>
-      <label class="dc-case"><input type="checkbox" id="dc-ica"${d.ica === true ? ' checked' : ''}><span>Informations sur la chaîne alimentaire (ICA) transmises</span></label>
-      <label class="dc-case"><input type="checkbox" id="dc-ica-risque"${d.icaRisque === true ? ' checked' : ''}><span>Des animaux présentent un risque pour la chaîne alimentaire</span></label>`
-    : `<div class="dc-gris">Heure : ${val(d.heure)} · Transporteur : ${val(d.transporteur)} · Immatriculation : ${val(d.immatriculation)}<br>Camion vide : ${d.camionVide === true ? 'oui' : 'non renseigné'} · ICA : ${d.ica === true ? 'transmises' : 'non cochée'}${d.icaRisque === true ? ' · risque signalé' : ''}</div>`;
+      <div class="prm-titre dc-sect" id="dc-ica-titre">Chaîne alimentaire (ICA)</div>
+      <div role="radiogroup" aria-labelledby="dc-ica-titre" id="dc-ica">${ICA_CHOIX_DC.map(([v, l]) => `<label class="dc-case"><input type="radio" name="dc-ica" value="${v}"${d.icaAttestation === v ? ' checked' : ''}><span>${l}</span></label>`).join('')}</div>`
+    : `<div class="dc-gris">Heure : ${val(d.heure)} · Transporteur : ${val(d.transporteur)} · Immatriculation : ${val(d.immatriculation)}<br>Camion vide : ${d.camionVide === true ? 'oui' : 'non renseigné'} · ICA : ${d.icaAttestation === 'aucunRisque' ? 'aucun risque attesté' : d.icaAttestation === 'risque' ? 'risque, document dédié joint' : 'non renseignée'}</div>`;
   const champsEntree = modifiable || (!fige && pc) ? `<label for="dc-heure">Heure d'arrivée (facultatif)</label><input type="time" id="dc-heure" value="${echapperHtml(d.heure || '')}">` : `<div class="dc-gris">Heure d'arrivée : ${val(d.heure)}</div>`;
   const vendus = x.agneaux.filter(i => agneauVenduDc(i) && i.vivant);
   const agneauxModif = sortie && modifiable && vendus.length > 0;
@@ -33742,7 +33748,7 @@ function ficheDocumentCirculation(cible, x, redessiner) {
   const blocageAnnexe = sortie && pc ? raisonsBlocageListeAnnexe(x) : [];
   const boutonAnnexe = sortie && pc ? `<button type="button" class="btn btn-secondary" id="dc-annexe"${blocageAnnexe.length ? ' disabled' : ''}>Liste annexe (PDF)</button>` : '';
   const ligneBlocageAnnexe = blocageAnnexe.length ? `<div class="prm-alerte" id="dc-annexe-bloquee" style="margin:12px 0 0;">Liste annexe impossible tant que ${blocageAnnexe.length > 1 ? 'ces animaux sont' : 'cet animal est'} à vérifier : ${echapperHtml(blocageAnnexe.join(', '))}. Une liste annexe n'omet jamais un animal.</div>` : '';
-  const rappelIca = sortie && d.icaRisque === true ? '<div class="prm-alerte" id="dc-ica-rappel" style="margin:12px 0 0;">Joindre le document dédié à l\'information sur la chaîne alimentaire, à remettre au détenteur d\'arrivée.</div>' : '';
+  const rappelIca = sortie && d.icaAttestation === 'risque' ? '<div class="prm-alerte" id="dc-ica-rappel" style="margin:12px 0 0;">Joindre le document dédié à l\'information sur la chaîne alimentaire, à remettre au détenteur d\'arrivée.</div>' : '';
   const nbViande = x.alertesViande.length;
   const entete = `<div class="pc-cardhead"><p class="brd-ttl" style="margin:0;">${echapperHtml(formatDateFr(d.date))} · ${titreDocumentCirculation(x)}</p>${cartePastille(lib, ton)}</div>
       <div class="dc-gris" style="margin-top:4px;">${x.def ? echapperHtml(x.def.court) + (numeroPartenaireTexte(x.partenaire) ? ' · ' + echapperHtml(numeroPartenaireTexte(x.partenaire)) : '') : ''}${x.partenaire && pc ? ` <button type="button" class="btn btn-secondary btn-petit" id="dc-fiche-partenaire" style="width:auto;">Fiche partenaire</button>` : ''}</div>
@@ -33781,8 +33787,7 @@ function ficheDocumentCirculation(cible, x, redessiner) {
   brancherChamp('dc-transporteur', 'transporteur', el => el.value.trim() || undefined);
   brancherChamp('dc-immat', 'immatriculation', el => el.value.trim() || undefined);
   brancherChamp('dc-camion-vide', 'camionVide', el => el.checked ? true : undefined);
-  brancherChamp('dc-ica', 'ica', el => el.checked ? true : undefined);
-  brancherChamp('dc-ica-risque', 'icaRisque', el => el.checked ? true : undefined);
+  bloc.querySelectorAll('input[name="dc-ica"]').forEach(el => el.onchange = () => { if (el.checked) { ecrireChamps({ icaAttestation: el.value }); redessiner(); } });
   if ($d('dc-annexe')) $d('dc-annexe').onclick = () => imprimerListeAnnexe(x).catch(e => afficherErreurExport(e));
   if ($d('dc-inconnu')) $d('dc-inconnu').onclick = () => { ecrireChamps({ transporteur: 'Inconnu' }); redessiner(); };
   bloc.querySelectorAll('.dc-dest button').forEach(b => b.onclick = () => {
@@ -33836,7 +33841,7 @@ function ficheDocumentCirculation(cible, x, redessiner) {
   };
   if ($d('dc-valider')) $d('dc-valider').onclick = () => {
     if (x.etat !== 'complet') return;
-    if (x.alertesViande.length) questionCharte('Valider quand même ?', x.alertesViande.length + ' animal' + (x.alertesViande.length > 1 ? 'ux sont' : ' est') + " encore sous délai d'attente viande le jour du départ.", 'Valider quand même', 'Revenir', valider);
+    if (x.alertesViande.length && d.icaAttestation === 'aucunRisque') questionCharte('Valider quand même ?', x.alertesViande.length + ' animal' + (x.alertesViande.length > 1 ? 'ux sont' : ' est') + " encore sous délai d'attente viande le jour du départ.", 'Valider quand même', 'Revenir', valider);
     else valider();
   };
   if ($d('dc-rouvrir')) $d('dc-rouvrir').onclick = () => { const g = instant(); ecrireChamps({ valideLe: undefined }); redessiner(); restaurer(g, 'Document rouvert'); };
