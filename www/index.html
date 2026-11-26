@@ -33608,6 +33608,102 @@ function renderDocumentCirculation() {
   if (!x) { app.innerHTML = '<div class="card"><div class="prm-note" style="margin:0;">Ce document n\'existe plus (mouvements annulés ou regroupés autrement).</div></div>'; return; }
   ficheDocumentCirculation(app, x, () => render('document-circulation'));
 }
+/* ---------- Liste annexe au document de circulation (étape 2, point 1 ; maquette validée le 24/11) ----------
+   Feuille A4 portrait en NOIR ET BLANC (exception voulue à la charte couleur : photocopie, carnet de l'EDE), PC seulement, documents de SORTIE.
+   Aucun n° de document ni identifiant (« À joindre au document de circulation n° ____ » à la main) : une impression ne consomme rien et n'écrit rien.
+   Jamais d'animal omis ni de total faux : bloquée tant qu'un animal est « À vérifier » (raisonsBlocageListeAnnexe). Contrôle : test_liste_annexe. */
+function texteNumeroEde(n) { const c = normaliserNumeroEde(n); return c ? 'FR ' + c.slice(2, 4) + ' ' + c.slice(4, 7) + ' ' + c.slice(7) : String(n || ''); }
+function libelleAnimalBloque(it) { return it.eid ? numeroOfficielTexte(it.eid) : 'agneau sans n° (mère ' + (it.mereEid ? numeroAnimal(it.mereEid) : 'inconnue') + ')'; }
+function raisonsBlocageListeAnnexe(x) { return x.aVerifier.map(libelleAnimalBloque); }
+function categorieListeAnnexe(it) {
+  if (it.cat === 'agneaux') return 'Agneau · reproduction';
+  return LIBELLE_CAT_DC[it.cat] + (it.code === 'E' ? ' · élevage' : ' · réforme');
+}
+// Contenu de la feuille (fonction pure : relue par le test)
+function donneesListeAnnexe(x) {
+  const ex = DB.exploitation || {}, d = x.doc, info = partenaireInfo(x.partenaire), def = x.def;
+  const g = agneauxParIndicatifDc(x.comptes);
+  const listes = x.listes.map((it, i) => ({ rang: i + 1, national: it.eid ? numeroOfficielTexte(it.eid) : '', travail: numeroTravailDc(it) || '–', categorie: categorieListeAnnexe(it), annee: it.eid && anneeNaissance(it.eid) ? String(anneeNaissance(it.eid)) : '–' }));
+  const nbAgneaux = g.groupes.reduce((t, r) => t + r.n, 0);
+  return {
+    depart: { ede: texteNumeroEde(ex.numeroCheptel), nom: ex.nom || '', adresse: [ex.adresse, [ex.codePostal, ex.commune].filter(Boolean).join(' ')].filter(Boolean).join(', ') },
+    arrivee: { categorie: def ? def.court : '', nom: x.partenaire || '', numero: def && def.numero === 'ede' && normaliserNumeroEde(info.numero) ? texteNumeroEde(info.numero) : (numeroPartenaireTexte(x.partenaire) || ''), chargement: formatDateFr(d.date) + (d.heure ? ' à ' + d.heure.replace(':', ' h ') : '') },
+    listes, agneaux: g.groupes.map(r => ({ indicatif: 'FR ' + r.indicatif, n: r.n })),
+    totaux: { total: listes.length + nbAgneaux, listes: listes.length, agneaux: nbAgneaux }
+  };
+}
+function buildListeAnnexePdfBytes(x) {
+  const D = donneesListeAnnexe(x);
+  const W = PDF_PAGE_W, H = PDF_PAGE_H, M = 40, L = M, R = W - M, BAS = 52;
+  const pages = []; let ops = '', y = 0;
+  const t = (xx, yy, s, gras, taille) => { ops += pdfTextOp(xx.toFixed(1), yy.toFixed(1), String(s), gras ? 'FB' : 'F1', taille || 9.5); };
+  const cadre = (x0, y0, w, h) => { ops += '0 G 0.8 w ' + x0.toFixed(1) + ' ' + y0.toFixed(1) + ' ' + w.toFixed(1) + ' ' + h.toFixed(1) + ' re S\n'; };
+  const fond = (x0, y0, w, h) => { ops += '0.91 g ' + x0.toFixed(1) + ' ' + y0.toFixed(1) + ' ' + w.toFixed(1) + ' ' + h.toFixed(1) + ' re f 0 g\n'; };
+  const trait = (x0, y0, x1, y1, ep) => { ops += '0 G ' + (ep || 0.8) + ' w ' + x0.toFixed(1) + ' ' + y0.toFixed(1) + ' m ' + x1.toFixed(1) + ' ' + y1.toFixed(1) + ' l S\n'; };
+  const coupe = (s, larg, taille) => { s = String(s); while (s.length > 1 && pdfTextWidth(s, taille || 9.5) > larg) s = s.slice(0, -2) + '…'; return s; };
+  const nouvellePage = () => { if (ops) pages.push(ops); ops = ''; y = H - M; };
+  const place = h => { if (y - h < BAS) { nouvellePage(); y -= 4; } };
+  nouvellePage();
+  // titre
+  const titre = 'Liste annexe au document de circulation';
+  t((W - pdfTextWidth(titre, 17, true)) / 2, y - 16, titre, true, 17); y -= 34;
+  const sous = 'Ovins · à joindre au document de circulation n° ';
+  const ws = pdfTextWidth(sous, 10) + 130;
+  t((W - ws) / 2, y, sous, false, 10); trait((W - ws) / 2 + pdfTextWidth(sous, 10) + 2, y - 2, (W + ws) / 2, y - 2, 0.6); y -= 18;
+  // départ / arrivée
+  const hC = 72, mid = (L + R) / 2;
+  cadre(L, y - hC, R - L, hC); trait(mid, y, mid, y - hC);
+  const bloc = (x0, titreB, lignes) => { let yy = y - 14; t(x0 + 8, yy, titreB, true, 10.5); lignes.forEach(([lib, val]) => { yy -= 13; t(x0 + 8, yy, lib, false, 9); t(x0 + 8 + pdfTextWidth(lib, 9) + 4, yy, coupe(val || '', mid - L - 20 - pdfTextWidth(lib, 9), 9.5), true, 9.5); }); };
+  bloc(L, 'Départ', [['N° EDE :', D.depart.ede], ['Détenteur :', D.depart.nom], ['Adresse :', D.depart.adresse]]);
+  bloc(mid, 'Arrivée', [[(D.arrivee.categorie || 'Destinataire') + ' :', D.arrivee.nom], ['N° :', D.arrivee.numero], ['Date de chargement :', D.arrivee.chargement]]);
+  y -= hC + 16;
+  // tableau générique avec en-tête répété
+  const tableau = (titreT, cols, lignes) => {
+    place(40);
+    t(L, y, titreT, true, 10.5); y -= 8;
+    const hL = 17, larg = cols.reduce((a, c) => a + c.w, 0);
+    const entete = () => { fond(L, y - hL, larg, hL); cadre(L, y - hL, larg, hL); let xx = L; cols.forEach((c, i) => { if (i) trait(xx, y, xx, y - hL); t(xx + 5, y - 12, c.l, true, 9); xx += c.w; }); y -= hL; };
+    entete();
+    lignes.forEach(ln => {
+      if (y - hL < BAS) { nouvellePage(); y -= 4; t(L, y, titreT + ' (suite)', true, 10.5); y -= 8; entete(); }
+      cadre(L, y - hL, larg, hL); let xx = L;
+      cols.forEach((c, i) => { if (i) trait(xx, y, xx, y - hL); t(xx + 5, y - 12, coupe(ln[i], c.w - 9, 9.5), !!c.gras, 9.5); xx += c.w; });
+      y -= hL;
+    });
+    y -= 14;
+  };
+  if (D.listes.length) tableau('Reproducteurs et réformes · numéros nationaux complets (' + D.listes.length + ')',
+    [{ l: '#', w: 30 }, { l: 'N° national', w: 140, gras: true }, { l: 'N° de travail', w: 90 }, { l: 'Catégorie', w: 175 }, { l: 'Né(e) en', w: R - L - 435 }],
+    D.listes.map(r => [String(r.rang), r.national, r.travail, r.categorie, r.annee]));
+  if (D.agneaux.length) tableau('Agneaux de boucherie · par indicatif de marquage (' + D.totaux.agneaux + ')',
+    [{ l: 'Indicatif de marquage', w: 190, gras: true }, { l: 'Nombre', w: 90 }], D.agneaux.map(r => [r.indicatif, String(r.n)]));
+  // total + signatures
+  place(26 + 70 + 10);
+  cadre(L, y - 22, R - L, 22);
+  t(L + 8, y - 15, 'Total ovins : ' + D.totaux.total, true, 10);
+  t(L + 130, y - 15, 'dont reproducteurs et réformes : ' + D.totaux.listes + '    agneaux de boucherie : ' + D.totaux.agneaux, false, 9.5);
+  y -= 32;
+  const hS = 62; cadre(L, y - hS, R - L, hS); trait(mid, y, mid, y - hS);
+  t(L + 8, y - 14, 'Détenteur de départ', true, 10); t(L + 8, y - 28, 'Date et signature :', false, 9);
+  t(mid + 8, y - 14, "Détenteur d'arrivée", true, 10); t(mid + 8, y - 28, 'Date et signature :', false, 9);
+  pages.push(ops);
+  // pied de page : « Ovilog — Liste annexe » et « Page X/Y »
+  const n = pages.length;
+  const finales = pages.map((p, i) => {
+    let o = p;
+    o += '0 G 0.6 w ' + L + ' 40 m ' + R + ' 40 l S\n';
+    o += pdfTextOp(L, 28, 'Ovilog — Liste annexe', 'F1', 8.5);
+    const pg = 'Page ' + (i + 1) + '/' + n;
+    o += pdfTextOp((R - pdfTextWidth(pg, 8.5)).toFixed(1), 28, pg, 'F1', 8.5);
+    return o;
+  });
+  return buildMultiPagePdfBytes(finales, false);
+}
+async function imprimerListeAnnexe(x) {
+  if (raisonsBlocageListeAnnexe(x).length) return;
+  const nom = 'liste-annexe_' + (x.doc.date || jourAujourdhuiISO()) + '_' + slugifyFiltre(x.partenaire || 'destinataire') + '.pdf';
+  await saveOrShareBinaryFile(nom, buildListeAnnexePdfBytes(x), 'application/pdf');
+}
 // Fiche d'un document : mobile = consultation en cartes ; PC = une carte, Transport et Agneaux vendus côte à côte, tableaux de la charte
 function ficheDocumentCirculation(cible, x, redessiner) {
   const pc = isDesktopMode();
@@ -33622,8 +33718,9 @@ function ficheDocumentCirculation(cible, x, redessiner) {
         <div><label for="dc-transporteur">Transporteur (n° ou nom)</label><div style="display:flex;gap:8px;"><input type="text" id="dc-transporteur" value="${echapperHtml(d.transporteur || '')}" autocomplete="off" style="flex:1;"><button type="button" class="btn btn-secondary btn-petit" id="dc-inconnu" style="width:auto;">Inconnu</button></div></div></div>
       <label for="dc-immat">Immatriculation (facultatif)</label><input type="text" id="dc-immat" value="${echapperHtml(d.immatriculation || '')}" autocomplete="off">
       <label class="dc-case"><input type="checkbox" id="dc-camion-vide"${d.camionVide === true ? ' checked' : ''}><span>Camion vide avant chargement</span></label>
-      <label class="dc-case"><input type="checkbox" id="dc-ica"${d.ica === true ? ' checked' : ''}><span>Informations sur la chaîne alimentaire (ICA) transmises</span></label>`
-    : `<div class="dc-gris">Heure : ${val(d.heure)} · Transporteur : ${val(d.transporteur)} · Immatriculation : ${val(d.immatriculation)}<br>Camion vide : ${d.camionVide === true ? 'oui' : 'non renseigné'} · ICA : ${d.ica === true ? 'transmises' : 'non cochée'}</div>`;
+      <label class="dc-case"><input type="checkbox" id="dc-ica"${d.ica === true ? ' checked' : ''}><span>Informations sur la chaîne alimentaire (ICA) transmises</span></label>
+      <label class="dc-case"><input type="checkbox" id="dc-ica-risque"${d.icaRisque === true ? ' checked' : ''}><span>Des animaux présentent un risque pour la chaîne alimentaire</span></label>`
+    : `<div class="dc-gris">Heure : ${val(d.heure)} · Transporteur : ${val(d.transporteur)} · Immatriculation : ${val(d.immatriculation)}<br>Camion vide : ${d.camionVide === true ? 'oui' : 'non renseigné'} · ICA : ${d.ica === true ? 'transmises' : 'non cochée'}${d.icaRisque === true ? ' · risque signalé' : ''}</div>`;
   const champsEntree = modifiable || (!fige && pc) ? `<label for="dc-heure">Heure d'arrivée (facultatif)</label><input type="time" id="dc-heure" value="${echapperHtml(d.heure || '')}">` : `<div class="dc-gris">Heure d'arrivée : ${val(d.heure)}</div>`;
   const vendus = x.agneaux.filter(i => agneauVenduDc(i) && i.vivant);
   const agneauxModif = sortie && modifiable && vendus.length > 0;
@@ -33642,6 +33739,10 @@ function ficheDocumentCirculation(cible, x, redessiner) {
       : `<button type="button" class="btn btn-primary" id="dc-valider"${x.etat === 'complet' ? '' : ' disabled'}>Valider</button>`)
     : (d.envoyeLe ? `<button type="button" class="btn btn-secondary" id="dc-annuler-envoi">Annuler « Envoyé »</button>` : `<button type="button" class="btn btn-primary" id="dc-envoye"${x.etat === 'complet' ? '' : ' disabled'}>Envoyé</button>`);
   const aPartRattacher = pc && d.aPart && !fige ? '<button type="button" class="btn btn-secondary" id="dc-rattacher">Remettre avec les autres</button>' : '';
+  const blocageAnnexe = sortie && pc ? raisonsBlocageListeAnnexe(x) : [];
+  const boutonAnnexe = sortie && pc ? `<button type="button" class="btn btn-secondary" id="dc-annexe"${blocageAnnexe.length ? ' disabled' : ''}>Liste annexe (PDF)</button>` : '';
+  const ligneBlocageAnnexe = blocageAnnexe.length ? `<div class="prm-alerte" id="dc-annexe-bloquee" style="margin:12px 0 0;">Liste annexe impossible tant que ${blocageAnnexe.length > 1 ? 'ces animaux sont' : 'cet animal est'} à vérifier : ${echapperHtml(blocageAnnexe.join(', '))}. Une liste annexe n'omet jamais un animal.</div>` : '';
+  const rappelIca = sortie && d.icaRisque === true ? '<div class="prm-alerte" id="dc-ica-rappel" style="margin:12px 0 0;">Joindre le document dédié à l\'information sur la chaîne alimentaire, à remettre au détenteur d\'arrivée.</div>' : '';
   const nbViande = x.alertesViande.length;
   const entete = `<div class="pc-cardhead"><p class="brd-ttl" style="margin:0;">${echapperHtml(formatDateFr(d.date))} · ${titreDocumentCirculation(x)}</p>${cartePastille(lib, ton)}</div>
       <div class="dc-gris" style="margin-top:4px;">${x.def ? echapperHtml(x.def.court) + (numeroPartenaireTexte(x.partenaire) ? ' · ' + echapperHtml(numeroPartenaireTexte(x.partenaire)) : '') : ''}${x.partenaire && pc ? ` <button type="button" class="btn btn-secondary btn-petit" id="dc-fiche-partenaire" style="width:auto;">Fiche partenaire</button>` : ''}</div>
@@ -33656,7 +33757,8 @@ function ficheDocumentCirculation(cible, x, redessiner) {
     ? `<div class="card dc-fiche" id="dc-entete">${entete}
         <div class="dc-cols${blocDest ? '' : ' dc-cols-1'}"><div id="dc-champs"><div class="prm-titre dc-sect" style="margin-top:0;">${sortie ? 'Transport' : 'Arrivée'}</div>${champPartenaire}${sortie ? champsSortie : champsEntree}</div>${blocDest ? `<div>${blocDest}</div>` : ''}</div>
         <div id="dc-animaux"><div class="prm-titre dc-sect">${titreAnimaux}</div>${tableauAnimauxDcHtml(x, sortie ? x.listes : x.items, modifiable)}${sortie ? comptesAgneauxDcHtml(x, true) : ''}</div>
-        ${boutons || aPartRattacher ? `<div class="prm-actions prm-actions-fin" id="dc-actions">${aPartRattacher}${boutons}</div>` : ''}</div>`
+        ${rappelIca}${ligneBlocageAnnexe}
+        ${boutons || aPartRattacher || boutonAnnexe ? `<div class="prm-actions prm-actions-fin" id="dc-actions">${boutonAnnexe}${aPartRattacher}${boutons}</div>` : ''}</div>`
     : `<div class="card" id="dc-entete">${entete}</div>
     <div class="card" id="dc-champs">${champPartenaire}${sortie ? champsSortie : champsEntree}</div>
     ${blocDest ? `<div class="card">${blocDest}</div>` : ''}
@@ -33680,6 +33782,8 @@ function ficheDocumentCirculation(cible, x, redessiner) {
   brancherChamp('dc-immat', 'immatriculation', el => el.value.trim() || undefined);
   brancherChamp('dc-camion-vide', 'camionVide', el => el.checked ? true : undefined);
   brancherChamp('dc-ica', 'ica', el => el.checked ? true : undefined);
+  brancherChamp('dc-ica-risque', 'icaRisque', el => el.checked ? true : undefined);
+  if ($d('dc-annexe')) $d('dc-annexe').onclick = () => imprimerListeAnnexe(x).catch(e => afficherErreurExport(e));
   if ($d('dc-inconnu')) $d('dc-inconnu').onclick = () => { ecrireChamps({ transporteur: 'Inconnu' }); redessiner(); };
   bloc.querySelectorAll('.dc-dest button').forEach(b => b.onclick = () => {
     const ref = b.closest('.dc-dest').dataset.ref, it = x.items.find(i => i.ref === ref);
