@@ -149,25 +149,27 @@ function jeuEcho() {
 await m.evaluate(jeuEcho); await m.evaluate(() => { accueilEchoTab = 'resultat'; render('home'); });
 const lignesEcho = () => m.evaluate(() => [...document.querySelectorAll('#ac-echo .ac-echo-corps .rp, #ac-echo .ac-echo-corps .lbl, #ac-echo .ac-echo-corps .ac-detail-btn')].map(r => r.classList.contains('lbl') ? '# ' + r.textContent : r.classList.contains('ac-detail-btn') ? '> ' + r.textContent + ' [' + r.getAttribute('aria-expanded') + ']' : r.querySelector('.h span').textContent + ' = ' + r.querySelector('.h b').textContent.replace(/\s/g, ' ') + ' [' + r.querySelector('.tb2 i').className + ']'));
 eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo-seg button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : ''))), ['Résultat*', 'Comptage'], 'segmenté Résultat / Comptage, Résultat actif');
-eq(await lignesEcho(), ['Pleine = 11 (73 %) [vert]', '> Détail par stade ▾ [false]', 'Vide = 1 (7 %) [rouge-clair]', 'Vide définitive = 1 (7 %) [rouge]', 'Avortée / pseudogestation = 2 (13 %) [ambre]'],
-  'Résultat figé, détail replié par défaut : Pleine (mise bas et vendue après l\'écho comprises), « Détail par stade », Vide, Vide définitive et Avortée / pseudogestation (> 0) ; plus de « Sans échographie »');
+eq(await lignesEcho(), ['Pleine = 11 (73 %) [vert]', '> Détail par stade ▾ [false]', 'Vide = 4 (27 %) [rouge-clair]'],
+  'Dernier passage (01/08), figé, détail replié par défaut : Pleine (mise bas et vendue après l\'écho comprises), « Détail par stade », Vide = vides + avortée + pseudogestation (la vide définitive y est : son écho dit « Vide »)');
+eq(await m.evaluate(() => [document.getElementById('ac-echo-resume').textContent, document.getElementById('ac-echo-dont').textContent]), ['Écho du 01/08/2026 · 15 passées · 73,3 % pleines', 'dont 1 avortée, 1 pseudogestation'],
+  'résumé du passage : passées, % pleines = pleines ÷ passées ; « dont » des avortées / pseudogestations');
 eq(await m.evaluate(() => document.querySelector('#ac-echo .ac-tete .reg-pastille').textContent), '2 passages · dernier le 01\/08\/2026', 'pastille « N passages · dernier le … »');
 eq(await m.evaluate(() => document.querySelectorAll('#ac-echo .ac-detail').length), 0, 'détail replié : aucune ligne de stade dans la page');
 await m.click('#ac-echo-detail-btn');
 eq(await lignesEcho(), ['Pleine = 11 (73 %) [vert]', '> Détail par stade ▴ [true]', '# Monte naturelle', 'Début = 1 (7 %) [vert]', 'Milieu = 2 (13 %) [vert]', 'Fin = 3 (20 %) [vert]', '# Lots IA / Éponge', 'IA = 1 (7 %) [vert]', 'Stade non précisé = 4 (27 %) [vert]',
-  'Vide = 1 (7 %) [rouge-clair]', 'Vide définitive = 1 (7 %) [rouge]', 'Avortée / pseudogestation = 2 (13 %) [ambre]'],
+  'Vide = 4 (27 %) [rouge-clair]'],
   'détail déplié : groupes Monte naturelle et Lots IA / Éponge, lignes à 0 masquées (Retour 1, Retour 2, Tardive), « Stade non précisé » en dernier hors groupe');
 check(await m.evaluate(() => { const nonPrecis = [...document.querySelectorAll('#ac-echo .ac-detail .rp')].pop(); return nonPrecis.querySelector('.h span').textContent === 'Stade non précisé' && nonPrecis.parentElement.classList.contains('ac-detail') && nonPrecis.previousElementSibling.querySelector('.h span').textContent === 'IA'; }), '« Stade non précisé » est la dernière ligne du détail, après le groupe des lots');
 await m.click('#ac-echo-detail-btn');
 eq((await lignesEcho())[1], '> Détail par stade ▾ [false]', 'le détail se replie');
-eq(await m.evaluate(() => document.querySelector('#ac-echo .reg-info').innerHTML), 'Chaque brebis d\'après sa dernière écho de la campagne : les mises bas et les sorties ne la changent pas.<br>1 brebis présente pas encore passée à l\'écho cette campagne.', 'phrase d\'info : règle figée + présentes pas encore passées');
-console.log('OK 5 Résultat figé : dernière écho de la campagne (mise bas et sortie ensuite sans effet, date égale = dernière saisie, deux types = le plus récent), Vide définitive à part, Avortée / pseudogestation à part, pastille des passages.');
+eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo > .reg-info')].pop().innerHTML), '% pleines = pleines ÷ passées, au passage du 01/08/2026 : les mises bas et les sorties ne le changent pas.<br>1 brebis présente pas encore passée à l\'écho cette campagne.', 'phrase d\'info : règle du dernier passage + présentes pas encore passées');
+console.log('OK 5 Dernier passage figé (mise bas et sortie ensuite sans effet, date égale = dernière saisie) : passées, pleines, vides dont avortées / pseudogestations, % pleines = pleines ÷ passées, pastille des passages.');
 await m.click('#ac-echo-seg [data-tab="comptage"]');
 eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo-seg button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : ''))), ['Résultat', 'Comptage*'], 'Comptage actif');
 eq(await lignesEcho(), ['1 agneau (simple) = 3 (27 %) [vert]', '2 agneaux (double) = 2 (18 %) [vert]', '3 agneaux et + = 2 (18 %) [vert]', 'Sans comptage = 4 (36 %) [gris]'], 'Comptage : brebis pleines, « 2 » = 2 + Double, « 3 et + » = 3 + 4 et plus');
-eq(await m.evaluate(() => document.querySelector('#ac-echo .reg-info').textContent), 'Brebis pleines, selon le comptage de leur dernière échographie. « 2 » regroupe 2 et « 2 et plus » (Simple / Double) ; « 3 et + » regroupe 3 et « 4 et plus ».', 'phrase d\'info du Comptage');
+eq(await m.evaluate(() => [...document.querySelectorAll('#ac-echo > .reg-info')].pop().textContent), 'Brebis pleines au passage du 01/08/2026, selon leur comptage. « 2 » regroupe 2 et « 2 et plus » (Simple / Double) ; « 3 et + » regroupe 3 et « 4 et plus ».', 'phrase d\'info du Comptage');
 check(await m.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'le segmenté est un état d\'affichage : aucune écriture');
-eq(await m.evaluate(() => { const c = repartitionEchoAccueil(); return c.pleine + c.vide + c.videDefinitive + c.cas === c.total && c.pasPassees === 1; }), true, 'chaque brebis passée est dans une seule ligne (somme = total), la présente sans écho à part');
+eq(await m.evaluate(() => { const c = dernierPassageEchoAccueil(); return c.pleines + c.vides === c.passees && c.pasPassees === 1; }), true, 'chaque brebis du passage est pleine ou vide (somme = passées), la présente sans écho à part');
 await m.evaluate(() => { accueilEchoTab = 'resultat'; });
 console.log('OK 5bis Comptage : 1 / 2 / 3 et + / Sans comptage, aucune écriture.');
 // plusieurs lots IA / Éponge : leurs stades s'additionnent dans « Lots IA / Éponge » ; lignes à 0 masquées ; groupe vide masqué ; Vide définitive et Avortée / pseudogestation absentes à 0
@@ -181,18 +183,18 @@ await m.evaluate(() => {
   window.__avant = JSON.stringify(DB); window.__saves = 0; accueilEchoTab = 'resultat'; accueilEchoDetailOuvert = true; render('home');
 });
 eq(await lignesEcho(), ['Pleine = 6 (100 %) [vert]', '> Détail par stade ▴ [true]', '# Monte naturelle', 'Début = 1 (17 %) [vert]', '# Lots IA / Éponge', 'IA = 2 (33 %) [vert]', 'Retour 1 = 2 (33 %) [vert]', 'Tardive = 1 (17 %) [vert]', 'Vide = 0 (0 %) [rouge-clair]'],
-  'plusieurs lots IA et un lot Éponge : les stades s\'additionnent (IA 2, Retour 1 2, Tardive 1) ; Retour 2, Stade non précisé, Vide définitive, Avortée / pseudogestation masqués à 0 ; Pleine et Vide toujours visibles');
+  'plusieurs lots IA et un lot Éponge : les stades s\'additionnent (IA 2, Retour 1 2, Tardive 1) ; Retour 2, Stade non précisé masqués à 0 ; Pleine et Vide toujours visibles');
 await m.evaluate(() => { DB.brebis = DB.brebis.filter(s => s.id !== 'M1'); render('home'); });
 check((await lignesEcho()).every(l => l !== '# Monte naturelle') && (await lignesEcho()).includes('# Lots IA / Éponge'), 'groupe Monte naturelle masqué quand tous ses stades sont à 0');
 await m.evaluate(() => { DB.brebis.forEach(s => { s.echographies = []; }); render('home'); });
-eq(await lignesEcho(), ['Pleine = 0 (0 %) [vert]', 'Vide = 0 (0 %) [rouge-clair]'], 'sans aucune écho : pas de « Détail par stade », 2 lignes seulement');
-eq(await m.evaluate(() => [!!document.querySelector('#ac-echo .ac-tete .reg-pastille'), /5 brebis présentes pas encore passées/.test(document.querySelector('#ac-echo .reg-info').textContent)]), [false, true], 'sans écho : pas de pastille des passages, « 5 brebis présentes pas encore passées »');
+eq(await lignesEcho(), [], 'sans aucune écho : aucune ligne');
+eq(await m.evaluate(() => [!!document.querySelector('#ac-echo .ac-tete .reg-pastille'), !!document.getElementById('ac-echo-seg'), document.getElementById('ac-echo-aucune').textContent, /5 brebis présentes pas encore passées/.test(document.getElementById('ac-echo').textContent)]), [false, false, 'Aucune échographie cette campagne.', true], 'sans écho : ni pastille des passages ni segmenté, « Aucune échographie cette campagne », « 5 brebis présentes pas encore passées »');
 check(await m.evaluate(() => window.__saves === 0), 'aucune écriture');
 await m.evaluate(() => { accueilEchoDetailOuvert = false; });
-console.log('OK 5ter Détail par stade : replié par défaut, lots IA / Éponge additionnés, lignes et groupes à 0 masqués, Vide définitive et Avortée / pseudogestation seulement si > 0.');
+console.log('OK 5ter Détail par stade : replié par défaut, lots IA / Éponge additionnés, lignes et groupes à 0 masqués ; sans écho : « Aucune échographie cette campagne ».');
 // jeu vide : aucun calcul n'échoue
 await m.evaluate(jeu, 'zero'); await m.evaluate(() => { accueilEchoTab = 'resultat'; render('home'); });
-eq((await lignesEcho())[0], 'Pleine = 0 (0 %) [vert]', 'aucune brebis : Pleine 0 (0 %)');
+eq(await m.evaluate(() => (document.getElementById('ac-echo-aucune') || {}).textContent), 'Aucune échographie cette campagne.', 'aucune brebis : « Aucune échographie cette campagne »');
 
 // ================================================================ 6. Contrôle laitier : moyenne et nombre de brebis par contrôle, plus de « relevés au total »
 await m.evaluate(jeu, ''); await m.evaluate(() => {

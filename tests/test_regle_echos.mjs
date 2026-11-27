@@ -39,26 +39,26 @@ async function ouvrir(bureau) {
   return page;
 }
 const pc = await ouvrir(true), mob = await ouvrir(false);
-const comptes = (R) => ({ total: R.total, pleine: R.pleine, vide: R.vide, videDef: R.videDefinitive, cas: R.cas, pasPassees: R.pasPassees, passages: R.passages });
+const comptes = (R) => ({ passees: R.passees, pleines: R.pleines, vides: R.vides, avortees: R.avortees, pseudos: R.pseudos, pasPassees: R.pasPassees, passages: R.passages });
 
 // ================================================================ 1. noyau : toutes les brebis ayant une écho, quel que soit leur statut
-const A = await pc.evaluate(() => repartitionEchoAccueil());
-eq(comptes(A), { total: 7, pleine: 2, vide: 3, videDef: 1, cas: 1, pasPassees: 1, passages: 1 }, 'Accueil : pleines 2 (dont 1 vendue), vides 3 (dont 1 vendue et 1 morte), vide définitive 1 (vendue), avortée 1 (morte), présente pas encore passée 1 (la sortie sans écho n\'est pas comptée), 1 passage');
-eq(await pc.evaluate(() => echoReussite(repartitionEchoAccueil())), 40, 'Réussite = pleines ÷ (pleines + vides) = 2 / 5 : la vide définitive n\'y entre pas');
+const A = await pc.evaluate(() => dernierPassageEchoAccueil());
+eq(comptes(A), { passees: 7, pleines: 2, vides: 5, avortees: 1, pseudos: 0, pasPassees: 1, passages: 1 }, 'Accueil, dernier passage : pleines 2 (dont 1 vendue), vides 5 (dont 1 vendue, 1 morte, la vide définitive et l\'avortée), présente pas encore passée 1 (la sortie sans écho n\'est comptée nulle part)');
+eq(A.pctPleines, 28.6, '% pleines = pleines ÷ passées = 2 / 7');
 // écran PC « Échographies » : onglet Passages = résultat figé (les sorties comptées) ; onglet Aujourd'hui = réel (une sortie y est « sortie »)
 const D = await pc.evaluate(() => { const P = passagesEchoCampagne(DB.campagneDebut), J = donneesEchoJour(DB.campagneDebut); return { passees: P.reduce((n, x) => n + x.total.passees, 0), sorties: J.T.sortie, lignes: J.lignes.map(r => [r.id, r.sit.cat, r.sit.present]) }; });
 check(D.passees >= 7, 'écran PC, Passages : toutes les échos de la campagne, brebis sorties comprises (' + D.passees + ')');
 check(D.lignes.filter(l => !l[2]).every(l => l[1] === 'sortie') && D.sorties === D.lignes.filter(l => !l[2]).length, 'écran PC, Aujourd\'hui : les brebis sorties sans mise bas y sont des « sorties » : ' + JSON.stringify(D.lignes));
 check(!D.lignes.some(l => l[0] === 'SE'), 'une brebis sortie sans écho n\'apparaît nulle part');
-console.log('OK 1 noyau : résultat figé sur toutes les brebis échographiées, Vide définitive séparée, pas encore passées = présentes seulement.');
+console.log('OK 1 noyau : dernier passage figé sur toutes les brebis échographiées ce jour-là, avortée dans les vides, % pleines = pleines ÷ passées, pas encore passées = présentes seulement.');
 
 // ================================================================ 2. non-régression : une brebis vide vendue ou morte APRÈS l'écho reste dans Vide, disparaît de « À repasser »
 await pc.evaluate(() => { const s = DB.brebis.find(x => x.id === 'V1'); s.mouvements.push({ type: 'Vente', date: '2026-09-20' }); recalculerStatutBrebis(s); });
-const A2 = await pc.evaluate(() => repartitionEchoAccueil());
-eq([A2.vide, A2.total, A2.pleine], [3, 7, 2], 'V1 vendue après son écho : Vide reste à 3 (résultat figé)');
+const A2 = await pc.evaluate(() => dernierPassageEchoAccueil());
+eq([A2.vides, A2.passees, A2.pleines], [5, 7, 2], 'V1 vendue après son écho : Vide reste à 5 (résultat figé)');
 eq(await pc.evaluate(() => brebisAPasserEcho(2026).map(s => s.id)), ['SP'], 'V1 vendue : elle quitte « À passer au prochain passage » (écran Échographies)');
 await pc.evaluate(() => { const s = DB.brebis.find(x => x.id === 'P'); s.mouvements.push({ type: 'Morte', cause: 'Mammite', date: '2026-09-25' }); recalculerStatutBrebis(s); });
-eq(await pc.evaluate(() => { const R = repartitionEchoAccueil(); return [R.pleine, R.vide]; }), [2, 3], 'une pleine morte ensuite reste dans Pleine');
+eq(await pc.evaluate(() => { const R = dernierPassageEchoAccueil(); return [R.pleines, R.vides]; }), [2, 5], 'une pleine morte ensuite reste dans Pleine');
 console.log('OK 2 non-régression : une brebis vide vendue ou morte après l\'écho reste comptée dans Vide et disparaît de « À passer au prochain passage ».');
 
 // ================================================================ 3. les trois écrans montrent les mêmes nombres
@@ -68,7 +68,7 @@ await pc.click('#ep-onglets button[data-o="passages"]');
 check(await pc.evaluate(() => /Vendue|Morte/.test(document.getElementById('ep-brebis-passage').textContent)), 'écran Échographies PC, Passages : les brebis sorties restent dans le passage, avec leur statut');
 await mob.evaluate(() => render('home'));
 const cm = await mob.evaluate(() => [...document.querySelectorAll('.rp')].map(r => r.querySelector('span').textContent.trim() + ' ' + r.querySelector('b').textContent.trim()));
-check(cm.some(x => /^Pleine 2 /.test(x)) && cm.some(x => /^Vide 3 /.test(x)) && cm.some(x => /^Vide définitive 1 /.test(x)), 'Accueil mobile : mêmes chiffres (Pleine 2, Vide 3, Vide définitive 1) : ' + JSON.stringify(cm));
+check(cm.some(x => /^Pleine 2 /.test(x)) && cm.some(x => /^Vide 5 /.test(x)) && !cm.some(x => /^Vide définitive/.test(x)), 'Accueil mobile : mêmes chiffres (Pleine 2, Vide 5 dont l\'avortée, plus de ligne Vide définitive) : ' + JSON.stringify(cm));
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'aucune écriture');
 console.log('OK 3 Accueil mobile et noyau de l\'Accueil PC : mêmes chiffres ; écran PC : passages figés.');
 

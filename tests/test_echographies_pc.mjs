@@ -59,27 +59,27 @@ async function ouvrir(bureau) {
 }
 
 const pc = await ouvrir(true);
-const jour = (C, lot) => pc.evaluate(({ C, lot }) => { const d = donneesEchoJour(C, lot); return { T: d.T, stades: d.stades, comptage: d.comptage, parLot: d.parLot.map(g => [g.nom, g.mode, g.brebis, g.aMettreBas, g.misBas, g.vide, g.videDef, g.cas, g.sortie, g.pasPassee]), cats: Object.fromEntries(d.lignes.map(r => [r.id, r.sit.cat])) }; }, { C, lot });
+const jour = (C, lot) => pc.evaluate(({ C, lot }) => { const d = donneesEchoJour(C, lot); return { T: d.T, stades: d.stades, comptage: d.comptage, parLot: d.parLot.map(g => [g.nom, g.mode, g.brebis, g.aMettreBas, g.misBas, g.vide, g.videDef, g.avortees + g.pseudos, g.sortie, g.pasPassee]), cats: Object.fromEntries(d.lignes.map(r => [r.id, r.sit.cat])) }; }, { C, lot });
 
 // ================================================================ 1. Aujourd'hui : chaque brebis une fois (mise bas, sinon dernière écho de la campagne)
 const J = await jour(2026, '');
-eq(J.T, { brebis: 16, aMettreBas: 8, misBas: 2, vide: 1, videDef: 1, cas: 2, pasPassee: 1, sortie: 1 }, 'Aujourd\'hui : 16 brebis (la vendue X est une sortie, plus une pleine)');
+eq(J.T, { brebis: 16, avortees: 1, pseudos: 1, aMettreBas: 8, misBas: 2, vide: 3, videDef: 1, pasPassee: 1, sortie: 1 }, 'Aujourd\'hui : 16 brebis (la vendue X est une sortie, plus une pleine) ; l\'avortée et la pseudogestation sont des vides');
 eq([J.cats.TIE, J.cats.MB, J.cats.MB2, J.cats.N, J.cats.X, J.cats.VD], ['aMettreBas', 'misBas', 'misBas', 'pasPassee', 'sortie', 'videDef'], 'à date égale la dernière saisie ; mise bas de la campagne = « Ont mis bas »');
 eq(J.stades, { 'Début': 1, 'Milieu': 1, 'Fin': 3, 'IA': 1, 'Retour 1': 0, 'Retour 2': 0, 'Tardive': 0, nonPrecise: 2 }, 'stades des seules pleines à mettre bas');
 eq(J.comptage, { un: 3, deux: 1, troisEtPlus: 2, sans: 2 }, 'comptage des pleines à mettre bas');
-eq(J.parLot, [['Monte naturelle', '', 12, 5, 2, 0, 1, 2, 1, 1], ['IA septembre', 'IA', 4, 3, 0, 1, 0, 0, 0, 0]], 'par lot (lots visant la campagne ; recherche, éponge 2027 et lot 2024 exclus), chiffres réels');
+eq(J.parLot, [['Monte naturelle', '', 12, 5, 2, 2, 1, 2, 1, 1], ['IA septembre', 'IA', 4, 3, 0, 1, 0, 0, 0, 0]], 'par lot (lots visant la campagne ; recherche, éponge 2027 et lot 2024 exclus), chiffres réels');
 eq([(await jour(2026, 'mn')).T.brebis, (await jour(2026, 'IA1')).T.brebis], [12, 4], 'filtre lot');
-eq((await jour(2027, '')).T, { brebis: 15, aMettreBas: 0, misBas: 0, vide: 0, videDef: 0, cas: 0, pasPassee: 15, sortie: 0 }, 'campagne 2027 : aucune écho, la vendue sans écho n\'est pas comptée');
+eq((await jour(2027, '')).T, { brebis: 15, avortees: 0, pseudos: 0, aMettreBas: 0, misBas: 0, vide: 0, videDef: 0, pasPassee: 15, sortie: 0 }, 'campagne 2027 : aucune écho, la vendue sans écho n\'est pas comptée');
 console.log('OK 1 Aujourd\'hui : une fois par brebis, par lot réel, campagne.');
 
 // ================================================================ 2. Passages : un par date, figés, par lot, repassées, devenir
-const P = await pc.evaluate(() => passagesEchoCampagne(2026).map(x => ({ date: x.date, t: [x.total.passees, x.total.pleines, x.total.vides, x.total.cas, x.total.reussite], c: x.total.comptage, rep: [x.repassees.passees, x.repassees.pleines], pre: [x.premiere.passees, x.premiere.pleines], dev: x.devenir, lots: x.parLot.map(g => [g.nom, g.passees, g.pleines, g.vides, g.reussite]) })));
+const P = await pc.evaluate(() => passagesEchoCampagne(2026).map(x => ({ date: x.date, t: [x.total.passees, x.total.pleines, x.total.vides, x.total.avortees + x.total.pseudos, x.total.reussite], c: x.total.comptage, rep: [x.repassees.passees, x.repassees.pleines], pre: [x.premiere.passees, x.premiere.pleines], dev: x.devenir, lots: x.parLot.map(g => [g.nom, g.passees, g.pleines, g.vides, g.reussite]) })));
 eq(P.map(x => x.date), ['2026-08-01', '2026-07-01'], 'deux passages, le plus récent d\'abord');
-eq(P[0].t, [15, 11, 2, 2, 85], '01-08 : 15 passées (la vendue comprise), 11 pleines, 2 vides, 2 cas, 85 %');
+eq(P[0].t, [15, 11, 4, 2, 73], '01-08 : 15 passées (la vendue comprise), 11 pleines, 4 vides dont 2 avortée / pseudogestation, réussite 11 ÷ 15 = 73 %');
 eq(P[0].c, { un: 3, deux: 2, troisEtPlus: 2, sans: 4 }, '01-08 : comptage au jour de l\'écho');
 eq([P[0].rep, P[0].pre], [[2, 2], [13, 9]], '01-08 : repassées (T1, T2) et 1re écho');
 eq(P[0].dev, { misBas: 1, restent: 9, sorties: 1 }, '01-08 : devenir des pleines (une mise bas antérieure ne compte pas)');
-eq(P[0].lots, [['Monte naturelle', 11, 8, 1, 89], ['IA septembre', 4, 3, 1, 75]], '01-08 : par lot au jour de l\'écho');
+eq(P[0].lots, [['Monte naturelle', 11, 8, 3, 73], ['IA septembre', 4, 3, 1, 75]], '01-08 : par lot au jour de l\'écho');
 eq(P[1].t, [2, 2, 0, 0, 100], '07-01 : 2 passées, 2 pleines');
 check(await pc.evaluate(() => JSON.stringify(DB) === window.__avant && window.__saves === 0), 'aucune écriture');
 console.log('OK 2 Passages : figés, par lot, repassées, devenir.');
@@ -106,7 +106,7 @@ await pc.evaluate(() => { echosPcEtat = { onglet: 'aujourdhui', campagne: null, 
 const T = await pc.evaluate(() => ({
   onglets: [...document.querySelectorAll('#ep-onglets button')].map(b => b.textContent),
   tuiles: [...document.querySelectorAll('#ep-tuiles-jour .ep-tuile')].map(t => [t.querySelector('.reg-tuile-l').textContent, t.querySelector('.reg-tuile-v').textContent]),
-  ligne: document.getElementById('ep-ligne-jour').textContent, aussi: document.getElementById('ep-aussi').textContent,
+  ligne: document.getElementById('ep-ligne-jour').textContent, aussi: document.getElementById('ep-aussi').textContent, dont: document.getElementById('ep-dont-jour').textContent,
   anneau: [...document.querySelectorAll('.ep-lg div')].map(d => d.childNodes[1].textContent + ' ' + d.querySelector('b').textContent), centre: [...document.querySelectorAll('.ep-dn svg text')].map(t => t.textContent),
   stades: [...document.querySelectorAll('.ep-g3 .ep-carte:nth-child(2) .ep-rp')].map(r => r.querySelector('span').textContent + ' ' + r.querySelector('b').textContent),
   comptage: [...document.querySelectorAll('.ep-g3 .ep-carte:nth-child(3) .ep-rp')].map(r => r.querySelector('span').textContent + ' ' + r.querySelector('b').textContent),
@@ -114,15 +114,16 @@ const T = await pc.evaluate(() => ({
   histo: document.querySelectorAll('.ep-cols, .ep-cl').length + (/Échos par semaine/.test(document.getElementById('app').textContent) ? 1 : 0),
   thFond: getComputedStyle(document.querySelector('table.ep-table th')).backgroundColor, thTexte: getComputedStyle(document.querySelector('table.ep-table th')).color }));
 eq(T.onglets, ['Aujourd\'hui', 'Passages', 'Historique'], 'trois onglets');
-eq(T.tuiles, [['pleines, à mettre bas', '8'], ['ont mis bas', '2'], ['vides', '1'], ['pas encore passées', '1']], 'quatre tuiles');
+eq(T.tuiles, [['pleines, à mettre bas', '8'], ['ont mis bas', '2'], ['vides', '3'], ['pas encore passées', '1']], 'quatre tuiles (vides : avortée et pseudogestation comprises)');
+eq(T.dont, 'Vides dont 1 avortée, 1 pseudogestation.', 'ligne grise « dont » sous les tuiles');
 check(/^Situation au 03\/10\/2026 · chaque brebis une fois, d'après sa dernière écho de la campagne · 16 brebis\.$/.test(T.ligne), 'ligne « Situation au … » : ' + T.ligne);
-eq(T.aussi, 'Aussi : 1 vide définitive · 2 avortées / pseudo. · 1 sortie.', 'ligne grise des autres situations');
-eq(T.anneau, ['Pleines, à mettre bas 8 · 50 %', 'Ont mis bas 2 · 13 %', 'Vides 1 · 6 %', 'Vides définitives 1 · 6 %', 'Avortées / pseudo. 2 · 13 %', 'Pas encore passées 1 · 6 %', 'Sorties 1 · 6 %'], 'légende de l\'anneau (catégories du jour, « Sans échographie » disparue)');
+eq(T.aussi, 'Aussi : 1 vide définitive · 1 sortie.', 'ligne grise des autres situations');
+eq(T.anneau, ['Pleines, à mettre bas 8 · 50 %', 'Ont mis bas 2 · 13 %', 'Vides 3 · 19 %', 'Vides définitives 1 · 6 %', 'Pas encore passées 1 · 6 %', 'Sorties 1 · 6 %'], 'légende de l\'anneau (catégories du jour, « Sans échographie » disparue)');
 eq(T.centre, ['16', 'brebis'], 'total au centre');
 eq(T.stades, ['Début 1', 'Milieu 1', 'Fin 3', 'IA 1', 'Stade non précisé 2'], 'stades des pleines à mettre bas (lignes à 0 masquées)');
 eq(T.comptage, ['1 agneau 3 (38 %)', '2 et + 1 (13 %)', '3 et + 2 (25 %)', 'Sans comptage 2 (25 %)'], 'comptage des pleines à mettre bas');
-eq(T.lotsTete, ['Lot', 'Mode', 'Brebis', 'À mettre bas', 'Ont mis bas', 'Vides', 'Vides déf.', 'Avortées', 'Sorties', 'Pas encore passées'], 'par lot : colonnes réelles, aucun %');
-eq(T.lots, ['Monte naturelle||12|5|2|0|1|2|1|1', 'IA septembre|IA|4|3|0|1|0|0|0|0'], 'par lot aujourd\'hui');
+eq(T.lotsTete, ['Lot', 'Mode', 'Brebis', 'À mettre bas', 'Ont mis bas', 'Vides', 'Vides déf.', 'dont avortées / pseudo.', 'Sorties', 'Pas encore passées'], 'par lot : colonnes réelles, aucun %');
+eq(T.lots, ['Monte naturelle||12|5|2|2|1|2|1|1', 'IA septembre|IA|4|3|0|1|0|0|0|0'], 'par lot aujourd\'hui');
 eq(T.histo, 0, 'plus d\'histogramme « Échos par semaine »');
 eq([T.thFond, T.thTexte], ['rgb(53, 127, 75)', 'rgb(255, 255, 255)'], 'tableaux : en-tête vert, texte blanc');
 console.log('OK 7 Aujourd\'hui : tuiles, ligne grise, anneau, stades, comptage, par lot, sans histogramme.');
@@ -176,10 +177,11 @@ const PA = await pc.evaluate(() => ({
   lignes: [...document.querySelectorAll('#ep-passages tbody tr')].map(r => [...r.children].map(c => c.textContent.trim()).join('|')), sel: document.querySelector('#ep-passages tr.ep-sel').dataset.date,
   titre: document.querySelector('#ep-panneau-passage h3').textContent, vues: [...document.querySelectorAll('#ep-vue-passage button')].map(b => b.textContent),
   lots: [...document.querySelectorAll('#ep-parlot-passage tbody tr')].map(r => [...r.children].map(c => c.textContent.trim()).join('|')), brebis: document.querySelectorAll('#ep-brebis-passage tbody tr').length }));
-eq(PA.lignes, ['01\/08\/2026|15|11|2|85 %|3|2|2|2 → 2 pleines|13 → 9 pleines|1|9|1', '01\/07\/2026|2|2|0|100 %|0|1|0|—|2 → 2 pleines|0|2|0'], 'tableau des passages');
+eq(PA.lignes, ['01\/08\/2026|15|11|4|73 %|3|2|2|2 → 2 pleines|13 → 9 pleines|1|9|1', '01\/07\/2026|2|2|0|100 %|0|1|0|—|2 → 2 pleines|0|2|0'], 'tableau des passages');
 eq([PA.sel, PA.titre, PA.vues], ['2026-08-01', 'Passage du 01\/08\/2026', ['Toutes 15', 'Repassées 2', '1re écho 13']], 'le plus récent est ouvert, sous-onglets avec effectifs');
-eq(PA.lots, ['Monte naturelle|11|8|1|89 %|2|1|2', 'IA septembre|4|3|1|75 %|1|1|0'], 'par lot au jour de l\'écho');
+eq(PA.lots, ['Monte naturelle|11|8|3|73 %|2|1|2', 'IA septembre|4|3|1|75 %|1|1|0'], 'par lot au jour de l\'écho');
 eq(PA.brebis, 15, 'toutes les brebis du passage');
+eq(await pc.evaluate(() => document.getElementById('ep-dont-passage').textContent), 'Vides dont 1 avortée, 1 pseudogestation.', 'passage : « dont » sous les tuiles');
 await pc.click('#ep-vue-passage button[data-v="repassees"]');
 const rep = await pc.evaluate(() => [...document.querySelectorAll('#ep-brebis-passage tbody tr')].map(r => [...r.children].slice(0, 5).map(c => c.textContent.trim())));
 eq(rep.map(r => r[3]), ['Pleine · Milieu le 01\/07\/2026', 'Pleine le 01\/07\/2026'], 'repassées : écho précédente en gris');
@@ -268,7 +270,7 @@ print(json.dumps({ 'pages': len(d), 'txt': txt, 'verts': verts }))
 };
 let L = lirePdf(pdf.b64), TXT = L.txt.join('\n');
 check(L.verts >= 5, 'PDF : en-têtes de tableau verts #357f4b (' + L.verts + ')');
-for (const motif of ['Échographies · aujourd\'hui', 'Pleines, à mettre bas', 'Ont mis bas', 'Pas encore passées', 'Aussi : 1 vide définitive · 2 avortées / pseudo. · 1 sortie.', 'Par lot · aujourd\'hui', 'Détail par brebis', 'Dernière écho', 'Page 1/' + L.pages, 'Ovilog — Échographies · aujourd\'hui'])
+for (const motif of ['Échographies · aujourd\'hui', 'Pleines, à mettre bas', 'Ont mis bas', 'Pas encore passées', 'Aussi : 1 vide définitive · 1 sortie.', 'dont 1 avortée, 1 pseudogestation', 'Par lot · aujourd\'hui', 'Détail par brebis', 'Dernière écho', 'Page 1/' + L.pages, 'Ovilog — Échographies · aujourd\'hui'])
   check(TXT.includes(motif), 'PDF Aujourd\'hui contient « ' + motif + ' »');
 check(!TXT.includes('…') && !/semaine/i.test(TXT), 'PDF : aucune troncature, aucune semaine');
 // onglet Passages : exports du tableau et du passage ouvert
@@ -277,7 +279,7 @@ await pc.evaluate(() => { window.__xlsx = []; window.__fich = []; });
 await pc.click('#ep-export-xlsx'); await pc.waitForTimeout(100);
 const xp = await pc.evaluate(() => window.__xlsx[0]);
 eq(xp.map(f => f.name), ['Passages', 'Passage 01\/08\/2026'], 'Excel Passages : tableau + passage ouvert');
-check(xp[0].rows.some(r => r[0] === '01\/08\/2026' && r[1] === 15 && r[4] === '85 %') && xp[1].rows.length === 17, 'Excel Passages : lignes : ' + JSON.stringify(xp[0].rows.slice(0, 6)));
+check(xp[0].rows.some(r => r[0] === '01\/08\/2026' && r[1] === 15 && r[3] === 4 && r[4] === '73 %') && xp[1].rows.length === 17, 'Excel Passages : lignes : ' + JSON.stringify(xp[0].rows.slice(0, 6)));
 await pc.click('#ep-export-pdf'); await pc.waitForTimeout(300);
 const pdf2 = await pc.evaluate(() => window.__fich.find(f => f.mime === 'application/pdf'));
 eq(pdf2.nom, 'echographies_passage_2026-08-01.pdf', 'PDF Passages : nom');

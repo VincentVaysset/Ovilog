@@ -35,7 +35,7 @@ await p.evaluate(() => {
 
 // 1. Aujourd'hui : chaque brebis une fois
 const J = await p.evaluate(() => { const d = donneesEchoJour(2026); return { T: d.T, stades: d.stades, comptage: d.comptage, parLot: d.parLot.map(g => [g.nom, g.brebis, g.aMettreBas, g.misBas, g.vide, g.videDef, g.sortie, g.pasPassee]), lignes: d.lignes.map(r => [r.numero, r.sit.cat, r.pastille[0]]) }; });
-eq(J.T, { brebis: 9, aMettreBas: 3, misBas: 1, vide: 1, videDef: 1, cas: 0, pasPassee: 2, sortie: 1 }, 'Aujourd\'hui : 9 brebis comptées une fois (la morte sans écho exclue)');
+eq(J.T, { brebis: 9, avortees: 0, pseudos: 0, aMettreBas: 3, misBas: 1, vide: 1, videDef: 1, pasPassee: 2, sortie: 1 }, 'Aujourd\'hui : 9 brebis comptées une fois (la morte sans écho exclue)');
 eq([J.stades['IA'], J.stades['Retour 1'], J.stades['Début'], J.comptage], [1, 1, 1, { un: 2, deux: 1, troisEtPlus: 0, sans: 0 }], 'stades et comptage des seules pleines à mettre bas (dernière écho)');
 eq(J.parLot, [['Monte naturelle', 6, 1, 0, 1, 1, 1, 2], ['Lot IA 1', 3, 2, 1, 0, 0, 0, 0]], 'par lot, chiffres réels');
 check(J.lignes.some(l => l[0] === 'n°19001' && l[2] === 'Mise bas le 02\/11\/2026') && J.lignes.some(l => l[0] === 'n°19005' && l[2] === 'Vendue le 20\/10\/2026'), 'pastilles « Mise bas le … » et « Vendue le … » : ' + JSON.stringify(J.lignes));

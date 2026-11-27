@@ -1244,6 +1244,8 @@
   .ac-rw .bc-chev { flex: none; color: var(--ch-icone); }
   .ac-cnt { min-width: 36px; height: 30px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; padding: 0 10px; font-variant-numeric: tabular-nums; }
   .ac-seg { background: var(--ch-onglets); border-radius: 999px; padding: 3px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+  .ac-echo-resume { font-size: 14px; color: var(--ch-texte); margin: 2px 0 10px; }
+  .ac-echo-resume b { color: var(--ch-vert-fonce); font-variant-numeric: tabular-nums; }
   .ac-seg button { min-height: 36px; border: 0; border-radius: 999px; background: none; font: inherit; font-size: 13px; font-weight: 500; color: var(--ch-texte2); cursor: pointer; }
   .ac-seg button.on { background: var(--ch-carte); color: var(--ch-texte); font-weight: 700; box-shadow: 0 1px 2px rgba(43, 38, 28, 0.14); }
   .ac-echo-corps { display: flex; flex-direction: column; gap: 10px; }
@@ -8754,11 +8756,11 @@ function dashboardKpiHtml() {
   `;
 }
 
-/* ---------- Cartes écho de l'Accueil (mobile « Dernière échographie », PC « Reproduction · échographies ») : résultat FIGÉ, lecture seule ----------
+/* ---------- Cartes écho de l'Accueil (mobile « Dernière échographie », PC « Reproduction · échographies ») : DERNIER PASSAGE, figé, lecture seule ----------
    Campagne = celle des échos : en cours, ou la suivante dès qu'elle porte une écho (`campagneEchoAccueil`, même règle que l'écran Échographies mobile).
-   Chaque brebis UNE fois, d'après SA DERNIÈRE ÉCHO DE LA CAMPAGNE (toutes les brebis, sorties comprises) : une mise bas, une vente ou une mort ensuite
-   ne changent rien. « Vide définitive » (même statut que le Bilan de campagne, pour cette campagne) est prioritaire et comptée à part. Une brebis
-   PRÉSENTE sans écho de la campagne est « pas encore passée » (ligne grise, hors pourcentages) ; une sortie sans écho n'est comptée nulle part. */
+   Résultat du DERNIER PASSAGE d'écho de la campagne (toutes les échos de sa date, même calcul que l'onglet Passages : `passagesEchoCampagne`) :
+   passées, pleines, vides (avortées et pseudogestations comprises, « dont … » à part), % pleines = pleines ÷ passées. Une mise bas, une vente ou une
+   mort ensuite ne changent rien. Une brebis PRÉSENTE sans écho de la campagne est « pas encore passée » (ligne grise, hors pourcentages). */
 function campagneEchoAccueil() {
   const S = DB.campagneDebut;
   return DB.brebis.some(s => echosDeCampagne(s, S + 1).length) ? S + 1 : S;
@@ -8777,43 +8779,18 @@ function libelleComptageEcho(e) {
   const n = Number(e.nombreAgneaux);
   return n >= 3 ? '3 et +' : n >= 1 ? String(n) : '—';
 }
-// Classement d'une brebis pour la campagne C : cat = 'videDef' | 'pasPassee' (aucune écho de la campagne) | 'cas' (avortée / pseudogestation) | 'vide' | 'pleine' ; stade / comptage : pour les pleines.
-function classementEchoBrebis(sheep, C) {
-  const e = dernierEchoParDate(echosDeCampagne(sheep, C));
-  const r = { cat: 'pasPassee', echo: e, stade: null, comptage: null };
-  if (estVideDefinitiveCampagneN(sheep, C)) { r.cat = 'videDef'; return r; }
-  if (!e) return r;
-  const res = resultatEcho(e);
-  if (res !== 'pleine') { r.cat = res; return r; }
-  r.cat = 'pleine';
-  r.stade = e.stade && ECHO_STADES_PLEINE.includes(e.stade) ? e.stade : 'nonPrecise';
-  r.comptage = comptageCleEcho(e);
-  return r;
-}
 // Brebis PRÉSENTE = statut « active » (les vendues, mortes, perdues, autoconsommées ne le sont plus).
 function estBrebisPresente(s) { return (s.statut || 'active') === 'active'; }
 const LIBELLE_STATUT_SORTIE = { morte: 'Morte', vendue: 'Vendue', 'vendue reproduction': 'Vendue repro.', perdue: 'Perdue', 'autoconsommée': 'Autoconsommée', 'sortie inventaire': 'Mise à jour inventaire' };
 function libelleStatutBrebis(s) { const st = s.statut || 'active'; return LIBELLE_STATUT_SORTIE[st] || (st.charAt(0).toUpperCase() + st.slice(1)); }
-// total = brebis passées (pleines + vides + vides définitives + avortées / pseudo.) ; pasPassees à part ; passages = dates d'écho distinctes de la campagne.
-function repartitionEchoAccueil() {
-  const C = campagneEchoAccueil();
-  const R = { campagne: C, total: 0, pasPassees: 0, passages: 0, derniereDate: '', pleine: 0, stades: { 'Début': 0, 'Milieu': 0, 'Fin': 0, 'IA': 0, 'Retour 1': 0, 'Retour 2': 0, 'Tardive': 0, nonPrecise: 0 },
-    vide: 0, videDefinitive: 0, cas: 0, comptage: { un: 0, deux: 0, troisEtPlus: 0, sans: 0 } };
-  const dates = new Set();
-  DB.brebis.forEach(s => {
-    echosDeCampagne(s, C).forEach(e => dates.add(e.date));
-    const c = classementEchoBrebis(s, C);
-    if (c.cat === 'pasPassee') { if (estBrebisPresente(s)) R.pasPassees++; return; }
-    R.total++;
-    if (c.cat === 'videDef') R.videDefinitive++; else if (c.cat === 'cas') R.cas++; else if (c.cat === 'vide') R.vide++;
-    else { R.pleine++; R.stades[c.stade]++; R.comptage[c.comptage]++; }
-  });
-  R.passages = dates.size;
-  R.derniereDate = [...dates].sort().pop() || '';
-  return R;
+// Dernier passage d'écho de la campagne de l'Accueil (null si aucune écho) + passages de la campagne et brebis présentes pas encore passées
+function dernierPassageEchoAccueil() {
+  const C = campagneEchoAccueil(), passages = passagesEchoCampagne(C), P = passages[0] || null;
+  const pasPassees = DB.brebis.filter(s => estBrebisPresente(s) && !echosDeCampagne(s, C).length).length;
+  const t = P ? P.total : { passees: 0, pleines: 0, vides: 0, avortees: 0, pseudos: 0, comptage: { un: 0, deux: 0, troisEtPlus: 0, sans: 0 } };
+  return { campagne: C, passages: passages.length, date: P ? P.date : '', passees: t.passees, pleines: t.pleines, vides: t.vides, avortees: t.avortees, pseudos: t.pseudos,
+    pctPleines: t.passees ? Math.round(t.pleines / t.passees * 1000) / 10 : null, stades: P ? P.stades : {}, comptage: t.comptage, pasPassees };
 }
-// Réussite = pleines ÷ (pleines + vides) : les vides définitives, avortées / pseudogestations n'y entrent pas.
-function echoReussite(R) { const b = R.pleine + R.vide; return b > 0 ? Math.round(R.pleine / b * 1000) / 10 : null; }
 // Pastille « 2 passages · dernier le 15/10/2026 » (rien sans écho)
 function libellePassagesEchoAccueil(nb, date) {
   return nb ? nb + ' passage' + (nb > 1 ? 's' : '') + ' · dernier le ' + formatDateFr(date) : '';
@@ -8828,7 +8805,7 @@ function lignePasPasseesEchoAccueil(R) {
    (sortie sans mise bas après une écho de la campagne) ; une brebis sortie sans écho ni mise bas de la campagne n'est comptée nulle part.
    Passage = toutes les échos d'une même DATE de la campagne : résultat de ce jour-là, découpé par lot (appartenance aux lots de reproduction visant
    la campagne, monte naturelle sinon), « Repassées » (une écho de la campagne avant ce jour) / « 1re écho » (antenaises comptées), devenir des pleines. */
-const ECHO_CATS_JOUR = ['aMettreBas', 'misBas', 'vide', 'videDef', 'cas', 'pasPassee', 'sortie'];
+const ECHO_CATS_JOUR = ['aMettreBas', 'misBas', 'vide', 'videDef', 'pasPassee', 'sortie'];   // avortées / pseudogestations : dans « vide » (compteurs avortees / pseudos à part)
 function echosDeCampagne(sheep, C) {
   return (Array.isArray(sheep && sheep.echographies) ? sheep.echographies : []).filter(e => e && e.date && e.campagne !== undefined && e.campagne !== null && Number(e.campagne) === Number(C));
 }
@@ -8854,21 +8831,27 @@ function situationEchoJour(sheep, C) {
   if (estVideDefinitiveCampagneN(sheep, C)) { r.cat = 'videDef'; return r; }
   if (!e) { r.cat = 'pasPassee'; return r; }
   const res = resultatEcho(e);
-  if (res === 'cas') { r.cat = 'cas'; return r; }
+  if (res === 'cas') { r.cat = 'vide'; r.cas = e.special; return r; }   // avortée / pseudogestation = vide (« dont … » à part)
   if (res === 'vide') { r.cat = 'vide'; return r; }
   r.cat = 'aMettreBas';
   r.stade = e.stade && ECHO_STADES_PLEINE.includes(e.stade) ? e.stade : 'nonPrecise';
   r.comptage = comptageCleEcho(e);
   return r;
 }
-function compteursEchoJourVides() { const o = { brebis: 0 }; ECHO_CATS_JOUR.forEach(k => { o[k] = 0; }); return o; }
+function compteursEchoJourVides() { const o = { brebis: 0, avortees: 0, pseudos: 0 }; ECHO_CATS_JOUR.forEach(k => { o[k] = 0; }); return o; }
+// Avortées et pseudogestations sont des VIDES : « dont 2 avortées, 1 pseudogestation » (rien s'il n'y en a pas). o = { avortees, pseudos }
+function texteDontAvortees(o) {
+  const a = (o && o.avortees) || 0, p = (o && o.pseudos) || 0;
+  const parts = [a ? a + ' avortée' + (a > 1 ? 's' : '') : '', p ? p + ' pseudogestation' + (p > 1 ? 's' : '') : ''].filter(Boolean);
+  return parts.length ? 'dont ' + parts.join(', ') : '';
+}
+function compterAvortee(o, special) { if (special === 'Avortée') o.avortees++; else if (special === 'Pseudogestation') o.pseudos++; }
 // Pastille « aujourd'hui » d'une brebis (texte, ton charte)
 function pastilleSituationEchoJour(sheep, sit) {
   if (sit.cat === 'misBas') return ['Mise bas le ' + formatDateFr(sit.miseBas.date), 'bleu'];
   if (sit.cat === 'aMettreBas') return ['À mettre bas', 'vert'];
-  if (sit.cat === 'vide') return ['Vide', 'ambre'];
+  if (sit.cat === 'vide') return [sit.cas || 'Vide', 'ambre'];
   if (sit.cat === 'videDef') return ['Vide définitive', 'rouge'];
-  if (sit.cat === 'cas') return [sit.echo.special, 'ambre'];
   if (sit.cat === 'pasPassee') return ['Pas encore passée', 'gris'];
   const d = dernierMouvementDate(sheep.mouvements, TYPES_SORTIE);
   return [libelleStatutBrebis(sheep) + (d ? ' le ' + formatDateFr(d) : ''), 'gris'];
@@ -8884,9 +8867,9 @@ function donneesEchoJour(C, lotFiltre) {
     if (lotFiltre === 'mn' ? ls.length > 0 : (lotFiltre && !ls.some(l => l.id === lotFiltre))) return;
     const sit = situationEchoJour(sheep, C);
     if (!sit.cat) return;
-    T.brebis++; T[sit.cat]++;
+    T.brebis++; T[sit.cat]++; if (sit.cas) compterAvortee(T, sit.cas);
     if (sit.cat === 'aMettreBas') { stades[sit.stade]++; comptage[sit.comptage]++; }
-    (ls.length ? groupes.filter(g => ls.some(l => l.id === g.id)) : [groupes[0]]).forEach(g => { g.brebis++; g[sit.cat]++; });
+    (ls.length ? groupes.filter(g => ls.some(l => l.id === g.id)) : [groupes[0]]).forEach(g => { g.brebis++; g[sit.cat]++; if (sit.cas) compterAvortee(g, sit.cas); });
     lignes.push({ sheep, id: sheep.id, numero: numeroAffichageEcho(sheep), age: age(sheep.eid), millesime: anneeNaissance(sheep.eid), lots: ls.map(l => l.nom), sit, pastille: pastilleSituationEchoJour(sheep, sit) });
   });
   lignes.sort(comparerAnimauxAgeNumero);
@@ -8907,8 +8890,9 @@ function passagesEchoCampagne(C) {
   return Object.keys(parDate).sort().reverse().map(date => resumePassageEcho(date, parDate[date], lots, C));
 }
 function resumePassageEcho(date, brebis, lots, C) {
-  const bloc = () => ({ passees: 0, pleines: 0, vides: 0, cas: 0, comptage: { un: 0, deux: 0, troisEtPlus: 0, sans: 0 } });
-  const ajouter = (b, x) => { b.passees++; if (x.res === 'pleine') { b.pleines++; b.comptage[comptageCleEcho(x.echo)]++; } else if (x.res === 'vide') b.vides++; else b.cas++; };
+  // avortées / pseudogestations = VIDES (comptées dans vides, et à part dans avortees / pseudos pour « dont … »)
+  const bloc = () => ({ passees: 0, pleines: 0, vides: 0, avortees: 0, pseudos: 0, comptage: { un: 0, deux: 0, troisEtPlus: 0, sans: 0 } });
+  const ajouter = (b, x) => { b.passees++; if (x.res === 'pleine') { b.pleines++; b.comptage[comptageCleEcho(x.echo)]++; } else { b.vides++; if (x.res === 'cas') compterAvortee(b, x.echo.special); } };
   const total = bloc(), repassees = bloc(), premiere = Object.assign(bloc(), { antenaises: 0 }), stades = {}, devenir = { misBas: 0, restent: 0, sorties: 0 };
   ECHO_STADES_PLEINE.concat(['nonPrecise']).forEach(k => { stades[k] = 0; });
   const groupes = [{ id: 'mn', nom: 'Monte naturelle', mode: '' }].concat(lots).map(l => Object.assign({ id: l.id, nom: l.nom, mode: l.mode }, bloc()));
@@ -8942,38 +8926,38 @@ function campagnesEchoDisponibles() {
 let accueilEchoTab = 'resultat';   // 'resultat' | 'comptage' : état d'affichage seulement
 let accueilEchoDetailOuvert = false;   // « Détail par stade » : replié par défaut, état d'affichage seulement
 function carteEchoAccueilHtml() {
-  const R = repartitionEchoAccueil();
+  const D = dernierPassageEchoAccueil();
   const ligne = (libelle, n, base, couleur, opts) => {
     const pct = base > 0 ? Math.round((n / base) * 100) : 0;
     return `<div class="rp${opts && opts.sous ? ' sous' : ''}"><div class="h"><span${opts && opts.gras ? ' class="gras"' : ''}>${libelle}</span><b>${n} (${pct} %)</b></div><div class="tb2"><i class="${couleur}" style="width:${pct}%"></i></div></div>`;
   };
-  const st = R.stades;
-  const totalMN = st['Début'] + st['Milieu'] + st['Fin'];
-  const totalLot = st['IA'] + st['Retour 1'] + st['Retour 2'] + st['Tardive'];
+  const st = D.stades;
   let corps, info;
-  if (accueilEchoTab === 'resultat') {
+  if (!D.date) {
+    corps = '<div class="reg-info" id="ac-echo-aucune">Aucune échographie cette campagne.</div>';
+    info = lignePasPasseesEchoAccueil(D);
+  } else if (accueilEchoTab === 'resultat') {
     // Lignes à 0 masquées dans le détail ; groupe vide masqué ; « Stade non précisé » en dernier, hors groupe. « Lots IA / Éponge » additionne tous les lots (le stade est relevé sur l'écho, jamais par lot).
-    const lignesStades = (cles) => cles.filter(k => st[k] > 0).map(k => ligne(k, st[k], R.total, 'vert', { sous: true })).join('');
+    const lignesStades = (cles) => cles.filter(k => st[k] > 0).map(k => ligne(k, st[k], D.passees, 'vert', { sous: true })).join('');
     const mn = lignesStades(['Début', 'Milieu', 'Fin']), lot = lignesStades(['IA', 'Retour 1', 'Retour 2', 'Tardive']);
-    const detail = (mn ? '<div class="lbl">Monte naturelle</div>' + mn : '') + (lot ? '<div class="lbl">Lots IA / Éponge</div>' + lot : '') + (st.nonPrecise > 0 ? ligne('Stade non précisé', st.nonPrecise, R.total, 'vert', { sous: true }) : '');
-    const ouvert = accueilEchoDetailOuvert;
-    corps = ligne('Pleine', R.pleine, R.total, 'vert', { gras: true })
+    const detail = (mn ? '<div class="lbl">Monte naturelle</div>' + mn : '') + (lot ? '<div class="lbl">Lots IA / Éponge</div>' + lot : '') + (st.nonPrecise > 0 ? ligne('Stade non précisé', st.nonPrecise, D.passees, 'vert', { sous: true }) : '');
+    const ouvert = accueilEchoDetailOuvert, dont = texteDontAvortees(D);
+    corps = `<div class="ac-echo-resume" id="ac-echo-resume">Écho du ${formatDateFr(D.date)} · <b>${D.passees}</b> passée${D.passees > 1 ? 's' : ''} · <b>${D.pctPleines !== null ? fmtDecimal(D.pctPleines, 1) + ' %' : '—'}</b> pleines</div>`
+      + ligne('Pleine', D.pleines, D.passees, 'vert', { gras: true })
       + (detail ? `<button type="button" class="ac-detail-btn" id="ac-echo-detail-btn" aria-expanded="${ouvert}">Détail par stade ${ouvert ? '▴' : '▾'}</button>` + (ouvert ? `<div class="ac-detail">${detail}</div>` : '') : '')
-      + ligne('Vide', R.vide, R.total, 'rouge-clair', { gras: true })
-      + (R.videDefinitive > 0 ? ligne('Vide définitive', R.videDefinitive, R.total, 'rouge') : '')
-      + (R.cas > 0 ? ligne('Avortée / pseudogestation', R.cas, R.total, 'ambre') : '')
-      ;
-    info = 'Chaque brebis d\'après sa dernière écho de la campagne : les mises bas et les sorties ne la changent pas.' + (R.pasPassees ? '<br>' + lignePasPasseesEchoAccueil(R) : '');
+      + ligne('Vide', D.vides, D.passees, 'rouge-clair', { gras: true })
+      + (dont ? `<div class="reg-info" id="ac-echo-dont">${dont}</div>` : '');
+    info = '% pleines = pleines ÷ passées, au passage du ' + formatDateFr(D.date) + ' : les mises bas et les sorties ne le changent pas.' + (D.pasPassees ? '<br>' + lignePasPasseesEchoAccueil(D) : '');
   } else {
-    const c = R.comptage;
-    corps = ligne('1 agneau (simple)', c.un, R.pleine, 'vert') + ligne('2 agneaux (double)', c.deux, R.pleine, 'vert') + ligne('3 agneaux et +', c.troisEtPlus, R.pleine, 'vert') + ligne('Sans comptage', c.sans, R.pleine, 'gris');
-    info = 'Brebis pleines, selon le comptage de leur dernière échographie. « 2 » regroupe 2 et « 2 et plus » (Simple / Double) ; « 3 et + » regroupe 3 et « 4 et plus ».';
+    const c = D.comptage;
+    corps = ligne('1 agneau (simple)', c.un, D.pleines, 'vert') + ligne('2 agneaux (double)', c.deux, D.pleines, 'vert') + ligne('3 agneaux et +', c.troisEtPlus, D.pleines, 'vert') + ligne('Sans comptage', c.sans, D.pleines, 'gris');
+    info = 'Brebis pleines au passage du ' + formatDateFr(D.date) + ', selon leur comptage. « 2 » regroupe 2 et « 2 et plus » (Simple / Double) ; « 3 et + » regroupe 3 et « 4 et plus ».';
   }
   return `<div class="card ac-carte" id="ac-echo">
-      <div class="ac-tete"><span class="ac-titre">Dernière échographie</span>${R.passages ? `<span class="reg-pastille gris">${libellePassagesEchoAccueil(R.passages, R.derniereDate)}</span>` : ''}</div>
-      <div class="ac-seg" id="ac-echo-seg"><button type="button" data-tab="resultat" class="${accueilEchoTab === 'resultat' ? 'on' : ''}">Résultat</button><button type="button" data-tab="comptage" class="${accueilEchoTab === 'comptage' ? 'on' : ''}">Comptage</button></div>
+      <div class="ac-tete"><span class="ac-titre">Dernière échographie</span>${D.passages ? `<span class="reg-pastille gris">${libellePassagesEchoAccueil(D.passages, D.date)}</span>` : ''}</div>
+      ${D.date ? `<div class="ac-seg" id="ac-echo-seg"><button type="button" data-tab="resultat" class="${accueilEchoTab === 'resultat' ? 'on' : ''}">Résultat</button><button type="button" data-tab="comptage" class="${accueilEchoTab === 'comptage' ? 'on' : ''}">Comptage</button></div>` : ''}
       <div class="ac-echo-corps">${corps}</div>
-      <div class="reg-info">${info}</div>
+      ${info ? `<div class="reg-info">${info}</div>` : ''}
     </div>`;
 }
 function brancherCarteEchoAccueil() {
@@ -9173,8 +9157,8 @@ function accueilDesktopHtml() {
   const r = d.repro;
   const cardRepro = `<div class="card apc-carte cliquable" id="apc-reproduction">
     <div class="ch"><h3>Reproduction · échographies</h3>${r.passages ? `<span class="pill p-n">${libellePassagesEchoAccueil(r.passages, r.date)}</span>` : ''}</div>
-    <div class="kp kp2"><div><b class="t-vert">${r.pleines}</b><span>Pleines</span></div><div><b class="t-ambre">${r.vides}</b><span>Vides</span></div><div><b class="${r.videsDefinitives > 0 ? 't-rouge' : ''}">${r.videsDefinitives}</b><span>Vides définitives</span></div><div><b>${r.reussite !== null ? fmtDecimal(r.reussite, 1) + ' %' : '—'}</b><span>Réussite (pleines / échographiées)</span></div></div>
-    <div class="info">${r.pleines + r.vides} brebis échographiées, chacune d'après sa dernière écho de la campagne (mises bas et sorties ne la changent pas). Les vides définitives ne sont comptées ni en pleines ni en vides.${r.pasPassees ? ' ' + lignePasPasseesEchoAccueil(r) : ''}</div>
+    ${r.date ? `<div class="kp kp2"><div><b>${r.passees}</b><span>Passées le ${formatDateFr(r.date)}</span></div><div><b class="t-vert">${r.pleines}</b><span>Pleines</span></div><div><b class="t-ambre">${r.vides}</b><span>Vides${texteDontAvortees(r) ? ' · ' + texteDontAvortees(r) : ''}</span></div><div><b>${r.pctPleines !== null ? fmtDecimal(r.pctPleines, 1) + ' %' : '—'}</b><span>% pleines</span></div></div>
+    <div class="info">Dernier passage d'écho : % pleines = pleines ÷ passées (avortées et pseudogestations comptées dans les vides). Les mises bas et les sorties ne le changent pas.${r.pasPassees ? ' ' + lignePasPasseesEchoAccueil(r) : ''}</div>` : `<div class="info">Aucune échographie cette campagne.${r.pasPassees ? ' ' + lignePasPasseesEchoAccueil(r) : ''}</div>`}
   </div>`;
 
   const pillType = t => /^Mort/.test(t) || t === 'Perte' ? 'p-r' : t === 'Autoconsommation' ? 'p-a' : 'p-n';
@@ -9215,7 +9199,7 @@ function accueilDesktopHtml() {
 
 /* Accueil PC : toutes les valeurs affichées, calculées ICI à partir des fonctions déjà partagées avec le mobile (dashboardStatsData, repartitionEchoAccueil, mortaliteSanitaireData, controleLaitierCompareData...), jamais un second calcul. Fonction pure (lecture seule) : testée telle quelle. */
 function accueilPcData() {
-  const s = dashboardStatsData(), R = repartitionEchoAccueil(), mort = mortaliteSanitaireData(), cmp = controleLaitierCompareData(), sexe = agneauxCampagneRestants();
+  const s = dashboardStatsData(), R = dernierPassageEchoAccueil(), mort = mortaliteSanitaireData(), cmp = controleLaitierCompareData(), sexe = agneauxCampagneRestants();
   const vdPresentes = s.active.filter(x => videDefinitiveRetenue(x)).length;
   const attendues = attendueTraiteListe();
   const motifs = attendues.map(b => Object.assign({ numero: numeroVisuel(b.eid), affiche: numeroAnimal(b), eid: b.eid }, attendueTraiteMotif(b)));
@@ -9225,7 +9209,7 @@ function accueilPcData() {
     brebis: s.total, beliers: DB.beliers.filter(b => (b.statut || 'actif') === 'actif').length, agnelles: (DB.agnelles || []).length, agneaux: sexe,
     sousDelai: nbBrebisSousDelai(),
     misesBas: { faites: s.misesBasActives, attendues: s.troupeauAMettreBas, restantes: s.misesBasRestantes, pct: s.pctMisesBasRealisees, prolificite: s.prolificite, agneauxNes: s.totalAgneaux, mortNes: s.totalMortNes, males: s.totalMales, femelles: s.totalFemelles, presentes: s.total, videsDefinitivesPresentes: vdPresentes },
-    repro: { date: R.derniereDate, passages: R.passages, pleines: R.pleine, vides: R.vide, videsDefinitives: R.videDefinitive, reussite: echoReussite(R), pasPassees: R.pasPassees },
+    repro: R,   // dernier passage d'écho (dernierPassageEchoAccueil)
     mouvements: derniersMouvementsPcData(5),
     lait: { vide: points.every(p => p.actuel === null && p.precedent === null), points },
     attendues: { total: attendues.length, liste: motifs },
@@ -15627,7 +15611,8 @@ function compteursSeanceEcho(seance) {
     const ec = echoSeanceEnBase(e);
     if (!ec) return;
     enregistrees++;
-    if (ec.stade === 'Vide') vides++; else if (ec.stade) pleines++;
+    const res = resultatEcho(ec);
+    if (res === 'vide' || res === 'cas') vides++; else if (ec.stade) pleines++;   // avortée / pseudogestation = vide
   });
   return { pleines, vides, enregistrees };
 }
@@ -16316,7 +16301,7 @@ function echoSupprimer(sheepId, idx) {
 function echoPastilleHtml(texte, ton) { return `<span class="reg-pastille ${ton}">${echoHtml(texte)}</span>`; }
 // Ligne grise « Aussi : … » : catégories hors tuiles, seulement celles qui ont des brebis
 function ligneAussiEchoJour(T) {
-  const parts = [['videDef', 'vide définitive', 'vides définitives'], ['cas', 'avortée / pseudo.', 'avortées / pseudo.'], ['sortie', 'sortie', 'sorties']].filter(([k]) => T[k] > 0).map(([k, s, pl]) => T[k] + ' ' + (T[k] > 1 ? pl : s));
+  const parts = [['videDef', 'vide définitive', 'vides définitives'], ['sortie', 'sortie', 'sorties']].filter(([k]) => T[k] > 0).map(([k, s, pl]) => T[k] + ' ' + (T[k] > 1 ? pl : s));
   return parts.length ? 'Aussi : ' + parts.join(' · ') + '.' : '';
 }
 function echoCampagnePc() { const E = echosPcEtat; return E.campagne !== null && E.campagne !== undefined && E.campagne !== '' ? Number(E.campagne) : DB.campagneDebut; }
@@ -16354,13 +16339,13 @@ function ongletAujourdhuiPcHtml(D) {
   const sel = (id, val, opts) => `<select id="${id}" class="ep-fld">${opts.map(([v, l]) => `<option value="${echapperHtml(v)}"${String(val) === String(v) ? ' selected' : ''}>${echapperHtml(l)}</option>`).join('')}</select>`;
   const filtres = `<div class="ep-tb">${sel('ep-f-campagne', C, campagnesEchoDisponibles().map(c => [c, echoLibelleCampagne(c)]))}${sel('ep-f-lot', E.lot, [['', 'Tous les lots'], ['mn', 'Monte naturelle'], ...D.lots.map(l => [l.id, l.nom + ' · ' + l.mode])])}</div>`;
   const tuile = (cls, lib, n) => `<div class="reg-tuile tuile-pc ${cls} ep-tuile"><div class="reg-tuile-l">${lib}</div><div class="reg-tuile-v">${n}</div></div>`;
-  const tuiles = `<div class="ep-tuiles" id="ep-tuiles-jour">${tuile(tonTuile(T.aMettreBas, 'vert', true), 'pleines, à mettre bas', T.aMettreBas)}${tuile(tonTuile(T.misBas, 'bleu', true), 'ont mis bas', T.misBas)}${tuile(tonTuile(T.vide, 'ambre', true), 'vides', T.vide)}${tuile('gris', 'pas encore passées', T.pasPassee)}</div>`;
+  const tuiles = `<div class="ep-tuiles" id="ep-tuiles-jour">${tuile(tonTuile(T.aMettreBas, 'vert', true), 'pleines, à mettre bas', T.aMettreBas)}${tuile(tonTuile(T.misBas, 'bleu', true), 'ont mis bas', T.misBas)}${tuile(tonTuile(T.vide, 'ambre', true), 'vides', T.vide)}${tuile('gris', 'pas encore passées', T.pasPassee)}</div>${texteDontAvortees(T) ? `<div class="ep-info" id="ep-dont-jour">Vides ${texteDontAvortees(T)}.</div>` : ''}`;
   const aussi = ligneAussiEchoJour(T);
   const st = D.stades, vert = 'background:var(--ch-vert);opacity:.6', bleu = 'background:var(--ch-bleu)', gris = 'background:var(--ch-icone)', vv = 'background:var(--ch-vert)';
   const stades = ['Début', 'Milieu', 'Fin'].filter(k => st[k]).map(k => echoLigneBarrePc(k, st[k], T.aMettreBas, vert)).join('') + ['IA', 'Retour 1', 'Retour 2', 'Tardive'].filter(k => st[k]).map(k => echoLigneBarrePc(k, st[k], T.aMettreBas, bleu)).join('') + (st.nonPrecise ? echoLigneBarrePc('Stade non précisé', st.nonPrecise, T.aMettreBas, gris) : '');
   const c = D.comptage;
   const comptage = [['1 agneau', c.un], ['2 et +', c.deux], ['3 et +', c.troisEtPlus], ['Sans comptage', c.sans]].map(([l, n]) => echoLigneBarrePc(l, n, T.aMettreBas, vv, n + ' (' + echoPct(n, T.aMettreBas) + ' %)')).join('');
-  const parLot = `<div class="ep-tw"><table class="ep-table ep-sm" id="ep-parlot-jour"><thead><tr><th>Lot</th><th>Mode</th><th>Brebis</th><th>À mettre bas</th><th>Ont mis bas</th><th>Vides</th><th>Vides déf.</th><th>Avortées</th><th>Sorties</th><th>Pas encore passées</th></tr></thead><tbody>${D.parLot.map(g => `<tr><td>${echoHtml(g.nom)}</td><td>${g.mode ? `<span class="reg-pastille gris">${g.mode}</span>` : ''}</td><td>${g.brebis}</td><td>${g.aMettreBas}</td><td>${g.misBas}</td><td>${g.vide}</td><td>${g.videDef}</td><td>${g.cas}</td><td>${g.sortie}</td><td>${g.pasPassee}</td></tr>`).join('')}</tbody></table></div>
+  const parLot = `<div class="ep-tw"><table class="ep-table ep-sm" id="ep-parlot-jour"><thead><tr><th>Lot</th><th>Mode</th><th>Brebis</th><th>À mettre bas</th><th>Ont mis bas</th><th>Vides</th><th>Vides déf.</th><th>dont avortées / pseudo.</th><th>Sorties</th><th>Pas encore passées</th></tr></thead><tbody>${D.parLot.map(g => `<tr><td>${echoHtml(g.nom)}</td><td>${g.mode ? `<span class="reg-pastille gris">${g.mode}</span>` : ''}</td><td>${g.brebis}</td><td>${g.aMettreBas}</td><td>${g.misBas}</td><td>${g.vide}</td><td>${g.videDef}</td><td>${g.avortees + g.pseudos}</td><td>${g.sortie}</td><td>${g.pasPassee}</td></tr>`).join('')}</tbody></table></div>
     <div class="ep-info">Chiffres du jour, sans « % pleines » : la réussite se lit dans l'onglet Passages, au jour de l'écho. Une brebis dans deux lots compte dans chacun.</div>`;
   const detail = `<div class="ep-carte"><h3>Détail par brebis</h3><div class="ep-tb">
       <input type="text" id="ep-q" class="ep-fld" style="width:260px;" placeholder="Rechercher un n°" value="${echapperHtml(E.q)}" autocomplete="off">
@@ -16387,7 +16372,7 @@ function ongletPassagesPcHtml(C, passages) {
   const vue = E.vuePassage, nb = { toutes: P.brebis.length, repassees: P.repassees.passees, premiere: P.premiere.passees };
   const sousOnglets = `<div class="ep-tabs ep-tabs-sous" id="ep-vue-passage">${[['toutes', 'Toutes'], ['repassees', 'Repassées'], ['premiere', '1re écho']].map(([k, l]) => `<button type="button" data-v="${k}" class="${vue === k ? 'on' : ''}">${l} ${nb[k]}</button>`).join('')}</div>`;
   const tuile = (cls, lib, n) => `<div class="reg-tuile tuile-pc ${cls} ep-tuile"><div class="reg-tuile-l">${lib}</div><div class="reg-tuile-v">${n}</div></div>`;
-  const tuiles = `<div class="ep-tuiles">${tuile('bleu', 'passées', P.total.passees)}${tuile(tonTuile(P.total.pleines, 'vert'), 'pleines', P.total.pleines)}${tuile(tonTuile(P.total.vides, 'ambre', true), 'vides', P.total.vides)}${tuile(P.total.reussite === null ? 'gris' : 'vert', 'réussite', pct(P.total.reussite))}</div>`;
+  const tuiles = `<div class="ep-tuiles">${tuile('bleu', 'passées', P.total.passees)}${tuile(tonTuile(P.total.pleines, 'vert'), 'pleines', P.total.pleines)}${tuile(tonTuile(P.total.vides, 'ambre', true), 'vides', P.total.vides)}${tuile(P.total.reussite === null ? 'gris' : 'vert', 'réussite', pct(P.total.reussite))}</div>${texteDontAvortees(P.total) ? `<div class="ep-info" id="ep-dont-passage">Vides ${texteDontAvortees(P.total)}.</div>` : ''}`;
   const provenance = [P.repassees.passees ? `Repassées : ${P.repassees.passees} déjà vues · ${P.repassees.pleines} pleine${P.repassees.pleines > 1 ? 's' : ''} · ${P.repassees.vides} vide${P.repassees.vides > 1 ? 's' : ''}` : '',
     P.premiere.passees ? `1re écho : ${P.premiere.passees} jamais vue${P.premiere.passees > 1 ? 's' : ''} · ${P.premiere.pleines} pleine${P.premiere.pleines > 1 ? 's' : ''} · ${P.premiere.vides} vide${P.premiere.vides > 1 ? 's' : ''}${P.premiere.antenaises ? ' · dont ' + P.premiere.antenaises + ' antenaise' + (P.premiere.antenaises > 1 ? 's' : '') : ''}` : ''].filter(Boolean).map(t => `<div>${t}</div>`).join('');
   const parLot = `<div class="ep-tw"><table class="ep-table ep-sm" id="ep-parlot-passage"><thead><tr><th>Lot</th><th>Passées</th><th>Pleines</th><th>Vides</th><th>Réussite</th><th>1</th><th>2 et +</th><th>3 et +</th></tr></thead><tbody>${P.parLot.map(g => `<tr><td>${echoHtml(g.nom)}</td><td>${g.passees}</td><td>${g.pleines}</td><td>${g.vides}</td><td>${pct(g.reussite)}</td><td>${g.comptage.un}</td><td>${g.comptage.deux}</td><td>${g.comptage.troisEtPlus}</td></tr>`).join('')}</tbody></table></div>`;
@@ -16453,7 +16438,7 @@ function echosJourSections(D) {
     tuiles: ECHO_CATS_JOUR.filter(k => ['aMettreBas', 'misBas', 'vide', 'pasPassee'].includes(k) || T[k] > 0).map(k => [ECHO_JOUR_LIBELLES[k], T[k], echoPct(T[k], T.brebis) + ' %']),
     stades: ECHO_STADES_PLEINE.concat(['nonPrecise']).filter(k => st[k]).map(k => [k === 'nonPrecise' ? 'Stade non précisé' : k, st[k], echoPct(st[k], T.aMettreBas) + ' %']),
     comptage: [['1 agneau', c.un], ['2 et +', c.deux], ['3 et +', c.troisEtPlus], ['Sans comptage', c.sans]].map(([l, n]) => [l, n, echoPct(n, T.aMettreBas) + ' %']),
-    parLot: D.parLot.map(g => [g.nom, g.mode, g.brebis, g.aMettreBas, g.misBas, g.vide, g.videDef, g.cas, g.sortie, g.pasPassee]),
+    parLot: D.parLot.map(g => [g.nom, g.mode, g.brebis, g.aMettreBas, g.misBas, g.vide, g.videDef, g.avortees + g.pseudos, g.sortie, g.pasPassee]),
     detail: echoLignesJourFiltrees(D).map(r => { const e = r.sit.echo; return [r.numero, r.millesime === null ? '' : r.millesime, r.pastille[0], e ? formatDateFr(e.date) : '', e ? libelleResultatEcho(e) : '', e && resultatEcho(e) === 'pleine' ? libelleComptageEcho(e) : '', r.lots.length ? r.lots.join(', ') : 'Monte naturelle']; })
   };
 }
@@ -16461,7 +16446,7 @@ async function exporterEchosJourXlsx(D) {
   const X = echosJourSections(D);
   const resume = [['Échographies · aujourd\'hui'], ['Édité le ' + formatDateFr(jourAujourdhuiISO())], ['Filtres', X.filtres], ['Brebis', D.T.brebis], [],
     ['Situation', 'Brebis', '%'], ...X.tuiles, [], ['Pleines à mettre bas · stade', 'Brebis', '%'], ...X.stades, [], ['Pleines à mettre bas · comptage', 'Brebis', '%'], ...X.comptage, [],
-    ['Par lot', 'Mode', 'Brebis', 'À mettre bas', 'Ont mis bas', 'Vides', 'Vides déf.', 'Avortées', 'Sorties', 'Pas encore passées'], ...X.parLot];
+    ['Par lot', 'Mode', 'Brebis', 'À mettre bas', 'Ont mis bas', 'Vides', 'Vides déf.', 'dont avortées / pseudo.', 'Sorties', 'Pas encore passées'], ...X.parLot];
   const detail = [['N° de travail', 'Millésime', 'Aujourd\'hui', 'Dernière écho', 'Résultat', 'Comptage', 'Lots'], ...X.detail];
   const bytes = await buildXlsxWorkbook([{ name: 'Résumé', colWidths: [32, 14, 12, 14, 14, 10, 12, 12, 10, 18], rows: resume }, { name: 'Détail', colWidths: [12, 10, 26, 14, 18, 10, 30], rows: detail }]);
   await saveOrShareBinaryFile('echographies_aujourdhui_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -16481,13 +16466,13 @@ function echoPdfTableau(doc, LARG) {
 function buildEchosJourPdfBytes(D) {
   const X = echosJourSections(D), doc = pdfProdDoc({ paysage: true }), tableau = echoPdfTableau(doc, 842 - 72), T = D.T;
   doc.page('Échographies · aujourd\'hui', X.filtres + ' · ' + T.brebis + ' brebis, chacune une fois', pdfPied('Échographies · aujourd\'hui'));
-  doc.tuiles([pdfTuile(tonTuile(T.aMettreBas, 'vert'), 'Pleines, à mettre bas', T.aMettreBas, ''), pdfTuile(tonTuile(T.misBas, 'bleu'), 'Ont mis bas', T.misBas, ''), pdfTuile(tonTuile(T.vide, 'ambre', true), 'Vides', T.vide, ''), pdfTuile('neutre', 'Pas encore passées', T.pasPassee, '')]);
+  doc.tuiles([pdfTuile(tonTuile(T.aMettreBas, 'vert'), 'Pleines, à mettre bas', T.aMettreBas, ''), pdfTuile(tonTuile(T.misBas, 'bleu'), 'Ont mis bas', T.misBas, ''), pdfTuile(tonTuile(T.vide, 'ambre', true), 'Vides', T.vide, texteDontAvortees(T)), pdfTuile('neutre', 'Pas encore passées', T.pasPassee, '')]);
   const aussi = ligneAussiEchoJour(T);
   if (aussi) doc.note(aussi, 8.5);
   doc.section('Situation'); tableau([['Situation'], ['Brebis'], ['%']], X.tuiles);
   if (X.stades.length) { doc.section('Pleines à mettre bas · stade'); tableau([['Stade'], ['Brebis'], ['%']], X.stades); }
   doc.section('Pleines à mettre bas · comptage'); tableau([['Comptage'], ['Brebis'], ['%']], X.comptage);
-  doc.section('Par lot · aujourd\'hui'); tableau([['Lot'], ['Mode'], ['Brebis'], ['À mettre bas'], ['Ont mis bas'], ['Vides'], ['Vides déf.'], ['Avortées'], ['Sorties'], ['Pas encore passées']], X.parLot);
+  doc.section('Par lot · aujourd\'hui'); tableau([['Lot'], ['Mode'], ['Brebis'], ['À mettre bas'], ['Ont mis bas'], ['Vides'], ['Vides déf.'], ['dont avortées / pseudo.'], ['Sorties'], ['Pas encore passées']], X.parLot);
   doc.section('Détail par brebis', X.detail.length + ' brebis'); tableau([['N° de travail'], ['Millésime'], ['Aujourd\'hui'], ['Dernière écho'], ['Résultat'], ['Comptage'], ['Lots', 150]], X.detail);
   return doc.fin();
 }
@@ -16514,7 +16499,7 @@ function buildPassagesEchoPdfBytes(C, passages, P, vue) {
   doc.page('Échographies · passages', X.filtres + ' · résultat au jour de l\'écho, figé', pdfPied('Échographies · passages'));
   doc.section('Passages'); tableau([['Passage'], ['Passées'], ['Pleines'], ['Vides'], ['Réussite'], ['1'], ['2 et +'], ['3 et +'], ['Repassées'], ['1re écho'], ['Ont mis bas depuis'], ['Restent'], ['Sorties']], X.passages);
   doc.section('Passage du ' + formatDateFr(P.date));
-  doc.tuiles([pdfTuile('bleu', 'Passées', P.total.passees, ''), pdfTuile(tonTuile(P.total.pleines, 'vert'), 'Pleines', P.total.pleines, ''), pdfTuile(tonTuile(P.total.vides, 'ambre', true), 'Vides', P.total.vides, ''), pdfTuile(P.total.reussite === null ? 'neutre' : 'vert', 'Réussite', pct(P.total.reussite), '')]);
+  doc.tuiles([pdfTuile('bleu', 'Passées', P.total.passees, ''), pdfTuile(tonTuile(P.total.pleines, 'vert'), 'Pleines', P.total.pleines, ''), pdfTuile(tonTuile(P.total.vides, 'ambre', true), 'Vides', P.total.vides, texteDontAvortees(P.total)), pdfTuile(P.total.reussite === null ? 'neutre' : 'vert', 'Réussite', pct(P.total.reussite), '')]);
   doc.section('Par lot · le ' + formatDateFr(P.date)); tableau([['Lot'], ['Passées'], ['Pleines'], ['Vides'], ['Réussite'], ['1'], ['2 et +'], ['3 et +']], X.parLot);
   doc.section('Brebis du passage · ' + X.vue, X.brebis.length + ' brebis'); tableau([['N° de travail'], ['Le ' + formatDateFr(P.date)], ['Comptage'], ['Écho précédente'], ['Devenue'], ['Lots', 150]], X.brebis);
   return doc.fin();
@@ -16541,7 +16526,7 @@ function renderEchosMobile() {
     const D = donneesEchoJour(C), T = D.T, aPasser = brebisAPasserEcho(C), aussi = ligneAussiEchoJour(T);
     const tuile = (ton, l, n, id) => `<div class="tuile-charte ${n === 0 ? '' : ton}" id="${id}"><div class="l">${l}</div><div class="n">${n}</div></div>`;
     corps = `${infoLigneHtml(T.brebis + ' brebis, chacune comptée une fois, d\'après sa dernière écho de la campagne.')}
-      <div class="tuiles-charte" id="em-tuiles">${tuile('vert', 'Pleines, à mettre bas', T.aMettreBas, 'em-t-amb')}${tuile('bleu', 'Ont mis bas', T.misBas, 'em-t-mb')}${tuile('ambre', 'Vides', T.vide, 'em-t-vide')}${tuile('', 'Pas encore passées', T.pasPassee, 'em-t-pas')}</div>
+      <div class="tuiles-charte" id="em-tuiles">${tuile('vert', 'Pleines, à mettre bas', T.aMettreBas, 'em-t-amb')}${tuile('bleu', 'Ont mis bas', T.misBas, 'em-t-mb')}${tuile('ambre', 'Vides', T.vide, 'em-t-vide')}${tuile('', 'Pas encore passées', T.pasPassee, 'em-t-pas')}</div>${texteDontAvortees(T) ? `<div class="reg-info" id="em-dont-jour">Vides ${texteDontAvortees(T)}.</div>` : ''}
       ${aussi ? `<div class="reg-info" id="em-aussi">${aussi}</div>` : ''}
       <div class="card" id="em-a-passer"><div class="carte-liste-l1"><span style="font-weight:700;">À passer au prochain passage</span>${cartePastille(String(aPasser.length), aPasser.length ? 'ambre' : '')}</div>
         ${infoLigneHtml('Suggestion : les vides et celles jamais passées. Rien n\'oblige : n\'importe quel lot peut être passé.')}
@@ -16591,7 +16576,7 @@ function renderPassageEchoMobile() {
   const tuile = (ton, l, n) => `<div class="tuile-charte ${n === 0 || n === '—' ? '' : ton}"><div class="l">${l}</div><div class="n">${n}</div></div>`;
   const lignes = brebisVuePassage(P, E.vue);
   app.innerHTML = `${vues}
-    <div class="tuiles-charte" id="em-passage-tuiles">${tuile('bleu', 'Passées', P.total.passees)}${tuile('vert', 'Pleines', P.total.pleines)}${tuile('ambre', 'Vides', P.total.vides)}${tuile('vert', 'Réussite', pct(P.total.reussite))}</div>
+    <div class="tuiles-charte" id="em-passage-tuiles">${tuile('bleu', 'Passées', P.total.passees)}${tuile('vert', 'Pleines', P.total.pleines)}${tuile('ambre', 'Vides', P.total.vides)}${tuile('vert', 'Réussite', pct(P.total.reussite))}</div>${texteDontAvortees(P.total) ? `<div class="reg-info" id="em-dont-passage">Vides ${texteDontAvortees(P.total)}.</div>` : ''}
     ${P.parLot.length > 1 || (P.parLot[0] && P.parLot[0].id !== 'mn') ? `<div class="em-titre">Par lot · le ${formatDateFr(P.date)}</div><div class="cartes-liste" id="em-passage-lots">${P.parLot.map(g => carteListeHtml({ nm: echoHtml(g.nom), pastille: cartePastille(pct(g.reussite), g.reussite === null ? '' : 'vert'), l2: g.passees + ' passée' + (g.passees > 1 ? 's' : '') + ' · ' + g.pleines + ' pleine' + (g.pleines > 1 ? 's' : '') + ' · ' + g.vides + ' vide' + (g.vides > 1 ? 's' : ''), l3: [g.comptage.un ? cartePastille('1 : ' + g.comptage.un, '') : '', g.comptage.deux ? cartePastille('2 et + : ' + g.comptage.deux, '') : '', g.comptage.troisEtPlus ? cartePastille('3 et + : ' + g.comptage.troisEtPlus, '') : ''] })).join('')}</div>` : ''}
     <div class="em-titre">Brebis</div>
     <div class="cartes-liste" id="em-passage-brebis">${lignes.length ? lignes.map(x => { const pa = pastilleSituationEchoJour(x.sheep, x.sit);
