@@ -161,7 +161,8 @@ await page.waitForTimeout(300);
 check(/REMPLACÉ/.test(confirms[0]) && await page.evaluate(() => DB.resumesCampagne['2025'].groupes.adultes.adoptes) === 3, 'remplacement : confirmation explicite ; refusée = résumé existant intact');
 reponseConfirm = true;
 // le refus réactive le bouton : attendre qu'il le soit avant de recliquer (sinon le clic tombe sur un bouton encore désactivé, machine lente)
-await waitFor(() => page.evaluate(() => { const b = document.getElementById('rs-valider'); return !!b && !b.disabled; }), { label: 'bouton Valider réactivé après le refus' });
+// … et sorti du blocage anti double appui (classe un-appui, 800 ms après le 1er appui) : sinon le 2e clic est ignoré sur une machine chargée
+await waitFor(() => page.evaluate(() => { const b = document.getElementById('rs-valider'); return !!b && !b.disabled && !b.classList.contains('un-appui'); }), { label: 'bouton Valider réactivé après le refus' });
 await page.click('#rs-valider');
 await waitFor(() => page.evaluate(() => DB.resumesCampagne['2025'].groupes.adultes.adoptes === 5), { label: 'résumé remplacé' });
 console.log('OK 4 un résumé existant n\'est remplacé qu\'après confirmation explicite (refus = intact).');

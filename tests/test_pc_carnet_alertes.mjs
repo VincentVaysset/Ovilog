@@ -76,7 +76,7 @@ await page.fill('#f-date', '2026-10-28');
 check(await page.evaluate(() => !!document.getElementById('alerte-vente-delai')), 'le 28/10 : alerte');
 await t('Vente reproduction'); check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'Vente reproduction : pas d\'alerte');
 await t('Autoconsommation'); check(await page.evaluate(() => !!document.getElementById('alerte-vente-delai')), 'Autoconsommation : alerte');
-await t('Morte'); check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'Morte : pas d\'alerte');
+await t('Mort'); check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'Mort : pas d\'alerte');
 await t('Perte'); check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'Perte : pas d\'alerte');
 // jamais bloquante : on valide la vente malgré l'alerte, la date saisie n'est pas corrigée
 await t('Vente'); await page.fill('#f-date', '2026-10-10');
@@ -98,7 +98,7 @@ check(al && /n°00003 est encore sous délai/.test(al) && /Ivomec/.test(al) && /
 await page.click('tr.clic[data-id="A"]');
 al = await page.evaluate(() => { const e = document.getElementById('alerte-vente-delai'); return e ? e.textContent.replace(/\s+/g, ' ') : null; });
 check(/2 animaux sont encore sous délai/.test(al) && /n°00001/.test(al) && /n°00003/.test(al), 'collectif : 2 animaux listés après ajout à la sélection : ' + al);
-await page.click('.mv-type[data-val="Morte"]');
+await page.click('.mv-type[data-val="Mort"]');
 check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')), 'collectif Morte : pas d\'alerte');
 console.log('OK 3 mouvement collectif : seuls les animaux sélectionnés sous délai sont listés, mis à jour avec la date et le type.');
 

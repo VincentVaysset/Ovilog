@@ -55,7 +55,7 @@ for (const bureau of [false, true]) {
   if (bureau) {
     await p.evaluate(() => { mvPcEtat = null; render('inventaire'); }); await p.waitForSelector('#mv-table');
     const vu = {};
-    for (const [cat, type] of [['brebis', 'Morte'], ['beliers', 'Mort'], ['agnelles', 'Morte'], ['agneaux', 'Mort']]) {
+    for (const [cat, type] of [['brebis', 'Mort'], ['beliers', 'Mort'], ['agnelles', 'Mort'], ['agneaux', 'Mort']]) {
       await p.click(`.mv-cat[data-cat="${cat}"]`); await p.click(`.mv-type[data-val="${type}"]`);
       vu[cat] = await options(p, '#mv-cause');
     }
@@ -64,7 +64,7 @@ for (const bureau of [false, true]) {
     eq(await p.evaluate(() => [DB.causesMortaliteAgneaux.includes('Coccidiose'), DB.causesMortalite.includes('Coccidiose'), document.getElementById('mv-cause').value]), [true, false, 'Coccidiose'], 'PC Mouvements, agneaux : « Ajouter… » range la cause dans la liste agneaux');
   } else {
     const vu = {};
-    for (const [cat, type] of [['brebis', 'Morte'], ['agneaux', 'Mort'], ['agnelles', 'Morte'], ['beliers', 'Mort']]) {
+    for (const [cat, type] of [['brebis', 'Mort'], ['agneaux', 'Mort'], ['agnelles', 'Mort'], ['beliers', 'Mort']]) {
       await p.evaluate(cat => { mvMobNouveau = mvMobNouveauInitial(cat); renderNouveauMouvementMobile(); }, cat);
       await p.click(`#mn-types .mn-chip[data-val="${type}"]`);
       vu[cat] = await options(p, '#mn-cause');
@@ -73,7 +73,7 @@ for (const bureau of [false, true]) {
   }
   // mouvement individuel : brebis (puces adultes), agneau (puces agneaux), « + » dans la bonne liste
   await p.evaluate(() => { currentSheepId = 'b1'; editContext = null; render('add-mouvement', 'b1'); });
-  await p.click('.type-opt[data-val="Morte"]');
+  await p.click('.type-opt[data-val="Mort"]');
   eq(await p.evaluate(() => [...document.querySelectorAll('#cause-list .chip')].map(c => c.textContent)), ['Mammite', 'Mise à jour inventaire'], nom + ' : fiche brebis, mouvement : causes adultes');
   await p.evaluate(() => { currentAgneauEid = '250000004561004'; editAgneauContext = null; render('add-mouvement-agneau'); });
   await p.click('.type-opt[data-val="Mort"]');
