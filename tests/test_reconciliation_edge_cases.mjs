@@ -125,7 +125,8 @@ async function getUidViaFetchInterception(page) {
     window.__batchCallsPendantReconnexion = 0;
     const origFetch = window.fetch;
     window.fetch = function (url, opts) {
-      if (typeof url === 'string' && url.includes('/batch')) window.__batchCallsPendantReconnexion++;
+      // l'annonce de l'appareil au registre des comptes (comptes/<uid> : nom d'exploitation et version, aucune donnée d'élevage) n'est pas une poussée de données
+      if (typeof url === 'string' && url.includes('/batch') && !(opts && typeof opts.body === 'string' && /"path":"comptes\//.test(opts.body))) window.__batchCallsPendantReconnexion++;
       return origFetch.apply(this, arguments);
     };
   });
@@ -227,7 +228,7 @@ async function getUidViaFetchInterception(page) {
     window.__batchCallsReconnexionB = 0;
     const origFetch = window.fetch;
     window.fetch = function (url, opts) {
-      if (typeof url === 'string' && url.includes('/batch')) {
+      if (typeof url === 'string' && url.includes('/batch') && !(opts && typeof opts.body === 'string' && /"path":"comptes\//.test(opts.body))) {   // annonce au registre des comptes : pas une poussée de données
         window.__batchCallsReconnexionB++;
         try { window.__dernierBatchBody = JSON.parse(opts.body); } catch (e) {}
       }

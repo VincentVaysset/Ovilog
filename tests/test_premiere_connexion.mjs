@@ -188,7 +188,7 @@ let pairePourB = null;
   await h.connecter(d11, mail2, MDP);
   await h.attendre(d11, () => currentView === 'home' && DB.lots.some(l => l.id === 'LC'), { timeout: 30000, label: 'E : 2e compte lu' });
   await h.dormir(800);
-  const t2 = await d11.page.evaluate(() => ({ sauv: window.__sauvegardes.map(s => s.prefixe), ecr: (window.__ecrituresLog || []).length }));
+  const t2 = await d11.page.evaluate(() => ({ sauv: window.__sauvegardes.map(s => s.prefixe), ecr: (window.__ecrituresLog || []).filter(e => !(e.chemins || []).every(c => c.startsWith('comptes/'))).length }));   // l'annonce au registre des comptes n'est pas une écriture de données
   check(!t2.sauv.includes('avant-migration-registre'), 'E : compte déjà migré : aucune sauvegarde de migration (' + JSON.stringify(t2.sauv) + ')');
   check(t2.ecr === 0, 'E : compte déjà migré : aucune écriture du nouvel appareil');
   console.log('OK E migration : attend la lecture du compte ; sauvegarde avant d\'écrire ; rien à écrire = ni sauvegarde ni écriture.');
