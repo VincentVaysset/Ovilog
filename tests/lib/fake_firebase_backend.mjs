@@ -74,6 +74,29 @@ function refusRacine(op, auth) {
   return 'opération inconnue';
 }
 
+/* Verrou de version : MÊME règle que firestore.rules. Dès que users/{uid}/verrouVersion/courant porte une versionMinimale, toute écriture du compte doit
+   réécrire, dans la même requête, le jeton users/{uid}/ecritures/jeton avec l'heure du serveur (serverTimestamp) et vApp >= versionMinimale ; un ancien
+   appareil (pas de jeton) est refusé, suppressions comprises. Le document du verrou ne baisse jamais, ne se supprime pas et n'est posé que par une
+   version au moins égale. */
+function refusVerrou(uid, ops) {
+  const cols = collections.get(uid) || {};
+  const v = (cols.verrouVersion || {}).courant || {};
+  const min = Number.isInteger(v.versionMinimale) ? v.versionMinimale : 0;
+  const jeton = ops.find(op => op.path === 'users/' + uid + '/ecritures/jeton' && op.type === 'set');
+  const jd = (jeton && jeton.data) || {};
+  const jetonOk = !!jeton && !!jd.vEcrit && jd.vEcrit.__op === 'serverTimestamp' && Number.isInteger(jd.vApp);
+  for (const op of ops) {
+    if (!/\/verrouVersion\//.test(op.path)) continue;
+    if (op.type === 'delete') return 'verrou : suppression interdite';
+    const nv = (op.data || {}).versionMinimale;
+    if (!/\/verrouVersion\/courant$/.test(op.path) || !Number.isInteger(nv) || nv < min) return 'verrou : version minimale abaissée ou invalide';
+    if (!jetonOk || jd.vApp < nv) return 'verrou : posé par une version plus ancienne';
+  }
+  if (!min) return null;
+  if (!jetonOk) return 'verrou de version : écriture sans jeton (appareil trop ancien)';
+  if (jd.vApp < min) return 'verrou de version : version ' + jd.vApp + ' plus ancienne que ' + min;
+  return null;
+}
 function ensureUser(uid) {
   if (!collections.has(uid)) collections.set(uid, {});
   if (!versions.has(uid)) versions.set(uid, {});
@@ -189,6 +212,7 @@ const server = http.createServer(async (req, res) => {
       ensureUser(uid);
       // Règle Firestore : les réglages administrateur du compte (users/{uid}/reglagesAdmin) ne s'écrivent que par un compte administrateur (admins/<uid>)
       if (clientId !== 'test-direct' && ops.some(op => /\/reglagesAdmin\//.test(op.path)) && !(authUid && racine('admins')[authUid])) return json(res, 403, { error: 'permission-denied', message: 'réglages administrateur : compte non administrateur' });
+      if (clientId !== 'test-direct') { const motif = refusVerrou(uid, ops); if (motif) return json(res, 403, { error: 'permission-denied', message: motif }); }
       const cols = collections.get(uid);
       // « Créer seulement si absent » (runTransaction du faux SDK) : refuse TOUT le batch si le document existe déjà -- 409, comme une transaction abandonnée.
       for (const op of ops) {

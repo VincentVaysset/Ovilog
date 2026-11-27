@@ -8,10 +8,27 @@ service cloud.firestore {
     match /users/{uid} {
       allow read, write: if proprietaireVerifie(uid);
     }
+    // Verrou de version (Ovilog, 27/11) : dès que le compte a un document verrouVersion/courant, toute écriture doit réécrire DANS LA MÊME REQUÊTE
+    // le jeton ecritures/jeton avec l'heure du serveur (vEcrit == request.time) et un n° de version de l'appli au moins égal à la version minimale.
+    // Un appareil d'avant ce code n'écrit pas de jeton : il est refusé (suppressions comprises). Sans verrou : rien ne change.
+    function cheminVerrou(uid) { return /databases/$(database)/documents/users/$(uid)/verrouVersion/courant; }
+    function cheminJeton(uid) { return /databases/$(database)/documents/users/$(uid)/ecritures/jeton; }
+    function jetonValide(uid, min) {
+      let j = getAfter(cheminJeton(uid)).data;
+      return j.get('vEcrit', null) == request.time && j.get('vApp', 0) is int && j.get('vApp', 0) >= min;
+    }
+    function versionAdmise(uid) { return !exists(cheminVerrou(uid)) || jetonValide(uid, get(cheminVerrou(uid)).data.get('versionMinimale', 0)); }
     match /users/{uid}/{collection}/{reste=**} {
       allow read: if proprietaireVerifie(uid);
-      // les réglages administrateur du compte (chantiers en test) ne s'écrivent pas par cette règle
-      allow write: if proprietaireVerifie(uid) && collection != 'reglagesAdmin';
+      // les réglages administrateur du compte (chantiers en test) et le verrou de version ne s'écrivent pas par cette règle
+      allow write: if proprietaireVerifie(uid) && collection != 'reglagesAdmin' && collection != 'verrouVersion' && versionAdmise(uid);
+    }
+    // Le verrou lui-même : posé par le propriétaire du compte, jamais abaissé, jamais supprimé depuis l'appli, et seulement par une version au moins égale
+    match /users/{uid}/verrouVersion/{id} {
+      allow create, update: if proprietaireVerifie(uid) && id == 'courant'
+        && request.resource.data.versionMinimale is int
+        && request.resource.data.versionMinimale >= (resource == null ? 0 : resource.data.get('versionMinimale', 0))
+        && jetonValide(uid, request.resource.data.versionMinimale);
     }
     // Réglages administrateur du compte (interrupteur « Notification EDE ») : lus par le propriétaire, écrits seulement si le compte est administrateur (admins/<uid>)
     match /users/{uid}/reglagesAdmin/{id} {

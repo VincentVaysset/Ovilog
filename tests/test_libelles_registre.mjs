@@ -28,7 +28,7 @@ console.log('OK 1 code : anciens libellés seulement dans la table de conversion
 
 const browser = await chromium.launch(LAUNCH);
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
-await ctx.addInitScript(() => { window.electronAPI = { isDesktop: true, version: '1.0.test', refocus: () => {} }; });
+await ctx.addInitScript(() => { window.electronAPI = { isDesktop: true, version: '1.0.test', refocus: () => {} }; window.__verrouConfirmeTest = true; });   // verrou de version supposé confirmé (testé à part : test_verrou_version)
 const page = await ctx.newPage();
 await page.clock.setFixedTime(new Date('2026-11-26T09:00:00'));
 const erreurs = []; page.on('pageerror', e => erreurs.push(e.message));

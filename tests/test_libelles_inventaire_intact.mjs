@@ -51,6 +51,7 @@ const r = await page.evaluate(async () => {
   });
   const avant = photo();
   sauvegardeVisibleAvantMutation = async () => ({ ok: true });
+  window.__verrouConfirmeTest = true;   // verrou de version supposé confirmé (testé à part : test_verrou_version)
   const p = convertirLibellesMouvements();
   await new Promise(res => setTimeout(res, 50));
   document.querySelector('#question-charte .btn-primary').click();

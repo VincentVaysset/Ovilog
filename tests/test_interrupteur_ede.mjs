@@ -1,7 +1,7 @@
 /* Interrupteur « Notification EDE » (chantier Documents de circulation en test) : réglage du COMPTE, désactivé par défaut, réservé à l'administrateur
    (document admins/<uid>), rangé dans users/<uid>/reglagesAdmin/chantiers (écriture refusée par le serveur à un compte non administrateur) ;
    une seule fonction, chantierEdeActif(). Faux serveur, deux comptes jetables (éleveur A, administrateur B), n° fictifs.
-   1) éleveur A : pas d'onglet Administration ; désactivé = comme avant (N° EDE et son contrôle, adresse en 3 champs ; pas de SIREN, de base locale,
+   1) éleveur A : onglet Administration avec le seul verrou de version ; désactivé = comme avant (N° EDE et son contrôle, adresse en 3 champs ; pas de SIREN, de base locale,
       de « Fiches partenaires », titre « Acheteurs », écran Partenaires inaccessible) ; aucune donnée du chantier écrite ; écriture du réglage refusée
       (appli et serveur) ; 2) valeur inconnue (pas encore lue) = désactivé ; 3) administrateur B : onglet Administration, activer (date « Notifier à partir
       du » = début de la campagne, ligne grise « hors périmètre »), fiche partenaire, désactiver (tout masqué, rien supprimé), renommer l'acheteur
@@ -35,7 +35,7 @@ try {
   await preparer(A);
   eq(await A.page.evaluate(() => [chantierEdeActif(), window.OvilogSync.contactEtat().estAdmin]), [false, false], 'A : chantier désactivé par défaut, pas administrateur');
   await vueParametres(A, 'exploitation');
-  check(!(await A.page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].some(b => b.dataset.tab === 'administration'))), 'A : pas d\'onglet Administration');
+  check(await A.page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].some(b => b.dataset.tab === 'administration')), 'A : onglet Administration (verrou de version du compte seulement)');
   const ecransA = await etatEcrans(A);
   eq(ecransA, { libelle: 'N° EDE', siren: false, base: false, cp: true, commune: true, titre: 'Acheteurs', bouton: false, vue: 'parametres' }, 'désactivé : N° EDE et adresse en 3 champs seulement, carte « Acheteurs » comme avant, écran Partenaires inaccessible');
   await vueParametres(A, 'exploitation');
@@ -44,7 +44,8 @@ try {
   for (let i = 0; i < 5 && !formatVu; i++) { await A.page.fill('#f-exp-cheptel', '1234567'); formatVu = await A.page.waitForSelector('#prm-ede-format', { state: 'visible', timeout: 1000 }).then(() => true, () => false); }
   check(formatVu, 'désactivé : contrôle du format du N° EDE toujours là');
   await A.page.evaluate(() => { parametresTab = 'administration'; render('parametres'); });
-  eq(await A.page.evaluate(() => [!!document.getElementById('card-chantiers'), !!document.getElementById('f-adm-ede')]), [false, false], 'A : rubrique Administration forcée = vide');
+  eq(await A.page.evaluate(() => [!!document.getElementById('card-chantiers'), !!document.getElementById('f-adm-ede')]), [false, false], 'A : rubrique Administration sans les chantiers en test');
+  check(await A.page.evaluate(() => !!document.getElementById('card-verrou-version')), 'A : carte « Verrou de version » seule');
   const refusApp = await A.page.evaluate(() => window.OvilogSync.ecrireReglagesAdmin({ notificationEde: true }).then(() => 'écrit', e => 'refusé'));
   eq(refusApp, 'refusé', 'A : l\'appli refuse d\'écrire le réglage');
   const r = await fetch('http://127.0.0.1:' + h.port + '/batch', { method: 'POST', body: JSON.stringify({ uid: A.uid, authUid: A.uid, clientId: 'appareil-A', ops: [{ type: 'set', path: 'users/' + A.uid + '/reglagesAdmin/chantiers', data: { notificationEde: true } }] }) });

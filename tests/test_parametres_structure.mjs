@@ -22,7 +22,7 @@ const txt = (page, sel) => page.evaluate(s => document.querySelector(s) ? docume
   await page.goto(URL_APP, { waitUntil: 'load' }); await page.waitForTimeout(300);
   await jeu(page);
   await page.evaluate(() => render('parametres'));
-  eq(await page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].map(b => b.textContent)), ['Exploitation', 'Campagne', "Règles d'élevage", 'Listes', 'Imports', 'Synchro et sauvegarde'], 'PC : 5 onglets dans l\'ordre demandé');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].map(b => b.textContent)), ['Exploitation', 'Campagne', "Règles d'élevage", 'Listes', 'Imports', 'Synchro et sauvegarde', 'Administration'], 'PC : onglets dans l\'ordre demandé (Administration : verrou de version du compte)');
   const aides = { Exploitation: "L'identité de l'élevage : suivi laitier, laiterie, bio", Campagne: 'La campagne en cours et ses dates', "Règles d'élevage": "Les règles que l'appli applique, pour tous les appareils du compte", Listes: 'Les choix proposés dans les menus déroulants', Imports: 'Fichiers Excel au modèle Ovilog · disponible sur PC uniquement', 'Synchro et sauvegarde': "Ton compte, tes données, la version de l'application, l'aide et le contact" };
   for (const [nom, aide] of Object.entries(aides)) {
     await page.click(`.tab-bar .tab-btn:text-is("${nom}")`);

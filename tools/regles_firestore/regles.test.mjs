@@ -1,6 +1,6 @@
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'fs';
-import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp, setLogLevel } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp, setLogLevel, writeBatch } from 'firebase/firestore';
 setLogLevel('error');
 const env = await initializeTestEnvironment({ projectId: 'demo-ovilog', firestore: { rules: readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8'), host: '127.0.0.1', port: 8085 } });
 const A = 'eleveurA', B = 'eleveurB', ADMIN = 'proprio';
@@ -79,6 +79,31 @@ await ok(getDoc(doc(db(A, true), 'users', A, 'reglagesAdmin', 'chantiers')), 'co
 await ok(setDoc(doc(db(ADMIN, true), 'users', ADMIN, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'administrateur : écrit son réglage');
 await ko(setDoc(doc(db(ADMIN, true), 'users', A, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'administrateur : jamais le réglage d\'un autre compte');
 await ko(setDoc(doc(db(ADMIN, false), 'users', ADMIN, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'administrateur NON vérifié : refusé');
+// verrou de version (users/<uid>/verrouVersion/courant + jeton users/<uid>/ecritures/jeton daté par le serveur)
+const C = 'eleveurC';
+const lot = (uid, ecr, jeton) => { const d = db(uid, true), b = writeBatch(d); ecr(b, d); if (jeton) b.set(doc(d, 'users', uid, 'ecritures', 'jeton'), jeton); return b.commit(); };
+const jt = v => ({ vApp: v, vEcrit: serverTimestamp() });
+await ok(setDoc(doc(db(C, true), 'users', C, 'brebis', 'b1'), { eid: '250000000000001', statut: 'active' }), 'verrou : sans verrou, écriture sans jeton acceptée (comme avant)');
+await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 490 }), jt(480)), 'verrou : posé par une version plus ancienne que lui refusé');
+await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 490 }), null), 'verrou : posé sans jeton refusé');
+await ko(lot(B, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 490 }), null), 'verrou : jamais par un autre compte');
+await ok(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 490, date: '2026-11-27' }), jt(490)), 'verrou : posé par la version 490 (avec son jeton)');
+await ko(setDoc(doc(db(C, true), 'users', C, 'brebis', 'b1'), { eid: '250000000000001', statut: 'active' }), 'verrou : ancien appareil (écriture sans jeton) refusé');
+await ko(updateDoc(doc(db(C, true), 'users', C, 'brebis', 'b1'), { statut: 'active' }), 'verrou : ancien appareil, mise à jour sans jeton refusée');
+await ko(deleteDoc(doc(db(C, true), 'users', C, 'brebis', 'b1')), 'verrou : ancien appareil, suppression sans jeton refusée');
+await ko(setDoc(doc(db(C, true), 'users', C, 'meta', 'main'), { schemaDonnees: 3 }), 'verrou : ancien appareil, document principal refusé');
+await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'brebis', 'b1'), { statut: 'active' }, { merge: true }), jt(489)), 'verrou : version 489 refusée');
+await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'brebis', 'b1'), { statut: 'active' }, { merge: true }), { vApp: 495, vEcrit: 12345 }), 'verrou : jeton sans heure du serveur refusé');
+await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'brebis', 'b1'), { statut: 'active' }, { merge: true }), { vApp: '495', vEcrit: serverTimestamp() }), 'verrou : version de mauvais type refusée');
+await ok(lot(C, (b, d) => b.set(doc(d, 'users', C, 'brebis', 'b1'), { statut: 'morte' }, { merge: true }), jt(490)), 'verrou : version 490 avec son jeton acceptée');
+await ko(updateDoc(doc(db(C, true), 'users', C, 'brebis', 'b1'), { statut: 'active' }), 'verrou : le jeton déjà écrit ne sert pas une 2e fois');
+await ok(lot(C, (b, d) => b.delete(doc(d, 'users', C, 'brebis', 'b1')), jt(491)), 'verrou : suppression avec jeton acceptée');
+await ok(lot(C, (b, d) => { for (let i = 0; i < 499; i++) b.set(doc(d, 'users', C, 'brebis', 'g' + i), { eid: 'x' + i }); }, jt(490)), 'verrou : lot de 499 écritures + jeton accepté (limite des accès des règles)');
+await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 480 }), jt(490)), 'verrou : jamais abaissé');
+await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 495 }), jt(490)), 'verrou : jamais relevé au-dessus de la version qui le pose');
+await ok(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 495 }), jt(495)), 'verrou : relevé par la version 495');
+await ko(deleteDoc(doc(db(C, true), 'users', C, 'verrouVersion', 'courant')), 'verrou : jamais supprimé depuis l\'appli');
+await ok(setDoc(doc(db(A, true), 'users', A, 'brebis', 'b2'), { eid: '250000000000002' }), 'verrou : compte par compte (A sans verrou, inchangé)');
 // anciennes collections Logisol (séparation, étape 5) : plus aucun accès, même pour un compte vérifié administrateur
 await ko(getDoc(doc(db(ADMIN, true), 'parcelles', 'p1')), 'Logisol retiré : parcelles refusée');
 await ko(setDoc(doc(db(ADMIN, true), 'lgs_stocks', 's1'), { x: 1 }), 'Logisol retiré : lgs_* refusée');

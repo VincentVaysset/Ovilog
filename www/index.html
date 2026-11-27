@@ -2547,8 +2547,89 @@ function poserIdsElements(db, mode) {
 /* Garde-fou du FORMAT des données du compte (lot 4) : `meta.schemaDonnees` dit quel rangement le compte utilise ; un appareil dont l'appli
    ne connaît pas ce rangement (version plus ancienne) n'envoie PLUS RIEN vers le cloud (ses saisies restent sur l'appareil) et affiche
    « Mettre à jour l'application ». Cette version connaît le format 1 (listes d'origine) ; le rangement élément par élément sera le 2. */
-function schemaDonneesVersionCourante() { return 3; }   // 2 = fiches rangées par versions (lot 4, livraison 2) ; 3 = listes du compte aussi (livraison 3)
+function schemaDonneesVersionCourante() { return 4; }   // 2 = fiches rangées par versions (lot 4, livraison 2) ; 3 = listes du compte aussi (livraison 3) ; 4 = verrou de version posé
 function donneesVerrouillees() { return ((typeof DB !== 'undefined' && DB && DB.schemaDonnees) || 0) > schemaDonneesVersionCourante(); }
+/* Verrou de version (27/11, avant la conversion des libellés) : le compte porte une VERSION MINIMALE (document users/{uid}/verrouVersion/courant,
+   posé par le bouton de Paramètres › Administration, jamais d'office ; compte par compte). Un appareil plus ancien CONSULTE mais n'écrit plus
+   rien (ni sur l'appareil, ni vers le cloud) : bandeau « Mise à jour obligatoire » avec le bouton de mise à jour. Les appareils d'avant ce code
+   sont arrêtés par le format du compte (`schemaDonnees` = 4, qu'ils ne connaissent pas) et, une fois la règle publiée, par Firestore (jeton
+   d'écriture daté par le serveur, voir firestore.rules). Version d'un appareil = n° du build : versionCode Android, « 1.0.N » sur PC. */
+const SCHEMA_VERROU_VERSION = 4;
+const CLE_VERROU_VERSION = 'ovilog_verrou_version';   // dernier verrou connu, propre à l'appareil (hors ligne au démarrage : il reste appliqué)
+let versionAppCache;
+function numeroVersionDepuisTexte(t) { const m = /^\d+\.\d+\.(\d+)$/.exec(String(t || '').trim()); return m ? parseInt(m[1], 10) : null; }
+// n° de version de l'appli sur cet appareil, null s'il est inconnu (navigateur de test, plugin absent) ; tests : window.__versionAppTest
+function versionAppSync() {
+  if (typeof window !== 'undefined' && typeof window.__versionAppTest === 'number') return window.__versionAppTest;
+  if (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.version) return numeroVersionDepuisTexte(window.electronAPI.version);
+  return versionAppCache === undefined ? null : versionAppCache;
+}
+async function versionAppNumero() {
+  const n = versionAppSync();
+  if (n !== null || versionAppCache !== undefined) return n;
+  versionAppCache = await versionCodeInstalle();
+  return versionAppCache;
+}
+// lue une fois au démarrage (Android : réponse du plugin, asynchrone) : jusque-là, un compte verrouillé reste en consultation seule
+setTimeout(() => { versionAppNumero().then(() => { if (window.updateHeaderSyncBadge) window.updateHeaderSyncBadge(); }).catch(() => {}); }, 0);
+// Verrou connu sur cet appareil pour le compte connecté : { versionMinimale } ou null
+function verrouVersionCompte() {
+  const s = typeof window !== 'undefined' && window.OvilogSync;
+  const v = s && typeof s.verrouVersion === 'function' ? s.verrouVersion() : null;
+  return v && v.versionMinimale > 0 ? v : null;
+}
+// Vrai si cet appareil est trop ancien pour ce compte (version inconnue = trop ancienne : jamais d'écriture sur une supposition)
+function ecrituresBloqueesVersion() {
+  const v = verrouVersionCompte();
+  if (!v) return false;
+  const n = versionAppSync();
+  return !(typeof n === 'number' && n >= v.versionMinimale);
+}
+let messageMajObligatoireMontre = false;
+function signalerMiseAJourObligatoire(force) {
+  if (typeof window === 'undefined') return;
+  window.__syncVersionBloquee = true;
+  if (typeof marquerSynchroEnAttente === 'function') { try { marquerSynchroEnAttente(true); } catch (e) { /* ignoré */ } }
+  if (window.updateHeaderSyncBadge) window.updateHeaderSyncBadge();
+  if (force) messageMajObligatoireMontre = false;
+  if (messageMajObligatoireMontre || typeof questionCharte !== 'function' || document.getElementById('question-charte')) return;
+  messageMajObligatoireMontre = true;
+  const v = verrouVersionCompte();
+  questionCharte('Mise à jour obligatoire', 'Ce compte demande la version 1.0.' + (v ? v.versionMinimale : '?') + ' ou plus récente. Cette version d\'Ovilog ('
+    + (versionAppSync() ? '1.0.' + versionAppSync() : 'version inconnue') + ') peut consulter les données mais ne peut plus rien enregistrer.',
+    'Mettre à jour', 'Plus tard', () => ouvrirMiseAJourObligatoire(), () => {});
+}
+// Bouton « Mettre à jour » (bandeau, message) : la carte des mises à jour de Paramètres › Synchro et sauvegarde, vérification lancée
+function ouvrirMiseAJourObligatoire() {
+  parametresTab = 'sauvegarde'; parametresRubrique = 'sauvegarde';
+  render('parametres');
+  setTimeout(() => { const b = document.getElementById('btn-check-update'); if (b && !b.disabled) b.click(); }, 300);
+}
+// Conversion des données (libellés…) : seulement une fois le verrou confirmé par le SERVEUR (tests : remplaçable)
+async function verrouVersionConfirme() {
+  if (typeof window !== 'undefined' && window.__verrouConfirmeTest === true) return true;   // tests sans serveur (conversion seule) : verrou supposé confirmé
+  const s = typeof window !== 'undefined' && window.OvilogSync;
+  if (!s || typeof s.verrouConfirmeServeur !== 'function') return false;
+  try { return !!(await s.verrouConfirmeServeur()).ok; } catch (e) { return false; }
+}
+/* Garde-fou des saisies faites sur un appareil bloqué (hors ligne, ou d'avant ce code) : une fiche dont le DERNIER mouvement est une sortie
+   ne repasse jamais « active » (un ancien code ne reconnaissant pas « Mort » la recalculait active). Statut recalculé par la règle unique
+   (recalculerStatutBrebis / Belier / FinalAgneau), appliqué avant chaque envoi et à chaque réception ; aucun mouvement n'est touché. */
+const TYPES_SORTIE_STATUT = () => [TYPE_MVT.MORT, TYPE_MVT.VENTE, TYPE_MVT.VENTE_REPRO, TYPE_MVT.PERTE, TYPE_MVT.AUTOCONSO, SORTIE_INVENTAIRE];
+function sortieEnDernier(mouvements) {
+  const last = dernierMouvementParDate(mouvements || []);
+  return !!last && TYPES_SORTIE_STATUT().includes(typeMvt(last.type));
+}
+function corrigerStatutsSortis(db, cols) {
+  let n = 0;
+  const voir = c => !cols || cols.includes(c);
+  if (voir('brebis')) ((db && db.brebis) || []).forEach(b => { if (b && (!b.statut || b.statut === 'active') && sortieEnDernier(b.mouvements)) { recalculerStatutBrebis(b); if (b.statut !== 'active') n++; } });
+  if (voir('beliers')) ((db && db.beliers) || []).forEach(b => { if (b && (!b.statut || b.statut === 'actif') && sortieEnDernier(b.mouvements)) { recalculerStatutBelier(b); if (b.statut !== 'actif') n++; } });
+  if (voir('brebis')) ((db && db.brebis) || []).forEach(b => ((b && b.agnelages) || []).forEach(a => ((a && a.lambs) || []).forEach(l => {
+    if (l && !agneauSorti(l) && (l.mouvements || []).some(m => TYPES_SORTIE_AGNEAU.includes(m.type) || [TYPE_MVT.MORT, SORTIE_INVENTAIRE].includes(typeMvt(m.type)))) { recalculerStatutFinalAgneau(l); if (agneauSorti(l)) n++; }
+  })));
+  return n;
+}
 
 /* ---------- Rangement des fiches par VERSIONS (lot 4, livraison 2) ----------
    Fiches brebis, béliers, agnelles : chaque élément de liste (mise bas, agneau, soin d'agneau, écho, soin, mouvement, contrôle, note, évènement
@@ -3230,6 +3311,7 @@ function controlerOctetsSauvegarde(bytes, data) {
    saisie si l'enregistrement a échoué) -- les appelants actuels ignorent
    cette valeur de retour, comportement inchangé pour eux. */
 function saveData(data, opts) {
+  if (ecrituresBloqueesVersion()) { signalerMiseAJourObligatoire(); return false; }   // verrou de version : consultation seule
   try {
     poserIdsElements(data, 'nouveau');   // lot 4 : un élément créé ici reçoit un id unique
     ecrireStockageVerifie(data);
@@ -9581,6 +9663,8 @@ async function convertirLibellesMouvements(opts) {
   const n = convertirTypesDansBase(essai);
   if (!n) return { fait: false, n: 0 };
   if (typeof currentView !== 'undefined' && vueAvecSaisie(currentView)) return { fait: false, raison: 'saisie en cours' };
+  // ordre validé : verrou de version CONFIRMÉ PAR LE SERVEUR (aucun ancien appareil ne peut plus écrire) → sauvegarde → conversion
+  if (!(await verrouVersionConfirme())) return { fait: false, raison: 'verrou de version pas encore confirmé par le serveur' };
   if (compterMouvementsBase(essai) !== compterMouvementsBase(DB) || texteContientAncienLibelle(JSON.stringify(essai))) return { fait: false, raison: 'essai à blanc en échec' };
   conversionLibellesEnCours = true;
   try {
@@ -15550,6 +15634,7 @@ function compterIdDansTexte(texte, id, cle) {
   return n;
 }
 function enregistrerVerifie(ensuite, titre, attendus) {
+  if (ecrituresBloqueesVersion()) { signalerMiseAJourObligatoire(true); return false; }   // verrou de version : la saisie n'est pas enregistrée, message « Mise à jour obligatoire »
   const raison = (() => {
     if (saveData(DB, { silencieux: true }) === false) return 'enregistrement refusé par l\'appareil';
     if (!attendus || (Array.isArray(attendus) && !attendus.length)) return null;
@@ -33238,7 +33323,7 @@ const PARAMETRES_RUBRIQUES_MOBILE = ['exploitation', 'campagne', 'regles', 'list
 // « Messages reçus » (bulle de contact) : rubrique mobile et onglet PC du SEUL administrateur (document admins/<uid>, voir demarrerContact)
 const PARAMETRES_RUBRIQUE_MESSAGES = { key: 'messages', label: 'Messages reçus', aide: 'Questions, bugs et idées envoyés depuis la bulle de contact' };
 // « Administration » : onglet PC du SEUL administrateur (chantiers en test, interrupteurs réservés)
-const PARAMETRES_RUBRIQUE_ADMIN = { key: 'administration', label: 'Administration', aide: 'Chantiers en test, réservés à l\'administrateur' };
+const PARAMETRES_RUBRIQUE_ADMIN = { key: 'administration', label: 'Administration', aide: 'Verrou de version du compte ; chantiers en test (administrateur)' };
 /* Taille du document principal (meta) du compte : mesure par OvilogSync.mesureMeta (plafond Firestore 1 Mo). Ambre dès 70 %, rouge dès 90 % ou si une
    écriture a été refusée pour la taille (vraie alerte : la synchro de ces données s'arrête). Message pour tous sur l'Accueil et dans Paramètres ›
    Sauvegarde ; détail des rubriques pour l'administrateur seulement. Mesure mise en cache 30 s (l'Accueil se redessine souvent). */
@@ -33286,7 +33371,8 @@ function tailleMetaAdminHtml() {
 }
 function contactAdministrateur() { const e = contactEtatCourant(); return !!(e && e.connecte && e.estAdmin); }
 function parametresRubriquesMobile() { return contactAdministrateur() ? [...PARAMETRES_RUBRIQUES_MOBILE, 'messages'] : PARAMETRES_RUBRIQUES_MOBILE; }
-function parametresTabsPc() { return contactAdministrateur() ? [...PARAMETRES_TABS, PARAMETRES_RUBRIQUE_MESSAGES, PARAMETRES_RUBRIQUE_ADMIN] : PARAMETRES_TABS; }
+// « Administration » sur PC pour tout compte (verrou de version, compte par compte) ; « Messages reçus » et chantiers en test : administrateur seulement
+function parametresTabsPc() { return contactAdministrateur() ? [...PARAMETRES_TABS, PARAMETRES_RUBRIQUE_MESSAGES, PARAMETRES_RUBRIQUE_ADMIN] : [...PARAMETRES_TABS, PARAMETRES_RUBRIQUE_ADMIN]; }
 function parametresRubriqueInfo(cle) { return cle === 'messages' ? PARAMETRES_RUBRIQUE_MESSAGES : cle === 'administration' ? PARAMETRES_RUBRIQUE_ADMIN : (PARAMETRES_TABS.find(x => x.key === cle) || PARAMETRES_RUBRIQUE_LECTEUR); }
 // Mise en page commune des cartes : PC = grille de cartes pleine largeur ; mobile = cartes empilées sur une colonne (mêmes cartes, mêmes libellés).
 function prmGrilleHtml(cardsHtml) { return isDesktopMode() ? `<div class="prm-grid">${cardsHtml}</div>` : cardsHtml; }
@@ -33342,7 +33428,7 @@ function appelerRenduParametres(cle, content) {
   else if (cle === 'sauvegarde') renderParametresSauvegarde(content);
   else if (cle === 'lecteur') renderParametresLecteur(content);
   else if (cle === 'messages') renderMessagesRecus(content);
-  else if (cle === 'administration') { if (contactAdministrateur() && isDesktopMode()) renderParametresAdministration(content); else content.innerHTML = ''; }
+  else if (cle === 'administration') { if (isDesktopMode()) renderParametresAdministration(content); else content.innerHTML = ''; }
 }
 // Écran d'arrivée mobile : 4 rubriques en lignes cliquables, chacune avec un résumé ; état de synchro et version en pied.
 function renderParametresAccueilMobile() {
@@ -33517,11 +33603,55 @@ function dateReferenceEde() {
 }
 function horsPerimetreEde(dateMouvement) { const ref = dateReferenceEde(); return !!(ref && String(dateMouvement || '') < ref); }
 // Paramètres › Administration (PC, administrateur seulement) : carte « Chantiers en test »
+/* Carte « Verrou de version » (Paramètres › Administration, PC, tout compte) : seul point d'activation, jamais d'office. Refusé si cet appareil n'est pas
+   à jour (dernière version publiée plus récente) ou si la vérification échoue ; version minimale = celle de CET appareil ; confirmation du serveur puis
+   conversion des libellés (sauvegarde d'abord). */
+function carteVerrouVersionHtml() {
+  const v = verrouVersionCompte(), n = versionAppSync();
+  const etat = v ? 'Activé · version minimale 1.0.' + v.versionMinimale + (ecrituresBloqueesVersion() ? ' · cet appareil est trop ancien' : '') : 'Désactivé · tous les appareils de ce compte enregistrent, quelle que soit leur version.';
+  const peut = typeof n === 'number' && (!v || n > v.versionMinimale);
+  return `<div class="card" id="card-verrou-version">
+    <div class="prm-titre">Verrou de version</div>
+    <div class="prm-note">Réglage de CE compte. Activé, un appareil plus ancien que la version minimale consulte les données mais n'enregistre plus rien (« Mise à jour obligatoire »). À activer seulement une fois le PC et le mobile à jour.</div>
+    <div class="prm-note" id="verrou-etat">${echapperHtml(etat)}</div>
+    <div class="prm-note">Cet appareil : ${typeof n === 'number' ? '1.0.' + n : 'version inconnue'}</div>
+    ${peut ? `<button type="button" class="btn btn-primary" id="btn-verrou-version">${v ? 'Relever le verrou à 1.0.' + n : 'Activer le verrou (version 1.0.' + n + ')'}</button>` : ''}
+    <div class="prm-note" id="verrou-message"></div>
+  </div>`;
+}
+function brancherCarteVerrouVersion() {
+  const b = document.getElementById('btn-verrou-version'), ligne = document.getElementById('verrou-message');
+  if (!b) return;
+  b.onclick = async () => {
+    b.disabled = true;
+    const dire = t => { if (ligne) ligne.textContent = t; };
+    dire('Vérification de la version de cet appareil…');
+    const refus = t => { dire(''); b.disabled = false; messageCharte('Verrou non activé', t); };
+    const n = await versionAppNumero();
+    if (typeof n !== 'number') return refus('Version de cet appareil inconnue : rien n\'est changé.');
+    const rel = await derniereReleaseDisponible();
+    if (!rel || !rel.ok) return refus('Impossible de vérifier que cet appareil est à jour (réseau ?) : rien n\'est changé, réessayez.');
+    if (rel.best && rel.best.versionCode > n) return refus('Cet appareil n\'est pas à jour : version 1.0.' + n + ', dernière version publiée 1.0.' + rel.best.versionCode + '. Mettez-le à jour avant d\'activer le verrou.');
+    dire('');
+    questionCharte('Activer le verrou de version ?', 'Version minimale : 1.0.' + n + ' (celle de cet appareil). Tout appareil de ce compte plus ancien pourra consulter mais ne pourra plus rien enregistrer. Vérifiez que le mobile est aussi en 1.0.' + n + ' ou plus récent. Ensuite : sauvegarde, puis correction des libellés.',
+      'Activer le verrou', 'Annuler', async () => {
+        dire('Activation… attente de la confirmation du serveur');
+        let r;
+        try { r = await window.OvilogSync.activerVerrouVersion(n); } catch (e) { r = { ok: false, raison: (e && e.message) || String(e) }; }
+        if (!r || !r.ok) { b.disabled = false; dire(''); messageCharte('Verrou non confirmé', 'Le serveur n\'a pas confirmé le verrou (' + ((r && r.raison) || 'raison inconnue') + ') : aucune donnée n\'est convertie. Réessayez.'); return; }
+        if (currentView === 'parametres') render('parametres');
+        const l = document.getElementById('verrou-message');
+        if (l) l.textContent = 'Verrou confirmé par le serveur : version minimale 1.0.' + r.versionMinimale + '.';
+        convertirLibellesMouvements().catch(e => console.error('Conversion des libellés', e));
+      }, () => { b.disabled = false; });
+  };
+}
 function renderParametresAdministration(content) {
+  if (!contactAdministrateur()) { content.innerHTML = prmGrilleHtml(carteVerrouVersionHtml()); brancherCarteVerrouVersion(); return; }
   const r = reglagesAdminCompte();
   const actif = chantierEdeActif();
   const ref = dateReferenceEde();
-  content.innerHTML = prmGrilleHtml(`<div class="card" id="card-chantiers">
+  content.innerHTML = prmGrilleHtml(carteVerrouVersionHtml() + `<div class="card" id="card-chantiers">
     <div class="prm-titre" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">Chantiers en test <span class="badge badge-blue">Réservé à l'administrateur</span></div>
     <div class="prm-note">Réglages de CE compte. Un chantier désactivé est entièrement masqué ; rien n'est supprimé.</div>
     ${r === null ? `<div class="prm-alerte" id="adm-inconnu">Réglages du compte pas encore lus (hors ligne ?) : chantiers considérés comme désactivés.</div>` : ''}
@@ -33549,6 +33679,7 @@ function renderParametresAdministration(content) {
       ecrire(champs, on ? 'Notification EDE activée' : 'Notification EDE désactivée', { notificationEde: !on });
     };
   }
+  brancherCarteVerrouVersion();
   const champDate = document.getElementById('f-adm-ede-date');
   if (champDate) champDate.onchange = () => { if (/^\d{4}-\d{2}-\d{2}$/.test(champDate.value)) ecrire({ notifierAPartirDu: champDate.value }, 'Date enregistrée', { notifierAPartirDu: (r && r.notifierAPartirDu) || ref }); };
 }
@@ -36665,13 +36796,26 @@ function updateHeaderReaderButton() {
 // par un changement de vue.
 window.updateHeaderSyncBadge = function updateHeaderSyncBadge() {
   const badge = document.getElementById('sync-badge');
-  const attente = !!window.__syncEnAttente || !!window.__syncAttenteCompte;
+  const bloque = typeof ecrituresBloqueesVersion === 'function' && ecrituresBloqueesVersion();
+  window.__syncVersionBloquee = bloque;
+  const attente = !!window.__syncEnAttente || !!window.__syncAttenteCompte || bloque;
   if (badge) badge.classList.toggle('show', attente);
   const bandeau = document.getElementById('sync-bandeau');
   if (bandeau) {
     bandeau.hidden = !attente;
+    const titre = bandeau.querySelector('strong');
+    if (titre) titre.textContent = bloque ? 'Mise à jour obligatoire' : 'Synchro en attente';
+    let bouton = document.getElementById('sync-bandeau-maj');
+    if (bloque && !bouton) {
+      bouton = document.createElement('button');
+      bouton.type = 'button'; bouton.id = 'sync-bandeau-maj'; bouton.className = 'btn btn-primary btn-petit'; bouton.textContent = 'Mettre à jour';
+      bouton.onclick = () => ouvrirMiseAJourObligatoire();
+      bandeau.appendChild(bouton);
+    } else if (!bloque && bouton) bouton.remove();
     const texte = document.getElementById('sync-bandeau-texte');
-    if (texte) texte.textContent = window.__syncFormatRecent
+    if (texte) texte.textContent = bloque
+      ? 'ce compte demande une version plus récente d\'Ovilog · consultation seule, rien n\'est enregistré sur cet appareil'
+      : window.__syncFormatRecent
       ? 'Mettre à jour l\'application : votre compte utilise une version plus récente d\'Ovilog · rien n\'est envoyé, vos saisies restent sur cet appareil'
       : window.__syncAttenteCompte
       ? 'lecture de votre compte en cours · vos saisies sont gardées sur cet appareil et ne partiront qu\'après'
@@ -38200,6 +38344,7 @@ function setRecordsArrayForSync(colName, arr) {
   }
   if (colName === 'registre') appliquerRecordsRegistre(arr);
   else DB[colName] = garderIdentiteFiches(DB[colName], arr);
+  if (colName === 'brebis' || colName === 'beliers') corrigerStatutsSortis(DB, [colName]);   // reçu d'un appareil resté ancien : une fiche sortie ne repasse jamais « active »
   if (colName === 'evenementsLots') recalculerMembresLotsRepro();      // nouveaux événements reçus : le cache lot.membres suit le journal
 }
 
@@ -38478,6 +38623,7 @@ window.ecrireEtVerifierDocRegistre = async function ecrireEtVerifierDocRegistre(
   try {
     const batch = writeBatch(fbDb);
     batch.set(ref, dataEnvoyee);
+    await poserJetonEcriture(batch);
     await batch.commit();
   } catch (e) {
     return { ok: false, raison: "l'écriture du document registre a échoué (" + (e && e.message ? e.message : 'erreur inconnue') + ')' };
@@ -38591,6 +38737,7 @@ async function commitOpsIndividually(ops) {
       if (op.type === 'set') { if (op.merge) b.set(op.ref, op.data, { merge: true }); else b.set(op.ref, op.data); }
       else if (op.type === 'update') b.update(op.ref, op.data);
       else if (op.type === 'delete') b.delete(op.ref);
+      await poserJetonEcriture(b);
       await b.commit();
       marquerOpAppliquee(op);
     } catch (e) {
@@ -38607,16 +38754,28 @@ function ecritureCloudAutorisee() {
   console.error('Écriture vers le cloud refusée : la base locale appartient à un autre compte.');
   return false;
 }
+/* Jeton d'écriture (verrou de version) : CHAQUE écriture groupée vers le compte porte aussi le document users/{uid}/ecritures/jeton, avec le n° de
+   version de l'appli (vApp) et l'heure du SERVEUR (vEcrit). La règle Firestore (firestore.rules) refuse, dès que le compte a un verrou, toute écriture
+   dont le jeton n'est pas réécrit dans la même requête par une version assez récente : un appareil d'avant ce code (qui n'écrit pas de jeton) est
+   refusé, suppressions comprises. Les documents de l'appli ne reçoivent aucun champ en plus. */
+function refJetonEcriture() { return doc(fbDb, 'users', sync.uid, 'ecritures', 'jeton'); }
+async function poserJetonEcriture(b) {
+  if (!sync.uid) return;
+  const v = await versionAppNumero();
+  b.set(refJetonEcriture(), { vApp: typeof v === 'number' ? v : 0, vEcrit: serverTimestamp() });
+}
 async function commitOpsInBatches(ops) {
   if (!ecritureCloudAutorisee()) return;
-  for (let i = 0; i < ops.length; i += FIRESTORE_BATCH_MAX) {
-    const chunk = ops.slice(i, i + FIRESTORE_BATCH_MAX);
+  const parLot = FIRESTORE_BATCH_MAX - 1;   // une place pour le jeton d'écriture
+  for (let i = 0; i < ops.length; i += parLot) {
+    const chunk = ops.slice(i, i + parLot);
     const batch = writeBatch(fbDb);
     chunk.forEach(op => {
       if (op.type === 'set') { if (op.merge) batch.set(op.ref, op.data, { merge: true }); else batch.set(op.ref, op.data); }
       else if (op.type === 'update') batch.update(op.ref, op.data);
       else if (op.type === 'delete') batch.delete(op.ref);
     });
+    await poserJetonEcriture(batch);
     try {
       await batch.commit();
       chunk.forEach(marquerOpAppliquee);
@@ -38631,6 +38790,10 @@ async function syncAllToCloud(data) {
   if (!ecritureCloudAutorisee()) return;
   // compte rangé dans un format plus récent que cette appli : rien n'est envoyé (les saisies restent ici), bandeau « Mettre à jour l'application »
   if (donneesVerrouillees()) { window.__syncFormatRecent = true; marquerSynchroEnAttente(true); if (window.updateHeaderSyncBadge) window.updateHeaderSyncBadge(); return; }
+  // appareil plus ancien que la version minimale du compte : rien n'est envoyé, bandeau « Mise à jour obligatoire »
+  if (ecrituresBloqueesVersion()) { signalerMiseAJourObligatoire(); return; }
+  // saisies d'un appareil resté bloqué (hors ligne, ancienne version) : une fiche sortie ne repart jamais « active »
+  if (corrigerStatutsSortis(data)) { try { localStorage.setItem(DB_KEY, JSON.stringify(data)); } catch (e) { /* ignoré : la base en mémoire est corrigée */ } }
   const ops = [];
   for (const col of DOC_COLLECTIONS) buildAnimalCollectionOps(col, getRecordsArrayForSync(col, data), ops);
   buildMetaOp(data, ops);
@@ -38651,6 +38814,7 @@ async function syncAllToCloud(data) {
 // rendu ce correctif inopérant pour toute installation ayant la synchro
 // cloud activée -- corrigé ici plutôt que dans la fonction de base.
 saveData = function(data, opts) {
+  if (ecrituresBloqueesVersion()) { signalerMiseAJourObligatoire(); return false; }   // verrou de version : consultation seule, rien d'écrit ni d'envoyé
   try {
     poserIdsElements(data, 'nouveau');   // lot 4 : un élément créé ici reçoit un id unique
     ecrireStockageVerifie(data);
@@ -39161,6 +39325,8 @@ async function compteVideConfirme() {
       const snap = await tx.get(metaRef);
       if (snap.exists()) return false;
       tx.set(metaRef, record);
+      const v = await versionAppNumero();
+      tx.set(refJetonEcriture(), { vApp: typeof v === 'number' ? v : 0, vEcrit: serverTimestamp() });
       return true;
     });
     if (cree) {
@@ -39373,6 +39539,30 @@ function demarrerReglagesAdmin(uid) {
     reglagesAdmin.data = snap.exists() ? (snap.data() || {}) : {};
     try { if (window.rafraichirChantierEde) window.rafraichirChantierEde(); } catch (e) { console.error('Réglages administrateur : rafraîchissement', e); }
   }, e => { console.error('Réglages administrateur : lecture impossible', e); });
+}
+/* Verrou de version du compte (users/{uid}/verrouVersion/courant = { versionMinimale, activeLe }) : lu en continu ; le dernier connu est gardé sur
+   l'appareil (un appareil hors ligne au démarrage reste bloqué). Une lecture du cache ne fait jamais BAISSER la version connue ; le serveur fait foi. */
+const verrou = { uid: null, versionMinimale: 0, connu: false, duServeur: false, unsub: null, confirme: null };
+function verrouPersiste(uid) { try { const v = JSON.parse(localStorage.getItem(CLE_VERROU_VERSION) || 'null'); return v && v.uid === uid && Number.isInteger(v.versionMinimale) ? v.versionMinimale : 0; } catch (e) { return 0; } }
+function persisterVerrou() { try { localStorage.setItem(CLE_VERROU_VERSION, JSON.stringify({ uid: verrou.uid, versionMinimale: verrou.versionMinimale })); } catch (e) { /* ignoré */ } }
+function arreterVerrouVersion() { if (verrou.unsub) { try { verrou.unsub(); } catch (e) {} } Object.assign(verrou, { uid: null, versionMinimale: 0, connu: false, duServeur: false, unsub: null, confirme: null }); }
+function demarrerVerrouVersion(uid) {
+  if (verrou.uid === uid) return;
+  arreterVerrouVersion();
+  verrou.uid = uid;
+  verrou.versionMinimale = verrouPersiste(uid);
+  verrou.unsub = onSnapshot(doc(fbDb, 'users', uid, 'verrouVersion', 'courant'), { includeMetadataChanges: true }, snap => {
+    if (verrou.uid !== uid) return;
+    const duServeur = !(snap.metadata && snap.metadata.fromCache);
+    const d = snap.exists() ? (snap.data() || {}) : {};
+    const min = Number.isInteger(d.versionMinimale) && d.versionMinimale > 0 ? d.versionMinimale : 0;
+    if (duServeur || min > verrou.versionMinimale) { if (min !== verrou.versionMinimale) verrou.confirme = null; verrou.versionMinimale = min; }
+    verrou.connu = true; verrou.duServeur = verrou.duServeur || duServeur;
+    persisterVerrou();
+    if (window.updateHeaderSyncBadge) window.updateHeaderSyncBadge();
+    if (ecrituresBloqueesVersion()) signalerMiseAJourObligatoire();
+    else if (verrou.versionMinimale > 0 && duServeur && typeof window.convertirLibellesMouvements === 'function') setTimeout(() => { window.convertirLibellesMouvements().catch(e => console.error('Conversion des libellés', e)); }, 0);
+  }, e => { console.error('Verrou de version : lecture impossible', e); });
 }
 function lireEchecsContact() { try { return JSON.parse(localStorage.getItem(CLE_ECHECS_CONTACT) || '[]'); } catch (e) { return []; } }
 function ecrireEchecsContact(l) { try { localStorage.setItem(CLE_ECHECS_CONTACT, JSON.stringify(l)); } catch (e) {} }
@@ -39685,6 +39875,7 @@ async function onSignedIn(user) {
     try { hadDonneesExistantes = await bootstrapDevice(user.uid); }
     catch (e) { console.error('Lecture ponctuelle du compte impossible pour le moment (réseau lent ou coupé) : attente de l\'instantané serveur', e); }
   }
+  demarrerVerrouVersion(user.uid);   // avant toute écriture : un appareil trop ancien n'envoie rien
   await startListeners(alreadyBootstrapped);
   demarrerContact(user.uid).catch(e => console.error('Bulle de contact : démarrage', e));
   demarrerReglagesAdmin(user.uid);
@@ -39704,6 +39895,7 @@ function onSignedOut() {
   stopListeners();
   arreterContact();
   arreterReglagesAdmin();
+  arreterVerrouVersion();
   sync.uid = null;
   sync.email = null;
   reinitialiserEtatCompte();
@@ -39783,6 +39975,57 @@ function friendlyAuthError(e) {
 }
 
 window.OvilogSync = {
+  // verrou de version du compte connecté : { versionMinimale, connu, duServeur } (versionMinimale 0 = aucun verrou)
+  verrouVersion() {
+    if (!sync.uid) return null;
+    const min = verrou.uid === sync.uid ? verrou.versionMinimale : verrouPersiste(sync.uid);
+    return { versionMinimale: min, connu: verrou.uid === sync.uid && verrou.connu, duServeur: verrou.uid === sync.uid && verrou.duServeur };
+  },
+  /* Confirmé par le SERVEUR (lecture qui ne vient pas du cache) : verrou posé (version minimale), cet appareil assez récent, et format du compte à 4
+     (les appareils d'avant ce code s'arrêtent). Résultat positif gardé pour la séance (même compte, même version minimale). */
+  async verrouConfirmeServeur() {
+    if (!sync.uid) return { ok: false, raison: 'non connecté' };
+    const uid = sync.uid;
+    if (verrou.confirme && verrou.confirme.uid === uid && verrou.confirme.min === verrou.versionMinimale && verrou.confirme.min > 0) return { ok: true, versionMinimale: verrou.confirme.min };
+    try {
+      const sv = await getDoc(doc(fbDb, 'users', uid, 'verrouVersion', 'courant'));
+      if (sv.metadata && sv.metadata.fromCache) return { ok: false, raison: 'hors réseau : verrou lu dans le cache seulement' };
+      const d = sv.exists() ? (sv.data() || {}) : {};
+      const min = Number.isInteger(d.versionMinimale) ? d.versionMinimale : 0;
+      if (!(min > 0)) return { ok: false, raison: 'aucun verrou de version sur ce compte' };
+      const v = await versionAppNumero();
+      if (!(typeof v === 'number' && v >= min)) return { ok: false, raison: 'cet appareil est plus ancien que la version minimale' };
+      const sm = await getDoc(doc(fbDb, 'users', uid, 'meta', 'main'));
+      if (sm.metadata && sm.metadata.fromCache) return { ok: false, raison: 'hors réseau : format du compte lu dans le cache seulement' };
+      const sch = sm.exists() ? ((sm.data() || {}).schemaDonnees || 0) : 0;
+      if (!(sch >= SCHEMA_VERROU_VERSION)) return { ok: false, raison: 'format du compte pas encore enregistré par le serveur' };
+      if (sync.uid !== uid) return { ok: false, raison: 'compte changé' };
+      verrou.confirme = { uid, min };
+      return { ok: true, versionMinimale: min };
+    } catch (e) { return { ok: false, raison: (e && e.message) || String(e) }; }
+  },
+  /* Pose le verrou (bouton de Paramètres › Administration, jamais d'office) : version minimale = celle de CET appareil, jamais plus basse que le verrou
+     déjà posé ; puis format du compte à 4 ; puis attente de la confirmation du serveur. */
+  async activerVerrouVersion(min) {
+    if (!sync.uid) throw new Error('non connecté');
+    if (!ecritureCloudAutorisee()) throw new Error('la base de cet appareil appartient à un autre compte');
+    if (!Number.isInteger(min) || min <= 0) throw new Error('version de cet appareil inconnue');
+    const actuel = verrou.uid === sync.uid ? verrou.versionMinimale : 0;
+    if (min < actuel) throw new Error('le compte demande déjà la version 1.0.' + actuel);
+    const b = writeBatch(fbDb);
+    b.set(doc(fbDb, 'users', sync.uid, 'verrouVersion', 'courant'), { versionMinimale: min, activeLe: serverTimestamp(), date: new Date().toISOString() });
+    await poserJetonEcriture(b);
+    await b.commit();
+    if (verrou.uid === sync.uid && min > verrou.versionMinimale) { verrou.versionMinimale = min; verrou.confirme = null; persisterVerrou(); }
+    if (!((DB.schemaDonnees || 0) >= SCHEMA_VERROU_VERSION)) { DB.schemaDonnees = SCHEMA_VERROU_VERSION; saveData(DB); }
+    else syncAllToCloud(DB).catch(e => console.error('Verrou de version : envoi', e));
+    for (let i = 0; i < 15; i++) {
+      const r = await window.OvilogSync.verrouConfirmeServeur();
+      if (r.ok) return r;
+      await new Promise(res => setTimeout(res, 700));
+    }
+    return { ok: false, raison: 'le serveur ne confirme pas encore le verrou (réseau ?) : rien n\'est converti' };
+  },
   // réglages administrateur du compte (chantiers en test) : { connu, data } ; écriture réservée à l'administrateur (règle Firestore aussi)
   reglagesAdmin() { return { connu: reglagesAdmin.connu && reglagesAdmin.uid === sync.uid, data: Object.assign({}, reglagesAdmin.data) }; },
   async ecrireReglagesAdmin(champs) {
