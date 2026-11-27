@@ -116,7 +116,7 @@ await page.click('#add-lamb-rapide'); await page.click('.sexe-opt-rapide[data-id
 await page.click('.remove-lamb-rapide[data-id="1"]');
 eq(await page.evaluate(() => document.querySelectorAll('.mb-ag').length), 1, 'Retirer cet agneau');
 await page.click('#btn-valider-misebas'); await page.waitForSelector('#mb-confirmation');
-eq([(await ag(102)).length, (await ag(103)).length, await page.evaluate(() => misebasRapideCount)], [1, 1, 2], 'deux mises bas enchaînées, compteur de session 2');
+eq([(await ag(102)).length, (await ag(103)).length, await page.evaluate(() => nbMisesBasSeance())], [1, 1, 2], 'deux mises bas enchaînées, compteur de session 2');
 check((await ag(103))[0].lambs[0].eid === L_(2) && (await ag(103))[0].lambs[0].sanitaire.length === 0, 'EID de l\'agneau enregistré, sans soin d\'office');
 
 // ================================================================ 6. blocage rouge : déjà mis bas

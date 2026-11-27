@@ -3228,6 +3228,7 @@ function saveData(data) {
     return false;
   }
 }
+saveData.ecritStockage = true;   // saisies sans perte : seul un vrai saveData permet de relire le stockage (les tests qui le remplacent ne relisent que la base)
 let DB = loadData();
 
 /* ---------- Registre d'élevage réglementaire (conditionnalité PAC) ----------
@@ -15414,6 +15415,81 @@ function renderAddAgnelage(sheepId) {
   };
 }
 
+/* ---------- Saisies sans perte (chantier du 27/11) ----------
+   Une saisie n'écrit JAMAIS dans une fiche gardée à l'écran : au moment d'« Enregistrer », la fiche est relue dans la base par son id (ou son
+   EID), l'élément y est ajouté (ou remplacé, même id), puis la base ET le stockage de l'appareil sont relus pour vérifier qu'il y est. Échec =
+   message bloquant « non enregistrée » avec « Réessayer » ; la vibration et la confirmation ne viennent qu'après cette vérification.
+   Journal de séance propre à l'appareil (bip, création, enregistrement, correction, passée), exportable, comparé à la base en fin de séance. */
+function ficheDeBase(col, ficheId, eid) {
+  const l = (DB && DB[col]) || [];
+  return l.find(f => f && ficheId != null && f.id === ficheId) || (eid ? l.find(f => f && f.eid && cleanEid(f.eid) === cleanEid(eid)) : null) || null;
+}
+function ficheStockee(col, ficheId, eid) {
+  if (!(saveData && saveData.ecritStockage)) return undefined;   // saveData remplacé (tests) : le stockage n'est pas relu
+  try {
+    const st = JSON.parse(localStorage.getItem(DB_KEY) || 'null');
+    const l = (st && st[col]) || [];
+    return l.find(f => f && ficheId != null && f.id === ficheId) || (eid ? l.find(f => f && f.eid && cleanEid(f.eid) === cleanEid(eid)) : null) || null;
+  } catch (e) { return null; }
+}
+// o = { col, ficheId, eid, appliquer(fiche), verifier(fiche) } -> { ok, fiche } ou { ok: false, raison }
+function ecrireSaisieVerifiee(o) {
+  const fiche = ficheDeBase(o.col, o.ficheId, o.eid);
+  if (!fiche) return { ok: false, raison: 'fiche introuvable dans la base' };
+  try { o.appliquer(fiche); } catch (e) { console.error('Saisie : écriture impossible', e); return { ok: false, raison: 'écriture impossible' }; }
+  if (saveData(DB) === false) return { ok: false, raison: 'enregistrement refusé par l\'appareil' };
+  const relue = ficheDeBase(o.col, o.ficheId, o.eid);
+  if (!relue || !o.verifier(relue)) return { ok: false, raison: 'absente de la base après l\'enregistrement' };
+  const stockee = ficheStockee(o.col, relue.id, relue.eid);
+  if (stockee !== undefined && (!stockee || !o.verifier(stockee))) return { ok: false, raison: 'absente du stockage de l\'appareil' };
+  return { ok: true, fiche: relue };
+}
+// Vérification après une écriture faite sur place (fiche relue par son id juste avant) : null si l'élément est dans la base ET le stockage, sinon la raison
+function verifierApresSaisie(col, fiche, verifier) {
+  const relue = fiche && ficheDeBase(col, fiche.id, fiche.eid);
+  if (!relue || !verifier(relue)) return 'absente de la base après l\'enregistrement';
+  const st = ficheStockee(col, relue.id, relue.eid);
+  if (st !== undefined && (!st || !verifier(st))) return 'absente du stockage de l\'appareil';
+  return null;
+}
+function vibrerConfirmation() { try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) { /* ignoré */ } }
+// Échec vérifié : message bloquant (rouge : vraie alerte), « Réessayer » en vert ; « Laisser de côté » ne ferme qu'en connaissance de cause
+function alerteSaisieNonEnregistree(titre, texte, reessayer, laisser) {
+  document.getElementById('saisie-non-enregistree')?.remove();
+  const ov = document.createElement('div');
+  ov.className = 'sheet-overlay'; ov.id = 'saisie-non-enregistree';
+  ov.innerHTML = `<div class="sheet-card" role="alertdialog" aria-labelledby="sne-titre">
+      <div id="sne-titre" style="font-weight:700;font-size:16px;margin-bottom:6px;color:var(--ch-rouge);">${echapperHtml(titre)}</div>
+      <div style="font-size:14px;color:var(--ch-texte2);margin-bottom:14px;">${echapperHtml(texte)}</div>
+      <button type="button" class="btn btn-primary" id="sne-reessayer">Réessayer</button>
+      <button type="button" class="btn btn-secondary" id="sne-laisser" style="margin-top:8px;">Laisser de côté</button>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#sne-reessayer').onclick = () => { ov.remove(); reessayer(); };
+  ov.querySelector('#sne-laisser').onclick = () => { ov.remove(); if (laisser) laisser(); };
+}
+// Journal des séances (propre à l'appareil, jamais synchronisé) : les 10 dernières séances
+const CLE_JOURNAL_SEANCES = 'ovilog_journal_seances';
+function lireJournauxSeances() { try { const l = JSON.parse(localStorage.getItem(CLE_JOURNAL_SEANCES) || '[]'); return Array.isArray(l) ? l : []; } catch (e) { return []; } }
+function persisterJournalSeance(seance) {
+  if (!seance || !seance.id) return;
+  try {
+    const l = lireJournauxSeances().filter(x => x && x.id !== seance.id);
+    l.unshift({ id: seance.id, ecran: seance.ecran, debut: seance.debut, date: seance.date, campagne: seance.campagne, journal: seance.journal });
+    localStorage.setItem(CLE_JOURNAL_SEANCES, JSON.stringify(l.slice(0, 10)));
+  } catch (e) { console.error('Journal de séance : écriture impossible', e); }
+}
+function noterJournalSeance(seance, entree) {
+  if (!seance || !seance.id) return;
+  seance.journal = seance.journal || [];
+  seance.journal.push(Object.assign({ t: new Date().toISOString() }, entree));
+  persisterJournalSeance(seance);
+}
+async function exporterJournalSeance(seance) {
+  const nom = 'journal_seance_' + (seance.ecran || 'saisie') + '_' + (seance.date || jourAujourdhuiISO()) + '_' + String(seance.id || '').slice(-6) + '.json';
+  await saveOrShareBinaryFile(nom, new TextEncoder().encode(JSON.stringify({ id: seance.id, ecran: seance.ecran, debut: seance.debut, date: seance.date, campagne: seance.campagne, journal: seance.journal || [] }, null, 2)), 'application/json');
+}
+
 /* ---------- Saisie rapide d'échographies (boucle scan → résultat) ----------
    1) On choisit le type d'échographie une seule fois pour toute la session.
    2) Boucle : scan → résumé de la brebis + champs de résultat pour ce type
@@ -15433,9 +15509,81 @@ function renderAddAgnelage(sheepId) {
    la page de sélection du type"). Réinitialisée uniquement quand l'écran
    d'accueil (ou tout autre écran) est explicitement quitté vers autre chose
    ET qu'on revient plus tard : voir resetEchoRapideSession(). */
-const echoRapideSessionVide = () => ({ demarree: false, resultMethod: 'stade', comptageMode: 'exact', count: 0, pleines: 0, vides: 0, dernierEcho: false, campagne: null, lot: 'tous', date: null });
+const echoRapideSessionVide = () => ({ demarree: false, resultMethod: 'stade', comptageMode: 'exact', dernierEcho: false, campagne: null, lot: 'tous', date: null, id: null, ecran: 'echo', debut: null, journal: [], ecrites: [] });
 let echoRapideSession = echoRapideSessionVide();
 function resetEchoRapideSession() { echoRapideSession = echoRapideSessionVide(); }
+// Fin de séance avec des écarts : liste en ROUGE (vraie alerte) avant de fermer ; « Réenregistrer » remet les échos du journal (vérifiées)
+function afficherControleFinSeanceEcho(ctl, terminer, continuer) {
+  afficherControleFinSeance({ seance: echoRapideSession, quoi: 'écho', quois: 'échos', bipeSans: 'sans écho enregistrée', controler: () => controleFinSeanceEcho(), reecrire: reecrireDepuisJournalEcho, texte: j => j.contenu ? (j.contenu.stade || j.contenu.special || '') : '' }, ctl, terminer, continuer);
+}
+function afficherControleFinSeance(o, ctl, terminer, continuer) {
+  document.getElementById('fin-seance-echo')?.remove();
+  const ov = document.createElement('div');
+  ov.className = 'sheet-overlay'; ov.id = 'fin-seance-echo';
+  const ligne = j => `<li>${echapperHtml(numeroAnimal(j.eid))}${o.texte(j) ? ' : ' + echapperHtml(o.texte(j)) : ''}</li>`;
+  const n = ctl.manquantes.length, b = ctl.sansResultat.length;
+  ov.innerHTML = `<div class="sheet-card" role="alertdialog" aria-labelledby="fse-titre">
+      <div id="fse-titre" style="font-weight:700;font-size:16px;margin-bottom:6px;color:var(--ch-rouge);">Vérifiez avant de terminer</div>
+      ${n ? `<div id="fse-manquantes" style="color:var(--ch-rouge);font-size:14px;margin-bottom:10px;"><b>${n} ${n > 1 ? o.quois : o.quoi} enregistrée${n > 1 ? 's' : ''} absente${n > 1 ? 's' : ''} de la base</b><ul style="margin:4px 0 0 18px;padding:0;">${ctl.manquantes.map(ligne).join('')}</ul></div>` : ''}
+      ${b ? `<div id="fse-sans-resultat" style="color:var(--ch-rouge);font-size:14px;margin-bottom:10px;"><b>${b} brebis bipée${b > 1 ? 's' : ''} ${o.bipeSans}</b><ul style="margin:4px 0 0 18px;padding:0;">${ctl.sansResultat.map(ligne).join('')}</ul></div>` : ''}
+      ${n ? `<button type="button" class="btn btn-primary" id="fse-reecrire">Réenregistrer les ${o.quois} manquantes</button>` : ''}
+      <button type="button" class="btn btn-secondary" id="fse-continuer" style="margin-top:8px;">Continuer la séance</button>
+      <button type="button" class="btn btn-secondary" id="fse-terminer" style="margin-top:8px;">Terminer quand même</button>
+    </div>`;
+  document.body.appendChild(ov);
+  const r = ov.querySelector('#fse-reecrire');
+  if (r) r.onclick = () => {
+    ctl.manquantes.forEach(j => { if (o.reecrire(j).ok) noterJournalSeance(o.seance, { action: 'reecrit', eid: j.eid, ficheId: j.ficheId, elementId: j.echoId || j.elementId }); });
+    ov.remove();
+    const ctl2 = o.controler();
+    if (ctl2.manquantes.length || ctl2.sansResultat.length) afficherControleFinSeance(o, ctl2, terminer, continuer); else { messageCharte('Saisies réenregistrées', 'Toutes les saisies de la séance sont dans la base.'); continuer(); }
+  };
+  ov.querySelector('#fse-continuer').onclick = () => { ov.remove(); continuer(); };
+  ov.querySelector('#fse-terminer').onclick = () => { ov.remove(); terminer(); };
+}
+/* Compteurs de la séance d'écho calculés d'après la BASE : échos écrites pendant la séance (ecrites : fiche + id de l'écho), relues à chaque
+   affichage ; une écho absente de la base n'est jamais comptée. Pleines = un stade autre que Vide ; un cas particulier seul ne compte ni l'un ni l'autre. */
+function echoSeanceEnBase(e) {
+  const f = ficheDeBase('brebis', e.ficheId, e.eid);
+  return f ? (f.echographies || []).find(x => x && x.id === e.echoId) || null : null;
+}
+function compteursSeanceEcho(seance) {
+  seance = seance || echoRapideSession;
+  let pleines = 0, vides = 0, enregistrees = 0;
+  (seance.ecrites || []).forEach(e => {
+    const ec = echoSeanceEnBase(e);
+    if (!ec) return;
+    enregistrees++;
+    if (ec.stade === 'Vide') vides++; else if (ec.stade) pleines++;
+  });
+  return { pleines, vides, enregistrees };
+}
+/* Contrôle de fin de séance : journal comparé à la base. manquantes = échos enregistrées (puis vérifiées) que la base n'a plus ; sansResultat =
+   brebis bipées qui n'ont aucune écho à la date de la séance (passées, abandonnées ou perdues). */
+function controleFinSeanceEcho(seance) {
+  seance = seance || echoRapideSession;
+  const derniere = new Map();
+  (seance.journal || []).forEach(j => { if ((j.action === 'enregistre' || j.action === 'modifie') && j.echoId) derniere.set(j.ficheId + '|' + j.echoId, j); });
+  const manquantes = [];
+  derniere.forEach(j => {
+    const ec = echoSeanceEnBase(j);
+    if (!ec || (j.contenu && (ec.stade || null) !== (j.contenu.stade || null))) manquantes.push(j);
+  });
+  const bipees = new Map();
+  (seance.journal || []).forEach(j => { if (j.action === 'bip' && j.eid) bipees.set(cleanEid(j.eid), j); });
+  const sansResultat = [];
+  bipees.forEach((j, k) => {
+    const f = ficheDeBase('brebis', j.ficheId, j.eid);
+    if (!f || !(f.echographies || []).some(x => x && x.date === seance.date)) sansResultat.push(j);
+  });
+  return { manquantes, sansResultat };
+}
+// « Réenregistrer » depuis le journal : l'écho notée est remise sur sa fiche (même id), vérifiée comme une saisie
+function reecrireDepuisJournalEcho(j) {
+  return ecrireSaisieVerifiee({ col: 'brebis', ficheId: j.ficheId, eid: j.eid,
+    appliquer: f => { f.echographies = f.echographies || []; const i = f.echographies.findIndex(x => x && (x.id === j.echoId || x.date === j.contenu.date)); const e = Object.assign({}, j.contenu, { id: j.echoId }); if (i >= 0) f.echographies[i] = e; else f.echographies.push(e); },
+    verifier: f => (f.echographies || []).some(x => x && x.id === j.echoId && (x.stade || null) === (j.contenu.stade || null)) });
+}
 /* Session d'échographies (mobile) : filtre « Lot » (Toutes les brebis, Monte naturelle, lots IA / Éponge de la campagne). Le filtre n'empêche rien : une brebis scannée hors du lot est
    signalée (alerte), jamais refusée. « Précédente » : dernière échographie de la brebis par DATE RÉELLE. */
 function echoLotsSession() {
@@ -15518,6 +15666,11 @@ function renderEchoRapide() {
     document.getElementById('btn-start-echo-session').onclick = () => {
       if (!confirmerCampagneEcho(echoRapideSession.campagne, () => document.getElementById('btn-start-echo-session').click())) return;
       echoRapideSession.demarree = true;
+      echoRapideSession.id = 'se' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      echoRapideSession.debut = new Date().toISOString();
+      echoRapideSession.date = echoRapideSession.date || jourAujourdhuiISO();
+      echoRapideSession.journal = []; echoRapideSession.ecrites = [];
+      persisterJournalSeance(echoRapideSession);
       screenLoop();
     };
     document.getElementById('btn-historique-echo').onclick = () => render('historique-echo');
@@ -15529,10 +15682,26 @@ function renderEchoRapide() {
     let conflitEid = null; // EID absent de DB.brebis mais déjà utilisé ailleurs (voir verifierEidUnique) : bloque la création plutôt que de créer une brebis fantôme
     let candidatsAmbigus = null; // numéro d'ordre partagé par plusieurs brebis : l'éleveur doit choisir (voir trouverUnParEidOuNumero)
     let stade = null, agneaux = null, nombreAgneaux = null, parasit = false, special = null;
+    let dejaPassee = null, enModif = false;   // re-bip : écho déjà saisie à la date de la séance ; « Modifier » la remplace (même id)
+    let confirmation = '';
+    const dateSeance = () => echoRapideSession.date || jourAujourdhuiISO();
+    const echoDuJour = (f) => (f && f.echographies || []).find(e => e && e.date === dateSeance()) || null;
 
     function resetResult() {
       currentSheep = null; unknownEid = null; conflitEid = null; candidatsAmbigus = null;
       stade = null; agneaux = null; nombreAgneaux = null; parasit = false; special = null;
+      dejaPassee = null; enModif = false;
+    }
+    // brebis bipée : jamais gardée telle quelle, relue dans la base par son id
+    function choisirBrebis(sheep) {
+      resetResult();
+      currentSheep = sheep;
+      dejaPassee = echoDuJour(sheep);
+      noterJournalSeance(echoRapideSession, { action: 'bip', eid: sheep.eid, ficheId: sheep.id, dejaPassee: !!dejaPassee });
+    }
+    function libelleEcho(e) {
+      const n = e.nombreAgneaux, nb = n ? (n >= 4 ? '4 agneaux et plus' : n + ' agneau' + (n > 1 ? 'x' : '')) : e.agneaux === 'Simple' ? '1 agneau' : e.agneaux === 'Double' ? '2 et plus' : null;
+      return [e.stade || e.special || (e.parasitisme ? 'Parasitisme' : '—'), nb, e.stade && e.special ? e.special : null, e.parasitisme && (e.stade || e.special) ? 'parasitisme' : null].filter(Boolean).join(' · ');
     }
 
     function clearGroup(sel) {
@@ -15628,6 +15797,13 @@ function renderEchoRapide() {
     }
 
     function resultFieldsHtml() {
+      if (dejaPassee && !enModif) return `
+        <div class="card" id="carte-echo-brebis" data-brebis-trouvee>
+          <div style="font-size:20px;font-weight:700;color:var(--ch-vert-fonce);margin-bottom:6px;">${echapperHtml(numeroAnimal(currentSheep.eid))}</div>
+          <div class="info" id="echo-deja-passee" style="color:var(--ch-ambre-texte);background:var(--ch-ambre-pastel);border-radius:12px;padding:8px 12px;margin-bottom:10px;">Déjà passée le ${formatDateFr(dejaPassee.date)} : ${echapperHtml(libelleEcho(dejaPassee))}</div>
+          <button type="button" class="btn btn-secondary" id="btn-modifier-echo">Modifier</button>
+          ${infoLigneHtml('Modifier remplace cette écho ; le compteur ne change pas.')}
+        </div>`;
       const prec = echoPrecedenteBrebis(currentSheep);
       const alerteLot = echoBrebisDansLot(currentSheep, echoRapideSession.lot) ? '' : `<div class="info" id="alerte-lot-echo" style="color:var(--ch-ambre-texte);background:var(--ch-ambre-pastel);border-radius:12px;padding:8px 12px;margin-bottom:10px;">n°${numeroVisuel(currentSheep.eid)} n'est pas dans le lot « ${echapperHtml((echoLotsSession().find(o => o.val === echoRapideSession.lot) || { label: '' }).label)} ».</div>`;
       return `
@@ -15664,6 +15840,7 @@ function renderEchoRapide() {
     }
 
     function draw() {
+      if (currentSheep) currentSheep = ficheDeBase('brebis', currentSheep.id, currentSheep.eid) || currentSheep;
       pageTitle.textContent = 'Échographies — ' + typeLabel();
       const unknownHtml = conflitEid ? `
         <div style="background:var(--coral-bg);border-radius:var(--radius);padding:16px;margin-bottom:12px;">
@@ -15695,12 +15872,13 @@ function renderEchoRapide() {
           <div id="echo-ambigu-candidats" style="font-size:13px;"></div>
         </div>
       ` : '';
-      const count = echoRapideSession.count;
-      const reussite = echoRapideSession.pleines + echoRapideSession.vides > 0 ? fmtDecimal(echoRapideSession.pleines / (echoRapideSession.pleines + echoRapideSession.vides) * 100, 1) + ' %' : '—';
+      const cpt = compteursSeanceEcho();
+      const count = cpt.enregistrees;
+      const reussite = cpt.pleines + cpt.vides > 0 ? fmtDecimal(cpt.pleines / (cpt.pleines + cpt.vides) * 100, 1) + ' %' : '—';
       app.innerHTML = `
         <div class="tuiles-charte" id="echo-tuiles">
-          <div class="tuile-charte vert"><div class="l">Pleines</div><div class="n" id="echo-n-pleines">${echoRapideSession.pleines}</div></div>
-          <div class="tuile-charte ambre"><div class="l">Vides</div><div class="n" id="echo-n-vides">${echoRapideSession.vides}</div></div>
+          <div class="tuile-charte vert"><div class="l">Pleines</div><div class="n" id="echo-n-pleines">${cpt.pleines}</div></div>
+          <div class="tuile-charte ambre"><div class="l">Vides</div><div class="n" id="echo-n-vides">${cpt.vides}</div></div>
           <div class="tuile-charte bleu"><div class="l">Réussite</div><div class="n" id="echo-n-reussite">${reussite}</div></div>
         </div>
         ${echoRapideSession.dernierEcho ? `<div style="display:flex;align-items:center;gap:10px;background:var(--ch-bleu-pastel);color:var(--ch-bleu);padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:14px;font-weight:600;">Dernière écho de la campagne — toute brebis "Vide" sera aussi marquée vide définitive</div>` : ''}
@@ -15708,12 +15886,14 @@ function renderEchoRapide() {
           <label>${currentSheep ? 'Prochaine brebis' : 'Brebis'}</label>
           <input type="text" id="scan-echo" placeholder="Scanner ou saisir l'EID" autofocus style="margin-bottom:0;">
         </div>
+        ${confirmation && !currentSheep ? `<div class="info" id="echo-confirme" style="color:var(--ch-vert-texte);background:var(--ch-vert-pastel);border-radius:12px;padding:8px 12px;margin-bottom:10px;">${echapperHtml(confirmation)}</div>` : ''}
         ${unknownHtml}
         ${ambiguHtml}
         ${currentSheep ? resultFieldsHtml() : ''}
-        ${currentSheep ? `<div class="mn-barre"><button type="button" class="btn btn-secondary" id="btn-passer-echo">Passer</button><button type="button" class="btn btn-primary" id="btn-valider-echo">Enregistrer et suivante</button></div>` : ''}
+        ${currentSheep ? `<div class="mn-barre${dejaPassee && !enModif ? ' une' : ''}"><button type="button" class="btn btn-secondary" id="btn-passer-echo">Passer</button>${dejaPassee && !enModif ? '' : `<button type="button" class="btn btn-primary" id="btn-valider-echo">${enModif ? 'Enregistrer la correction' : 'Enregistrer et suivante'}</button>`}</div>` : ''}
         <button type="button" class="btn btn-secondary" id="btn-fin-session-echo" style="margin-top:14px;">Terminer la session</button>
         <button type="button" class="btn btn-secondary" id="btn-historique-echo-loop" style="margin-top:10px;">Voir l'historique des échographies</button>
+        <button type="button" class="btn btn-secondary" id="btn-journal-echo" style="margin-top:10px;">Exporter le journal de la séance</button>
       `;
 
       const scanInput = document.getElementById('scan-echo');
@@ -15725,8 +15905,8 @@ function renderEchoRapide() {
       if (candidatsAmbigus) {
         renderCandidatsEidChips(candidatsAmbigus, document.getElementById('echo-ambigu-candidats'), (sheep) => {
           playBeepTrouve();
-          resetResult();
-          currentSheep = sheep;
+          confirmation = '';
+          choisirBrebis(sheep);
           draw();
         });
       }
@@ -15760,12 +15940,15 @@ function renderEchoRapide() {
           return;
         }
         playBeepTrouve();
-        resetResult();
-        currentSheep = r.item;
+        confirmation = '';
+        choisirBrebis(r.item);
         draw();
       });
+      document.getElementById('btn-journal-echo').onclick = () => exporterJournalSeance(echoRapideSession).catch(e => afficherErreurExport(e));
       document.getElementById('btn-fin-session-echo').onclick = () => {
-        const terminer = () => { resetEchoRapideSession(); render('home'); };
+        const terminer = () => { noterJournalSeance(echoRapideSession, { action: 'fin' }); resetEchoRapideSession(); render('home'); };
+        const ctl = controleFinSeanceEcho();
+        if (ctl.manquantes.length || ctl.sansResultat.length) { afficherControleFinSeanceEcho(ctl, terminer, () => draw()); return; }
         if (count > 0) questionCharte('Terminer la session ?', 'Session d\'échographies : ' + count + ' saisie' + (count > 1 ? 's' : '') + ' enregistrée' + (count > 1 ? 's' : '') + '. Vous pourrez en commencer une nouvelle à tout moment.', 'Terminer la session', 'Continuer la session', terminer);
         else terminer();
       };
@@ -15790,8 +15973,11 @@ function renderEchoRapide() {
           };
           DB.brebis.push(newSheep);
           saveData(DB);
+          if (!ficheDeBase('brebis', newSheep.id, newSheep.eid)) { alerteSaisieNonEnregistree('Brebis NON créée', 'La fiche de ' + numeroAnimal(eidFormatted) + ' n\'a pas été enregistrée.', () => document.getElementById('btn-create-unknown') && document.getElementById('btn-create-unknown').click()); return; }
+          noterJournalSeance(echoRapideSession, { action: 'creation', eid: eidFormatted, ficheId: newSheep.id });
+          const creee = ficheDeBase('brebis', newSheep.id, newSheep.eid);
           unknownEid = null;
-          currentSheep = newSheep;
+          choisirBrebis(creee);
           draw();
         };
       }
@@ -15803,7 +15989,17 @@ function renderEchoRapide() {
         };
       }
 
-      if (currentSheep) {
+      if (currentSheep && dejaPassee && !enModif) {
+        document.getElementById('btn-modifier-echo').onclick = () => {
+          const e = dejaPassee;
+          enModif = true;
+          stade = e.stade || null; special = e.special || null; parasit = !!e.parasitisme;
+          agneaux = e.agneaux || null; nombreAgneaux = e.nombreAgneaux || null;
+          draw();
+        };
+        document.getElementById('btn-passer-echo').onclick = () => { noterJournalSeance(echoRapideSession, { action: 'passe', eid: currentSheep.eid, ficheId: currentSheep.id }); resetResult(); draw(); };
+      }
+      if (currentSheep && !(dejaPassee && !enModif)) {
         renderStadeButtons();
         renderSpecialChips();
         updateComptageVisibility();
@@ -15823,7 +16019,7 @@ function renderEchoRapide() {
             btn.classList.add('active');
           };
         });
-        document.getElementById('btn-passer-echo').onclick = () => { resetResult(); draw(); };   // on passe à la brebis suivante sans rien enregistrer
+        document.getElementById('btn-passer-echo').onclick = () => { noterJournalSeance(echoRapideSession, { action: 'passe', eid: currentSheep.eid, ficheId: currentSheep.id }); resetResult(); draw(); };   // on passe à la brebis suivante sans rien enregistrer
 
         const btnValider = document.getElementById('btn-valider-echo');
         btnValider.onclick = () => {
@@ -15846,15 +16042,14 @@ function renderEchoRapide() {
             err.classList.remove('hidden');
             return;
           }
-          const dateEcho = echoRapideSession.date || jourAujourdhuiISO();
-          currentSheep.echographies = currentSheep.echographies || [];
-          if (currentSheep.echographies.some(e => e.date === dateEcho)) {
-            err.textContent = "Une échographie a déjà été saisie à cette date pour cette brebis — modifie-la depuis sa fiche si besoin.";
-            err.classList.remove('hidden');
-            return;
+          const dateEcho = dateSeance();
+          const fiche = ficheDeBase('brebis', currentSheep.id, currentSheep.eid);
+          const existante = echoDuJour(fiche);
+          if (existante && !enModif) {   // une écho est arrivée pour cette brebis entre-temps : on la montre, rien n'est écrasé
+            dejaPassee = existante; draw(); return;
           }
           btnValider.disabled = true; // évite un double-clic/double-tap qui rejouerait la validation
-          const echo = {
+          const contenu = {
             type: echoRapideSession.resultMethod,
             date: dateEcho,
             stade: stade,
@@ -15863,18 +16058,36 @@ function renderEchoRapide() {
             special: special, parasitisme: parasit,
             campagne: echoRapideSession.campagne
           };
-          currentSheep.echographies.push(echo);
-          // "Dernière écho de la campagne" cochée : une brebis notée "Vide"
-          // ici est vide définitive, pas juste vide "à cette écho" — pas de
-          // double saisie à faire (voir marquerVideDefinitive). Rattachée à
-          // la même campagne que l'écho de cette session (voir
-          // echoRapideSession.campagne), pas forcément DB.campagneDebut.
-          if (echoRapideSession.dernierEcho && stade === 'Vide') marquerVideDefinitive(currentSheep, echoRapideSession.campagne);
-          saveData(DB);
-          echoRapideSession.count++;
-          if (stade === 'Vide') echoRapideSession.vides++; else if (stade) echoRapideSession.pleines++;   // les cas particuliers ne comptent ni en pleines ni en vides
-          resetResult();
-          draw();
+          const echoId = existante && existante.id ? existante.id : idAleatoireElement();
+          const modif = !!existante;
+          const ficheId = currentSheep.id, eidB = currentSheep.eid;
+          const ecrire = () => {
+            const r = ecrireSaisieVerifiee({ col: 'brebis', ficheId, eid: eidB,
+              appliquer: f => {
+                f.echographies = f.echographies || [];
+                const i = f.echographies.findIndex(x => x && (x.id === echoId || (modif && x.date === dateEcho)));   // « Réessayer » rejoue la même écriture : jamais deux échos
+                if (i >= 0) f.echographies[i] = Object.assign({}, f.echographies[i], contenu, { id: f.echographies[i].id || echoId });
+                else f.echographies.push(Object.assign({ id: echoId }, contenu));
+                // "Dernière écho de la campagne" cochée : une brebis notée "Vide" ici est vide définitive (voir marquerVideDefinitive),
+                // rattachée à la campagne de la séance (echoRapideSession.campagne), pas forcément DB.campagneDebut.
+                if (echoRapideSession.dernierEcho && stade === 'Vide') marquerVideDefinitive(f, echoRapideSession.campagne);
+              },
+              verifier: f => (f.echographies || []).filter(x => x && x.date === dateEcho).length === 1 && (f.echographies || []).some(x => x && x.date === dateEcho && (x.stade || null) === (contenu.stade || null) && (x.special || null) === (contenu.special || null)) });
+            if (!r.ok) {
+              noterJournalSeance(echoRapideSession, { action: 'echec', eid: eidB, ficheId, raison: r.raison });
+              alerteSaisieNonEnregistree('Écho NON enregistrée', numeroAnimal(eidB) + ' : ' + r.raison + '. Réessayez avant de passer à la brebis suivante.', ecrire, () => { btnValider.disabled = false; });
+              return;
+            }
+            const ec = echoDuJour(r.fiche);
+            noterJournalSeance(echoRapideSession, { action: modif ? 'modifie' : 'enregistre', eid: eidB, ficheId: r.fiche.id, echoId: ec.id, contenu: Object.assign({}, contenu) });
+            if (!echoRapideSession.ecrites.some(x => x.ficheId === r.fiche.id && x.echoId === ec.id)) echoRapideSession.ecrites.push({ ficheId: r.fiche.id, eid: eidB, echoId: ec.id });
+            persisterJournalSeance(echoRapideSession);
+            vibrerConfirmation();
+            confirmation = numeroAnimal(eidB) + ' : ' + libelleEcho(ec) + (modif ? ' (corrigée)' : '') + ' enregistrée';
+            resetResult();
+            draw();
+          };
+          ecrire();
         };
       }
     }
@@ -16376,8 +16589,40 @@ function brancherHistoriqueEchosPc() {
 /* Compteur de session persisté au niveau module — voir echoRapideSession
    pour l'explication (une ré-entrée sur cet écran, ex: via le menu
    hamburger, reprend le compteur au lieu de le remettre à zéro). */
-let misebasRapideCount = 0;
-function resetMisebasRapideSession() { misebasRapideCount = 0; }
+// Séance de mises bas (saisies sans perte) : journal propre à l'appareil, compteur d'après la base (mises bas écrites puis vérifiées)
+const misebasSeanceVide = () => ({ id: null, ecran: 'misebas', debut: null, date: null, campagne: null, journal: [], ecrites: [] });
+let misebasSeance = misebasSeanceVide();
+function resetMisebasRapideSession() { misebasSeance = misebasSeanceVide(); }
+function demarrerSeanceMisebasSiBesoin() {
+  if (misebasSeance.id) return;
+  Object.assign(misebasSeance, { id: 'sm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), debut: new Date().toISOString(), date: jourAujourdhuiISO(), campagne: DB.campagneDebut });
+  persisterJournalSeance(misebasSeance);
+}
+function miseBasSeanceEnBase(e) {
+  const f = ficheDeBase('brebis', e.ficheId, e.eid);
+  return f ? (f.agnelages || []).find(a => a && a.id === e.elementId) || null : null;
+}
+function nbMisesBasSeance() { return (misebasSeance.ecrites || []).filter(e => miseBasSeanceEnBase(e)).length; }
+function controleFinSeanceMisebas() {
+  const derniere = new Map();
+  (misebasSeance.journal || []).forEach(j => {
+    if (j.action === 'enregistre' && j.elementId) derniere.set(j.elementId, j);
+    if (j.action === 'annule' && j.elementId) derniere.delete(j.elementId);
+  });
+  const manquantes = [...derniere.values()].filter(j => !miseBasSeanceEnBase(j));
+  const bipees = new Map();
+  (misebasSeance.journal || []).forEach(j => { if (j.action === 'bip' && j.eid) bipees.set(cleanEid(j.eid), j); });
+  const sansResultat = [...bipees.values()].filter(j => {
+    const f = ficheDeBase('brebis', j.ficheId, j.eid);
+    return !f || !agnelageDeCampagne(f, misebasSeance.campagne);
+  });
+  return { manquantes, sansResultat };
+}
+function reecrireDepuisJournalMisebas(j) {
+  return ecrireSaisieVerifiee({ col: 'brebis', ficheId: j.ficheId, eid: j.eid,
+    appliquer: f => { f.agnelages = f.agnelages || []; if (!f.agnelages.some(a => a && a.id === j.elementId)) f.agnelages.push(JSON.parse(JSON.stringify(j.contenu))); },
+    verifier: f => (f.agnelages || []).some(a => a && a.id === j.elementId) });
+}
 
 /* Tableau de consultation permanent (pas limité à la session de saisie en
    cours) des mises bas de la campagne active -- affiché sous le formulaire
@@ -16545,15 +16790,23 @@ function blocAvortementHtml(nb, traite, codeRepro, edition) {
 function modeMiseBasHtml(avortement) {
   return `<div class="tab-bar" id="mb-mode" role="group" aria-label="Mise bas ou avortement" style="margin-bottom:12px;">${[['mb', 'Mise bas'], ['avo', 'Avortement']].map(([v, l]) => `<button type="button" class="tab-btn mb-mode-btn${(v === 'avo') === !!avortement ? ' active' : ''}" data-val="${v}">${l}</button>`).join('')}</div>`;
 }
+// Saisies sans perte : la fiche est relue par son id au moment d'enregistrer, la mise bas y est ajoutée (une seule fois, même si l'on réessaie),
+// puis vérifiée dans la base et le stockage. Rend { ok, fiche, idx } ou { ok: false, raison }.
 function enregistrerMiseBas(sheep, agnelage) {
   if (typeof agnelage.saisieA !== 'number') agnelage.saisieA = Date.now();   // instant de l'enregistrement : ordre des listes de mises bas
-  appliquerTraiteAvortement(sheep, agnelage);
-  reporterPereIaSurAgneaux(sheep, agnelage);
-  sheep.agnelages = sheep.agnelages || [];
-  appliquerSoinsBouclage(agnelage.lambs, agnelage.date);   // agneaux bouclés à la saisie : soins réglés par l'éleveur
-  sheep.agnelages.push(agnelage);
-  saveData(DB);
-  return sheep.agnelages.length - 1;
+  if (!agnelage.id) agnelage.id = idAleatoireElement();
+  const r = ecrireSaisieVerifiee({ col: 'brebis', ficheId: sheep.id, eid: sheep.eid,
+    appliquer: f => {
+      f.agnelages = f.agnelages || [];
+      if (f.agnelages.some(a => a && a.id === agnelage.id)) return;   // « Réessayer » : déjà posée
+      appliquerTraiteAvortement(f, agnelage);
+      reporterPereIaSurAgneaux(f, agnelage);
+      appliquerSoinsBouclage(agnelage.lambs, agnelage.date);   // agneaux bouclés à la saisie : soins réglés par l'éleveur
+      f.agnelages.push(agnelage);
+    },
+    verifier: f => (f.agnelages || []).some(a => a && a.id === agnelage.id && (a.lambs || []).length === (agnelage.lambs || []).length) });
+  if (r.ok) r.idx = r.fiche.agnelages.findIndex(a => a && a.id === agnelage.id);
+  return r;
 }
 // Annulation d'une mise bas : un geste, SANS confirmation (mobile et PC)
 function annulerMiseBas(sheepId, agnelageIdx) {
@@ -16643,6 +16896,7 @@ function porteesAIdentifier(q) {
 // Écriture : { erreur } (rien d'écrit) ou { ok, eid, avant (copie de la fiche d'avant, pour Annuler), alerte }.
 // opts (facultatif) : { sexe: 'Mâle' | 'Femelle' (sexe corrigé), adopte, adoptNum (n° ou EID de la mère adoptive : brebis ACTIVE, jamais sa propre mère) } ; absent = inchangé.
 function identifierAgneau(sheep, agIdx, li, saisie, opts) {
+  sheep = sheep && (ficheDeBase('brebis', sheep.id, sheep.eid) || sheep);   // saisies sans perte : jamais une copie gardée à l'écran
   const ag = sheep && (sheep.agnelages || [])[agIdx], l = ag && (ag.lambs || [])[li];
   if (!l || !l.sexe || l.sexe === 'Mort-né' || cleanEid(l.eid || '') || agneauSorti(l)) return { erreur: "Cet agneau n'est plus à identifier." };
   const r = resoudreEidAgneau(saisie, ag.date);
@@ -16668,10 +16922,14 @@ function identifierAgneau(sheep, agIdx, li, saisie, opts) {
   ensureLambEntreeMouvement(l, ag.date);
   appliquerSoinsBouclage([l], ag.date);
   saveData(DB);
+  const pb = verifierApresSaisie('brebis', sheep, f => { const a = (f.agnelages || [])[agIdx], x = a && (a.lambs || [])[li]; return !!x && cleanEid(x.eid || '') === cleanEid(r.eid); });
+  if (pb) return { erreur: 'Agneau NON enregistré (' + pb + ') : appuyez de nouveau sur « Enregistrer ».' };
+  vibrerConfirmation();
   return { ok: true, eid: r.eid, avant, alerte: r.alerte || '' };
 }
 // Agneau mort avant d'être bouclé : même mort que « Déclarer mort » (date, cause facultative de la liste des agneaux) ; { erreur } ou { ok, avant } (Annuler : annulerIdentificationAgneau)
 function declarerMortAgneauSansNumero(sheep, agIdx, li, date, cause) {
+  sheep = sheep && (ficheDeBase('brebis', sheep.id, sheep.eid) || sheep);
   const ag = sheep && (sheep.agnelages || [])[agIdx], l = ag && (ag.lambs || [])[li];
   if (!l || !l.sexe || l.sexe === 'Mort-né' || cleanEid(l.eid || '') || agneauSorti(l)) return { erreur: "Cet agneau n'est plus à identifier." };
   if (!date) return { erreur: 'Choisis la date de la mort.' };
@@ -16682,6 +16940,8 @@ function declarerMortAgneauSansNumero(sheep, agIdx, li, date, cause) {
   l.mouvements.push({ type: 'Mort', cause: String(cause || '').trim() || 'Mort', acheteur: null, date });   // sans cause : « Mort » (affiché « Non renseignée »)
   l.statutFinal = 'mort';
   saveData(DB);
+  const pb = verifierApresSaisie('brebis', sheep, f => { const a = (f.agnelages || [])[agIdx], x = a && (a.lambs || [])[li]; return !!x && x.statutFinal === 'mort'; });
+  if (pb) return { erreur: 'Mort NON enregistrée (' + pb + ') : réessayez.' };
   return { ok: true, avant };
 }
 function annulerIdentificationAgneau(sheep, agIdx, li, avant) {
@@ -16876,6 +17136,8 @@ function renderMiseBasRapide() {
   const nosSaisis = () => (form ? form.lambs : []).filter(x => !x.mortNe && x.eid).map(x => x.eid);
   const agneauPropose = (saisis) => Object.assign(nouvelAgneau(), { eid: numeroBoucleSuivant(saisis) });
   const ouvrirFormulaire = (sheep) => {
+    demarrerSeanceMisebasSiBesoin();
+    noterJournalSeance(misebasSeance, { action: 'bip', eid: sheep.eid, ficheId: sheep.id });
     currentSheep = sheep;
     const situation = situationReproMiseBas(sheep, jourAujourdhuiISO());   // hors des fenêtres d'un lot IA / éponge : code à choisir (question)
     form = { date: jourAujourdhuiISO(), situation, codeRepro: situation.question ? null : situation.code, lambs: [agneauPropose([])], avortement: false, nbAvortons: '', traite: null };
@@ -17050,7 +17312,7 @@ function renderMiseBasRapide() {
         : '<p class="brd-note">Aucune mise bas enregistrée cette campagne.</p>';
       return `<div class="brd" id="pc-saisie-misebas">
         <div class="brd-head">
-          <div><h2 class="brd-title brd-doublon">Saisie de mises bas</h2><div class="brd-sub">Campagne ${campagneLabel(DB.campagneDebut)} · saisis le n° de la brebis, puis ses agneaux${misebasRapideCount > 0 ? ' · ' + misebasRapideCount + ' mise' + (misebasRapideCount > 1 ? 's' : '') + ' bas saisie' + (misebasRapideCount > 1 ? 's' : '') + ' dans cette session' : ''}</div></div>
+          <div><h2 class="brd-title brd-doublon">Saisie de mises bas</h2><div class="brd-sub">Campagne ${campagneLabel(DB.campagneDebut)} · saisis le n° de la brebis, puis ses agneaux${nbMisesBasSeance() > 0 ? ' · ' + nbMisesBasSeance() + ' mise' + (nbMisesBasSeance() > 1 ? 's' : '') + ' bas saisie' + (nbMisesBasSeance() > 1 ? 's' : '') + ' dans cette session' : ''}</div></div>
           <div class="brd-actions"><button type="button" class="btn btn-contour-vert" id="btn-fin-session-mb">Terminer la session</button></div>
         </div>
         ${kpis}
@@ -17107,8 +17369,13 @@ function renderMiseBasRapide() {
       draw();
     });
     document.getElementById('btn-fin-session-mb').onclick = () => {
-      const count = misebasRapideCount;
-      const terminer = () => { resetMisebasRapideSession(); render('home'); };
+      const count = nbMisesBasSeance();
+      const terminer = () => { noterJournalSeance(misebasSeance, { action: 'fin' }); resetMisebasRapideSession(); render('home'); };
+      const ctl = controleFinSeanceMisebas();
+      if (ctl.manquantes.length || ctl.sansResultat.length) {
+        afficherControleFinSeance({ seance: misebasSeance, quoi: 'mise bas', quois: 'mises bas', bipeSans: 'sans mise bas enregistrée cette campagne', controler: controleFinSeanceMisebas, reecrire: reecrireDepuisJournalMisebas, texte: () => '' }, ctl, terminer, () => draw());
+        return;
+      }
       if (count > 0) questionCharte('Terminer la session ?', 'Session de mises bas : ' + count + ' saisie' + (count > 1 ? 's' : '') + ' enregistrée' + (count > 1 ? 's' : '') + '. Vous pourrez en commencer une nouvelle à tout moment.', 'Terminer la session', 'Continuer la session', terminer);
       else terminer();
     };
@@ -17116,8 +17383,7 @@ function renderMiseBasRapide() {
     if (btnAnnulerDerniere) btnAnnulerDerniere.onclick = () => {
       // un geste, SANS confirmation
       const sh = findSheep(derniere.sheepId), idx = sh ? sh.agnelages.indexOf(derniere.ref) : -1;
-      if (idx !== -1) annulerMiseBas(derniere.sheepId, idx);
-      misebasRapideCount = Math.max(0, misebasRapideCount - 1);
+      if (idx !== -1) { annulerMiseBas(derniere.sheepId, idx); noterJournalSeance(misebasSeance, { action: 'annule', eid: sh.eid, ficheId: sh.id, elementId: derniere.ref.id }); }
       derniere = null; annulee = pc ? 'Mise bas annulée' : 'Saisie annulée';
       draw();
     };
@@ -17213,16 +17479,29 @@ function renderMiseBasRapide() {
           return;
         }
         dateFutureConfirmee = false;
+        currentSheep = ficheDeBase('brebis', currentSheep.id, currentSheep.eid) || currentSheep;   // jamais une copie gardée à l'écran
         const saisie = { date: form.date, codeRepro: form.codeRepro, lambs: form.lambs.map(l => ({ sexe: l.mortNe ? 'Mort-né' : l.sexe, sexeMortNe: l.mortNe ? (l.sexe || undefined) : undefined, cause: l.mortNe ? l.cause : undefined, eid: l.eid, adopte: l.adopte, adoptNum: l.adoptNum })) };
         const r = form.avortement ? construireAvortement(currentSheep, { date: form.date, nbAvortons: form.nbAvortons, traite: form.traite }) : construireAgnelageMiseBas(currentSheep, saisie);
         if (r.erreur) { err.textContent = r.erreur; err.classList.remove('hidden'); err.scrollIntoView && err.scrollIntoView({ block: 'center' }); return; }
         btnValider.disabled = true; // évite un double-tap qui rejouerait la validation
-        enregistrerMiseBas(currentSheep, r.agnelage);
-        misebasRapideCount++;
-        derniere = { sheepId: currentSheep.id, ref: r.agnelage, numero: numeroVisuel(currentSheep.eid), resume: resumeAgnelage(r.agnelage), avortement: !!r.agnelage.avortement };
-        annulee = null;
-        resetForm();
-        draw();
+        const brebis = currentSheep;
+        const ecrire = () => {
+          const res = enregistrerMiseBas(brebis, r.agnelage);
+          if (!res.ok) {
+            noterJournalSeance(misebasSeance, { action: 'echec', eid: brebis.eid, ficheId: brebis.id, raison: res.raison });
+            alerteSaisieNonEnregistree('Mise bas NON enregistrée', numeroAnimal(brebis.eid) + ' : ' + res.raison + '. Réessayez avant de passer à la brebis suivante.', ecrire, () => { btnValider.disabled = false; });
+            return;
+          }
+          noterJournalSeance(misebasSeance, { action: 'enregistre', eid: brebis.eid, ficheId: res.fiche.id, elementId: r.agnelage.id, contenu: JSON.parse(JSON.stringify(r.agnelage)) });
+          misebasSeance.ecrites.push({ ficheId: res.fiche.id, eid: brebis.eid, elementId: r.agnelage.id });
+          persisterJournalSeance(misebasSeance);
+          vibrerConfirmation();
+          derniere = { sheepId: res.fiche.id, ref: res.fiche.agnelages[res.idx], numero: numeroVisuel(brebis.eid), resume: resumeAgnelage(r.agnelage), avortement: !!r.agnelage.avortement };
+          annulee = null;
+          resetForm();
+          draw();
+        };
+        ecrire();
       };
     }
   }
@@ -17456,7 +17735,7 @@ function renderListeSerie() {
       const feedback = document.getElementById('scan-liste-feedback');
       scanInput.value = '';
       if (!val) return;
-      if (session.some(entry => entry.eid === val)) {
+      if ((DB.listeSerie || []).some(entry => entry.eid === val)) {
         playBeepDejaTrouve();
         feedback.textContent = numeroAnimal(val) + ' déjà dans la liste.';
         feedback.style.color = 'var(--warning)';
@@ -17464,8 +17743,13 @@ function renderListeSerie() {
       }
       playBeepTrouve();
       feedback.textContent = '';
-      session.push({ eid: val, espece: trouverAnimal(val) });
+      DB.listeSerie = DB.listeSerie || [];   // saisies sans perte : la liste de la base, jamais une copie gardée à l'écran
+      if (!DB.listeSerie.some(entry => entry.eid === val)) DB.listeSerie.push({ eid: val, espece: trouverAnimal(val) });
       saveData(DB);
+      let stocke = true;
+      if (saveData.ecritStockage) { try { stocke = (JSON.parse(localStorage.getItem(DB_KEY) || '{}').listeSerie || []).some(e => e && e.eid === val); } catch (e) { stocke = false; } }
+      if (!DB.listeSerie.some(e => e.eid === val) || !stocke) { alerteSaisieNonEnregistree('Animal NON ajouté à la liste', numeroAnimal(val) + ' n\'a pas été enregistré. Bipez-le de nouveau.', () => scanInput.focus()); return; }
+      vibrerConfirmation();
       draw();
     });
   }
@@ -22938,6 +23222,15 @@ function renderLotSearch(lotId) {
       }
       trouvees.add(clean);
       ecrireTrouveesLot(lot.id, trouvees);
+      // saisies sans perte : la trouvée est relue dans le stockage ; compteur et lignes repartent de ce qui y est réellement
+      const relues = lireTrouveesLot(lot.id);
+      if (!relues.has(clean)) {
+        trouvees.delete(clean); majLigne(clean); majCompteur();
+        alerteSaisieNonEnregistree('Trouvée NON enregistrée', numeroAnimal(clean) + ' n\'a pas été notée trouvée. Bipez-la de nouveau.', () => scanInput.focus());
+        return;
+      }
+      trouvees.clear(); relues.forEach(e => trouvees.add(e));
+      vibrerConfirmation();
       feedback.textContent = numeroAnimal(clean) + ' trouvée.';
       feedback.style.color = 'var(--green-fg)';
       const tr = majLigne(clean);
@@ -37693,6 +37986,21 @@ function getRecordsArrayForSync(colName, data) {
   if (colName === 'listesCompte') return champsListesCompte().map(c => listeCompteVersRecord(c, data[c]));
   return colName === 'registre' ? registreVersRecords(data) : data[colName];
 }
+/* Saisies sans perte (27/11) : une réception de synchro met à jour chaque fiche DÉJÀ présente SUR PLACE (même objet, contenu remplacé) au lieu
+   de la remplacer par une copie neuve. Un écran de saisie qui tient une fiche (brebis bipée, fiche ouverte…) écrit donc toujours dans la fiche
+   de la base : avant, l'écho saisie après une réception partait dans l'ancienne copie et se perdait sans message. Contenu identique à avant. */
+function garderIdentiteFiches(ancien, nouveau) {
+  if (!Array.isArray(ancien) || !Array.isArray(nouveau)) return nouveau;
+  const parId = new Map();
+  ancien.forEach(o => { if (o && typeof o === 'object' && o.id != null) parId.set(o.id, o); });
+  return nouveau.map(r => {
+    const o = r && typeof r === 'object' && r.id != null ? parId.get(r.id) : null;
+    if (!o || o === r) return r;
+    Object.keys(o).forEach(k => { if (!Object.prototype.hasOwnProperty.call(r, k)) delete o[k]; });
+    Object.assign(o, r);
+    return o;
+  });
+}
 function setRecordsArrayForSync(colName, arr) {
   if (colName === 'listesCompte') {
     // une liste absente du compte ne retire jamais celle de l'appareil (l'appli compte sur ces listes) : elle reste telle quelle
@@ -37700,7 +38008,7 @@ function setRecordsArrayForSync(colName, arr) {
     return;
   }
   if (colName === 'registre') appliquerRecordsRegistre(arr);
-  else DB[colName] = arr;
+  else DB[colName] = garderIdentiteFiches(DB[colName], arr);
   if (colName === 'evenementsLots') recalculerMembresLotsRepro();      // nouveaux événements reçus : le cache lot.membres suit le journal
 }
 
@@ -38166,6 +38474,7 @@ saveData = function(data) {
   }
   return true;
 };
+saveData.ecritStockage = true;
 
 /* Applique un changement reçu depuis Firestore (un autre appareil, ou notre
    propre écriture confirmée) : met à jour DB + le cache local + l'écran
@@ -38210,7 +38519,8 @@ function applyRemoteUpdate(mutatorFn) {
   }
 }
 window.__redessinSynchro = () => applyRemoteUpdate(() => {});      // même chemin qu'un instantané distant (utilisé par les tests de saisie)
-window.__appliquerSynchro = (mutatorFn) => applyRemoteUpdate(mutatorFn);   // idem, avec une donnée distante (tests de saisie pendant une synchro)
+window.__appliquerSynchro = (mutatorFn) => applyRemoteUpdate(mutatorFn);
+window.__recevoirFiches = (col, arr) => setRecordsArrayForSync(col, arr);   // tests : réception par le chemin réel (fiches mises à jour sur place)   // idem, avec une donnée distante (tests de saisie pendant une synchro)
 
 /* Report des instantanés Firestore pendant une opération groupée locale
    (voir operationGroupeeEnCours, posé par executerChangementCampagne) --

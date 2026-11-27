@@ -98,7 +98,7 @@ check(await page.evaluate(() => !document.querySelector('#special-list .chip.sel
 // Passer : rien n'est enregistré
 const avantPasser = await page.evaluate(() => window.__saves);
 await page.click('#btn-passer-echo');
-check(await page.evaluate((a) => !document.getElementById('carte-echo-brebis') && window.__saves === a && echoRapideSession.count === 1, avantPasser) && (await echos(101)).length === 0, 'Passer : brebis suivante sans rien enregistrer');
+check(await page.evaluate((a) => !document.getElementById('carte-echo-brebis') && window.__saves === a && compteursSeanceEcho().enregistrees === 1, avantPasser) && (await echos(101)).length === 0, 'Passer : brebis suivante sans rien enregistrer');
 // enregistrement complet : IA + 2 agneaux + parasitisme
 await saisir(E_(101));
 await page.waitForSelector('#carte-echo-brebis');
@@ -112,13 +112,22 @@ eq(await page.evaluate(() => [...document.querySelectorAll('#echo-tuiles .n')].m
 // cas particulier enregistré : ne compte ni pleine ni vide
 await saisir(E_(102)); await page.waitForSelector('#carte-echo-brebis');
 await page.click('#special-list .chip:has-text("Avortée")'); await page.click('#btn-valider-echo');
-await page.waitForFunction(() => echoRapideSession.count === 3);
+await page.waitForFunction(() => compteursSeanceEcho().enregistrees === 3);
 const e102 = (await echos(102))[0];
 eq([e102.special, e102.stade, e102.date], ['Avortée', null, '2026-10-01'], 'cas particulier enregistré sans stade');
 eq(await page.evaluate(() => [...document.querySelectorAll('#echo-tuiles .n')].map(n => n.textContent)), ['1', '1', '50,0 %'], 'un cas particulier ne compte ni en pleines ni en vides');
-// doublon à la même date
-await saisir(E_(101)); await page.waitForSelector('#carte-echo-brebis'); await page.click('.stade-opt[data-val="Milieu"]'); await page.click('#nombre-agneaux-group [data-val="1"]'); await page.click('#btn-valider-echo');
-check(/à cette date/.test(await page.evaluate(() => document.getElementById('err').textContent)) && (await echos(101)).length === 1, 'deux échos à la même date pour une brebis : refusé');
+// re-bip d'une brebis déjà passée : son résultat et « Modifier », qui remplace la MÊME écho (jamais une deuxième), compteur inchangé
+await saisir(E_(101)); await page.waitForSelector('#echo-deja-passee');
+check(/Déjà passée le 01\/10\/2026 : Milieu · 2 agneaux/.test(await page.textContent('#echo-deja-passee')) && !(await page.$('#btn-valider-echo')), 're-bip : résultat actuel affiché, pas d\'« Enregistrer » avant « Modifier »');
+const idAvant = (await echos(101))[0].id;
+await page.click('#btn-modifier-echo');
+check(await page.evaluate(() => document.querySelector('.stade-opt.active').dataset.val === 'Milieu'), '« Modifier » : résultat actuel pré-rempli');
+await page.click('.stade-opt[data-val="Fin"]'); await page.click('#nombre-agneaux-group [data-val="1"]'); await page.click('#btn-valider-echo');
+await page.waitForSelector('#echo-confirme');
+const e101b = await echos(101);
+eq([e101b.length, e101b[0].id, e101b[0].stade, e101b[0].nombreAgneaux, e101b[0].parasitisme], [1, idAvant, 'Fin', 1, true], '« Modifier » remplace la même écho (même id)');
+eq(await page.evaluate(() => [compteursSeanceEcho().enregistrees, [...document.querySelectorAll('#echo-tuiles .n')].map(n => n.textContent)]), [3, ['1', '1', '50,0 %']], 'correction : compteur inchangé');
+check(/corrigée/.test(await page.textContent('#echo-confirme')), 'confirmation après vérification');
 eq(dialogues, [], 'aucune boîte de dialogue pendant la saisie (campagne en cours)');
 console.log('OK : échographies rapides mobile (session, lot filtre + alerte, Précédente, comptage, puces, Passer, Enregistrer et suivante, dernière écho, tuiles).');
 await browser.close();

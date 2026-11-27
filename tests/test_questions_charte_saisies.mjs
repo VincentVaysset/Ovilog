@@ -17,7 +17,7 @@ await p.evaluate(() => {
   DB.brebis = [];
 });
 // 1. Terminer la session de mises bas : question, « Continuer » garde l'écran, « Terminer » ramène à l'Accueil
-await p.evaluate(() => { render('misebas-rapide'); misebasRapideCount = 2; });
+await p.evaluate(() => { render('misebas-rapide'); window.nbMisesBasSeance = () => 2; });   // compteur d'après la base (saisies sans perte) : 2 mises bas vérifiées
 await p.click('#btn-fin-session-mb');
 check(/Session de mises bas : 2 saisies enregistrées/.test(await p.textContent('#question-charte')), 'mises bas : question de la charte');
 await p.click('#qc-non');

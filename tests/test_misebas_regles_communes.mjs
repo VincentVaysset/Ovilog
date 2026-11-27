@@ -68,7 +68,7 @@ eq(await ev(() => resumeAgnelage({ lambs: [{ sexe: 'Mâle' }, { sexe: 'Mort-né'
 const e = await ev(() => {
   const s = DB.brebis.find(b => b.eid === E(3, 101)); const avant = window.__saves;
   const r = construireAgnelageMiseBas(s, { date: '2026-10-05', codeRepro: 'MN', lambs: [{ sexe: 'Mâle', eid: E(4, 1) }] });
-  const idx = enregistrerMiseBas(s, r.agnelage);
+  const idx = enregistrerMiseBas(s, r.agnelage).idx;
   const apres = { n: s.agnelages.length, saves: window.__saves - avant, bloque: controlesMiseBas(s, '2026-10-05').bloquants.length };
   window.confirm = () => { throw new Error('confirm interdit'); };
   const ok = annulerMiseBas(s.id, idx);
