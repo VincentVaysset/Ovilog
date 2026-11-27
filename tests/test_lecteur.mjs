@@ -319,7 +319,7 @@ const ROUGES = ['--ch-rouge', '--ch-rouge-pastel', '--danger'];
     await page.evaluate((k) => { parametresTab = k; render('parametres'); }, t);
     eq(await page.evaluate(() => document.getElementById('prm-lecteur-pc').textContent), 'Lecteur : mobile uniquement', 'PC Paramètres › ' + t + ' : une ligne « Lecteur : mobile uniquement »');
   }
-  eq(await page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].map(b => b.textContent)), ['Exploitation', 'Campagne', "Règles d'élevage", 'Listes', 'Imports', 'Synchro et sauvegarde'], 'PC : toujours 5 onglets, pas d\'onglet Lecteur');
+  eq(await page.evaluate(() => [...document.querySelectorAll('.tab-bar .tab-btn')].map(b => b.textContent)), ['Exploitation', 'Campagne', "Règles d'élevage", 'Listes', 'Imports', 'Synchro et sauvegarde', 'Administration'], 'PC : onglets habituels + Administration (verrou de version), pas d\'onglet Lecteur');
   check(await page.evaluate(() => !/Scanner|bip/i.test(document.getElementById('app').innerText)), 'PC : aucun libellé de scan ni de bip');
   await page.close();
 }
