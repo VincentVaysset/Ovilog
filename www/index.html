@@ -3217,16 +3217,23 @@ function controlerOctetsSauvegarde(bytes, data) {
    les futurs appelants qui voudraient réagir (ex: ne pas fermer une fiche de
    saisie si l'enregistrement a échoué) -- les appelants actuels ignorent
    cette valeur de retour, comportement inchangé pour eux. */
-function saveData(data) {
+function saveData(data, opts) {
   try {
     poserIdsElements(data, 'nouveau');   // lot 4 : un élément créé ici reçoit un id unique
-    localStorage.setItem(DB_KEY, JSON.stringify(data));
+    ecrireStockageVerifie(data);
     return true;
   } catch (e) {
     console.error('Échec de saveData (localStorage.setItem)', e);
-    alert('Échec de l\'enregistrement — vérifiez l\'espace de stockage de l\'appareil — réessayez ou exportez immédiatement vos données.');
+    if (!(opts && opts.silencieux)) alert('Échec de l\'enregistrement — vérifiez l\'espace de stockage de l\'appareil — réessayez ou exportez immédiatement vos données.');
     return false;
   }
+}
+/* Saisies sans perte : l'écriture du stockage de l'appareil est RELUE (même texte, octet pour octet) ; un écart lève une erreur, comme un
+   stockage plein. Seul point d'écriture de la base locale (les deux saveData). */
+function ecrireStockageVerifie(data) {
+  const texte = JSON.stringify(data);
+  localStorage.setItem(DB_KEY, texte);
+  if (localStorage.getItem(DB_KEY) !== texte) throw new Error('stockage relu différent de l\'écriture');
 }
 saveData.ecritStockage = true;   // saisies sans perte : seul un vrai saveData permet de relire le stockage (les tests qui le remplacent ne relisent que la base)
 let DB = loadData();
@@ -12007,8 +12014,11 @@ function erreursMouvementPc(E, animaux) {
   return err;
 }
 // Écriture d'un mouvement collectif : même chemin que l'écran mobile (applySortie de la catégorie + DB.mouvementsCollectifs). L'appelant a déjà validé et confirmé.
-function appliquerMouvementCollectifPc(p) {
+function appliquerMouvementCollectifPc(p, ensuite) {
   const cfg = CATEGORIE_ANIMAL_CONFIG[p.categorie];
+  // animaux relus dans la base au moment du geste (un agneau est un élément de la fiche de sa mère : jamais l'objet gardé à l'écran)
+  const vivants = new Map(animauxMouvementPc(p.categorie).map(a => [a.id, a]));
+  p = Object.assign({}, p, { animaux: p.animaux.map(a => vivants.get(a.id) || a) });
   const collectifId = 'MC-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
   const cause = cfg.motifsVente.includes(p.type) || p.type === 'Autoconsommation' ? null : (p.cause || null);
   const acheteur = cfg.motifsVente.includes(p.type) ? p.acheteur : null;
@@ -12016,7 +12026,7 @@ function appliquerMouvementCollectifPc(p) {
   p.animaux.forEach(a => cfg.applySortie(a.obj, p.type, cause, acheteur, p.date, collectifId));
   DB.mouvementsCollectifs = DB.mouvementsCollectifs || [];
   DB.mouvementsCollectifs.push({ id: collectifId, categorie: p.categorie, annulable: cfg.annulable, type: p.type, cause, acheteur, date: p.date, membres, createdAt: Date.now() });
-  saveData(DB);
+  enregistrerVerifie(ensuite, 'Mouvement', [[collectifId, 1], [collectifId, p.animaux.length, 'collectifId']]);
   return collectifId;
 }
 function recapMouvementPc(E, n) {
@@ -12126,10 +12136,11 @@ function renderMouvementsPc() {
     if (E.erreurs.length) { renderMouvementsPc(); const z = document.getElementById('mv-erreurs'); if (z) z.scrollIntoView({ block: 'nearest' }); return; }
     const msg = texteConfirmationMouvementPc(E, animaux);
     if (!confirm(msg)) return;
-    appliquerMouvementCollectifPc({ categorie: E.categorie, type: E.type, cause: E.cause, acheteur: E.acheteur, date: E.date, animaux });
-    const nb = animaux.length, cat = E.categorie, rec = recapMouvementPc(E, nb);
-    mvPcEtat = mvPcEtatInitial(); mvPcEtat.categorie = cat; mvPcEtat.message = messageEnregistreMouvementPc(rec);
-    renderMouvementsPc();
+    appliquerMouvementCollectifPc({ categorie: E.categorie, type: E.type, cause: E.cause, acheteur: E.acheteur, date: E.date, animaux }, () => {
+      const nb = animaux.length, cat = E.categorie, rec = recapMouvementPc(E, nb);
+      mvPcEtat = mvPcEtatInitial(); mvPcEtat.categorie = cat; mvPcEtat.message = messageEnregistreMouvementPc(rec);
+      renderMouvementsPc();
+    });
   };
   dessiner();
   if (typeof mouvementsPassesPcHtml === 'function') mouvementsPassesPcHtml($('mv-passes'));
@@ -13177,12 +13188,10 @@ function showLambSortieModal(lamb, type, onDone) {
     if (!date) { err.textContent = "Choisis une date."; err.classList.remove('hidden'); return; }
     if (isVendu && !acheteur) { err.textContent = "Sélectionne ou ajoute un acheteur."; err.classList.remove('hidden'); return; }
     if (!confirm((isVendu ? 'Confirmer la vente' : 'Confirmer la mort') + ' de l\'agneau ' + numeroAgneauTexte(lamb) + ' ?')) return;
-    lamb.mouvements = lamb.mouvements || [];
-    lamb.mouvements.push({ type: isVendu ? 'Vendu' : 'Mort', cause: isVendu ? null : (String(causeMort || '').trim() || 'Mort'), acheteur: isVendu ? acheteur : null, date });   // sans cause : « Mort » (affiché « Non renseignée »)
-    lamb.statutFinal = type;
-    saveData(DB);
-    document.body.removeChild(overlay);
-    onDone();
+    const lv = agneauVivant(lamb);   // agneau relu dans la fiche de sa mère au moment du geste
+    const mvt = placerElementFiche(lv, 'mouvements', { type: isVendu ? 'Vendu' : 'Mort', cause: isVendu ? null : (String(causeMort || '').trim() || 'Mort'), acheteur: isVendu ? acheteur : null, date }, null);   // sans cause : « Mort » (affiché « Non renseignée »)
+    lv.statutFinal = type;
+    enregistrerVerifie(() => { overlay.remove(); onDone(); }, isVendu ? 'Vente' : 'Mort', [[mvt.id, 1]]);
   };
 }
 
@@ -14865,11 +14874,10 @@ function renderAddEcho(sheepId) {
       // campagne actuelle.
       campagne: campagneChoisie
     };
-    if (editing) sheep.echographies[editContext.idx] = echo;
-    else sheep.echographies.push(echo);
+    const fv = ficheVivante('brebis', sheep);
+    if (!placerElementFiche(fv, 'echographies', echo, existing, editing ? editContext.idx : undefined)) { elementIntrouvableFiche('Écho'); return; }
     editContext = null;
-    saveData(DB);
-    render('detail', sheep.id);
+    enregistrerVerifie(() => render('detail', fv.id), 'Écho', [[echo.id, 1]]);
   };
 }
 
@@ -14968,12 +14976,10 @@ function renderAddNote(sheepId) {
   `;
 
   wireNoteForm(existing, (note) => {
-    sheep.notes = sheep.notes || [];
-    if (editing) sheep.notes[editContext.idx] = note;
-    else sheep.notes.push(note);
+    const fv = ficheVivante('brebis', sheep);
+    if (!placerElementFiche(fv, 'notes', note, existing, editing ? editContext.idx : undefined)) { elementIntrouvableFiche('Note'); return; }
     editContext = null;
-    saveData(DB);
-    render('detail', sheep.id);
+    enregistrerVerifie(() => render('detail', fv.id), 'Note', [[note.id, 1]]);
   });
 }
 
@@ -15437,7 +15443,7 @@ function ecrireSaisieVerifiee(o) {
   const fiche = ficheDeBase(o.col, o.ficheId, o.eid);
   if (!fiche) return { ok: false, raison: 'fiche introuvable dans la base' };
   try { o.appliquer(fiche); } catch (e) { console.error('Saisie : écriture impossible', e); return { ok: false, raison: 'écriture impossible' }; }
-  if (saveData(DB) === false) return { ok: false, raison: 'enregistrement refusé par l\'appareil' };
+  if (saveData(DB, { silencieux: true }) === false) return { ok: false, raison: 'enregistrement refusé par l\'appareil' };
   const relue = ficheDeBase(o.col, o.ficheId, o.eid);
   if (!relue || !o.verifier(relue)) return { ok: false, raison: 'absente de la base après l\'enregistrement' };
   const stockee = ficheStockee(o.col, relue.id, relue.eid);
@@ -15451,6 +15457,73 @@ function verifierApresSaisie(col, fiche, verifier) {
   const st = ficheStockee(col, relue.id, relue.eid);
   if (st !== undefined && (!st || !verifier(st))) return 'absente du stockage de l\'appareil';
   return null;
+}
+/* Écrans de saisie à formulaire (Carnet, mouvements, fiches, tri des agnelles, Lots PC) : la fiche est relue dans la base au moment du geste
+   (ficheVivante : même id, jamais une copie gardée à l'écran), l'élément y est écrit, puis enregistrerVerifie enregistre et relit le stockage ;
+   la suite (confirmation, vibration, changement d'écran) ne vient qu'après. Échec = message bloquant « … NON enregistrée » avec « Réessayer »,
+   qui ré-enregistre la base telle qu'elle est (la saisie n'est jamais refaite : jamais deux fois le même élément). */
+function ficheVivante(col, obj) {
+  if (!obj) return obj;
+  const l = (DB && DB[col]) || [];
+  if (l.includes(obj)) return obj;
+  return ficheDeBase(col, obj.id, obj.eid) || obj;
+}
+// attendus = [[id, n, clé?], …] : nombre d'éléments portant cet id (ou cette valeur de « clé », ex. collectifId) attendus dans la base enregistrée (n = 0 pour une suppression)
+function compterIdDansTexte(texte, id, cle) {
+  if (!texte || id === null || id === undefined) return 0;
+  const motif = '"' + (cle || 'id') + '":' + JSON.stringify(String(id));
+  let n = 0, i = texte.indexOf(motif);
+  while (i !== -1) { const c = texte[i + motif.length]; if (c === ',' || c === '}') n++; i = texte.indexOf(motif, i + motif.length); }
+  return n;
+}
+function enregistrerVerifie(ensuite, titre, attendus) {
+  const raison = (() => {
+    if (saveData(DB, { silencieux: true }) === false) return 'enregistrement refusé par l\'appareil';
+    if (!attendus || (Array.isArray(attendus) && !attendus.length)) return null;
+    let texte = null, ou = 'la base';
+    if (saveData.ecritStockage) { try { texte = localStorage.getItem(DB_KEY); ou = 'le stockage de l\'appareil'; } catch (e) { texte = null; } }
+    if (texte === null) texte = JSON.stringify(DB);
+    // vérification sur mesure : fonction appelée avec la base RELUE (stockage de l'appareil, sinon la base)
+    if (typeof attendus === 'function') { let relue = null; try { relue = JSON.parse(texte); } catch (e) { relue = null; } return relue && attendus(relue) ? null : 'absente de ' + ou; }
+    // n > 0 : au moins n (une copie peut aussi vivre au registre) ; n = 0 : aucune
+    for (const [id, n, cle] of attendus) { const c = compterIdDansTexte(texte, id, cle); if (n ? c < n : c !== 0) return n ? 'absente de ' + ou : 'encore dans ' + ou; }
+    return null;
+  })();
+  if (!raison) { vibrerConfirmation(); if (ensuite) ensuite(); return true; }
+  alerteSaisieNonEnregistree((titre || 'Saisie') + ' NON enregistrée', 'La saisie n\'a pas pu être vérifiée (' + raison + '). Réessayez ; la saisie n\'est jamais doublée.', () => enregistrerVerifie(ensuite, titre, attendus), null);
+  return false;
+}
+// Agneau relu dans la base (élément de la fiche de sa mère) : même objet s'il y est encore, sinon celui de même id ou de même EID
+function agneauVivant(lamb) {
+  if (!lamb) return lamb;
+  let trouve = null;
+  for (const s of (DB.brebis || [])) for (const ag of (s.agnelages || [])) for (const l of (ag.lambs || [])) {
+    if (l === lamb) return lamb;
+    if (!trouve && l && ((lamb.id && l.id === lamb.id) || (lamb.eid && l.eid && cleanEid(l.eid) === cleanEid(lamb.eid)))) trouve = l;
+  }
+  return trouve || lamb;
+}
+/* Saisie d'un formulaire de fiche (note, écho, contrôle, mouvement…) : l'élément est écrit dans la fiche VIVANTE (ajout, ou remplacement de
+   l'élément d'origine retrouvé par son id, jamais par sa seule place dans la liste) et garde l'id de l'élément d'origine. null si l'élément à
+   modifier n'est plus sur la fiche (rien n'est écrit). */
+function placerElementFiche(fiche, champ, element, existant, idxSecours) {
+  fiche[champ] = fiche[champ] || [];
+  const l = fiche[champ];
+  if (existant) {
+    let i = l.indexOf(existant);
+    if (i === -1 && existant.id) i = l.findIndex(x => x && x.id === existant.id);
+    if (i === -1 && Number.isInteger(idxSecours) && l[idxSecours] && texteIdentiteElement(l[idxSecours]) === texteIdentiteElement(existant)) i = idxSecours;
+    if (i === -1) return null;
+    element.id = l[i].id || existant.id || element.id || idAleatoireElement();
+    l[i] = element;
+  } else {
+    element.id = element.id || idAleatoireElement();
+    if (!l.some(x => x && x.id === element.id)) l.push(element);
+  }
+  return element;
+}
+function elementIntrouvableFiche(titre) {
+  messageCharte(titre + ' NON enregistrée', 'L\'élément à modifier n\'est plus sur la fiche (modifié ou supprimé sur un autre appareil). Rouvrez la fiche pour le voir tel qu\'il est.');
 }
 function vibrerConfirmation() { try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) { /* ignoré */ } }
 // Échec vérifié : message bloquant (rouge : vraie alerte), « Réessayer » en vert ; « Laisser de côté » ne ferme qu'en connaissance de cause
@@ -17876,23 +17949,33 @@ function renderAddControle(sheepId) {
       date: document.getElementById('f-date').value,
       campagne: DB.campagneDebut
     };
-    sheep.controleLaitier = sheep.controleLaitier || [];
-    const doublonIdx = controleLaitierCampagneIdx(sheep, record.controle, editing ? editContext.idx : undefined);
+    const fv = ficheVivante('brebis', sheep);   // fiche relue dans la base au moment du geste
+    fv.controleLaitier = fv.controleLaitier || [];
+    const cl = fv.controleLaitier;
+    let idxOrig;
+    if (editing) {
+      idxOrig = cl.indexOf(existing);
+      if (idxOrig === -1 && existing && existing.id) idxOrig = cl.findIndex(x => x && x.id === existing.id);
+      if (idxOrig === -1) { elementIntrouvableFiche('Contrôle'); return; }
+    }
+    const doublonIdx = controleLaitierCampagneIdx(fv, record.controle, editing ? idxOrig : undefined);
     if (doublonIdx !== -1) {
       // Remplace l'enregistrement en doublon plutôt que d'en créer un
       // second ; si on modifiait un AUTRE enregistrement que celui-ci
       // (numéro de contrôle changé vers un numéro déjà pris), l'original
       // est retiré pour ne pas se retrouver avec deux lignes après coup.
-      sheep.controleLaitier[doublonIdx] = record;
-      if (editing && editContext.idx !== doublonIdx) sheep.controleLaitier.splice(editContext.idx, 1);
+      record.id = cl[doublonIdx].id || idAleatoireElement();
+      cl[doublonIdx] = record;
+      if (editing && idxOrig !== doublonIdx) cl.splice(idxOrig, 1);
     } else if (editing) {
-      sheep.controleLaitier[editContext.idx] = record;
+      record.id = cl[idxOrig].id || idAleatoireElement();
+      cl[idxOrig] = record;
     } else {
-      sheep.controleLaitier.push(record);
+      record.id = idAleatoireElement();
+      cl.push(record);
     }
     editContext = null;
-    saveData(DB);
-    render('detail', sheep.id);
+    enregistrerVerifie(() => render('detail', fv.id), 'Contrôle', [[record.id, 1]]);
   };
 }
 
@@ -18542,9 +18625,11 @@ function renderAddMouvement(sheepId) {
     dateEntreeRef: premierMouvementDate(editing ? sheep.mouvements.filter((m, i) => i !== editContext.idx) : sheep.mouvements, ['Entrée']),
     erreurDateAnterieure: (dateMouvement, dateEntreeSheep) => "La date de sortie (" + formatDateFr(dateMouvement) + ") ne peut pas être antérieure à la date d'entrée de la brebis (" + formatDateFr(dateEntreeSheep) + ").",
     onSave: (mouvement) => {
-      sheep.mouvements = sheep.mouvements || [];
-      const statutAvant = sheep.statut || 'active';
-      const ancienMouvement = editing ? sheep.mouvements[editContext.idx] : null;
+      const fv = ficheVivante('brebis', sheep);   // fiche relue dans la base au moment du geste
+      fv.mouvements = fv.mouvements || [];
+      const statutAvant = fv.statut || 'active';
+      const avant = fv.mouvements.slice();
+      const ancienMouvement = editing ? existing : null;
       // Un mouvement issu d'une sortie groupée (Mouvement collectif, ou "Mise à
       // jour inventaire") porte un collectifId qui le rattache à
       // DB.mouvementsCollectifs -- sans le reporter ici, corriger juste la
@@ -18552,24 +18637,22 @@ function renderAddMouvement(sheepId) {
       // lot (retrouvable/annulable en masse) sans que rien ne le signale,
       // cassant sa traçabilité par rapport aux autres membres du même lot.
       if (ancienMouvement && ancienMouvement.collectifId) mouvement.collectifId = ancienMouvement.collectifId;
-      if (editing) sheep.mouvements[editContext.idx] = mouvement;
-      else sheep.mouvements.push(mouvement);
-      recalculerStatutBrebis(sheep);
+      if (!placerElementFiche(fv, 'mouvements', mouvement, ancienMouvement, editing ? editContext.idx : undefined)) { elementIntrouvableFiche('Mouvement'); return; }
+      recalculerStatutBrebis(fv);
       // Confirm() ciblé : uniquement si MODIFIER un mouvement existant change
       // réellement le statut qui en découle (ex: date corrigée qui fait
       // qu'une autre sortie devient la plus récente, type changé) -- jamais à
       // l'ajout d'un nouveau mouvement, ni sur une simple correction de cause
       // ou d'acheteur qui ne change rien au statut.
-      if (editing && sheep.statut !== statutAvant) {
-        if (!confirm('Modifier ce mouvement va faire passer le statut de la brebis ' + numeroAnimal(sheep.eid) + ' de "' + statutAvant + '" à "' + sheep.statut + '". Confirmer ?')) {
-          sheep.mouvements[editContext.idx] = ancienMouvement;
-          sheep.statut = statutAvant;
+      if (editing && fv.statut !== statutAvant) {
+        if (!confirm('Modifier ce mouvement va faire passer le statut de la brebis ' + numeroAnimal(fv.eid) + ' de "' + statutAvant + '" à "' + fv.statut + '". Confirmer ?')) {
+          fv.mouvements = avant;
+          fv.statut = statutAvant;
           return;
         }
       }
       editContext = null;
-      saveData(DB);
-      render('detail', sheep.id);
+      enregistrerVerifie(() => render('detail', fv.id), 'Mouvement', [[mouvement.id, 1]]);
     }
   });
 }
@@ -18671,16 +18754,17 @@ function showVendreAgnelleModal(ag, onDone) {
     const dateEntreeAg = premierMouvementDate(ag.mouvements, ['Entrée']);
     if (dateEntreeAg && date < dateEntreeAg) { err.textContent = "La date de vente (" + formatDateFr(date) + ") ne peut pas être antérieure à la date d'entrée de l'agnelle (" + formatDateFr(dateEntreeAg) + ")."; err.classList.remove('hidden'); return; }
     if (!confirm('Confirmer la vente de la n°' + numeroVisuel(ag.eid) + ' à ' + acheteur + ' ? Cette action est irréversible.')) return;
-    ag.mouvements = ag.mouvements || [];
-    ag.mouvements.push({ type: 'Vente', cause: null, acheteur, date });
-    ag.statut = 'vendue';
-    const lamb = findLambByEid(ag.eid);
+    const fv = ficheVivante('agnelles', ag);   // fiche relue dans la base au moment du geste
+    if (!(DB.agnelles || []).includes(fv)) { elementIntrouvableFiche('Vente'); return; }
+    fv.mouvements = fv.mouvements || [];
+    fv.mouvements.push({ type: 'Vente', cause: null, acheteur, date });
+    fv.statut = 'vendue';
+    const lamb = findLambByEid(fv.eid);
     if (lamb) lamb.statutFinal = 'vendu';
-    archiverDansRegistre('agnelles', ag.eid, { sanitaire: ag.sanitaire, mouvements: ag.mouvements });
-    DB.agnelles = DB.agnelles.filter(a => a.id !== ag.id);
-    saveData(DB);
-    document.body.removeChild(overlay);
-    onDone();
+    archiverDansRegistre('agnelles', fv.eid, { sanitaire: fv.sanitaire, mouvements: fv.mouvements });
+    DB.agnelles = DB.agnelles.filter(a => a.id !== fv.id);
+    enregistrerVerifie(() => { overlay.remove(); onDone(); }, 'Vente', b => !(b.agnelles || []).some(a => a && a.id === fv.id)
+      && !!(b.registre && b.registre.agnelles && b.registre.agnelles[fv.eid] && (b.registre.agnelles[fv.eid].mouvements || []).some(m => m && m.type === 'Vente' && m.date === date)));
   };
 }
 
@@ -18926,7 +19010,17 @@ function compteurTriAgnellesHtml(c) {
 }
 
 /* Actions de tri partagées PC / mobile (chantier de tri, partie e) -- Garder, Écarter, Reconsidérer, Revenir sur le tri : mêmes écritures que l'écran d'origine. */
+// Agneau relu dans la base enregistrée (texte du stockage parsé) par son EID
+function agneauDansBaseRelue(b, eid) {
+  for (const s of (b.brebis || [])) for (const ag of (s.agnelages || [])) for (const l of (ag.lambs || [])) if (l && l.eid && cleanEid(l.eid) === cleanEid(eid)) return l;
+  return null;
+}
+// Saisies sans perte : l'agneau est relu dans la fiche de sa mère au moment du geste ; rend la fiche d'agnelle seulement si l'écriture est
+// vérifiée (null sinon : message bloquant « NON enregistrée », Réessayer). Un 2e geste sur une agnelle déjà gardée rend sa fiche, jamais deux.
 function garderAgnelleTri(c) {
+  c.lamb = agneauVivant(c.lamb);
+  const deja = (DB.agnelles || []).find(a => a && a.eid && cleanEid(a.eid) === cleanEid(c.lamb.eid));
+  if (deja && c.lamb.triStatut === 'gardée') return enregistrerVerifie(null, 'Tri', [[deja.id, 1]]) ? deja : null;
   c.lamb.triStatut = 'gardée';
   const dateEntree = jourAujourdhuiISO();
   // Deux mouvements posés dès la création (naissance + entrée par tri) : sert au Registre PAC et reste exploitable même après suppression de la fiche.
@@ -18938,8 +19032,7 @@ function garderAgnelleTri(c) {
   if (c.lamb.pere && c.lamb.pereIa) { ag.pere = c.lamb.pere; ag.pereIa = Object.assign({}, c.lamb.pereIa); }   // le père de l'IA suit l'agnelle gardée
   DB.agnelles = DB.agnelles || [];
   DB.agnelles.push(ag);
-  saveData(DB);
-  return ag;
+  return enregistrerVerifie(null, 'Tri', [[ag.id, 1]]) ? ag : null;
 }
 // Revenir sur le tri d'une gardée : retourne de quoi la remettre EXACTEMENT (la fiche telle qu'elle était, sa place, l'état de l'agneau), pour « Annuler ».
 function revenirSurTriAgnelle(ag) {
@@ -18966,8 +19059,14 @@ function ficheAgnelleASaisies(ag) {
   return (ag.mouvements || []).some(m => m && !(m.type === 'Naissance' || (m.type === 'Entrée' && (!m.cause || m.cause === 'Tri (renouvellement)'))));
 }
 function numTri(x) { return x.court || x.numero; }
-function ecarterAgnelleTri(c) { c.lamb.triStatut = 'écartée'; saveData(DB); }
-function reconsidererEcarteeTri(c) { delete c.lamb.triStatut; saveData(DB); }
+function ecarterAgnelleTri(c) {
+  c.lamb = agneauVivant(c.lamb); c.lamb.triStatut = 'écartée';
+  return enregistrerVerifie(null, 'Tri', b => { const l = agneauDansBaseRelue(b, c.lamb.eid); return !!l && l.triStatut === 'écartée'; });
+}
+function reconsidererEcarteeTri(c) {
+  c.lamb = agneauVivant(c.lamb); delete c.lamb.triStatut;
+  return enregistrerVerifie(null, 'Tri', b => { const l = agneauDansBaseRelue(b, c.lamb.eid); return !!l && !l.triStatut; });
+}
 
 /* ---------- Tri des agnelles, version PC (maquette « Chantier de tri » PC) ----------
    Même logique que le mobile : tuiles (À trier ambre, Gardées vert, Écartées gris), une ligne « N triées sur M », trois onglets segmentés, un tableau charte (lignes de 48 px) par onglet,
@@ -19230,9 +19329,10 @@ function brancherTriCriteresPc(E, Tc, redessiner) {
       const avantCrit = instant(), C = crit();
       if (C.reprise !== null && C.reprise !== undefined) ecrire(C.regles, C.decisions);   // règles reprises : écrites pour cette campagne au premier geste
       const fiches = g.map(x => garderAgnelleTri(x));
-      e.forEach(x => ecarterAgnelleTri(x));
+      const ecartees = e.map(x => ecarterAgnelleTri(x));
       E.crit.sel.clear(); E.crit.imprimer = 'toutes';
       saveData(DB); redessiner();
+      if (fiches.some(f => !f) || ecartees.some(ok => !ok)) return;   // une écriture non vérifiée : message bloquant affiché, pas de bandeau « Tri validé »
       afficherSnackAnnuler('Tri validé : ' + g.length + ' gardée' + (g.length > 1 ? 's' : '') + ', ' + e.length + ' écartée' + (e.length > 1 ? 's' : ''), () => {
         fiches.forEach(ag => revenirSurTriAgnelle(ag));
         e.forEach(x => reconsidererEcarteeTri(x));
@@ -19349,11 +19449,11 @@ function renderTriAgnellesPc() {
   const nom = x => '<b>n°' + numTri(x) + '</b>';
   const trouver = (b, eid) => liste(b).find(x => cleanEid(x.eid) === cleanEid(eid));
   if ($('tri-toast-annuler')) $('tri-toast-annuler').onclick = () => { const f = E.toast && E.toast.annuler; E.toast = null; if (f) f(); redessiner(); };
-  document.querySelectorAll('.ta-garder').forEach(b => { b.onclick = () => { const x = trouver('aTrier', b.dataset.eid); if (!x) return; const ag = garderAgnelleTri(x); retour(nom(x) + ' gardée', () => { revenirSurTriAgnelle(ag); }); }; });
-  document.querySelectorAll('.ta-ecarter').forEach(b => { b.onclick = () => { const x = trouver('aTrier', b.dataset.eid); if (!x) return; ecarterAgnelleTri(x); retour(nom(x) + ' écartée', () => { reconsidererEcarteeTri(x); }); }; });
+  document.querySelectorAll('.ta-garder').forEach(b => { b.onclick = () => { const x = trouver('aTrier', b.dataset.eid); if (!x) return; const ag = garderAgnelleTri(x); if (!ag) return; retour(nom(x) + ' gardée', () => { revenirSurTriAgnelle(ag); }); }; });
+  document.querySelectorAll('.ta-ecarter').forEach(b => { b.onclick = () => { const x = trouver('aTrier', b.dataset.eid); if (!x) return; if (!ecarterAgnelleTri(x)) return; retour(nom(x) + ' écartée', () => { reconsidererEcarteeTri(x); }); }; });
   document.querySelectorAll('.ta-reconsiderer').forEach(b => { b.onclick = () => {
     const x = trouver(onglet, b.dataset.eid); if (!x) return;
-    if (onglet === 'ecartees') { reconsidererEcarteeTri(x); retour(nom(x) + ' remise à trier', () => { ecarterAgnelleTri(x); }); return; }
+    if (onglet === 'ecartees') { if (!reconsidererEcarteeTri(x)) return; retour(nom(x) + ' remise à trier', () => { ecarterAgnelleTri(x); }); return; }
     // Gardée : un seul geste ; confirmation seulement si la fiche porte des saisies. « Annuler » remet la fiche EXACTE (soins, notes, mouvements) et l'agneau « gardé ».
     const revenir = () => { const snap = revenirSurTriAgnelle(x.ag); retour(nom(x) + ' remise à trier', () => { restaurerAgnelleGardeeTri(snap); }); };
     if (ficheAgnelleASaisies(x.ag)) { questionCharte('Revenir sur le tri de la n°' + numTri(x) + ' ?', 'Sa fiche contient des saisies (soins, notes ou mouvements) : elle quitte la liste des gardées ; « Annuler » la remet telle quelle.', 'Revenir sur le tri', 'Garder la fiche', revenir); return; }   // message de la charte, jamais confirm()
@@ -19470,16 +19570,17 @@ function renderAgnelles() {
   document.querySelectorAll('.btn-garder').forEach(btn => { btn.onclick = () => {
     const x = trouverTri('aTrier', btn.dataset.eid); if (!x) return;
     const ag = garderAgnelleTri(x);
+    if (!ag) return;
     retour(nom(x) + ' gardée', () => { revenirSurTriAgnelle(ag); });
   }; });
   document.querySelectorAll('.btn-ecarter').forEach(btn => { btn.onclick = () => {
     const x = trouverTri('aTrier', btn.dataset.eid); if (!x) return;
-    ecarterAgnelleTri(x);
+    if (!ecarterAgnelleTri(x)) return;
     retour(nom(x) + ' écartée', () => { reconsidererEcarteeTri(x); });
   }; });
   document.querySelectorAll('.btn-reconsiderer').forEach(btn => { btn.onclick = () => {
     const x = trouverTri(btn.dataset.bloc, btn.dataset.eid); if (!x) return;
-    if (btn.dataset.bloc === 'ecartees') { reconsidererEcarteeTri(x); retour(nom(x) + ' remise à trier', () => { ecarterAgnelleTri(x); }); return; }
+    if (btn.dataset.bloc === 'ecartees') { if (!reconsidererEcarteeTri(x)) return; retour(nom(x) + ' remise à trier', () => { ecarterAgnelleTri(x); }); return; }
     // Gardée : un seul geste ; confirmation seulement si la fiche porte des saisies. « Annuler » remet la fiche EXACTE (soins, notes, mouvements) et l'agneau « gardé ».
     const revenir = () => { const snap = revenirSurTriAgnelle(x.ag); retour(nom(x) + ' remise à trier', () => { restaurerAgnelleGardeeTri(snap); }); };
     if (ficheAgnelleASaisies(x.ag)) { questionCharte('Revenir sur le tri de la n°' + numTri(x) + ' ?', 'Sa fiche contient des saisies (soins, notes ou mouvements) : elle quitte la liste des gardées ; « Annuler » la remet telle quelle.', 'Revenir sur le tri', 'Garder la fiche', revenir); return; }   // message de la charte, jamais confirm()
@@ -19947,18 +20048,20 @@ function renderAddMouvementAgnelle() {
     dateEntreeRef: premierMouvementDate(editing ? ag.mouvements.filter((m, i) => i !== editAgnelleContext.idx) : ag.mouvements, ['Naissance', 'Entrée']),
     erreurDateAnterieure: (dateMouvement, dateEntree) => "La date de sortie (" + formatDateFr(dateMouvement) + ") ne peut pas être antérieure à la date d'entrée de l'agnelle (" + formatDateFr(dateEntree) + ").",
     onSave: (mouvement) => {
+      const fv = ficheVivante('agnelles', ag);   // fiche relue dans la base au moment du geste
       if (!editing) {
-        if (!confirm('Confirmer ce mouvement pour la n°' + numeroVisuel(ag.eid) + ' ? Elle sortira du roster de renouvellement. Cette action est irréversible.')) return;
-        cfg.applySortie(ag, mouvement.type, mouvement.cause, mouvement.acheteur, mouvement.date, null);
+        if (!confirm('Confirmer ce mouvement pour la n°' + numeroVisuel(fv.eid) + ' ? Elle sortira du roster de renouvellement. Cette action est irréversible.')) return;
+        if (!(DB.agnelles || []).includes(fv)) { elementIntrouvableFiche('Mouvement'); return; }
+        cfg.applySortie(fv, mouvement.type, mouvement.cause, mouvement.acheteur, mouvement.date, null);
         editAgnelleContext = null;
-        saveData(DB);
-        render(agnelleDetailOrigin);
+        // vérifié dans la base relue : l'agnelle a quitté le roster et sa sortie est au registre
+        enregistrerVerifie(() => render(agnelleDetailOrigin), 'Mouvement', b => !(b.agnelles || []).some(a => a && a.id === fv.id)
+          && !!(b.registre && b.registre.agnelles && b.registre.agnelles[fv.eid] && (b.registre.agnelles[fv.eid].mouvements || []).some(m => m && m.type === mouvement.type && m.date === mouvement.date)));
         return;
       }
-      ag.mouvements[editAgnelleContext.idx] = mouvement;
+      if (!placerElementFiche(fv, 'mouvements', mouvement, existing, editAgnelleContext.idx)) { elementIntrouvableFiche('Mouvement'); return; }
       editAgnelleContext = null;
-      saveData(DB);
-      render('agnelle-detail');
+      enregistrerVerifie(() => render('agnelle-detail'), 'Mouvement', [[mouvement.id, 1]]);
     }
   });
 }
@@ -19977,12 +20080,10 @@ function renderAddNoteAgnelle() {
   `;
 
   wireNoteForm(existing, (note) => {
-    ag.notes = ag.notes || [];
-    if (editing) ag.notes[editAgnelleContext.idx] = note;
-    else ag.notes.push(note);
+    const fv = ficheVivante('agnelles', ag);
+    if (!placerElementFiche(fv, 'notes', note, existing, editing ? editAgnelleContext.idx : undefined)) { elementIntrouvableFiche('Note'); return; }
     editAgnelleContext = null;
-    saveData(DB);
-    render('agnelle-detail');
+    enregistrerVerifie(() => render('agnelle-detail'), 'Note', [[note.id, 1]]);
   });
 }
 
@@ -20220,13 +20321,11 @@ function renderAddMouvementAgneau() {
       // même "filet" avant un ajout, jamais sur une simple édition -- voir
       // renderAddMouvement/Belier/Agnelle pour la logique équivalente).
       if (!editing && !confirm((mouvement.type === 'Vendu' ? 'Confirmer la vente' : 'Confirmer la mort') + ' de l\'agneau n°' + numeroVisuel(lamb.eid) + ' ?')) return;
-      lamb.mouvements = lamb.mouvements || [];
-      if (editing) lamb.mouvements[editAgneauContext.idx] = mouvement;
-      else lamb.mouvements.push(mouvement);
-      recalculerStatutFinalAgneau(lamb);
+      const lv = agneauVivant(lamb);   // agneau relu dans la fiche de sa mère au moment du geste
+      if (!placerElementFiche(lv, 'mouvements', mouvement, existing, editing ? editAgneauContext.idx : undefined)) { elementIntrouvableFiche('Mouvement'); return; }
+      recalculerStatutFinalAgneau(lv);
       editAgneauContext = null;
-      saveData(DB);
-      render('agneau-detail');
+      enregistrerVerifie(() => render('agneau-detail'), 'Mouvement', [[mouvement.id, 1]]);
     }
   });
 }
@@ -20246,12 +20345,10 @@ function renderAddNoteAgneau() {
   `;
 
   wireNoteForm(existing, (note) => {
-    lamb.notes = lamb.notes || [];
-    if (editing) lamb.notes[editAgneauContext.idx] = note;
-    else lamb.notes.push(note);
+    const lv = agneauVivant(lamb);
+    if (!placerElementFiche(lv, 'notes', note, existing, editing ? editAgneauContext.idx : undefined)) { elementIntrouvableFiche('Note'); return; }
     editAgneauContext = null;
-    saveData(DB);
-    render('agneau-detail');
+    enregistrerVerifie(() => render('agneau-detail'), 'Note', [[note.id, 1]]);
   });
 }
 
@@ -20572,24 +20669,23 @@ function renderAddMouvementBelier() {
     dateEntreeRef: premierMouvementDate(editing ? belier.mouvements.filter((m, i) => i !== editBelierContext.idx) : belier.mouvements, ['Entrée']),
     erreurDateAnterieure: (dateMouvementBelier, dateEntreeBelier) => "La date de sortie (" + formatDateFr(dateMouvementBelier) + ") ne peut pas être antérieure à la date d'entrée du bélier (" + formatDateFr(dateEntreeBelier) + ").",
     onSave: (mouvement) => {
-      belier.mouvements = belier.mouvements || [];
-      const statutAvant = belier.statut || 'actif';
-      const ancienMouvement = editing ? belier.mouvements[editBelierContext.idx] : null;
-      if (editing) belier.mouvements[editBelierContext.idx] = mouvement;
-      else belier.mouvements.push(mouvement);
-      recalculerStatutBelier(belier);
+      const fv = ficheVivante('beliers', belier);   // fiche relue dans la base au moment du geste
+      fv.mouvements = fv.mouvements || [];
+      const statutAvant = fv.statut || 'actif';
+      const avant = fv.mouvements.slice();
+      if (!placerElementFiche(fv, 'mouvements', mouvement, editing ? existing : null, editing ? editBelierContext.idx : undefined)) { elementIntrouvableFiche('Mouvement'); return; }
+      recalculerStatutBelier(fv);
       // Confirm() ciblé : voir renderAddMouvement (brebis) pour la logique
       // identique -- uniquement si modifier ce mouvement change le statut.
-      if (editing && belier.statut !== statutAvant) {
-        if (!confirm('Modifier ce mouvement va faire passer le statut du bélier ' + numeroAnimal(belier.eid) + ' de "' + statutAvant + '" à "' + belier.statut + '". Confirmer ?')) {
-          belier.mouvements[editBelierContext.idx] = ancienMouvement;
-          belier.statut = statutAvant;
+      if (editing && fv.statut !== statutAvant) {
+        if (!confirm('Modifier ce mouvement va faire passer le statut du bélier ' + numeroAnimal(fv.eid) + ' de "' + statutAvant + '" à "' + fv.statut + '". Confirmer ?')) {
+          fv.mouvements = avant;
+          fv.statut = statutAvant;
           return;
         }
       }
       editBelierContext = null;
-      saveData(DB);
-      render('belier-detail');
+      enregistrerVerifie(() => render('belier-detail'), 'Mouvement', [[mouvement.id, 1]]);
     }
   });
 }
@@ -20611,12 +20707,10 @@ function renderAddNoteBelier() {
   `;
 
   wireNoteForm(existing, (note) => {
-    belier.notes = belier.notes || [];
-    if (editing) belier.notes[editBelierContext.idx] = note;
-    else belier.notes.push(note);
+    const fv = ficheVivante('beliers', belier);
+    if (!placerElementFiche(fv, 'notes', note, existing, editing ? editBelierContext.idx : undefined)) { elementIntrouvableFiche('Note'); return; }
     editBelierContext = null;
-    saveData(DB);
-    render('belier-detail');
+    enregistrerVerifie(() => render('belier-detail'), 'Note', [[note.id, 1]]);
   });
 }
 
@@ -22342,10 +22436,11 @@ function renderLotsPc() {
     if (!garderLotsModifiables()) return;
     const items = lignesSelection(); if (!items.length) return;
     if (!confirm('Affecter ' + items.length + ' ' + (agn ? 'agnelle' : 'brebis') + (items.length > 1 && agn ? 's' : '') + ' au lot « ' + lot.nom + ' » ?\n\nL\'affectation AJOUTE au lot, elle n\'en retire jamais.')) return;
-    const n = affecterAuLotPc(lot, items);
+    const lotV = (DB.lots || []).find(l => l && l.id === lot.id) || lot;   // lot relu dans la base au moment du geste
+    const n = affecterAuLotPc(lotV, items);
     if (n < 0) { E.messagePanneau = 'Ce lot porte un écart non tranché (modifié par un appareil non à jour) : rien n\'a été affecté.'; redessiner(); return; }
-    saveData(DB);
-    E.selection.clear(); E.messagePanneau = ''; E.messageNumero = null; redessiner();
+    enregistrerVerifie(() => { E.selection.clear(); E.messagePanneau = ''; E.messageNumero = null; redessiner(); }, 'Affectation',
+      b => { const l = (b.lots || []).find(x => x && x.id === lot.id); const m = new Set(((l && l.membres) || []).map(cleanEid)); return !!l && items.every(r => m.has(cleanEid(r.eid))); });
   };
   $('lt-ed-nom').addEventListener('input', ev => { E.ed.nom = ev.target.value; });
   $('lt-ed-date').addEventListener('input', ev => { E.ed.date = ev.target.value; });
@@ -23617,11 +23712,12 @@ function renderNouveauMouvementMobile() {
     $('mn-erreurs').innerHTML = E.erreurs.length ? `<div class="brd-alert err"><b>À corriger avant de valider :</b><ul>${E.erreurs.map(m => `<li>${m}</li>`).join('')}</ul></div>` : '';
     if (E.erreurs.length) { $('mn-erreurs').scrollIntoView({ block: 'nearest' }); return; }
     if (!confirm(texteConfirmationMouvementPc(E, animaux))) return;
-    appliquerMouvementCollectifPc({ categorie: E.categorie, type: E.type, cause: E.cause, acheteur: E.acheteur, date: E.date, animaux });
-    mvMobEtat.cat = E.categorie; mvMobEtat.type = ''; mvMobEtat.q = ''; mvMobEtat.nb = 20;
-    mvMobEtat.message = messageEnregistreMouvementPc(recapMouvementPc(E, animaux.length));
-    mvMobNouveau = null;
-    render('inventaire');
+    appliquerMouvementCollectifPc({ categorie: E.categorie, type: E.type, cause: E.cause, acheteur: E.acheteur, date: E.date, animaux }, () => {
+      mvMobEtat.cat = E.categorie; mvMobEtat.type = ''; mvMobEtat.q = ''; mvMobEtat.nb = 20;
+      mvMobEtat.message = messageEnregistreMouvementPc(recapMouvementPc(E, animaux.length));
+      mvMobNouveau = null;
+      render('inventaire');
+    });
   };
   dessiner();
 }
@@ -24675,7 +24771,8 @@ function ecranCarnetAnimaux() {
     const msg = $('cs-msg'), montrer = (t, m) => { msg.innerHTML = `<div class="brd-alert ${t}" style="margin-top:12px;">${m}</div>`; };
     const erreurs = erreursSoinCarnet(E);
     if (erreurs.length) { E.erreurs = erreurs; E.ecran = 1; render('sanitaire'); return; }
-    const animaux = tous.filter(a => E.selection.has(a.eid));
+    // animaux relus dans la base au moment du geste (jamais les objets gardés à l'écran : un agneau est un élément de la fiche de sa mère)
+    const animaux = animauxEligiblesCarnet().filter(a => E.selection.has(a.eid));
     if (animaux.length === 0) { montrer('err', 'Sélectionne au moins un animal.'); return; }
     if (!confirm('Enregistrer « ' + (E.produit || 'Soin de plaie') + ' » pour ' + libAnimaux(animaux.length) + ' ? Un soin sera enregistré par animal ; tu pourras annuler tout le lot juste après.')) return;
     const modele = construireSoinCarnet(E);
@@ -24701,10 +24798,13 @@ function ecranCarnetAnimaux() {
       DB.traitementsCollectifs.push({ id: collectifId, categorie: cles.length === 1 ? cles[0] : 'multi', type: modele.type, sousType: modele.sousType, produit: modele.produit, date: modele.date, quantiteCc: modele.quantiteCc, intervenant: modele.intervenant, commentaire: '', membres: animaux.map(a => a.eid), numeroOrdonnance: modele.numeroOrdonnance || null, createdAt: Date.now(), source: 'carnet-pc' });
     }
     if (modele.intervenant && modele.intervenant !== 'Éleveur') { DB.intervenants = DB.intervenants || []; if (!DB.intervenants.includes(modele.intervenant)) DB.intervenants.push(modele.intervenant); }
-    saveData(DB);
-    carnetDernierLot = { eids: animaux.map(a => a.eid), soinId, collectifId, produit: modele.produit, n: animaux.length };
-    carnetSanitaireEtat = carnetEtatInitial();
-    render('sanitaire');
+    enregistrerVerifie(() => {
+      // nombre d'animaux soignés lu dans la base enregistrée (jamais un compteur à part)
+      const n = compterIdDansTexte(JSON.stringify(DB), soinId);
+      carnetDernierLot = { eids: animaux.map(a => a.eid), soinId, collectifId, produit: modele.produit, n };
+      carnetSanitaireEtat = carnetEtatInitial();
+      render('sanitaire');
+    }, 'Soin', [[soinId, animaux.length]].concat(collectifId ? [[collectifId, 1]] : []));
   };
   dessiner();
 }
@@ -38459,13 +38559,13 @@ async function syncAllToCloud(data) {
 // réaffectation écrasait entièrement le try/catch d'origine, ce qui aurait
 // rendu ce correctif inopérant pour toute installation ayant la synchro
 // cloud activée -- corrigé ici plutôt que dans la fonction de base.
-saveData = function(data) {
+saveData = function(data, opts) {
   try {
     poserIdsElements(data, 'nouveau');   // lot 4 : un élément créé ici reçoit un id unique
-    localStorage.setItem(DB_KEY, JSON.stringify(data));
+    ecrireStockageVerifie(data);
   } catch (e) {
     console.error('Échec de saveData (localStorage.setItem)', e);
-    alert('Échec de l\'enregistrement — vérifiez l\'espace de stockage de l\'appareil — réessayez ou exportez immédiatement vos données.');
+    if (!(opts && opts.silencieux)) alert('Échec de l\'enregistrement — vérifiez l\'espace de stockage de l\'appareil — réessayez ou exportez immédiatement vos données.');
     return false;
   }
   DB = data;
