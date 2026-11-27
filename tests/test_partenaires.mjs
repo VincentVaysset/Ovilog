@@ -61,12 +61,17 @@ for (const pc of [true, false]) {
   await page.click('#pt-nouveau');
   await page.fill('#pt-nom', 'GAEC Exemple');
   await page.click('#pt-enregistrer');
-  check(/Choisissez/.test(await page.textContent('#pt-err')), nom + ' : catégorie obligatoire');
+  check(await page.isVisible('#question-charte') && /Enregistrer sans catégorie/.test(await page.textContent('#question-charte')), nom + ' : sans catégorie = question, jamais un blocage');
+  await page.click('#qc-non');
+  eq(await page.evaluate(() => DB.acheteurs.includes('GAEC Exemple')), false, nom + ' : Revenir = rien d\'enregistré');
   await page.click('.pt-cat[data-cat="eleveur"]');
   await page.fill('#pt-numero', 'FR 12345678');
   await page.check('#pt-delegataire');
   await page.click('#pt-enregistrer');
   eq(await page.evaluate(() => [DB.acheteurs.includes('GAEC Exemple'), DB.partenairesInfo['GAEC Exemple']]), [true, { categorie: 'eleveur', numero: 'FR 12345678', delegataire: true }], nom + ' : nouveau partenaire, délégation cochée à la main');
+  await page.click('#pt-nouveau'); await page.fill('#pt-nom', 'Sans Categorie'); await page.click('#pt-enregistrer'); await page.click('#qc-oui'); await page.waitForTimeout(100);
+  eq(await page.evaluate(() => [DB.acheteurs.includes('Sans Categorie'), (DB.partenairesInfo['Sans Categorie'] || {}).categorie, manquesPartenaire('Sans Categorie')]), [true, undefined, ['catégorie']], nom + ' : « Enregistrer quand même » sans catégorie : fiche gardée, catégorie à reprendre');
+  await page.evaluate(() => { DB.acheteurs = DB.acheteurs.filter(n => n !== 'Sans Categorie'); delete DB.partenairesInfo['Sans Categorie']; });
   await page.evaluate(() => ouvrirFichePartenaire('Acheteur C'));
   await page.fill('#pt-nom', 'Abattoir Exemple');
   await page.click('#pt-enregistrer');

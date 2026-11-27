@@ -34145,16 +34145,22 @@ function ouvrirFichePartenaire(nom) {
   $p('pt-cp').addEventListener('input', () => { $p('pt-cp-etat').innerHTML = etatCodePostalHtml($p('pt-cp').value); });
   const fermer = () => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); };
   $p('pt-annuler').onclick = fermer;
+  let sansCategorieConfirme = false;
   $p('pt-enregistrer').onclick = () => {
     const err = $p('pt-err');
     const nv = $p('pt-nom').value.trim();
     if (!nv) { err.textContent = 'Indiquez le nom du partenaire.'; err.classList.remove('hidden'); return; }
-    if (!cat) { err.textContent = 'Choisissez où vont les animaux (ou d\'où ils viennent).'; err.classList.remove('hidden'); return; }
     const liste = DB.acheteurs || [];
     const autre = liste.find(x => x.toLowerCase() === nv.toLowerCase() && x !== nom);
     if (autre) { err.textContent = '« ' + autre + ' » existe déjà.'; err.classList.remove('hidden'); return; }
+    // Ovilog prévient, l'éleveur décide : sans catégorie, question puis enregistrement (la fiche va dans « Catégories à reprendre »)
+    if (!cat && !sansCategorieConfirme) {
+      questionCharte('Enregistrer sans catégorie ?', "Sans « Où vont les animaux ? », le document de circulation ne coche aucune case d'arrivée. La fiche restera dans « Catégories à reprendre ».",
+        'Enregistrer quand même', 'Revenir', () => { sansCategorieConfirme = true; $p('pt-enregistrer').click(); });
+      return;
+    }
     const def = categoriePartenaireDef(cat);
-    const fiche = { categorie: cat, numero: def.numero === 'aucun' ? '' : ($p('pt-numero') ? $p('pt-numero').value : ''), siren: $p('pt-siren').value, adresse: $p('pt-adresse').value,
+    const fiche = { categorie: cat || undefined, numero: def && def.numero === 'aucun' ? '' : ($p('pt-numero') ? $p('pt-numero').value : ''), siren: $p('pt-siren').value, adresse: $p('pt-adresse').value,
       codePostal: $p('pt-cp').value, commune: $p('pt-commune').value, delegataire: $p('pt-delegataire').checked === true };
     if (nouveau) { DB.acheteurs = liste.concat([nv]); }
     else if (nv !== nom) {
@@ -34176,7 +34182,7 @@ function ouvrirFichePartenaire(nom) {
    envoi) qu'au premier geste. Un animal peut être mis à part (document à lui). États : « À compléter » (ambre, ce qui manque), « Complet » (vert),
    « Validé » (figé, rouvrable). Agneaux vendus : Boucherie | Reproduction, pour le document puis animal par animal, écrit sur le mouvement
    (`destination`) seulement par « Confirmer » ; tant que ce n'est pas fait : ligne ambre « boucherie par défaut, à confirmer ». Un agneau pour la
-   reproduction est listé avec son n° national complet, sinon « À vérifier » (validation impossible). Animal sous délai d'attente viande vendu pour
+   reproduction est listé avec son n° national complet, sinon « À vérifier » (avertissement, « Valider quand même ? »). Animal sous délai d'attente viande vendu pour
    la boucherie ou l'abattoir : alerte rouge, validation après « Valider quand même ». Échéance de notification : date + délai réglé (Règles
    d'élevage › Mouvements, `delaiNotificationEde`, 7 j) ; partenaire délégataire : « notifié par … ». Aucun n° de document (compteur : point 6),
    aucun code officiel affiché. Contrôle : test_documents_circulation. */
@@ -34374,7 +34380,7 @@ function carteDocumentCirculationHtml(x) {
   if (x.change) pastilles.push(cartePastille('Modifié depuis la validation', 'ambre'));
   return carteListeHtml({ nm: echapperHtml(formatDateFr(x.doc.date)), ouvre: true, cls: 'dc-carte', attrs: `data-doc="${echapperHtml(x.doc.id)}"`,
     pastille: cartePastille(lib, ton),
-    l2: titreDocumentCirculation(x) + ' · ' + resumeAnimauxDc(x) + (x.etat === 'acompleter' && (x.manques.length || x.aVerifier.length) ? '<br>Manque : ' + echapperHtml(x.manques.concat(x.aVerifier.length ? ['agneau à vérifier'] : []).join(', ')) : ''),
+    l2: titreDocumentCirculation(x) + ' · ' + resumeAnimauxDc(x) + (x.etat !== 'valide' && x.etat !== 'envoye' && (x.manques.length || x.aVerifier.length) ? '<br>Manque : ' + echapperHtml(x.manques.concat(x.aVerifier.length ? ['agneau à vérifier'] : []).join(', ')) : ''),
     l3: pastilles });
 }
 function ligneHorsDocumentHtml(it, avecAbattoir) {
@@ -34523,10 +34529,25 @@ function renderDocumentCirculation() {
 /* ---------- Liste annexe au document de circulation (étape 2, point 1 ; maquette validée le 24/11) ----------
    Feuille A4 portrait en NOIR ET BLANC (exception voulue à la charte couleur : photocopie, carnet de l'EDE), PC seulement, documents de SORTIE.
    Aucun n° de document ni identifiant (« À joindre au document de circulation n° ____ » à la main) : une impression ne consomme rien et n'écrit rien.
-   Jamais d'animal omis ni de total faux : bloquée tant qu'un animal est « À vérifier » (raisonsBlocageListeAnnexe). Contrôle : test_liste_annexe. */
+   Jamais d'animal omis ni de total faux : un animal « À vérifier » reste compté (case vide), avertissement puis « Imprimer quand même ? » (avertissementsDc). Contrôle : test_liste_annexe. */
 function texteNumeroEde(n) { const c = normaliserNumeroEde(n); return c ? 'FR ' + c.slice(2, 4) + ' ' + c.slice(4, 7) + ' ' + c.slice(7) : String(n || ''); }
 function libelleAnimalBloque(it) { return it.eid ? numeroOfficielTexte(it.eid) : 'agneau sans n° (mère ' + (it.mereEid ? numeroAnimal(it.mereEid) : 'inconnue') + ')'; }
-function raisonsBlocageListeAnnexe(x) { return x.aVerifier.map(libelleAnimalBloque); }
+function raisonsBlocageListeAnnexe(x) { return x.aVerifier.map(libelleAnimalBloque); }   // animaux « À vérifier » (avertissement, jamais un blocage)
+/* Principe du chantier : Ovilog prévient, l'éleveur décide. Avertissements d'un document (manques, animaux à vérifier, n° identique), affichés sur la
+   fiche tant qu'ils ne sont pas réglés et rappelés dans la question « … quand même ? » ; aucune action n'est bloquée. */
+function avertissementsDc(x) {
+  const l = [];
+  if (x.manques.length) l.push('Manque : ' + x.manques.join(', ') + '.');
+  if (x.aVerifier.length) l.push('À vérifier : ' + raisonsBlocageListeAnnexe(x).join(', ') + ' (n° national ou indicatif à saisir).');
+  x.verifications.forEach(v => l.push('À vérifier : ' + v + '.'));
+  return l;
+}
+// Geste avec avertissements : question de la charte « titre », puis le geste ; sans avertissement, le geste directement
+function avecAvertissementsDc(x, titre, libOui, geste) {
+  const l = avertissementsDc(x);
+  if (!l.length) { geste(false); return; }
+  questionCharte(titre, l.join(' '), libOui, 'Revenir', () => geste(true));   // geste(true) : appelé depuis une question (une 2e question attend sa fermeture)
+}
 function categorieListeAnnexe(it) {
   if (it.cat === 'agneaux') return 'Agneau · reproduction';
   return LIBELLE_CAT_DC[it.cat] + (it.code === 'E' ? ' · élevage' : ' · réforme');
@@ -34536,11 +34557,11 @@ function donneesListeAnnexe(x) {
   const ex = DB.exploitation || {}, d = x.doc, info = partenaireInfo(x.partenaire), def = x.def;
   const g = agneauxParIndicatifDc(x.comptes);
   const listes = x.listes.map((it, i) => ({ rang: i + 1, national: it.eid ? numeroOfficielTexte(it.eid) : '', travail: numeroTravailDc(it) || '–', categorie: categorieListeAnnexe(it), annee: it.eid && anneeNaissance(it.eid) ? String(anneeNaissance(it.eid)) : '–' }));
-  const nbAgneaux = g.groupes.reduce((t, r) => t + r.n, 0);
+  const nbAgneaux = x.comptes.length;   // tous les agneaux comptés, indicatif connu ou non (imprimé quand même : jamais un total faux)
   return {
     depart: { ede: texteNumeroEde(ex.numeroCheptel), nom: ex.nom || '', adresse: [ex.adresse, [ex.codePostal, ex.commune].filter(Boolean).join(' ')].filter(Boolean).join(', ') },
     arrivee: { categorie: def ? def.court : '', nom: x.partenaire || '', numero: def && def.numero === 'ede' && normaliserNumeroEde(info.numero) ? texteNumeroEde(info.numero) : (numeroPartenaireTexte(x.partenaire) || ''), chargement: formatDateFr(d.date) + (d.heure ? ' à ' + d.heure.replace(':', ' h ') : '') },
-    listes, agneaux: g.groupes.map(r => ({ indicatif: 'FR ' + r.indicatif, n: r.n })),
+    listes, agneaux: g.groupes.map(r => ({ indicatif: 'FR ' + r.indicatif, n: r.n })).concat(g.inconnus.length ? [{ indicatif: 'Indicatif à compléter', n: g.inconnus.length }] : []),
     totaux: { total: listes.length + nbAgneaux, listes: listes.length, agneaux: nbAgneaux }
   };
 }
@@ -34620,7 +34641,6 @@ function pagesListeAnnexe(x) {
   return pages;
 }
 async function imprimerListeAnnexe(x) {
-  if (raisonsBlocageListeAnnexe(x).length) return;
   const nom = 'liste-annexe_' + (x.doc.date || jourAujourdhuiISO()) + '_' + slugifyFiltre(x.partenaire || 'destinataire') + '.pdf';
   await saveOrShareBinaryFile(nom, buildListeAnnexePdfBytes(x), 'application/pdf');
 }
@@ -34631,7 +34651,7 @@ async function imprimerListeAnnexe(x) {
    boucherie dans les 3 cases d'indicatif ; au-delà, « voir liste annexe jointe » dans « Autres infos » et liste annexe imprimée après CHAQUE exemplaire.
    Totaux toujours écrits. JAMAIS remplis : cases ICA (attestation signée au chargement ; le choix de la fiche ne sert qu'aux contrôles d'Ovilog), signatures,
    côté déchargement, n° de document (une impression ne consomme rien et n'écrit rien). Ni « Ovilog » ni mention « à faire valider » : pied « Page X/Y » seul.
-   Bloqué comme la liste annexe tant qu'un animal est « À vérifier ». Aucun code officiel. Contrôle : test_document_circulation_pdf. */
+   Avertissements (manques, animal « À vérifier », n° identique) puis « Imprimer quand même ? », jamais un blocage. Aucun code officiel. Contrôle : test_document_circulation_pdf. */
 const EXEMPLAIRES_DC = [
   { cle: 'depart', titre: 'Exemplaire à garder par le détenteur de départ' },
   { cle: 'edeDepart', titre: "Exemplaire à envoyer à l'EDE par le détenteur de départ dans les 7 jours" },
@@ -34664,7 +34684,7 @@ function donneesDocumentCirculation(x) {
   const A = donneesListeAnnexe(x);
   const g = agneauxParIndicatifDc(x.comptes);
   const repro = x.listes.map(it => nationalCasesDc(it.eid));
-  const annexe = repro.length > MAX_CASES_REPRO_DC || g.groupes.length > MAX_CASES_INDICATIF_DC;
+  const annexe = repro.length > MAX_CASES_REPRO_DC || g.groupes.length + (g.inconnus.length ? 1 : 0) > MAX_CASES_INDICATIF_DC;
   const numArr = def && def.numero !== 'aucun' ? (info.numero || '') : '';
   return {
     exemplaires: EXEMPLAIRES_DC.filter(e => !(e.cle === 'edeDepart' && x.delegataire)).map(e => e.titre),
@@ -34674,7 +34694,7 @@ function donneesDocumentCirculation(x) {
     arrivee: { coche: def ? (CASE_ARRIVEE_DC[def.cle] || null) : null, abattoir: !!(def && def.numero === 'agrement'), numero: caracteresNumeroCasesDc(numArr), numeroTexte: numArr,
       siren: String(numArr).trim() ? '' : String(info.siren || '').replace(/\D/g, ''), nom: x.partenaire || '', adresse: info.adresse || '', codePostal: info.codePostal || '', commune: info.commune || '' },
     totaux: { agneaux: A.totaux.agneaux, reproducteurs: A.totaux.listes, ovins: A.totaux.total },
-    agneaux: g.groupes.slice(0, MAX_CASES_INDICATIF_DC).map(r => ({ indicatif: r.indicatif, n: r.n })),
+    agneaux: g.groupes.concat(g.inconnus.length ? [{ indicatif: '', n: g.inconnus.length }] : []).slice(0, MAX_CASES_INDICATIF_DC).map(r => ({ indicatif: r.indicatif, n: r.n })),   // indicatif inconnu : cases vides, nombre écrit
     reproducteurs: repro.slice(0, MAX_CASES_REPRO_DC),
     autresInfos: annexe ? 'voir liste annexe jointe' : '',
     annexe
@@ -34826,7 +34846,6 @@ function buildDocumentCirculationPdfBytes(x) {
   return buildMultiPagePdfBytes(piedPagesNoirEtBlanc(pages, ''), false);
 }
 async function imprimerDocumentCirculation(x) {
-  if (raisonsBlocageListeAnnexe(x).length) return;
   const nom = 'document-circulation_' + (x.doc.date || jourAujourdhuiISO()) + '_' + slugifyFiltre(x.partenaire || 'destinataire') + '.pdf';
   await saveOrShareBinaryFile(nom, buildDocumentCirculationPdfBytes(x), 'application/pdf');
 }
@@ -34868,19 +34887,19 @@ function ficheDocumentCirculation(cible, x, redessiner) {
   const boutons = !pc ? '' : sortie
     ? (d.envoyeLe ? `<button type="button" class="btn btn-secondary" id="dc-annuler-envoi">Annuler « Envoyé »</button>`
       : d.valideLe ? `${x.delegataire ? '' : '<button type="button" class="btn btn-primary" id="dc-envoye">Envoyé à l\'EDE</button>'}<button type="button" class="btn btn-secondary" id="dc-rouvrir">Rouvrir</button>`
-      : `<button type="button" class="btn btn-primary" id="dc-valider"${x.etat === 'complet' ? '' : ' disabled'}>Valider</button>`)
-    : (d.envoyeLe ? `<button type="button" class="btn btn-secondary" id="dc-annuler-envoi">Annuler « Envoyé »</button>` : `<button type="button" class="btn btn-primary" id="dc-envoye"${x.etat === 'complet' ? '' : ' disabled'}>Envoyé</button>`);
+      : `<button type="button" class="btn btn-primary" id="dc-valider">Valider</button>`)
+    : (d.envoyeLe ? `<button type="button" class="btn btn-secondary" id="dc-annuler-envoi">Annuler « Envoyé »</button>` : `<button type="button" class="btn btn-primary" id="dc-envoye">Envoyé</button>`);
   const aPartRattacher = pc && d.aPart && !fige ? '<button type="button" class="btn btn-secondary" id="dc-rattacher">Remettre avec les autres</button>' : '';
-  const blocageAnnexe = sortie && pc ? raisonsBlocageListeAnnexe(x) : [];
-  const boutonAnnexe = sortie && pc ? `<button type="button" class="btn btn-secondary" id="dc-document-pdf"${blocageAnnexe.length ? ' disabled' : ''}>Document de circulation (PDF)</button><button type="button" class="btn btn-secondary" id="dc-annexe"${blocageAnnexe.length ? ' disabled' : ''}>Liste annexe (PDF)</button>` : '';
-  const ligneBlocageAnnexe = blocageAnnexe.length ? `<div class="prm-alerte" id="dc-annexe-bloquee" style="margin:12px 0 0;">Document de circulation et liste annexe impossibles tant que ${blocageAnnexe.length > 1 ? 'ces animaux sont' : 'cet animal est'} à vérifier : ${echapperHtml(blocageAnnexe.join(', '))}. Un document n'omet jamais un animal.</div>` : '';
+  const blocageAnnexe = sortie ? raisonsBlocageListeAnnexe(x) : [];
+  const boutonAnnexe = sortie && pc ? `<button type="button" class="btn btn-secondary" id="dc-document-pdf">Document de circulation (PDF)</button><button type="button" class="btn btn-secondary" id="dc-annexe">Liste annexe (PDF)</button>` : '';
+  const ligneBlocageAnnexe = blocageAnnexe.length ? `<div class="prm-alerte" id="dc-a-verifier" style="margin:12px 0 0;">À vérifier : ${echapperHtml(blocageAnnexe.join(', '))}. Imprimé quand même, ${blocageAnnexe.length > 1 ? 'ces animaux restent comptés' : 'cet animal reste compté'} dans les totaux, ${blocageAnnexe.length > 1 ? 'leurs cases restent vides' : 'sa case reste vide'}.</div>` : '';
   const rappelIca = sortie && d.icaAttestation === 'risque' ? '<div class="prm-alerte" id="dc-ica-rappel" style="margin:12px 0 0;">Joindre le document dédié à l\'information sur la chaîne alimentaire, à remettre au détenteur d\'arrivée.</div>' : '';
   const nbViande = x.alertesViande.length;
   const entete = `<div class="pc-cardhead"><p class="brd-ttl" style="margin:0;">${echapperHtml(formatDateFr(d.date))} · ${titreDocumentCirculation(x)}</p>${cartePastille(lib, ton)}</div>
       <div class="dc-gris" style="margin-top:4px;">${x.def ? echapperHtml(x.def.court) + (numeroPartenaireTexte(x.partenaire) ? ' · ' + echapperHtml(numeroPartenaireTexte(x.partenaire)) : '') : ''}${x.partenaire && pc ? ` <button type="button" class="btn btn-secondary btn-petit" id="dc-fiche-partenaire" style="width:auto;">Fiche partenaire</button>` : ''}</div>
       <div style="margin-top:8px;">${cartePastille(echapperHtml(x.notif.texte), x.notif.ton === 'neutre' ? '' : x.notif.ton)}</div>
       ${x.verifications.length ? `<div class="prm-alerte" id="dc-verifier" style="margin:10px 0 0;">À vérifier : ${echapperHtml(x.verifications.join(' ; '))}.</div>` : ''}
-      ${x.etat === 'acompleter' ? `<div class="prm-alerte" id="dc-manques" style="margin:10px 0 0;">Manque : ${echapperHtml(x.manques.concat(x.aVerifier.length ? [x.aVerifier.length + ' agneau' + (x.aVerifier.length > 1 ? 'x' : '') + ' à vérifier (n° national ou indicatif)'] : []).join(', '))}.</div>` : ''}
+      ${x.manques.length || x.aVerifier.length ? `<div class="prm-alerte" id="dc-manques" style="margin:10px 0 0;">Manque : ${echapperHtml(x.manques.concat(x.aVerifier.length ? [x.aVerifier.length + ' agneau' + (x.aVerifier.length > 1 ? 'x' : '') + ' à vérifier (n° national ou indicatif)'] : []).join(', '))}.</div>` : ''}
       ${x.change ? '<div class="prm-alerte" style="margin:10px 0 0;">Des mouvements ont changé depuis la validation : rouvrez le document pour le relire.</div>' : ''}
       ${nbViande ? `<div class="dc-alerte-rouge" id="dc-alerte-viande">${nbViande} animal${nbViande > 1 ? 'ux' : ''} encore sous délai d'attente viande : ${echapperHtml(x.alertesViande.map(a => a.it.eid ? numeroOfficielTexte(a.it.eid) : 'agneau sans n°').join(', '))}.</div>` : ''}`;
   const titreAnimaux = sortie ? 'Animaux listés · ' + x.listes.length : 'Animaux achetés · ' + x.items.length;
@@ -34917,8 +34936,8 @@ function ficheDocumentCirculation(cible, x, redessiner) {
   brancherChamp('dc-immat', 'immatriculation', el => el.value.trim() || undefined);
   brancherChamp('dc-camion-vide', 'camionVide', el => el.checked ? true : undefined);
   bloc.querySelectorAll('input[name="dc-ica"]').forEach(el => el.onchange = () => { if (el.checked) { ecrireChamps({ icaAttestation: el.value }); redessiner(); } });
-  if ($d('dc-annexe')) $d('dc-annexe').onclick = () => imprimerListeAnnexe(x).catch(e => afficherErreurExport(e));
-  if ($d('dc-document-pdf')) $d('dc-document-pdf').onclick = () => imprimerDocumentCirculation(x).catch(e => afficherErreurExport(e));
+  if ($d('dc-annexe')) $d('dc-annexe').onclick = () => avecAvertissementsDc(x, 'Imprimer quand même ?', 'Imprimer quand même', () => imprimerListeAnnexe(x).catch(e => afficherErreurExport(e)));
+  if ($d('dc-document-pdf')) $d('dc-document-pdf').onclick = () => avecAvertissementsDc(x, 'Imprimer quand même ?', 'Imprimer quand même', () => imprimerDocumentCirculation(x).catch(e => afficherErreurExport(e)));
   if ($d('dc-inconnu')) $d('dc-inconnu').onclick = () => { ecrireChamps({ transporteurNom: 'Inconnu', transporteur: undefined }); redessiner(); };
   bloc.querySelectorAll('.dc-dest button').forEach(b => b.onclick = () => {
     const ref = b.closest('.dc-dest').dataset.ref, it = x.items.find(i => i.ref === ref);
@@ -34969,14 +34988,17 @@ function ficheDocumentCirculation(cible, x, redessiner) {
     ecrireChamps({ valideLe: jourAujourdhuiISO(), refs: x.items.map(i => i.ref) });
     redessiner(); restaurer(g, 'Document validé');
   };
-  if ($d('dc-valider')) $d('dc-valider').onclick = () => {
-    if (x.etat !== 'complet') return;
+  if ($d('dc-valider')) $d('dc-valider').onclick = () => avecAvertissementsDc(x, 'Valider quand même ?', 'Valider quand même', apresQuestion => {
     // délai viande : question avec « aucun risque » ; vers un abattoir, toujours (le détenteur s'engage à ne pas y envoyer d'animal sous délai)
-    if (x.alertesViande.length && (d.icaAttestation === 'aucunRisque' || partenaireInfo(x.partenaire).categorie === 'abattoir')) questionCharte('Valider quand même ?', x.alertesViande.length + ' animal' + (x.alertesViande.length > 1 ? 'ux sont' : ' est') + " encore sous délai d'attente viande le jour du départ.", 'Valider quand même', 'Revenir', valider);
+    if (x.alertesViande.length && (d.icaAttestation === 'aucunRisque' || partenaireInfo(x.partenaire).categorie === 'abattoir')) {
+      const q = () => questionCharte('Valider quand même ?', x.alertesViande.length + ' animal' + (x.alertesViande.length > 1 ? 'ux sont' : ' est') + " encore sous délai d'attente viande le jour du départ.", 'Valider quand même', 'Revenir', valider);
+      if (apresQuestion) setTimeout(q, 0); else q();
+    }
     else valider();
-  };
+  });
   if ($d('dc-rouvrir')) $d('dc-rouvrir').onclick = () => { const g = instant(); ecrireChamps({ valideLe: undefined }); redessiner(); restaurer(g, 'Document rouvert'); };
-  if ($d('dc-envoye')) $d('dc-envoye').onclick = () => { if (!sortie && x.etat !== 'complet') return; const g = instant(); ecrireChamps({ envoyeLe: jourAujourdhuiISO() }); redessiner(); restaurer(g, 'Noté envoyé à l\'EDE'); };
+  const noterEnvoye = () => { const g = instant(); ecrireChamps({ envoyeLe: jourAujourdhuiISO() }); redessiner(); restaurer(g, 'Noté envoyé à l\'EDE'); };
+  if ($d('dc-envoye')) $d('dc-envoye').onclick = () => sortie ? noterEnvoye() : avecAvertissementsDc(x, 'Noter envoyé quand même ?', 'Noter envoyé quand même', noterEnvoye);
   if ($d('dc-annuler-envoi')) $d('dc-annuler-envoi').onclick = () => { const g = instant(); const nd = Object.assign({}, documentsCirculationStock()[d.id] || d); delete nd.envoyeLe; ecrireDocumentCirculation(nd); saveData(DB); redessiner(); restaurer(g, '« Envoyé » annulé'); };
 }
 // Écran « Réglementaire » : un regroupement seul (aucun écran ni aucune donnée ne change)

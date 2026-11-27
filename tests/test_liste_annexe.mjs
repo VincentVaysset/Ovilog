@@ -54,7 +54,9 @@ eq([d.agneaux, d.totaux], [[{ indicatif: 'FR 000045', n: 3 }], { total: 5, liste
 // 2. bouton dans la fiche (sortie, PC), PDF noir et blanc
 await page.evaluate(() => { dcEtat.id = documentsCirculationCalcules({}).docs[0].doc.id; render('documents-circulation'); });
 check(await page.isEnabled('#dc-annexe'), 'document « À compléter » : liste annexe autorisée');
-await page.click('#dc-annexe'); await page.waitForTimeout(150);
+await page.click('#dc-annexe');
+check(/Imprimer quand même/.test(await page.textContent('#question-charte')) && /Manque :/.test(await page.textContent('#question-charte')), 'document « À compléter » : « Imprimer quand même ? » avec le manque');
+await page.click('#qc-oui'); await page.waitForTimeout(150);
 const f1 = await page.evaluate(() => window.__f[0]);
 check(/^liste-annexe_2026-11-10_.+\.pdf$/.test(f1.n), 'nom de fichier : ' + f1.n);
 const p1 = lirePdfMots(f1.b), t1 = p1.mots.join(' ');
@@ -74,9 +76,16 @@ check(pl.pages >= 2 && tl.includes('Page 1/' + pl.pages) && tl.includes('Page ' 
 await page.evaluate(() => { DB.brebis = DB.brebis.filter(b => !/^z/.test(b.id)); });
 // 4. blocage : animal « À vérifier » (agneau de reproduction sans n° national ; indicatif inconnu)
 await page.evaluate(() => { dcEtat.brouillon = { 'agneaux:l3:m13': 'reproduction' }; render('documents-circulation'); });
-eq(await page.evaluate(() => [document.getElementById('dc-annexe').disabled, /71003/.test(document.getElementById('dc-annexe-bloquee').textContent), /n'omet jamais un animal/.test(document.getElementById('dc-annexe-bloquee').textContent)]), [true, true, true], 'agneau à vérifier : liste annexe bloquée, message qui le nomme');
+eq(await page.evaluate(() => [document.getElementById('dc-annexe').disabled, /71003/.test(document.getElementById('dc-a-verifier').textContent), /reste(nt)? compté/.test(document.getElementById('dc-a-verifier').textContent)]), [false, true, true], 'agneau à vérifier : avertissement qui le nomme, bouton jamais grisé');
+const nAv = await page.evaluate(() => window.__f.length);
+await page.click('#dc-annexe');
+check(await page.isVisible('#question-charte') && /Imprimer quand même/.test(await page.textContent('#question-charte')), 'agneau à vérifier : « Imprimer quand même ? »');
+await page.click('#qc-non');
+eq(await page.evaluate(() => window.__f.length), nAv, 'Revenir = rien d\'imprimé');
+await page.click('#dc-annexe'); await page.click('#qc-oui'); await page.waitForTimeout(150);
+eq(await page.evaluate(() => window.__f.length), nAv + 1, '« Imprimer quand même » = PDF produit');
 await page.evaluate(() => { dcEtat.brouillon = {}; DB.exploitation.indicatifMarquage = ''; render('documents-circulation'); });
-eq(await page.evaluate(() => [document.getElementById('dc-annexe').disabled, /agneau sans n° \(mère/.test(document.getElementById('dc-annexe-bloquee').textContent)]), [true, true], 'indicatif inconnu : bloquée, agneau nommé par sa mère');
+eq(await page.evaluate(() => [document.getElementById('dc-annexe').disabled, /agneau sans n° \(mère/.test(document.getElementById('dc-a-verifier').textContent)]), [false, true], 'indicatif inconnu : avertissement, agneau nommé par sa mère');
 await page.evaluate(() => { DB.exploitation.indicatifMarquage = '000045'; render('documents-circulation'); });
 // 5. rappel ICA « risque »
 check(!(await page.isVisible('#dc-ica-rappel')), 'pas de rappel ICA sans le choix « risque »');

@@ -123,7 +123,7 @@ for (const pc of [true, false]) {
     eq(await page.evaluate(() => [[...document.querySelectorAll('#dc-animaux .dc-comptes tr')].slice(1).map(r => [...r.cells].map(c => c.textContent)), (document.getElementById('dc-sans-numero') || {}).textContent]), [[['FR 000045', '3']], 'dont 1 sans n° saisi dans Ovilog'], nom + ' : agneaux de boucherie = un nombre par indicatif, « dont 1 sans n° saisi dans Ovilog » en gris');
     eq(await page.evaluate(() => { const ex = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = ''; const x = documentsCirculationCalcules({}).docs[0]; const g = agneauxParIndicatifDc(x.comptes); DB.exploitation.indicatifMarquage = ex; return [g.groupes.map(r => r.indicatif + ':' + r.n), g.inconnus.length, x.aVerifier.length, x.etat]; }), [['000045:1'], 2, 2, 'acompleter'], nom + ' : indicatif inconnu = « À vérifier »');
     // fiche de la vente
-    eq(await page.evaluate(() => [[...document.querySelectorAll('input[name="dc-ica"]')].some(r => r.checked), document.getElementById('dc-camion-vide').checked, document.getElementById('dc-valider').disabled, !!document.getElementById('dc-dest-a-confirmer')]), [false, false, true, true], nom + ' : ICA et camion vide jamais cochés d\'office, Valider bloqué, ligne ambre « à confirmer »');
+    eq(await page.evaluate(() => [[...document.querySelectorAll('input[name="dc-ica"]')].some(r => r.checked), document.getElementById('dc-camion-vide').checked, document.getElementById('dc-valider').disabled, !!document.getElementById('dc-dest-a-confirmer')]), [false, false, false, true], nom + ' : ICA et camion vide jamais cochés d\'office, Valider jamais grisé, ligne ambre « à confirmer »');
     check(/boucherie par défaut, à confirmer/.test(await page.textContent('#dc-dest-a-confirmer')), nom + ' : texte de la ligne ambre');
     check(await page.isVisible('#dc-alerte-viande'), nom + ' : alerte rouge délai viande');
     eq(await page.evaluate(() => DB.documentsCirculation === undefined), true, nom + ' : rien d\'écrit avant le premier geste');
@@ -147,12 +147,16 @@ for (const pc of [true, false]) {
     eq(await page.evaluate(() => DB.brebis[1].agnelages[0].lambs.map(l => l.mouvements[0].destination || null)), [null, null, null], nom + ' : rien d\'écrit avant « Confirmer »');
     await page.click('#dc-dest-confirmer');
     eq(await page.evaluate(() => DB.brebis[1].agnelages[0].lambs.map(l => l.mouvements[0].destination)), ['reproduction', 'boucherie', 'reproduction'], nom + ' : Confirmer écrit la destination de chaque agneau');
-    eq(await page.evaluate(() => [!!document.getElementById('dc-dest-a-confirmer'), document.getElementById('dc-valider').disabled]), [false, true], nom + ' : ligne ambre retirée ; agneau sans n° national = validation impossible');
+    eq(await page.evaluate(() => [!!document.getElementById('dc-dest-a-confirmer'), document.getElementById('dc-valider').disabled]), [false, false], nom + ' : ligne ambre retirée ; agneau sans n° national = avertissement, Valider jamais grisé');
+    await page.click('#dc-valider');
+    check(await page.isVisible('#question-charte') && /Valider quand même/.test(await page.textContent('#question-charte')) && /71003|sans n°|À vérifier/.test(await page.textContent('#question-charte')), nom + ' : « Valider quand même ? » rappelle l\'agneau à vérifier');
+    await page.click('#qc-non');
+    eq(await page.evaluate(id => DB.documentsCirculation[id].valideLe || null, id1), null, nom + ' : Revenir = rien de validé');
     check(/1 agneau à vérifier/.test(await page.textContent('#dc-manques')), nom + ' : « à vérifier » affiché');
     eq(await page.evaluate(() => { const x = documentsCirculationCalcules({}).docs[0]; return [x.listes.map(i => i.ref).sort(), x.comptes.map(i => i.ref)]; }),
       [['agneaux:l1:m11', 'agneaux:l3:m13', 'brebis:250000004561001:m1', 'brebis:250000004561002:m2'], ['agneaux:l2:m12']], nom + ' : agneaux de reproduction listés, boucherie comptés');
     await page.click('.dc-dest[data-ref="agneaux:l3:m13"] button[data-val="boucherie"]');
-    eq(await page.evaluate(() => [DB.brebis[1].agnelages[0].lambs[2].mouvements[0].destination, document.getElementById('dc-valider').disabled, /chaîne alimentaire \(ICA\)/.test(document.getElementById('dc-manques').textContent)]), ['boucherie', true, true], nom + ' : agneau repassé en boucherie ; ICA sans choix = « Manque », Valider impossible');
+    eq(await page.evaluate(() => [DB.brebis[1].agnelages[0].lambs[2].mouvements[0].destination, document.getElementById('dc-valider').disabled, /chaîne alimentaire \(ICA\)/.test(document.getElementById('dc-manques').textContent)]), ['boucherie', false, true], nom + ' : agneau repassé en boucherie ; ICA sans choix = « Manque » affiché, Valider possible après question');
     eq(await page.evaluate(() => [...document.querySelectorAll('#dc-ica label')].map(l => l.textContent)), ["J'atteste que ces animaux ne présentent aucun risque nécessitant la transmission d'informations sur la chaîne alimentaire", 'Des animaux présentent un risque : document dédié à joindre'], nom + ' : ICA = deux choix, textes du modèle');
     await page.check('input[name="dc-ica"][value="risque"]'); await page.waitForTimeout(100);
     check(await page.isVisible('#dc-ica-rappel'), nom + ' : « risque » = rappel ambre du document dédié');
@@ -187,7 +191,11 @@ for (const pc of [true, false]) {
     const idA = await page.evaluate(() => documentsCirculationCalcules({}).docs.find(x => x.doc.date === '2026-11-02').doc.id);
     await page.evaluate(id => { dcEtat.id = id; render('document-circulation'); }, idA);
     check(/feuillet d'arrivée du document du vendeur à l'EDE avant le 09\/11\/2026/.test(await page.evaluate(() => document.body.innerText)), nom + ' : rappel du feuillet d\'arrivée avec l\'échéance');
-    eq(await page.evaluate(() => [document.getElementById('dc-envoye').disabled, /provenance/.test(document.getElementById('dc-manques').textContent)]), [true, true], nom + ' : achat sans provenance à compléter');
+    eq(await page.evaluate(() => [document.getElementById('dc-envoye').disabled, /provenance/.test(document.getElementById('dc-manques').textContent)]), [false, true], nom + ' : achat sans provenance à compléter (avertissement, bouton jamais grisé)');
+    await page.click('#dc-envoye');
+    check(await page.isVisible('#question-charte') && /provenance/.test(await page.textContent('#question-charte')), nom + ' : « Noter envoyé quand même ? » rappelle le manque');
+    await page.click('#qc-non');
+    eq(await page.evaluate(() => documentsCirculationCalcules({}).docs.find(x => x.doc.id === dcEtat.id).etat), 'acompleter', nom + ' : Revenir = rien de noté');
     await page.selectOption('#dc-partenaire', 'Éleveur Test');
     eq(await page.evaluate(() => [documentsCirculationCalcules({}).docs.find(x => x.doc.id === dcEtat.id).etat, document.getElementById('dc-envoye').disabled]), ['complet', false], nom + ' : provenance indiquée = complet');
     await page.click('#dc-envoye');

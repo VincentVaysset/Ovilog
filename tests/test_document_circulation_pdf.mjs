@@ -63,7 +63,9 @@ await page.evaluate(() => { dcEtat.id = docCoop().doc.id; render('documents-circ
 check(await page.isEnabled('#dc-document-pdf'), 'bouton « Document de circulation (PDF) » actif');
 const avantDoc = await page.evaluate(() => JSON.stringify(DB.documentsCirculation || null));
 const savesAvant = await page.evaluate(() => window.__saves);
-await page.click('#dc-document-pdf'); await page.waitForTimeout(200);
+await page.click('#dc-document-pdf');
+check(/Imprimer quand même/.test(await page.textContent('#question-charte')) && /chaîne alimentaire/.test(await page.textContent('#question-charte')), 'ICA non choisie : « Imprimer quand même ? »');
+await page.click('#qc-oui'); await page.waitForTimeout(200);
 const f1 = await page.evaluate(() => window.__f[window.__f.length - 1]);
 check(/^document-circulation_2026-11-10_.+\.pdf$/.test(f1.n), 'nom de fichier : ' + f1.n);
 garder('document_circulation_5_exemplaires.pdf', f1.b);
@@ -126,7 +128,25 @@ const dp = await page.evaluate(() => donneesDocumentCirculation(documentsCircula
 eq([dp.coche, dp.numero, dp.numeroTexte], ['Particulier', null, ''], 'particulier : case Particulier, pas de n°');
 // 7. blocage : agneau de reproduction sans n° national
 await page.evaluate(() => { dcEtat.id = docCoop().doc.id; dcEtat.brouillon = { 'agneaux:l3:m13': 'reproduction' }; render('documents-circulation'); });
-eq(await page.evaluate(() => [document.getElementById('dc-document-pdf').disabled, /Document de circulation et liste annexe impossibles/.test(document.getElementById('dc-annexe-bloquee').textContent)]), [true, true], 'animal à vérifier : document bloqué');
+eq(await page.evaluate(() => [document.getElementById('dc-document-pdf').disabled, /^À vérifier/.test(document.getElementById('dc-a-verifier').textContent)]), [false, true], 'animal à vérifier : avertissement, bouton jamais grisé');
+const nF = await page.evaluate(() => window.__f.length);
+await page.click('#dc-document-pdf');
+check(await page.isVisible('#question-charte') && /Imprimer quand même/.test(await page.textContent('#question-charte')), 'animal à vérifier : « Imprimer quand même ? »');
+await page.click('#qc-oui'); await page.waitForTimeout(200);
+const fAv = await page.evaluate(() => window.__f[window.__f.length - 1]);
+eq(await page.evaluate(() => window.__f.length), nF + 1, '« Imprimer quand même » = PDF produit');
+eq(await page.evaluate(() => { const x = documentsCirculationCalcules(dcEtat.brouillon).docs.find(y => y.partenaire === 'Coop Exemple'); return [donneesDocumentCirculation(x).totaux, x.aVerifier.length]; }), [{ agneaux: 2, reproducteurs: 3, ovins: 5 }, 1], 'imprimé quand même : l\'agneau à vérifier reste compté (case vide)');
+// indicatif inconnu : nombre écrit, cases vides, total juste
+eq(await page.evaluate(() => { dcEtat.brouillon = {}; const ex = DB.exploitation.indicatifMarquage; DB.exploitation.indicatifMarquage = ''; const dd = donneesDocumentCirculation(docCoop()); DB.exploitation.indicatifMarquage = ex; return [dd.agneaux, dd.totaux.agneaux]; }), [[{ indicatif: '000045', n: 1 }, { indicatif: '000123', n: 1 }, { indicatif: '', n: 1 }], 3], 'indicatif inconnu : nombre écrit, cases vides, total juste');
+// n° identique : impression possible après question
+await page.evaluate(() => { DB.partenairesInfo['Coop Exemple'].numero = 'FR 12 345 678'; render('documents-circulation'); });
+await page.click('#dc-document-pdf');
+check(/est le même que celui de votre exploitation/.test(await page.textContent('#question-charte')), 'n° identique : rappelé dans « Imprimer quand même ? »');
+await page.click('#qc-non');
+await page.click('#dc-valider');
+check(/Valider quand même/.test(await page.textContent('#question-charte')), 'n° identique : « Valider quand même ? »');
+await page.click('#qc-non');
+await page.evaluate(() => { DB.partenairesInfo['Coop Exemple'].numero = 'FR 12345999'; });
 await page.evaluate(() => { dcEtat.brouillon = {}; });
 // 8. mobile : pas de bouton
 const mob = await (await browser.newContext({ viewport: { width: 400, height: 860 } })).newPage();
