@@ -19,6 +19,10 @@ const pc = await ouvrirEnVersion(490, true);
 await h.inscrire(pc, mail, MDP);
 await h.attendre(pc, () => window.OvilogSync.getState().loggedIn, { label: 'PC connecté' });
 const uid = pc.uid;
+// le verrou se gère depuis le compte ADMINISTRATEUR seul (document admins/<uid>, comme dans la console)
+await h.ecrireServeur(uid, [{ type: 'set', path: 'admins/' + uid, data: { role: 'admin' } }]);
+await pc.page.reload({ waitUntil: 'load' });
+await h.attendre(pc, () => window.OvilogSync.getState().loggedIn && contactAdministrateur(), { label: 'PC administrateur', timeout: 30000 });
 await h.attendreServeur(uid, 'meta', r => r.data && r.data.schemaDonnees === 3, 'compte neuf (format 3)');
 const ANCIEN = await pc.page.evaluate(() => Object.keys(CONVERSION_TYPES_MOUVEMENT).find(k => CONVERSION_TYPES_MOUVEMENT[k] === TYPE_MVT.MORT));
 await pc.page.evaluate(ancien => {
