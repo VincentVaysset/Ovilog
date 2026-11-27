@@ -9,4 +9,4 @@ npm init -y && npm i firebase-tools@13 @firebase/rules-unit-testing@3 firebase@1
 npx firebase emulators:exec --project demo-ovilog --only firestore "node regles.test.mjs"
 ```
 
-Résultat attendu : `TOUT OK : 87 contrôles`. Ne pas commiter `node_modules`, `package.json` ni les journaux créés par ces commandes.
+Résultat attendu : `TOUT OK : 105 contrôles`. Ne pas commiter `node_modules`, `package.json` ni les journaux créés par ces commandes.

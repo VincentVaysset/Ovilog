@@ -79,15 +79,26 @@ await ok(getDoc(doc(db(A, true), 'users', A, 'reglagesAdmin', 'chantiers')), 'co
 await ok(setDoc(doc(db(ADMIN, true), 'users', ADMIN, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'administrateur : écrit son réglage');
 await ko(setDoc(doc(db(ADMIN, true), 'users', A, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'administrateur : jamais le réglage d\'un autre compte');
 await ko(setDoc(doc(db(ADMIN, false), 'users', ADMIN, 'reglagesAdmin', 'chantiers'), { notificationEde: true }), 'administrateur NON vérifié : refusé');
-// verrou de version (users/<uid>/verrouVersion/courant + jeton users/<uid>/ecritures/jeton daté par le serveur)
+// verrou de version (verrous/<uid> écrit par l'administrateur seul ; jeton users/<uid>/ecritures/jeton daté par le serveur), registre comptes/<uid>,
+// lecture SEULE de l'administrateur dans les données d'un autre compte
 const C = 'eleveurC';
 const lot = (uid, ecr, jeton) => { const d = db(uid, true), b = writeBatch(d); ecr(b, d); if (jeton) b.set(doc(d, 'users', uid, 'ecritures', 'jeton'), jeton); return b.commit(); };
 const jt = v => ({ vApp: v, vEcrit: serverTimestamp() });
 await ok(setDoc(doc(db(C, true), 'users', C, 'brebis', 'b1'), { eid: '250000000000001', statut: 'active' }), 'verrou : sans verrou, écriture sans jeton acceptée (comme avant)');
-await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 490 }), jt(480)), 'verrou : posé par une version plus ancienne que lui refusé');
-await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 490 }), null), 'verrou : posé sans jeton refusé');
-await ko(lot(B, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 490 }), null), 'verrou : jamais par un autre compte');
-await ok(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 490, date: '2026-11-27' }), jt(490)), 'verrou : posé par la version 490 (avec son jeton)');
+await ok(getDoc(doc(db(ADMIN, true), 'users', C, 'brebis', 'b1')), 'administrateur : lit les données d\'un autre compte (aperçu, sauvegarde)');
+await ok(getDocs(collection(db(ADMIN, true), 'users', C, 'brebis')), 'administrateur : liste une collection d\'un autre compte');
+await ko(setDoc(doc(db(ADMIN, true), 'users', C, 'brebis', 'b9'), { eid: 'x' }), 'administrateur : n\'écrit JAMAIS dans les données d\'un autre compte');
+await ko(getDoc(doc(db(ADMIN, false), 'users', C, 'brebis', 'b1')), 'administrateur NON vérifié : pas de lecture d\'un autre compte');
+await ko(getDoc(doc(db(B, true), 'users', C, 'brebis', 'b1')), 'un autre éleveur ne lit pas le compte C');
+await ko(setDoc(doc(db(C, true), 'verrous', C), { versionMinimale: 490 }), 'verrou : le compte ne pose pas son propre verrou');
+await ko(setDoc(doc(db(B, true), 'verrous', C), { versionMinimale: 490 }), 'verrou : un autre éleveur ne pose pas le verrou');
+await ko(setDoc(doc(db(ADMIN, true), 'verrous', C), { versionMinimale: 490, note: 'x' }), 'verrou : champ non permis refusé');
+await ko(setDoc(doc(db(ADMIN, true), 'verrous', C), { versionMinimale: '490' }), 'verrou : version de mauvais type refusée');
+await ok(setDoc(doc(db(ADMIN, true), 'verrous', C), { versionMinimale: 490, activeLe: serverTimestamp() }), 'verrou : posé par l\'administrateur');
+await ok(getDoc(doc(db(C, true), 'verrous', C)), 'verrou : lu par le compte concerné');
+await ko(getDoc(doc(db(B, true), 'verrous', C)), 'verrou : pas lu par un autre éleveur');
+await ko(getDocs(collection(db(C, true), 'verrous')), 'verrous : liste réservée à l\'administrateur');
+await ok(getDocs(collection(db(ADMIN, true), 'verrous')), 'verrous : l\'administrateur les liste');
 await ko(setDoc(doc(db(C, true), 'users', C, 'brebis', 'b1'), { eid: '250000000000001', statut: 'active' }), 'verrou : ancien appareil (écriture sans jeton) refusé');
 await ko(updateDoc(doc(db(C, true), 'users', C, 'brebis', 'b1'), { statut: 'active' }), 'verrou : ancien appareil, mise à jour sans jeton refusée');
 await ko(deleteDoc(doc(db(C, true), 'users', C, 'brebis', 'b1')), 'verrou : ancien appareil, suppression sans jeton refusée');
@@ -99,11 +110,19 @@ await ok(lot(C, (b, d) => b.set(doc(d, 'users', C, 'brebis', 'b1'), { statut: 'm
 await ko(updateDoc(doc(db(C, true), 'users', C, 'brebis', 'b1'), { statut: 'active' }), 'verrou : le jeton déjà écrit ne sert pas une 2e fois');
 await ok(lot(C, (b, d) => b.delete(doc(d, 'users', C, 'brebis', 'b1')), jt(491)), 'verrou : suppression avec jeton acceptée');
 await ok(lot(C, (b, d) => { for (let i = 0; i < 499; i++) b.set(doc(d, 'users', C, 'brebis', 'g' + i), { eid: 'x' + i }); }, jt(490)), 'verrou : lot de 499 écritures + jeton accepté (limite des accès des règles)');
-await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 480 }), jt(490)), 'verrou : jamais abaissé');
-await ko(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 495 }), jt(490)), 'verrou : jamais relevé au-dessus de la version qui le pose');
-await ok(lot(C, (b, d) => b.set(doc(d, 'users', C, 'verrouVersion', 'courant'), { versionMinimale: 495 }), jt(495)), 'verrou : relevé par la version 495');
-await ko(deleteDoc(doc(db(C, true), 'users', C, 'verrouVersion', 'courant')), 'verrou : jamais supprimé depuis l\'appli');
+await ko(setDoc(doc(db(ADMIN, true), 'verrous', C), { versionMinimale: 480 }), 'verrou : jamais abaissé');
+await ok(setDoc(doc(db(ADMIN, true), 'verrous', C), { conversion: { id: 'c1', nbAttendu: 3, appareil: 'a1' } }, { merge: true }), 'verrou : l\'administrateur autorise une conversion (version gardée)');
+await ok(setDoc(doc(db(ADMIN, true), 'verrous', C), { versionMinimale: 495 }, { merge: true }), 'verrou : relevé par l\'administrateur');
+await ko(deleteDoc(doc(db(ADMIN, true), 'verrous', C)), 'verrou : jamais supprimé depuis l\'appli');
 await ok(setDoc(doc(db(A, true), 'users', A, 'brebis', 'b2'), { eid: '250000000000002' }), 'verrou : compte par compte (A sans verrou, inchangé)');
+await ok(setDoc(doc(db(C, true), 'comptes', C), { exploitation: 'Ferme C', appareils: { a1: { type: 'pc', version: 495, vu: serverTimestamp() } } }), 'comptes : le compte écrit son registre');
+await ok(setDoc(doc(db(C, true), 'comptes', C), { conversion: { etat: 'faite', n: 3 } }, { merge: true }), 'comptes : le compte écrit le résultat de sa conversion');
+await ko(setDoc(doc(db(C, true), 'comptes', C), { eid: '250000000000001' }, { merge: true }), 'comptes : aucun autre champ (ni n° ni donnée d\'animal)');
+await ko(setDoc(doc(db(C, true), 'comptes', C), { exploitation: 'x'.repeat(121) }, { merge: true }), 'comptes : nom de plus de 120 caractères refusé');
+await ko(setDoc(doc(db(B, true), 'comptes', C), { exploitation: 'pirate' }), 'comptes : jamais celui d\'un autre');
+await ko(getDocs(collection(db(C, true), 'comptes')), 'comptes : liste réservée à l\'administrateur');
+await ok(getDocs(collection(db(ADMIN, true), 'comptes')), 'comptes : l\'administrateur les liste');
+await ko(setDoc(doc(db(ADMIN, true), 'comptes', C), { exploitation: 'changé' }, { merge: true }), 'comptes : l\'administrateur ne les modifie pas');
 // anciennes collections Logisol (séparation, étape 5) : plus aucun accès, même pour un compte vérifié administrateur
 await ko(getDoc(doc(db(ADMIN, true), 'parcelles', 'p1')), 'Logisol retiré : parcelles refusée');
 await ko(setDoc(doc(db(ADMIN, true), 'lgs_stocks', 's1'), { x: 1 }), 'Logisol retiré : lgs_* refusée');

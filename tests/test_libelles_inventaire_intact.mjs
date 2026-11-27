@@ -50,19 +50,22 @@ const r = await page.evaluate(async () => {
     horsType: JSON.stringify([DB.brebis, DB.beliers, DB.agnelles, DB.registre, DB.mouvementsCollectifs], (k, v) => k === 'type' ? undefined : v)
   });
   const avant = photo();
-  sauvegardeVisibleAvantMutation = async () => ({ ok: true });
   window.__verrouConfirmeTest = true;   // verrou de version supposé confirmé (testé à part : test_verrou_version)
-  const p = convertirLibellesMouvements();
-  await new Promise(res => setTimeout(res, 50));
-  document.querySelector('#question-charte .btn-primary').click();
-  const res = await p;
+  // retour automatique en arrière : une conversion qui toucherait autre chose que le type (défaut simulé) est annulée, rien d'enregistré
+  const stockageAvant = localStorage.getItem(DB_KEY), vrai = convertirTypesDansBase;
+  convertirTypesDansBase = d => { const n = vrai(d); if (d === DB) DB.brebis[0].mouvements[0].cause = 'changé par erreur'; return n; };
+  const raté = await executerConversionAutorisee({ id: 'test-raté', nbAttendu: apercuConversionLibelles(DB).length });
+  convertirTypesDansBase = vrai;
+  const retour = { raté, stockageIntact: localStorage.getItem(DB_KEY) === stockageAvant, baseIntacte: JSON.stringify(photo()) === JSON.stringify(avant) };
+  const res = await executerConversionAutorisee({ id: 'test-ok', nbAttendu: apercuConversionLibelles(DB).length });
   const apres = photo();
-  return { res, avant, apres, reste: texteContientAncienLibelle(localStorage.getItem(DB_KEY)) };
+  return { res, avant, apres, retour, reste: texteContientAncienLibelle(localStorage.getItem(DB_KEY)) };
 });
+check(!r.retour.raté.fait && /contrôle avant \/ après/.test(r.retour.raté.raison) && r.retour.stockageIntact && r.retour.baseIntacte, 'écart au contrôle : retour automatique à l\'état d\'avant, rien d\'enregistré : ' + JSON.stringify(r.retour));
 check(r.res.fait && r.res.n > 0 && !r.reste, 'conversion faite : ' + JSON.stringify(r.res));
 for (const k of ['statuts', 'agneaux', 'effectifs', 'accueil', 'mortalite', 'registre', 'lignesRegistre', 'mouvements', 'horsType']) eq(r.apres[k], r.avant[k], k + ' identique avant / après la conversion');
 check(r.avant.effectifs[0] === 10 && r.avant.mortalite[0] === 10, 'jeu : 10 brebis actives, 10 mortes à l\'ancien libellé : ' + JSON.stringify([r.avant.effectifs, r.avant.mortalite]));
 check(!erreurs.length, 'erreurs JS : ' + erreurs.slice(0, 3).join(' | '));
-console.log('OK ' + r.res.n + ' mouvements convertis : statuts, effectifs, Accueil, mortalité, registre (indicateurs et lignes), nombre de mouvements et tous les champs hors type : identiques.');
+console.log('OK retour automatique en arrière sur écart ; ' + r.res.n + ' mouvements convertis : statuts, effectifs, Accueil, mortalité, registre (indicateurs et lignes), nombre de mouvements et tous les champs hors type : identiques.');
 await browser.close();
 console.log('TOUS LES TESTS « LIBELLÉS : INVENTAIRE INTACT » SONT PASSÉS (jeu synthétique, aucune donnée réelle)');

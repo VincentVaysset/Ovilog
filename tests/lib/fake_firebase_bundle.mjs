@@ -135,6 +135,26 @@ async function ecrireRacine(op) {
     }
   } finally { if (enAttenteRacine.get(op.path) === op) enAttenteRacine.delete(op.path); versionLocaleRacine++; }
 }
+// Instantané d'UN document à la racine (verrous/<uid>, comptes/<uid>) : lecture par getdoc, livrée à chaque changement
+function onSnapshotDocRacine(ref, onNext, onError) {
+  const [col, id] = ref.path.split('/');
+  let dernier = null, stopped = false;
+  async function poll() {
+    if (stopped) return;
+    try {
+      if (!reseau().coupe) {
+        const res = await lireServeur(BACKEND_URL + '/getdoc?racine=' + col + '&id=' + encodeURIComponent(id) + '&auth=' + authUidCourant());
+        const data = await res.json();
+        if (!res.ok) { const e = new Error(data.error); e.code = data.error; throw e; }
+        const sig = JSON.stringify(data);
+        if (sig !== dernier) { dernier = sig; onNext({ id, exists: () => data.exists, data: () => data.data, metadata: { fromCache: false, hasPendingWrites: false } }); }
+      }
+    } catch (e) { if (!(e && e.code === 'unavailable')) { if (onError) onError(e); stopped = true; return; } }
+    if (!stopped) setTimeout(poll, POLL_MS);
+  }
+  poll();
+  return () => { stopped = true; };
+}
 export function query(colRef, ...filtres) { return { path: colRef.path, filtres }; }
 export function where(champ, op, valeur) { return { champ, op, valeur }; }
 export function serverTimestamp() { return { __op: 'serverTimestamp' }; }
@@ -142,7 +162,7 @@ export function deleteField() { return { __op: 'deleteField' }; }
 
 export async function setDoc(ref, data, opts) {
   const p = parsePath(ref.path);
-  if (p.racine) return ecrireRacine({ type: 'set', path: ref.path, data });
+  if (p.racine) return ecrireRacine(Object.assign({ type: 'set', path: ref.path, data }, opts && opts.merge ? { merge: true } : {}));
   await ecrire({ uid: p.uid, ops: [Object.assign({ type: 'set', path: ref.path, data }, opts && opts.merge ? { merge: true } : {})] });   // { merge: true } comme le vrai SDK
 }
 export async function updateDoc(ref, data) {
@@ -173,6 +193,13 @@ export async function getDoc(ref) {
 // qui interroge la collection avant d'écrire pour ne jamais recréer un
 // document déjà présent).
 export async function getDocs(colRef) {
+  if (parsePath(colRef.path).racine) {   // collection à la racine (verrous, comptes : administrateur)
+    const res = await lireServeur(BACKEND_URL + '/snapshot?racine=' + colRef.path.split('/')[0] + '&auth=' + authUidCourant());
+    const data = await res.json();
+    if (!res.ok) { const e = new Error(data.error); e.code = data.error; throw e; }
+    const ids = Object.keys(data.docs || {});
+    return { forEach(fn) { ids.forEach(id => fn({ id, data: () => data.docs[id] })); }, size: ids.length, metadata: { fromCache: false } };
+  }
   const { uid, col } = parsePath(colRef.path);
   const res = await lireServeur(BACKEND_URL + '/snapshot?uid=' + uid + '&col=' + col);
   const data = await res.json();
@@ -293,6 +320,7 @@ export function onSnapshot(ref, a, b, c) {
 // Instantanés d'une collection à la racine (ou d'une requête where('champ', '==', valeur)) : contenu serveur + écritures locales en attente.
 function onSnapshotRacine(ref, options, onNext, onError) {
   const racine = ref.path.split('/')[0];
+  if (ref.path.split('/').length === 2) return onSnapshotDocRacine(ref, onNext, onError);
   const f = (ref.filtres || [])[0];
   let dernier = null, stopped = false, serveur = null;
   function livrer() {

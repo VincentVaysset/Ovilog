@@ -39,11 +39,36 @@ function refusErreur(op, auth, id) {
   if (!Number.isInteger(d.nombre) || d.nombre < 1 || d.nombre > 1000) return 'nombre';
   return null;
 }
+// Verrous de version (verrous/<uid>) : MÊMES règles que firestore.rules — écrits par un administrateur seul, champs fermés, version minimale entière,
+// jamais abaissée, jamais supprimés. Registre des comptes (comptes/<uid>) : écrit par le compte lui-même (nom de l'exploitation, appareils, résultat
+// de conversion), champs fermés ; lu et supprimé par l'administrateur.
+function refusVerrousRacine(op, auth, id) {
+  if (!estAdmin(auth)) return 'verrous : écriture réservée à l\'administrateur';
+  if (op.type === 'delete') return 'verrous : jamais supprimé';
+  const actuel = racine('verrous')[id] || null;
+  const apres = op.type === 'update' || op.merge ? Object.assign({}, actuel || {}, op.data) : op.data;
+  if (!Object.keys(apres).every(k => ['versionMinimale', 'activeLe', 'conversion'].includes(k))) return 'verrous : champ non permis';
+  if (!Number.isInteger(apres.versionMinimale) || apres.versionMinimale <= 0) return 'verrous : version minimale invalide';
+  if (actuel && apres.versionMinimale < (actuel.versionMinimale || 0)) return 'verrous : version minimale abaissée';
+  return null;
+}
+function refusComptesRacine(op, auth, id) {
+  if (op.type === 'delete') return estAdmin(auth) ? null : 'comptes : suppression réservée à l\'administrateur';
+  if (auth !== id) return 'comptes : seulement le sien';
+  const actuel = racine('comptes')[id] || null;
+  const apres = op.type === 'update' || op.merge ? Object.assign({}, actuel || {}, op.data) : op.data;
+  if (!Object.keys(apres).every(k => ['exploitation', 'appareils', 'conversion'].includes(k))) return 'comptes : champ non permis';
+  if (apres.exploitation !== undefined && (typeof apres.exploitation !== 'string' || apres.exploitation.length > 120)) return 'comptes : exploitation';
+  if (apres.appareils !== undefined && (typeof apres.appareils !== 'object' || Object.keys(apres.appareils).length > 20)) return 'comptes : appareils';
+  return null;
+}
 // Renvoie null si l'opération est permise, sinon le motif du refus (permission-denied)
 function refusRacine(op, auth) {
   const [col, id] = op.path.split('/');
   if (!auth) return 'non connecté';
   if (col === 'admins') return 'admins : écriture réservée à la console';
+  if (col === 'verrous') return refusVerrousRacine(op, auth, id);
+  if (col === 'comptes') return refusComptesRacine(op, auth, id);
   if (col === 'erreurs') return refusErreur(op, auth, id);
   if (col !== 'feedback') return 'collection inconnue';
   if (refuserFeedback) return 'règles non publiées';
@@ -74,24 +99,16 @@ function refusRacine(op, auth) {
   return 'opération inconnue';
 }
 
-/* Verrou de version : MÊME règle que firestore.rules. Dès que users/{uid}/verrouVersion/courant porte une versionMinimale, toute écriture du compte doit
+/* Verrou de version : MÊME règle que firestore.rules. Dès que verrous/{uid} (racine, écrit par l’administrateur) porte une versionMinimale, toute écriture du compte doit
    réécrire, dans la même requête, le jeton users/{uid}/ecritures/jeton avec l'heure du serveur (serverTimestamp) et vApp >= versionMinimale ; un ancien
    appareil (pas de jeton) est refusé, suppressions comprises. Le document du verrou ne baisse jamais, ne se supprime pas et n'est posé que par une
    version au moins égale. */
 function refusVerrou(uid, ops) {
-  const cols = collections.get(uid) || {};
-  const v = (cols.verrouVersion || {}).courant || {};
+  const v = racine('verrous')[uid] || {};
   const min = Number.isInteger(v.versionMinimale) ? v.versionMinimale : 0;
   const jeton = ops.find(op => op.path === 'users/' + uid + '/ecritures/jeton' && op.type === 'set');
   const jd = (jeton && jeton.data) || {};
   const jetonOk = !!jeton && !!jd.vEcrit && jd.vEcrit.__op === 'serverTimestamp' && Number.isInteger(jd.vApp);
-  for (const op of ops) {
-    if (!/\/verrouVersion\//.test(op.path)) continue;
-    if (op.type === 'delete') return 'verrou : suppression interdite';
-    const nv = (op.data || {}).versionMinimale;
-    if (!/\/verrouVersion\/courant$/.test(op.path) || !Number.isInteger(nv) || nv < min) return 'verrou : version minimale abaissée ou invalide';
-    if (!jetonOk || jd.vApp < nv) return 'verrou : posé par une version plus ancienne';
-  }
   if (!min) return null;
   if (!jetonOk) return 'verrou de version : écriture sans jeton (appareil trop ancien)';
   if (jd.vApp < min) return 'verrou de version : version ' + jd.vApp + ' plus ancienne que ' + min;
@@ -199,7 +216,9 @@ const server = http.createServer(async (req, res) => {
         for (const op of ops) {
           const [col, id] = op.path.split('/');
           const c = racine(col);
-          if (op.type === 'set') c[id] = resoudreSentinelles(op.data);
+          const fusR = (a, b) => (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) ? Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map(k => [k, k in b ? fusR(a[k], b[k]) : a[k]])) : b;
+          if (op.type === 'set' && op.merge) c[id] = fusR(c[id] || {}, resoudreProfond(op.data));
+          else if (op.type === 'set') c[id] = resoudreSentinelles(op.data);
           else if (op.type === 'update') c[id] = Object.assign({}, c[id] || {}, resoudreSentinelles(op.data));
           else if (op.type === 'delete') delete c[id];
           if (!journaux.has('racine')) journaux.set('racine', []);
@@ -286,13 +305,14 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/getdoc' && req.method === 'GET' && url.searchParams.get('racine')) {
       const col = url.searchParams.get('racine'), id = url.searchParams.get('id'), auth = url.searchParams.get('auth');
       if (col === 'admins' && (!auth || auth !== id)) return json(res, 403, { error: 'permission-denied' });
+      if ((col === 'verrous' || col === 'comptes') && url.searchParams.get('test') !== '1' && !(auth && (auth === id || estAdmin(auth)))) return json(res, 403, { error: 'permission-denied' });
       const data = racine(col)[id];
       return json(res, 200, { exists: data !== undefined, data: data || null });
     }
     if (url.pathname === '/snapshot' && req.method === 'GET' && url.searchParams.get('racine')) {
       const col = url.searchParams.get('racine'), auth = url.searchParams.get('auth'), champ = url.searchParams.get('champ'), valeur = url.searchParams.get('valeur');
       if (url.searchParams.get('test') !== '1') {
-        const permis = (col === 'feedback' && auth && (estAdmin(auth) || (champ === 'uid' && valeur === auth))) || (col === 'erreurs' && estAdmin(auth));
+        const permis = (col === 'feedback' && auth && (estAdmin(auth) || (champ === 'uid' && valeur === auth))) || ((col === 'erreurs' || col === 'verrous' || col === 'comptes') && estAdmin(auth));
         if (!permis) return json(res, 403, { error: 'permission-denied' });
       }
       const tous = racine(col), docs = {};

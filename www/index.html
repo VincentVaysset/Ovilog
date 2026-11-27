@@ -1990,7 +1990,7 @@ const SORTIE_INVENTAIRE = 'Mise à jour inventaire';
 const TYPE_MVT = { ENTREE: 'Entrée', NAISSANCE: 'Naissance', VENTE: 'Vente', VENTE_REPRO: 'Vente reproduction', MORT: 'Mort', PERTE: 'Perte', AUTOCONSO: 'Autoconsommation', INVENTAIRE: SORTIE_INVENTAIRE };
 const TYPES_MOUVEMENT_VALIDES = Object.values(TYPE_MVT);
 /* Table de conversion : le SEUL endroit où vivent les anciens libellés (données d'un appareil pas à jour, sauvegardes, anciens imports). Ils ne
-   s'affichent jamais : tout type lu passe par typeMvt, et convertirLibellesMouvements les réécrit dans la base (après une sauvegarde horodatée). */
+   s'affichent jamais : tout type lu passe par typeMvt, et executerConversionAutorisee les réécrit (autorisation de l'administrateur, aperçu et sauvegarde horodatée). */
 const CONVERSION_TYPES_MOUVEMENT = { 'Morte': TYPE_MVT.MORT, 'Vendue': TYPE_MVT.VENTE, 'Vendu': TYPE_MVT.VENTE, 'Vendue reproduction': TYPE_MVT.VENTE_REPRO, 'Vendu reproduction': TYPE_MVT.VENTE_REPRO };
 function typeMvt(t) { return Object.prototype.hasOwnProperty.call(CONVERSION_TYPES_MOUVEMENT, t) ? CONVERSION_TYPES_MOUVEMENT[t] : t; }
 // Liste de types + les anciens libellés qui y mènent (pour reconnaître une donnée pas encore convertie, sans jamais écrire l'ancien texte)
@@ -2549,8 +2549,8 @@ function poserIdsElements(db, mode) {
    « Mettre à jour l'application ». Cette version connaît le format 1 (listes d'origine) ; le rangement élément par élément sera le 2. */
 function schemaDonneesVersionCourante() { return 4; }   // 2 = fiches rangées par versions (lot 4, livraison 2) ; 3 = listes du compte aussi (livraison 3) ; 4 = verrou de version posé
 function donneesVerrouillees() { return ((typeof DB !== 'undefined' && DB && DB.schemaDonnees) || 0) > schemaDonneesVersionCourante(); }
-/* Verrou de version (27/11, avant la conversion des libellés) : le compte porte une VERSION MINIMALE (document users/{uid}/verrouVersion/courant,
-   posé par le bouton de Paramètres › Administration, jamais d'office ; compte par compte). Un appareil plus ancien CONSULTE mais n'écrit plus
+/* Verrou de version (27/11, avant la conversion des libellés) : le compte porte une VERSION MINIMALE (document verrous/{uid} à la racine,
+   posé par l'ADMINISTRATEUR depuis Paramètres › Administration de son compte, jamais d'office ; compte par compte). Un appareil plus ancien CONSULTE mais n'écrit plus
    rien (ni sur l'appareil, ni vers le cloud) : bandeau « Mise à jour obligatoire » avec le bouton de mise à jour. Les appareils d'avant ce code
    sont arrêtés par le format du compte (`schemaDonnees` = 4, qu'ils ne connaissent pas) et, une fois la règle publiée, par Firestore (jeton
    d'écriture daté par le serveur, voir firestore.rules). Version d'un appareil = n° du build : versionCode Android, « 1.0.N » sur PC. */
@@ -2572,6 +2572,11 @@ async function versionAppNumero() {
 }
 // lue une fois au démarrage (Android : réponse du plugin, asynchrone) : jusque-là, un compte verrouillé reste en consultation seule
 setTimeout(() => { versionAppNumero().then(() => { if (window.updateHeaderSyncBadge) window.updateHeaderSyncBadge(); }).catch(() => {}); }, 0);
+// Identifiant de CET appareil (registre des comptes, conversion autorisée pour un appareil désigné) : tiré au hasard une fois, propre à l'appareil
+function idAppareil() {
+  try { let id = localStorage.getItem('ovilog_id_appareil'); if (!id) { id = 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('ovilog_id_appareil', id); } return id; }
+  catch (e) { return 'a-inconnu'; }
+}
 // Verrou connu sur cet appareil pour le compte connecté : { versionMinimale } ou null
 function verrouVersionCompte() {
   const s = typeof window !== 'undefined' && window.OvilogSync;
@@ -9625,84 +9630,107 @@ function reunirDoublonsIdentiquesAuto() {
 }
 window.reunirDoublonsIdentiquesAuto = reunirDoublonsIdentiquesAuto;
 window.addEventListener('load', () => { try { reunirDoublonsIdentiquesAuto(); } catch (e) { console.error('Doublons identiques : réunion automatique', e); } });
-/* ---------- Conversion des anciens libellés de mouvement (chantier du 27/11, point 6 : « Morte » → « Mort ») ----------
-   Réécriture des données autorisée par l'éleveur, APRÈS une sauvegarde JSON horodatée obligatoire (une fois par appareil : nom gardé dans
-   ovilog_libelles_sauvegarde ; Android : copie interne + fichier enregistré hors de l'appli ; PC : fichier téléchargé). « Plus tard », un refus ou
-   une saisie en cours = rien n'est changé (l'affichage est déjà unifié : tout type lu passe par typeMvt), nouvel essai à la prochaine ouverture.
-   Essai à blanc sur une copie, puis écriture et relecture du stockage (plus aucun ancien libellé). Ensuite, ce qui arrive d'un appareil pas à jour
-   est converti tout seul, à la réception (la sauvegarde existe déjà). Touche : mouvements des fiches (agneaux compris), registre, mouvements
-   collectifs ; seul le champ type change, jamais un n° ni une date. */
-const CLE_SAUVEGARDE_LIBELLES = 'ovilog_libelles_sauvegarde';
+/* ---------- Conversion des anciens libellés de mouvement (« Morte » → « Mort », agneaux « Vendu » → « Vente ») ----------
+   JAMAIS automatique : seulement quand l'ADMINISTRATEUR l'a autorisée depuis son compte (verrous/{uid}.conversion), pour UN appareil désigné du
+   compte, après son aperçu (nombre de mouvements, liste animal / date / ancien mot / nouveau mot) et sa sauvegarde JSON horodatée téléchargée sur
+   son PC. L'appareil désigné, à jour et verrou confirmé par le serveur, refait l'aperçu (nombre différent = rien n'est fait), photographie le
+   troupeau (statuts, effectifs, Accueil, mortalité et causes, chaque ligne du registre, nombre de mouvements, tous les champs sauf le type),
+   convertit, rephotographie : un seul écart = retour automatique à l'état exact d'avant, rien d'enregistré, message pour l'administrateur. Résultat
+   écrit dans comptes/{uid}.conversion. Touche : mouvements des fiches (agneaux compris), registre (agneaux compris), mouvements collectifs ; seul
+   le champ type change, jamais un n° ni une date. Un ancien libellé qui reste est toujours lu par typeMvt (affichage déjà unifié). */
+function chaqueMouvementBase(d, fn) {
+  const liste = (l, animal, categorie) => (Array.isArray(l) ? l : []).forEach(m => { if (m) fn(m, animal, categorie); });
+  const agneaux = (f, cat) => (f.agnelages || []).forEach(a => ((a && a.lambs) || []).forEach(l => { if (l) liste(l.mouvements, { agneau: l }, 'agneaux'); }));
+  ['brebis', 'beliers', 'agnelles'].forEach(c => ((d && d[c]) || []).forEach(f => { if (!f) return; liste(f.mouvements, { fiche: f }, c); agneaux(f, c); }));
+  if (d && d.registre) Object.keys(d.registre).forEach(c => Object.keys(d.registre[c] || {}).forEach(eid => { const e = d.registre[c][eid]; if (!e) return; liste(e.mouvements, { eid }, c); agneaux(e, c); }));
+  liste(d && d.mouvementsCollectifs, { collectif: true }, null);
+}
 function convertirTypesDansBase(d) {
   let n = 0;
-  const conv = m => { if (m && typeof m.type === 'string' && Object.prototype.hasOwnProperty.call(CONVERSION_TYPES_MOUVEMENT, m.type)) { m.type = CONVERSION_TYPES_MOUVEMENT[m.type]; n++; } };
-  const liste = l => (Array.isArray(l) ? l : []).forEach(conv);
-  ['brebis', 'beliers', 'agnelles'].forEach(c => ((d && d[c]) || []).forEach(f => {
-    if (!f) return;
-    liste(f.mouvements);
-    (f.agnelages || []).forEach(a => ((a && a.lambs) || []).forEach(l => { if (l) liste(l.mouvements); }));
-  }));
-  if (d && d.registre) Object.keys(d.registre).forEach(c => Object.values(d.registre[c] || {}).forEach(e => { if (e) liste(e.mouvements); }));
-  liste(d && d.mouvementsCollectifs);
+  chaqueMouvementBase(d, m => { if (typeof m.type === 'string' && Object.prototype.hasOwnProperty.call(CONVERSION_TYPES_MOUVEMENT, m.type)) { m.type = CONVERSION_TYPES_MOUVEMENT[m.type]; n++; } });
   return n;
 }
-function compterMouvementsBase(d) {
-  let n = 0;
-  const ajout = l => { n += Array.isArray(l) ? l.length : 0; };
-  ['brebis', 'beliers', 'agnelles'].forEach(c => ((d && d[c]) || []).forEach(f => { if (!f) return; ajout(f.mouvements); (f.agnelages || []).forEach(a => ((a && a.lambs) || []).forEach(l => { if (l) ajout(l.mouvements); })); }));
-  if (d && d.registre) Object.keys(d.registre).forEach(c => Object.values(d.registre[c] || {}).forEach(e => { if (e) ajout(e.mouvements); }));
-  ajout(d && d.mouvementsCollectifs);
-  return n;
-}
+function compterMouvementsBase(d) { let n = 0; chaqueMouvementBase(d, () => { n++; }); return n; }
 function texteContientAncienLibelle(texte) { return Object.keys(CONVERSION_TYPES_MOUVEMENT).some(k => String(texte || '').includes('"type":' + JSON.stringify(k))); }
-let conversionLibellesEnCours = false;
-function demanderSauvegardeAvantLibelles(nom, n) {
-  return new Promise(resolve => questionCharte('Correction des libellés',
-    n + ' mouvement' + (n > 1 ? 's' : '') + ' ' + (n > 1 ? 'portent' : 'porte') + ' encore un ancien libellé au féminin : ' + (n > 1 ? 'ils vont' : 'il va') + ' prendre celui du registre (« ' + TYPE_MVT.MORT + ' », « ' + TYPE_MVT.VENTE + ' »). Avant, enregistrez une sauvegarde de vos données ; sans elle, rien n\'est changé.',
-    'Enregistrer la sauvegarde', 'Plus tard',
-    () => { sauvegardeVisibleAvantMutation(nom, DB).then(resolve, e => resolve({ ok: false, raison: (e && e.message) || String(e) })); },
-    () => resolve({ ok: false, cancelled: true, raison: "reporté par l'éleveur" })));
+// Aperçu (lecture seule) : un mouvement à convertir par ligne { animal, categorie, date, ancien, nouveau }
+function apercuConversionLibelles(d) {
+  const rows = [];
+  chaqueMouvementBase(d, (m, qui, categorie) => {
+    if (typeof m.type !== 'string' || !Object.prototype.hasOwnProperty.call(CONVERSION_TYPES_MOUVEMENT, m.type)) return;
+    const f = qui.fiche, e = qui.eid, l = qui.agneau;
+    const animal = qui.collectif ? 'Mouvement collectif (' + ((m.membres || []).length) + ' animaux)'
+      : l ? 'Agneau ' + numeroAgneauTexte(l)
+      : f ? (f.numeroCourtTravailSieol || f.numeroTravailSieol || f.numeroTravail || ('n°' + String(cleanEid(f.eid || '')).slice(-5)))
+      : 'n°' + String(cleanEid(e || '')).slice(-5) + ' (registre)';
+    rows.push({ animal, categorie: categorie || m.categorie || '', date: m.date || '', ancien: m.type, nouveau: CONVERSION_TYPES_MOUVEMENT[m.type] });
+  });
+  return rows;
 }
-// opts.sansQuestion : à la réception d'un autre appareil, la conversion ne se fait que si la sauvegarde de cet appareil existe déjà (jamais de question en pleine séance)
-async function convertirLibellesMouvements(opts) {
-  if (conversionLibellesEnCours || !DB) return { fait: false };
-  const essai = JSON.parse(JSON.stringify(DB));   // essai à blanc
-  const n = convertirTypesDansBase(essai);
-  if (!n) return { fait: false, n: 0 };
-  if (typeof currentView !== 'undefined' && vueAvecSaisie(currentView)) return { fait: false, raison: 'saisie en cours' };
-  // ordre validé : verrou de version CONFIRMÉ PAR LE SERVEUR (aucun ancien appareil ne peut plus écrire) → sauvegarde → conversion
-  if (!(await verrouVersionConfirme())) return { fait: false, raison: 'verrou de version pas encore confirmé par le serveur' };
-  if (compterMouvementsBase(essai) !== compterMouvementsBase(DB) || texteContientAncienLibelle(JSON.stringify(essai))) return { fait: false, raison: 'essai à blanc en échec' };
-  conversionLibellesEnCours = true;
+// Photo de contrôle (base de CET appareil) : tout ce qui ne doit JAMAIS bouger quand seul le type d'un mouvement change
+// les listes de l'Accueil et de la mortalité recopient des mouvements entiers : leur seul champ « type » est celui qui change, tout le reste est comparé
+const sansType = (k, v) => k === 'type' ? undefined : v;
+function photoControleConversion() {
+  const statuts = [...(DB.brebis || []), ...(DB.beliers || []), ...(DB.agnelles || [])].map(a => [a.eid, a.statut || '', a.statut ? (LIBELLE_STATUT_SORTIE[a.statut] || a.statut) : '']);
+  const agneaux = (DB.brebis || []).flatMap(b => (b.agnelages || []).flatMap(a => (a.lambs || []).map(l => [l.eid || l.id || '', l.statutFinal || ''])));
+  return {
+    'statut des animaux': JSON.stringify([statuts, agneaux]),
+    'effectifs': JSON.stringify(['brebis', 'beliers', 'agnelles'].map(k => inventaireActifsItems(k).length)),
+    'chiffres de l\'Accueil': JSON.stringify(dashboardStatsData(), sansType),
+    'mortalité et causes': JSON.stringify(mortaliteSanitaireData(), sansType),
+    'indicateurs du registre': JSON.stringify(registreIndicateursPc()),
+    'lignes du registre': JSON.stringify(registreMouvementsRows().map(x => [x.eid, x.categorie, x.type, x.detail, x.date])),
+    'nombre de mouvements': String(compterMouvementsBase(DB)),
+    'champs des mouvements (hors type)': JSON.stringify([DB.brebis, DB.beliers, DB.agnelles, DB.registre, DB.mouvementsCollectifs], (k, v) => k === 'type' ? undefined : v)
+  };
+}
+function premierEcartPhoto(a, b) { return Object.keys(a).find(k => a[k] !== b[k]) || null; }
+const CLE_CONVERSION_TRAITEE = 'ovilog_conversion_traitee';   // id de la dernière autorisation traitée par cet appareil (jamais rejouée)
+let conversionAutoriseeEnCours = false;
+async function executerConversionAutorisee(autorisation) {
+  if (!autorisation || !autorisation.id || conversionAutoriseeEnCours) return { fait: false, raison: 'rien à faire' };
+  if (typeof currentView !== 'undefined' && vueAvecSaisie(currentView)) return { fait: false, raison: 'saisie en cours', reessayer: true };
+  if (!(await verrouVersionConfirme())) return { fait: false, raison: 'verrou de version pas encore confirmé par le serveur', reessayer: true };
+  conversionAutoriseeEnCours = true;
+  const fin = async res => {
+    try { localStorage.setItem(CLE_CONVERSION_TRAITEE, autorisation.id); } catch (e) { /* ignoré */ }
+    const r = Object.assign({ autorisation: autorisation.id, nbAttendu: autorisation.nbAttendu }, res);
+    try { if (window.OvilogSync && window.OvilogSync.ecrireResultatConversion) await window.OvilogSync.ecrireResultatConversion(r); } catch (e) { console.error('Conversion : résultat non envoyé', e); }
+    return Object.assign({ fait: res.etat === 'faite' }, r);
+  };
   try {
-    let nom = null;
-    try { nom = localStorage.getItem(CLE_SAUVEGARDE_LIBELLES); } catch (e) { nom = null; }
-    if (!nom) {
-      if (opts && opts.sansQuestion) return { fait: false, raison: 'sauvegarde pas encore faite sur cet appareil' };
-      if (document.getElementById('question-charte')) return { fait: false, raison: 'une autre question est ouverte' };
-      const nomNeuf = nomFichierBackupAuto(new Date()).replace('ovilog_backup_', 'ovilog_libelles_avant_');
-      const res = await demanderSauvegardeAvantLibelles(nomNeuf, n);
-      if (!res || !res.ok) return { fait: false, raison: (res && res.raison) || 'sauvegarde non faite' };
-      nom = nomNeuf;
-      try { localStorage.setItem(CLE_SAUVEGARDE_LIBELLES, nom); } catch (e) { /* ignoré */ }
-    }
-    if (typeof currentView !== 'undefined' && vueAvecSaisie(currentView)) return { fait: false, raison: 'saisie en cours' };
-    const avant = compterMouvementsBase(DB);
-    const fait = convertirTypesDansBase(DB);
-    if (saveData(DB, { silencieux: true }) === false) return { fait: false, raison: 'enregistrement refusé par l\'appareil' };
-    let texte = null;
-    if (saveData.ecritStockage) { try { texte = localStorage.getItem(DB_KEY); } catch (e) { texte = null; } }
+    const avantTexte = JSON.stringify(DB);
+    const lignes = apercuConversionLibelles(DB);
+    if (lignes.length !== autorisation.nbAttendu) return await fin({ etat: 'annulee', n: 0, raison: 'aperçu différent : ' + lignes.length + ' mouvement(s) à convertir sur cet appareil au lieu de ' + autorisation.nbAttendu + ' — rien n\'est changé' });
+    const essai = JSON.parse(avantTexte), nEssai = convertirTypesDansBase(essai);
+    if (nEssai !== lignes.length || texteContientAncienLibelle(JSON.stringify(essai)) || compterMouvementsBase(essai) !== compterMouvementsBase(DB)) return await fin({ etat: 'annulee', n: 0, raison: 'essai à blanc en échec — rien n\'est changé' });
+    const remettre = () => { DB = JSON.parse(avantTexte); if (typeof currentView !== 'undefined' && !vueAvecSaisie(currentView)) render(currentView); };
+    const photoAvant = photoControleConversion();
+    const n = convertirTypesDansBase(DB);
+    const ecart = premierEcartPhoto(photoAvant, photoControleConversion());
+    if (ecart) { remettre(); return await fin({ etat: 'annulee', n: 0, raison: 'contrôle avant / après : « ' + ecart + ' » a changé — retour automatique à l\'état d\'avant, rien d\'enregistré' }); }
+    if (saveData(DB, { silencieux: true }) === false) { remettre(); return await fin({ etat: 'annulee', n: 0, raison: 'enregistrement refusé par l\'appareil — retour à l\'état d\'avant' }); }
+    let texte = null; if (saveData.ecritStockage) { try { texte = localStorage.getItem(DB_KEY); } catch (e) { texte = null; } }
     if (texte === null) texte = JSON.stringify(DB);
     const relue = (() => { try { return JSON.parse(texte); } catch (e) { return null; } })();
-    if (!relue || texteContientAncienLibelle(texte) || compterMouvementsBase(relue) !== avant) return { fait: false, raison: 'relecture en échec' };
+    if (!relue || texteContientAncienLibelle(texte) || compterMouvementsBase(relue) !== compterMouvementsBase(JSON.parse(avantTexte))) { remettre(); saveData(DB, { silencieux: true }); return await fin({ etat: 'annulee', n: 0, raison: 'relecture du stockage en échec — retour à l\'état d\'avant' }); }
     if (typeof currentView !== 'undefined' && ['home', 'inventaire', 'registre'].includes(currentView)) render(currentView);
-    return { fait: true, n: fait, sauvegarde: nom };
-  } finally { conversionLibellesEnCours = false; }
+    return await fin({ etat: 'faite', n });
+  } finally { conversionAutoriseeEnCours = false; }
 }
-window.convertirLibellesMouvements = convertirLibellesMouvements;
-// Au démarrage : seulement si la base enregistrée sur l'appareil porte un ancien libellé (lue AVANT toute autre chose)
-const ancienLibelleAuDemarrage = (() => { try { return texteContientAncienLibelle(localStorage.getItem(DB_KEY)); } catch (e) { return false; } })();
-window.addEventListener('load', () => { if (ancienLibelleAuDemarrage) setTimeout(() => { convertirLibellesMouvements().catch(e => console.error('Conversion des libellés', e)); }, 2500); });
+// Appelée à chaque lecture du verrou : seul l'appareil DÉSIGNÉ par l'administrateur exécute, une fois par autorisation ; saisie en cours ou serveur pas
+// encore confirmé = nouvel essai 30 s plus tard (jamais pendant une saisie)
+let minuterieConversion = null;
+function planifierConversionAutorisee(autorisation) {
+  if (!autorisation || !autorisation.id || autorisation.appareil !== idAppareil()) return;
+  let traitee = null; try { traitee = localStorage.getItem(CLE_CONVERSION_TRAITEE); } catch (e) { traitee = null; }
+  if (traitee === autorisation.id || minuterieConversion) return;
+  minuterieConversion = setTimeout(async () => {
+    minuterieConversion = null;
+    const r = await executerConversionAutorisee(autorisation).catch(e => ({ fait: false, reessayer: true, raison: String(e) }));
+    if (r && r.reessayer) planifierConversionAutorisee(autorisation);
+  }, typeof window.__delaiConversionMs === 'number' ? window.__delaiConversionMs : 1500);
+}
+window.planifierConversionAutorisee = planifierConversionAutorisee;
 function pastilleDoublonsHtml() {
   const n = doublonsSynchro().length;
   return n ? `<button type="button" class="pastille-conflits" id="pastille-doublons">Doublons à vérifier : ${n}</button>` : '';
@@ -33598,48 +33626,126 @@ function dateReferenceEde() {
 }
 function horsPerimetreEde(dateMouvement) { const ref = dateReferenceEde(); return !!(ref && String(dateMouvement || '') < ref); }
 // Paramètres › Administration (PC, administrateur seulement) : carte « Chantiers en test »
-/* Carte « Verrou de version » (Paramètres › Administration, PC, tout compte) : seul point d'activation, jamais d'office. Refusé si cet appareil n'est pas
-   à jour (dernière version publiée plus récente) ou si la vérification échoue ; version minimale = celle de CET appareil ; confirmation du serveur puis
-   conversion des libellés (sauvegarde d'abord). */
+/* Carte « Verrous de version » (Paramètres › Administration, PC, compte ADMINISTRATEUR seul) : liste des comptes (registre comptes/, aucune donnée
+   d'animal), pour chacun l'état du verrou, la version minimale, les versions de ses appareils et « Activer le verrou ». Le bouton refuse si cet
+   appareil n'est pas à jour, si la vérification échoue ou si un appareil connu du compte est plus ancien. Puis, verrou actif : « Aperçu de la
+   conversion » (lecture SEULE du compte : nombre et liste animal / date / ancien mot / nouveau mot), « Télécharger la sauvegarde » (JSON horodaté,
+   obligatoire : échec = rien d'autre) et « Autoriser la conversion » sur UN appareil à jour du compte, qui la fait lui-même (contrôle avant / après,
+   retour automatique en arrière) ; son résultat revient ici. Rien n'est écrit dans les données d'un autre compte. */
+let adminVerrous = { charge: false, enCours: false, comptes: [], erreur: null, apercu: null };
+function dateDeHorodatage(v) {
+  if (!v) return null;
+  const d = typeof v.toDate === 'function' ? v.toDate() : typeof v.ms === 'number' ? new Date(v.ms) : typeof v === 'number' ? new Date(v) : typeof v.seconds === 'number' ? new Date(v.seconds * 1000) : typeof v === 'string' ? new Date(v) : null;
+  return d && !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null;
+}
+function texteAppareilCompte(a) { return (a.type === 'pc' ? 'PC' : 'Mobile') + ' 1.0.' + (a.version || '?') + (dateDeHorodatage(a.vu) ? ' (vu le ' + formatDateFr(dateDeHorodatage(a.vu)) + ')' : ''); }
+function texteConversionCompte(c) {
+  const v = c.verrou && c.verrou.conversion, r = c.conversion;
+  if (r && v && r.autorisation === v.id) return r.etat === 'faite' ? 'Conversion faite : ' + r.n + ' mouvement(s), le ' + formatDateFr(String(r.le || '').slice(0, 10)) : 'Conversion annulée : ' + (r.raison || 'raison inconnue');
+  if (v) return 'Conversion autorisée (' + v.nbAttendu + ' mouvement(s)), en attente de l\'appareil désigné';
+  return 'Conversion : pas encore autorisée';
+}
 function carteVerrouVersionHtml() {
-  const v = verrouVersionCompte(), n = versionAppSync();
-  const etat = v ? 'Activé · version minimale 1.0.' + v.versionMinimale + (ecrituresBloqueesVersion() ? ' · cet appareil est trop ancien' : '') : 'Désactivé · tous les appareils de ce compte enregistrent, quelle que soit leur version.';
-  const peut = typeof n === 'number' && (!v || n > v.versionMinimale);
-  return `<div class="card" id="card-verrou-version">
-    <div class="prm-titre">Verrou de version</div>
-    <div class="prm-note">Réglage de CE compte. Activé, un appareil plus ancien que la version minimale consulte les données mais n'enregistre plus rien (« Mise à jour obligatoire »). À activer seulement une fois le PC et le mobile à jour.</div>
-    <div class="prm-note" id="verrou-etat">${echapperHtml(etat)}</div>
-    <div class="prm-note">Cet appareil : ${typeof n === 'number' ? '1.0.' + n : 'version inconnue'}</div>
-    ${peut ? `<button type="button" class="btn btn-primary" id="btn-verrou-version">${v ? 'Relever le verrou à 1.0.' + n : 'Activer le verrou (version 1.0.' + n + ')'}</button>` : ''}
+  const n = versionAppSync(), A = adminVerrous;
+  const ligneCompte = c => {
+    const min = c.verrou && c.verrou.versionMinimale > 0 ? c.verrou.versionMinimale : 0;
+    const appareils = Object.entries(c.appareils || {}).map(([id, a]) => Object.assign({ id }, a));
+    const peut = typeof n === 'number' && (!min || n > min);
+    const ap = A.apercu && A.apercu.uid === c.uid ? A.apercu : null;
+    return `<div class="verrou-compte" data-uid="${echapperHtml(c.uid)}" style="border-top:1px solid var(--ch-separateur);padding:10px 0;">
+      <div style="font-weight:700;">${echapperHtml(c.exploitation || 'Compte sans nom')}${c.moi ? ' <span class="badge badge-gray">votre compte</span>' : ''}</div>
+      <div class="prm-note verrou-etat">${min ? 'Verrou activé · version minimale 1.0.' + min : 'Verrou désactivé'}</div>
+      <div class="prm-note verrou-appareils">Appareils : ${appareils.length ? appareils.map(a => echapperHtml(texteAppareilCompte(a))).join(' · ') : 'aucun appareil connu'}</div>
+      ${min ? `<div class="prm-note verrou-conversion">${echapperHtml(texteConversionCompte(c))}</div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+        ${peut ? `<button type="button" class="btn btn-primary btn-verrou-activer" data-uid="${echapperHtml(c.uid)}">${min ? 'Relever le verrou à 1.0.' + n : 'Activer le verrou (1.0.' + n + ')'}</button>` : ''}
+        ${min ? `<button type="button" class="btn btn-secondary btn-verrou-apercu" data-uid="${echapperHtml(c.uid)}">Aperçu de la conversion</button>` : ''}
+      </div>
+      ${ap ? apercuConversionCompteHtml(c, ap, min, appareils) : ''}
+    </div>`;
+  };
+  return `<div class="card" id="card-verrou-version" style="grid-column:1 / -1;">
+    <div class="prm-titre">Verrous de version</div>
+    <div class="prm-note">Un compte verrouillé : ses appareils plus anciens que la version minimale consultent les données mais n'enregistrent plus rien (« Mise à jour obligatoire »). Cet appareil : ${typeof n === 'number' ? '1.0.' + n : 'version inconnue'}.</div>
+    ${A.erreur ? `<div class="prm-alerte">${echapperHtml(A.erreur)}</div>` : ''}
+    ${!A.charge ? '<div class="prm-note" id="verrous-chargement">Lecture des comptes…</div>' : A.comptes.length ? A.comptes.map(ligneCompte).join('') : '<div class="prm-note">Aucun compte connu : un compte apparaît ici dès qu\'un de ses appareils à jour s\'ouvre connecté.</div>'}
     <div class="prm-note" id="verrou-message"></div>
   </div>`;
 }
+function apercuConversionCompteHtml(c, ap, min, appareils) {
+  if (ap.erreur) return `<div class="prm-alerte">${echapperHtml(ap.erreur)}</div>`;
+  const formatOk = (ap.d.schemaDonnees || 0) >= SCHEMA_VERROU_VERSION;
+  const eligibles = appareils.filter(a => (a.version || 0) >= min);
+  return `<div class="verrou-apercu" style="margin-top:8px;">
+    <div style="font-weight:600;" class="verrou-apercu-nb">${ap.lignes.length} mouvement(s) à convertir</div>
+    ${ap.lignes.length ? `<div style="max-height:260px;overflow:auto;margin:6px 0;"><table class="pc-table verrou-apercu-table"><thead><tr><th>Animal</th><th>Date</th><th>Ancien mot</th><th>Nouveau mot</th></tr></thead><tbody>
+      ${ap.lignes.map(l => `<tr><td>${echapperHtml(l.animal)}</td><td>${l.date ? formatDateFr(l.date) : '—'}</td><td>${echapperHtml(l.ancien)}</td><td>${echapperHtml(l.nouveau)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="prm-note">Rien à convertir sur ce compte.</div>'}
+    ${!formatOk ? '<div class="prm-alerte">Le format du compte n\'est pas encore passé à 4 : ouvrez Ovilog connecté sur un appareil à jour de ce compte, puis refaites l\'aperçu.</div>' : ''}
+    ${ap.lignes.length && formatOk ? `<button type="button" class="btn btn-secondary btn-verrou-sauvegarde" data-uid="${echapperHtml(c.uid)}">Télécharger la sauvegarde</button>
+      ${ap.sauvegarde ? `<div class="prm-note verrou-sauvegarde-ok">Sauvegarde enregistrée : ${echapperHtml(ap.sauvegarde)}</div>
+        ${eligibles.length ? `<div class="prm-note">Appareil qui fera la conversion :</div>${eligibles.map(a => `<label style="display:block;"><input type="radio" name="verrou-appareil" value="${echapperHtml(a.id)}"${ap.appareil === a.id ? ' checked' : ''}> ${echapperHtml(texteAppareilCompte(a))}</label>`).join('')}
+          <button type="button" class="btn btn-primary btn-verrou-autoriser" data-uid="${echapperHtml(c.uid)}" style="margin-top:6px;">Autoriser la conversion</button>` : '<div class="prm-alerte">Aucun appareil à jour connu pour ce compte.</div>'}` : ''}` : ''}
+  </div>`;
+}
+async function chargerComptesAdmin() {
+  const s = window.OvilogSync;
+  try { adminVerrous.comptes = await s.listerComptesAdmin(); adminVerrous.erreur = null; }
+  catch (e) { adminVerrous.erreur = 'Liste des comptes illisible : ' + ((e && e.message) || e); }
+  adminVerrous.charge = true;
+  if (currentView === 'parametres' && parametresTab === 'administration') render('parametres');
+}
 function brancherCarteVerrouVersion() {
-  const b = document.getElementById('btn-verrou-version'), ligne = document.getElementById('verrou-message');
-  if (!b) return;
-  b.onclick = async () => {
+  const A = adminVerrous, s = window.OvilogSync;
+  if (!A.charge && !A.enCours && s && s.listerComptesAdmin) { A.enCours = true; chargerComptesAdmin().finally(() => { A.enCours = false; }); }
+  const compte = uid => A.comptes.find(c => c.uid === uid);
+  const dire = t => { const l = document.getElementById('verrou-message'); if (l) l.textContent = t; };
+  const rafraichir = async () => { await chargerComptesAdmin(); };
+  document.querySelectorAll('.btn-verrou-activer').forEach(b => b.onclick = async () => {
+    const c = compte(b.dataset.uid); if (!c) return;
     b.disabled = true;
-    const dire = t => { if (ligne) ligne.textContent = t; };
+    const refus = t => { b.disabled = false; dire(''); messageCharte('Verrou non activé', t); };
     dire('Vérification de la version de cet appareil…');
-    const refus = t => { dire(''); b.disabled = false; messageCharte('Verrou non activé', t); };
     const n = await versionAppNumero();
     if (typeof n !== 'number') return refus('Version de cet appareil inconnue : rien n\'est changé.');
     const rel = await derniereReleaseDisponible();
     if (!rel || !rel.ok) return refus('Impossible de vérifier que cet appareil est à jour (réseau ?) : rien n\'est changé, réessayez.');
-    if (rel.best && rel.best.versionCode > n) return refus('Cet appareil n\'est pas à jour : version 1.0.' + n + ', dernière version publiée 1.0.' + rel.best.versionCode + '. Mettez-le à jour avant d\'activer le verrou.');
+    if (rel.best && rel.best.versionCode > n) return refus('Cet appareil n\'est pas à jour : version 1.0.' + n + ', dernière version publiée 1.0.' + rel.best.versionCode + '. Mettez-le à jour avant d\'activer un verrou.');
+    const anciens = Object.values(c.appareils || {}).filter(a => (a.version || 0) < n);
+    if (anciens.length) return refus('Appareil(s) de ce compte plus ancien(s) que 1.0.' + n + ' : ' + anciens.map(texteAppareilCompte).join(' · ') + '. Mettez-les à jour, ouvrez-les connectés, puis réessayez.');
     dire('');
-    questionCharte('Activer le verrou de version ?', 'Version minimale : 1.0.' + n + ' (celle de cet appareil). Tout appareil de ce compte plus ancien pourra consulter mais ne pourra plus rien enregistrer. Vérifiez que le mobile est aussi en 1.0.' + n + ' ou plus récent. Ensuite : sauvegarde, puis correction des libellés.',
+    questionCharte('Activer le verrou de version ?', '« ' + (c.exploitation || 'Compte sans nom') + ' » : version minimale 1.0.' + n + '. Tout appareil de ce compte plus ancien pourra consulter mais ne pourra plus rien enregistrer. Aucune conversion n\'est faite à cette étape.',
       'Activer le verrou', 'Annuler', async () => {
-        dire('Activation… attente de la confirmation du serveur');
-        let r;
-        try { r = await window.OvilogSync.activerVerrouVersion(n); } catch (e) { r = { ok: false, raison: (e && e.message) || String(e) }; }
-        if (!r || !r.ok) { b.disabled = false; dire(''); messageCharte('Verrou non confirmé', 'Le serveur n\'a pas confirmé le verrou (' + ((r && r.raison) || 'raison inconnue') + ') : aucune donnée n\'est convertie. Réessayez.'); return; }
-        if (currentView === 'parametres') render('parametres');
-        const l = document.getElementById('verrou-message');
-        if (l) l.textContent = 'Verrou confirmé par le serveur : version minimale 1.0.' + r.versionMinimale + '.';
-        convertirLibellesMouvements().catch(e => console.error('Conversion des libellés', e));
+        let r; try { r = await s.activerVerrouCompte(c.uid, n); } catch (e) { r = { ok: false, raison: (e && e.message) || String(e) }; }
+        if (!r.ok) { b.disabled = false; messageCharte('Verrou non confirmé', 'Le serveur n\'a pas confirmé le verrou (' + (r.raison || 'raison inconnue') + ') : rien n\'est changé. Réessayez.'); return; }
+        await rafraichir(); dire('Verrou confirmé par le serveur : version minimale 1.0.' + r.versionMinimale + '.');
       }, () => { b.disabled = false; });
-  };
+  });
+  document.querySelectorAll('.btn-verrou-apercu').forEach(b => b.onclick = async () => {
+    const c = compte(b.dataset.uid); if (!c) return;
+    b.disabled = true; dire('Lecture du compte (lecture seule)…');
+    try { const d = await s.lireCompteAdmin(c.uid); A.apercu = { uid: c.uid, d, lignes: apercuConversionLibelles(d), sauvegarde: null, appareil: null }; }
+    catch (e) { A.apercu = { uid: c.uid, erreur: 'Compte illisible : ' + ((e && e.message) || e) + ' (règles Firestore publiées ?)' }; }
+    dire(''); render('parametres');
+  });
+  document.querySelectorAll('.btn-verrou-sauvegarde').forEach(b => b.onclick = async () => {
+    const ap = A.apercu, c = compte(b.dataset.uid); if (!ap || !c) return;
+    b.disabled = true;
+    const nom = nomFichierBackupAuto(new Date()).replace('ovilog_backup_', 'ovilog_compte_' + (String(c.exploitation || 'compte').normalize('NFD').replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'compte') + '_avant_libelles_');
+    let r; try { r = await sauvegardeVisibleAvantMutation(nom, ap.d); } catch (e) { r = { ok: false, raison: (e && e.message) || String(e) }; }
+    if (!r || !r.ok) { b.disabled = false; messageCharte('Sauvegarde non faite', 'La sauvegarde n\'a pas pu être enregistrée (' + ((r && r.raison) || 'raison inconnue') + ') : rien d\'autre ne se fait.'); return; }
+    ap.sauvegarde = nom; render('parametres');
+  });
+  document.querySelectorAll('input[name="verrou-appareil"]').forEach(i => i.onchange = () => { if (A.apercu) A.apercu.appareil = i.value; });
+  document.querySelectorAll('.btn-verrou-autoriser').forEach(b => b.onclick = () => {
+    const ap = A.apercu, c = compte(b.dataset.uid); if (!ap || !c || !ap.sauvegarde) return;
+    if (!ap.appareil) { messageCharte('Choisissez un appareil', 'Choisissez l\'appareil du compte qui fera la conversion.'); return; }
+    questionCharte('Autoriser la conversion ?', ap.lignes.length + ' mouvement(s) de « ' + (c.exploitation || 'Compte sans nom') + ' » : seul le mot du type change. L\'appareil choisi refait l\'aperçu, contrôle tout avant et après, et revient seul à l\'état d\'avant au moindre écart.',
+      'Autoriser la conversion', 'Annuler', async () => {
+        try { await s.autoriserConversionCompte(c.uid, ap.lignes.length, ap.appareil, ap.sauvegarde); }
+        catch (e) { messageCharte('Autorisation non enregistrée', String((e && e.message) || e)); return; }
+        A.apercu = null; await rafraichir(); dire('Conversion autorisée : elle se fera à la prochaine ouverture connectée de l\'appareil choisi.');
+      }, () => {});
+  });
 }
 function renderParametresAdministration(content) {
   if (!contactAdministrateur()) { content.innerHTML = ''; return; }
@@ -38837,10 +38943,7 @@ let redessinSynchroDiffere = false;
 function vueDeSaisieEnCours(vue) {
   return /^(add|edit)-/.test(vue || '') || vue === 'misebas-rapide' || vue === 'identifier-agneaux' || vue === 'echo-rapide';
 }
-// Après toute réception : un ancien libellé de mouvement reçu d'un appareil pas à jour est converti tout seul (si la sauvegarde horodatée de cet appareil existe déjà)
-function convertirLibellesApresReception() { if (typeof window.convertirLibellesMouvements === 'function') setTimeout(() => { window.convertirLibellesMouvements({ sansQuestion: true }).catch(e => console.error('Conversion des libellés', e)); }, 0); }
 function applyRemoteUpdate(mutatorFn) {
-  convertirLibellesApresReception();
   if (vueDeSaisieEnCours(currentView)) {
     sync.applyingRemote = true;
     try { mutatorFn(); localStorage.setItem(DB_KEY, JSON.stringify(DB)); } finally { sync.applyingRemote = false; }
@@ -39157,8 +39260,6 @@ function apresFusionV2(colName) {
   if (typeof window.majPastilleConflits === 'function') setTimeout(() => window.majPastilleConflits(), 0);
   // copies de mise bas strictement identiques reçues d'un autre appareil : réunies d'office (jamais pendant une saisie : seule la donnée change)
   if (collectionsVersionnees().includes(colName) && typeof window.reunirDoublonsIdentiquesAuto === 'function') setTimeout(() => { try { window.reunirDoublonsIdentiquesAuto(); } catch (e) { console.error('Doublons identiques : réunion automatique', e); } }, 0);
-  // ancien libellé reçu d'un appareil pas à jour : converti tout seul (la sauvegarde horodatée existe déjà sur cet appareil ; sinon la question est posée)
-  if (typeof window.convertirLibellesMouvements === 'function') setTimeout(() => { window.convertirLibellesMouvements({ sansQuestion: true }).catch(e => console.error('Conversion des libellés', e)); }, 0);
 }
 function fusionnerInstantaneDistant(colName, arr, ancienneRef) {
   const localParId = new Map((getRecordsArrayForSync(colName, DB) || []).map(r => [r.id, r]));
@@ -39535,29 +39636,68 @@ function demarrerReglagesAdmin(uid) {
     try { if (window.rafraichirChantierEde) window.rafraichirChantierEde(); } catch (e) { console.error('Réglages administrateur : rafraîchissement', e); }
   }, e => { console.error('Réglages administrateur : lecture impossible', e); });
 }
-/* Verrou de version du compte (users/{uid}/verrouVersion/courant = { versionMinimale, activeLe }) : lu en continu ; le dernier connu est gardé sur
-   l'appareil (un appareil hors ligne au démarrage reste bloqué). Une lecture du cache ne fait jamais BAISSER la version connue ; le serveur fait foi. */
-const verrou = { uid: null, versionMinimale: 0, connu: false, duServeur: false, unsub: null, confirme: null };
+/* Verrou de version du compte : verrous/{uid} = { versionMinimale, activeLe, conversion } — collection à la RACINE, écrite par l'ADMINISTRATEUR seul
+   (Paramètres › Administration de son compte), lue par le compte. Lu en continu ; le dernier connu est gardé sur l'appareil (hors ligne au démarrage :
+   il reste appliqué). Une lecture du cache ne fait jamais BAISSER la version connue ; le serveur fait foi. Appareil à jour qui voit le verrou : passe le
+   format du compte à 4 (les appareils d'avant ce code s'arrêtent). Conversion des libellés : SEULEMENT si l'administrateur l'a autorisée pour CET
+   appareil (verrous/{uid}.conversion.appareil), avec nouvel aperçu, contrôle avant / après et retour automatique à l'état d'avant. */
+const verrou = { uid: null, versionMinimale: 0, conversion: null, connu: false, duServeur: false, unsub: null, confirme: null };
 function verrouPersiste(uid) { try { const v = JSON.parse(localStorage.getItem(CLE_VERROU_VERSION) || 'null'); return v && v.uid === uid && Number.isInteger(v.versionMinimale) ? v.versionMinimale : 0; } catch (e) { return 0; } }
 function persisterVerrou() { try { localStorage.setItem(CLE_VERROU_VERSION, JSON.stringify({ uid: verrou.uid, versionMinimale: verrou.versionMinimale })); } catch (e) { /* ignoré */ } }
-function arreterVerrouVersion() { if (verrou.unsub) { try { verrou.unsub(); } catch (e) {} } Object.assign(verrou, { uid: null, versionMinimale: 0, connu: false, duServeur: false, unsub: null, confirme: null }); }
+function arreterVerrouVersion() { if (verrou.unsub) { try { verrou.unsub(); } catch (e) {} } Object.assign(verrou, { uid: null, versionMinimale: 0, conversion: null, connu: false, duServeur: false, unsub: null, confirme: null }); }
 function demarrerVerrouVersion(uid) {
   if (verrou.uid === uid) return;
   arreterVerrouVersion();
   verrou.uid = uid;
   verrou.versionMinimale = verrouPersiste(uid);
-  verrou.unsub = onSnapshot(doc(fbDb, 'users', uid, 'verrouVersion', 'courant'), { includeMetadataChanges: true }, snap => {
+  verrou.unsub = onSnapshot(doc(fbDb, 'verrous', uid), { includeMetadataChanges: true }, snap => {
     if (verrou.uid !== uid) return;
     const duServeur = !(snap.metadata && snap.metadata.fromCache);
     const d = snap.exists() ? (snap.data() || {}) : {};
     const min = Number.isInteger(d.versionMinimale) && d.versionMinimale > 0 ? d.versionMinimale : 0;
     if (duServeur || min > verrou.versionMinimale) { if (min !== verrou.versionMinimale) verrou.confirme = null; verrou.versionMinimale = min; }
+    verrou.conversion = d.conversion && typeof d.conversion === 'object' ? d.conversion : null;
     verrou.connu = true; verrou.duServeur = verrou.duServeur || duServeur;
     persisterVerrou();
     if (window.updateHeaderSyncBadge) window.updateHeaderSyncBadge();
-    if (ecrituresBloqueesVersion()) signalerMiseAJourObligatoire();
-    else if (verrou.versionMinimale > 0 && duServeur && typeof window.convertirLibellesMouvements === 'function') setTimeout(() => { window.convertirLibellesMouvements().catch(e => console.error('Conversion des libellés', e)); }, 0);
+    if (ecrituresBloqueesVersion()) { signalerMiseAJourObligatoire(); return; }
+    if (verrou.versionMinimale > 0 && duServeur && !((DB.schemaDonnees || 0) >= SCHEMA_VERROU_VERSION)) { DB.schemaDonnees = SCHEMA_VERROU_VERSION; saveData(DB); }
+    if (verrou.conversion && duServeur && typeof window.planifierConversionAutorisee === 'function') window.planifierConversionAutorisee(verrou.conversion);
   }, e => { console.error('Verrou de version : lecture impossible', e); });
+}
+/* Registre des comptes (comptes/{uid}) : nom de l'exploitation et version de chaque appareil (type, n° de version, dernière vue), JAMAIS une donnée
+   d'animal ; écrit par le compte lui-même, lu par l'administrateur (liste des verrous). Annoncé à chaque ouverture connectée. */
+async function annoncerAppareil(uid) {
+  try {
+    if (!uid || sync.uid !== uid || !ecritureCloudAutorisee()) return;
+    const v = await versionAppNumero();
+    const nom = String((DB && DB.exploitation && DB.exploitation.nom) || '').slice(0, 120);
+    const appareil = { type: isDesktopMode() ? 'pc' : 'android', version: typeof v === 'number' ? v : 0, vu: serverTimestamp() };
+    await setDoc(doc(fbDb, 'comptes', uid), { exploitation: nom, appareils: { [idAppareil()]: appareil } }, { merge: true });
+  } catch (e) { console.warn('Registre des comptes : annonce non envoyée', e && (e.code || e.message)); }
+}
+/* Lecture SEULE d'un compte depuis le serveur (aperçu et sauvegarde de l'administrateur ; règle Firestore : lecture administrateur, jamais d'écriture) :
+   même reconstitution que la synchro (fiches rangées par versions lues par materialiserFicheV, listes du compte, registre, document principal),
+   dans un objet À PART : rien n'est écrit, la base de cet appareil n'est jamais touchée. */
+async function lireCompteLectureSeule(uid) {
+  const d = {};
+  for (const col of DOC_COLLECTIONS) {
+    const snap = await getDocs(collection(fbDb, 'users', uid, col));
+    if (snap.metadata && snap.metadata.fromCache) throw new Error('lecture depuis le cache (hors réseau)');
+    let arr = []; snap.forEach(x => arr.push(x.data()));
+    if (estVersionnee(col)) arr = arr.map(r => (r && r.el) ? copieNetteV(materialiserFicheV(r)) : r);
+    if (col === 'listesCompte') arr.forEach(r => { if (r && champsListesCompte().includes(r.id)) { const v = recordVersListeCompte(r); if (v !== undefined) d[r.id] = v; } });
+    else if (col === 'registre') {
+      d.registre = { brebis: {}, beliers: {}, agnelles: {} };
+      arr.forEach(r => { if (!r || !d.registre[r.categorie] || !r.eid) return; const e = Object.assign({}, r); delete e.id; delete e.categorie; delete e.eid; d.registre[r.categorie][r.eid] = e; });
+    } else d[col] = arr;
+  }
+  const sm = await getDoc(doc(fbDb, 'users', uid, 'meta', 'main'));
+  if (sm.metadata && sm.metadata.fromCache) throw new Error('lecture depuis le cache (hors réseau)');
+  const meta = sm.exists() ? (sm.data() || {}) : {};
+  champsMetaActifs(meta).forEach(k => { if (k in meta && !(k in d)) d[k] = meta[k]; });
+  if (!d.registre && meta.registre) d.registre = meta.registre;   // compte pas encore migré : registre dans meta
+  return JSON.parse(JSON.stringify(d));
 }
 function lireEchecsContact() { try { return JSON.parse(localStorage.getItem(CLE_ECHECS_CONTACT) || '[]'); } catch (e) { return []; } }
 function ecrireEchecsContact(l) { try { localStorage.setItem(CLE_ECHECS_CONTACT, JSON.stringify(l)); } catch (e) {} }
@@ -39872,6 +40012,7 @@ async function onSignedIn(user) {
   }
   demarrerVerrouVersion(user.uid);   // avant toute écriture : un appareil trop ancien n'envoie rien
   await startListeners(alreadyBootstrapped);
+  attendreSourceConnue('meta').then(() => annoncerAppareil(user.uid)).catch(() => {});
   demarrerContact(user.uid).catch(e => console.error('Bulle de contact : démarrage', e));
   demarrerReglagesAdmin(user.uid);
   if (!alreadyBootstrapped) {
@@ -39970,11 +40111,11 @@ function friendlyAuthError(e) {
 }
 
 window.OvilogSync = {
-  // verrou de version du compte connecté : { versionMinimale, connu, duServeur } (versionMinimale 0 = aucun verrou)
+  // verrou de version du compte connecté : { versionMinimale, connu, duServeur, conversion } (versionMinimale 0 = aucun verrou)
   verrouVersion() {
     if (!sync.uid) return null;
     const min = verrou.uid === sync.uid ? verrou.versionMinimale : verrouPersiste(sync.uid);
-    return { versionMinimale: min, connu: verrou.uid === sync.uid && verrou.connu, duServeur: verrou.uid === sync.uid && verrou.duServeur };
+    return { versionMinimale: min, connu: verrou.uid === sync.uid && verrou.connu, duServeur: verrou.uid === sync.uid && verrou.duServeur, conversion: verrou.uid === sync.uid ? verrou.conversion : null };
   },
   /* Confirmé par le SERVEUR (lecture qui ne vient pas du cache) : verrou posé (version minimale), cet appareil assez récent, et format du compte à 4
      (les appareils d'avant ce code s'arrêtent). Résultat positif gardé pour la séance (même compte, même version minimale). */
@@ -39983,7 +40124,7 @@ window.OvilogSync = {
     const uid = sync.uid;
     if (verrou.confirme && verrou.confirme.uid === uid && verrou.confirme.min === verrou.versionMinimale && verrou.confirme.min > 0) return { ok: true, versionMinimale: verrou.confirme.min };
     try {
-      const sv = await getDoc(doc(fbDb, 'users', uid, 'verrouVersion', 'courant'));
+      const sv = await getDoc(doc(fbDb, 'verrous', uid));
       if (sv.metadata && sv.metadata.fromCache) return { ok: false, raison: 'hors réseau : verrou lu dans le cache seulement' };
       const d = sv.exists() ? (sv.data() || {}) : {};
       const min = Number.isInteger(d.versionMinimale) ? d.versionMinimale : 0;
@@ -39999,27 +40140,42 @@ window.OvilogSync = {
       return { ok: true, versionMinimale: min };
     } catch (e) { return { ok: false, raison: (e && e.message) || String(e) }; }
   },
-  /* Pose le verrou (bouton de Paramètres › Administration, jamais d'office) : version minimale = celle de CET appareil, jamais plus basse que le verrou
-     déjà posé ; puis format du compte à 4 ; puis attente de la confirmation du serveur. */
-  async activerVerrouVersion(min) {
-    if (!sync.uid) throw new Error('non connecté');
-    if (!ecritureCloudAutorisee()) throw new Error('la base de cet appareil appartient à un autre compte');
+  idAppareil() { return idAppareil(); },
+  // ===== Administration (compte administrateur seul ; refusé par firestore.rules sinon) =====
+  // Liste des comptes : registre comptes/ + verrous/ (aucune donnée d'animal)
+  async listerComptesAdmin() {
+    if (!sync.uid || !contact.estAdmin) throw new Error('compte non administrateur');
+    const [sc, sv] = await Promise.all([getDocs(collection(fbDb, 'comptes')), getDocs(collection(fbDb, 'verrous'))]);
+    const verrous = {}; sv.forEach(x => { verrous[x.id] = x.data() || {}; });
+    const res = []; sc.forEach(x => { res.push(Object.assign({ uid: x.id, moi: x.id === sync.uid }, x.data() || {}, { verrou: verrous[x.id] || null })); });
+    return res;
+  },
+  // Pose ou relève le verrou d'un compte : jamais abaissé (règle aussi) ; la conversion déjà autorisée est gardée
+  async activerVerrouCompte(uid, min) {
+    if (!sync.uid || !contact.estAdmin) throw new Error('compte non administrateur');
     if (!Number.isInteger(min) || min <= 0) throw new Error('version de cet appareil inconnue');
-    const actuel = verrou.uid === sync.uid ? verrou.versionMinimale : 0;
-    if (min < actuel) throw new Error('le compte demande déjà la version 1.0.' + actuel);
-    const b = writeBatch(fbDb);
-    b.set(doc(fbDb, 'users', sync.uid, 'verrouVersion', 'courant'), { versionMinimale: min, activeLe: serverTimestamp(), date: new Date().toISOString() });
-    await poserJetonEcriture(b);
-    await b.commit();
-    if (verrou.uid === sync.uid && min > verrou.versionMinimale) { verrou.versionMinimale = min; verrou.confirme = null; persisterVerrou(); }
-    if (!((DB.schemaDonnees || 0) >= SCHEMA_VERROU_VERSION)) { DB.schemaDonnees = SCHEMA_VERROU_VERSION; saveData(DB); }
-    else syncAllToCloud(DB).catch(e => console.error('Verrou de version : envoi', e));
-    for (let i = 0; i < 15; i++) {
-      const r = await window.OvilogSync.verrouConfirmeServeur();
-      if (r.ok) return r;
-      await new Promise(res => setTimeout(res, 700));
-    }
-    return { ok: false, raison: 'le serveur ne confirme pas encore le verrou (réseau ?) : rien n\'est converti' };
+    await setDoc(doc(fbDb, 'verrous', uid), { versionMinimale: min, activeLe: serverTimestamp() }, { merge: true });
+    const relu = await getDoc(doc(fbDb, 'verrous', uid));
+    if (relu.metadata && relu.metadata.fromCache) return { ok: false, raison: 'hors réseau' };
+    const v = relu.exists() ? relu.data() : null;
+    return v && v.versionMinimale >= min ? { ok: true, versionMinimale: v.versionMinimale } : { ok: false, raison: 'le serveur ne confirme pas le verrou' };
+  },
+  // Lecture seule d'un compte (aperçu, sauvegarde) : rien n'est écrit, ni chez lui ni ici
+  async lireCompteAdmin(uid) {
+    if (!sync.uid || !contact.estAdmin) throw new Error('compte non administrateur');
+    return lireCompteLectureSeule(uid);
+  },
+  // Autorise la conversion des libellés sur UN appareil du compte, pour un nombre de mouvements attendu (aperçu de l'administrateur)
+  async autoriserConversionCompte(uid, nbAttendu, appareil, sauvegarde) {
+    if (!sync.uid || !contact.estAdmin) throw new Error('compte non administrateur');
+    const id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    await setDoc(doc(fbDb, 'verrous', uid), { conversion: { id, nbAttendu, appareil, sauvegarde: String(sauvegarde || '').slice(0, 160), autoriseeLe: serverTimestamp() } }, { merge: true });
+    return { ok: true, id };
+  },
+  // Résultat de la conversion, écrit par l'appareil qui l'a faite (lu par l'administrateur)
+  async ecrireResultatConversion(r) {
+    if (!sync.uid || !ecritureCloudAutorisee()) return;
+    await setDoc(doc(fbDb, 'comptes', sync.uid), { conversion: Object.assign({}, r, { appareil: idAppareil(), le: new Date().toISOString() }) }, { merge: true });
   },
   // réglages administrateur du compte (chantiers en test) : { connu, data } ; écriture réservée à l'administrateur (règle Firestore aussi)
   reglagesAdmin() { return { connu: reglagesAdmin.connu && reglagesAdmin.uid === sync.uid, data: Object.assign({}, reglagesAdmin.data) }; },

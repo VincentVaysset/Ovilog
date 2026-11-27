@@ -93,49 +93,45 @@ const boutons = await page.evaluate(() => { mvPcEtat = null; render('inventaire'
 eq(boutons, ['Mort', 'Vente', 'Vente · reproduction', 'Perte', 'Autoconsommation'], 'boutons de type (brebis) : libellés du registre');
 console.log('OK 2 saisies : « Mort » enregistré (fiche, mouvement collectif, agneau), aucune valeur hors liste, boutons aux libellés du registre.');
 
-// ================================================================ 3. données d'un appareil pas à jour : lues comme « Mort », puis converties après sauvegarde
+// ================================================================ 3. données d'un appareil pas à jour : lues comme « Mort » ; conversion seulement autorisée
 await page.evaluate(jeu, true);
-await page.reload({ waitUntil: 'load' });   // la base enregistrée porte un ancien libellé : la conversion se propose au démarrage
-await page.waitForSelector('#question-charte', { timeout: 6000 });
+await page.reload({ waitUntil: 'load' });
+await page.waitForTimeout(3500);   // rien d'automatique : ni question, ni conversion au démarrage
 const lu = await page.evaluate(() => {
   const b = DB.brebis.find(x => x.id === 'b4');
   return { statut: libelleStatutBrebis(b), mortalite: mortaliteSanitaireData().brebisMortesCount, registre: registreMouvementsRows().filter(r => r.type === TYPE_MVT.MORT).length,
-    question: document.getElementById('question-charte').textContent.replace(/\s+/g, ' ') };
+    question: !!document.getElementById('question-charte'), reste: texteContientAncienLibelle(localStorage.getItem(DB_KEY)) };
 });
 eq([lu.statut, lu.mortalite, lu.registre], ['Mort', 1, 2], 'ancien libellé lu comme « Mort » : statut, mortalité de la campagne, registre');
-check(/Correction des libellés/.test(lu.question) && /sauvegarde/.test(lu.question) && !/Morte/.test(lu.question), 'question : sauvegarde demandée, ancien libellé jamais affiché : ' + lu.question);
-// « Plus tard » : rien n'est changé
-await page.click('#question-charte .btn-secondary');
-await page.waitForTimeout(200);
-check(await page.evaluate(() => texteContientAncienLibelle(localStorage.getItem(DB_KEY))), '« Plus tard » : rien n\'est converti');
-// sauvegarde faite : conversion, relecture
+eq([lu.question, lu.reste], [false, true], 'rien d\'automatique au démarrage : aucune question, rien de converti');
+const ap = await page.evaluate(() => apercuConversionLibelles(DB).map(l => [l.animal, l.date, l.ancien, l.nouveau]));
+check(ap.length === 4 && ap.every(l => l[3] === 'Mort' || l[3] === 'Vente') && ap.some(l => /Agneau/.test(l[0]) && l[3] === 'Vente') && ap.some(l => /collectif/.test(l[0])) && ap.some(l => /registre/.test(l[0])), 'aperçu : 4 lignes animal / date / ancien mot / nouveau mot : ' + JSON.stringify(ap));
+// autorisation avec un autre nombre attendu : rien n'est fait
+const mauvais = await page.evaluate(async () => executerConversionAutorisee({ id: 'test-1', nbAttendu: 3 }));
+check(!mauvais.fait && mauvais.etat === 'annulee' && /aperçu différent/.test(mauvais.raison), 'aperçu différent : annulée : ' + JSON.stringify(mauvais));
+check(await page.evaluate(() => texteContientAncienLibelle(localStorage.getItem(DB_KEY))), 'aperçu différent : rien n\'est changé');
+// autorisation conforme : conversion, relecture
 const r = await page.evaluate(async () => {
-  window.__sauvegarde = null;
-  sauvegardeVisibleAvantMutation = async (nom, data) => { window.__sauvegarde = { nom, texte: JSON.stringify(data) }; return { ok: true }; };
   const avant = compterMouvementsBase(DB);
-  const p = convertirLibellesMouvements();
-  await new Promise(res => setTimeout(res, 50));
-  document.querySelector('#question-charte .btn-primary').click();
-  const res = await p;
+  const res = await executerConversionAutorisee({ id: 'test-2', nbAttendu: apercuConversionLibelles(DB).length });
   const st = localStorage.getItem(DB_KEY);
-  return { res, nom: window.__sauvegarde && window.__sauvegarde.nom, sauvegardeAvecAncien: texteContientAncienLibelle(window.__sauvegarde && window.__sauvegarde.texte), resteAncien: texteContientAncienLibelle(st), avant, apres: compterMouvementsBase(JSON.parse(st)),
-    statut: DB.brebis.find(x => x.id === 'b4').statut, mv: DB.brebis.find(x => x.id === 'b4').mouvements.find(m => m.id === 'mv-ancien'), lot: DB.mouvementsCollectifs[0].type, flag: localStorage.getItem(CLE_SAUVEGARDE_LIBELLES) };
+  return { res, resteAncien: texteContientAncienLibelle(st), avant, apres: compterMouvementsBase(JSON.parse(st)),
+    statut: DB.brebis.find(x => x.id === 'b4').statut, mv: DB.brebis.find(x => x.id === 'b4').mouvements.find(m => m.id === 'mv-ancien'), lot: DB.mouvementsCollectifs[0].type };
 });
 check(r.res.fait && r.res.n === 4, 'conversion faite (fiche, mouvement collectif, registre, vente d\'agneau) : ' + JSON.stringify(r.res));
 eq(await page.evaluate(() => { const l = DB.brebis.find(x => x.id === 'b3').agnelages[0].lambs[0]; const m = l.mouvements[0]; return [m.type, m.acheteur, m.date, m.destination, l.statutFinal, causeSortieEde(m, 'agneaux').code]; }), ['Vente', 'Acheteur C', '2026-11-15', 'boucherie', 'vendu', 'B'], 'vente d\'agneau à l\'ancien libellé : « Vente », reste du mouvement, statut et destination EDE gardés');
-check(/^ovilog_libelles_avant_\d{8}_\d{6}\.json$/.test(r.nom) && r.sauvegardeAvecAncien, 'sauvegarde horodatée faite AVANT, avec les données d\'avant : ' + r.nom);
 check(!r.resteAncien && r.avant === r.apres, 'stockage relu : plus aucun ancien libellé, même nombre de mouvements');
-eq([r.statut, r.mv.type, r.mv.cause, r.mv.date, r.lot, r.flag === r.nom], ['morte', 'Mort', 'Mammite', '2026-11-10', 'Mort', true], 'seul le type change (cause, date, statut, id gardés)');
+eq([r.statut, r.mv.type, r.mv.cause, r.mv.date, r.lot], ['morte', 'Mort', 'Mammite', '2026-11-10', 'Mort'], 'seul le type change (cause, date, statut, id gardés)');
 eq((await typesEnregistres()).horsListe, [], 'aucune valeur hors liste après conversion');
-// un ancien libellé reçu d'un appareil pas à jour : converti tout seul, sans question
+// la même autorisation n'est jamais rejouée ; un ancien libellé reçu ensuite n'est PAS converti tout seul (lu comme « Mort »)
 const recu = await page.evaluate(async () => {
   const ancien = Object.keys(CONVERSION_TYPES_MOUVEMENT)[0];
   window.__appliquerSynchro(() => { const b = DB.brebis.find(x => x.id === 'b2'); b.mouvements.push({ type: ancien, cause: 'Pneumonie', date: '2026-11-20' }); window.__recevoirFiches('brebis', DB.brebis.map(x => JSON.parse(JSON.stringify(x)))); });
-  await new Promise(res => setTimeout(res, 300));
-  return { question: !!document.getElementById('question-charte'), reste: texteContientAncienLibelle(localStorage.getItem(DB_KEY)) || texteContientAncienLibelle(JSON.stringify(DB)) };
+  await new Promise(res => setTimeout(res, 2500));
+  return { question: !!document.getElementById('question-charte'), reste: texteContientAncienLibelle(JSON.stringify(DB)), lu: libelleStatutBrebis(Object.assign({}, DB.brebis.find(x => x.id === 'b2'), { statut: 'morte' })) };
 });
-eq(recu, { question: false, reste: false }, 'ancien libellé reçu d\'un autre appareil : converti sans question');
+eq([recu.question, recu.reste], [false, true], 'ancien libellé reçu ensuite : aucune conversion automatique, aucune question');
 check(!erreurs.length, 'erreurs JS : ' + erreurs.slice(0, 3).join(' | '));
-console.log('OK 3 appareil pas à jour : lu comme « Mort » ; conversion après sauvegarde horodatée (« Plus tard » = rien), seul le type change, relu ; réception convertie seule.');
+console.log('OK 3 appareil pas à jour : lu comme « Mort » ; rien d\'automatique ; conversion seulement sur autorisation, au nombre attendu, seul le type change, relu.');
 await browser.close();
 console.log('TOUS LES TESTS « LIBELLÉS DU REGISTRE » SONT PASSÉS (jeu synthétique, aucune donnée réelle)');
