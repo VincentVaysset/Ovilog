@@ -52,12 +52,12 @@ const cats = await page.evaluate(() => [...document.querySelectorAll('#mv-catego
 check(cats === 'Brebis · 7 | Béliers · 2 | Agnelles · 1 | Agneaux · 2', 'sélecteur de catégorie avec l\'effectif ACTIF : ' + cats);
 check(!/[Bb]ip/.test(await $t('#pc-mouvements')), 'aucun « Bip en série » sur PC');
 check(await page.evaluate(() => !document.querySelector('.sp-mode-btn') && !document.querySelector('[data-mode="bip"]')), 'aucun sélecteur de mode (clic / bip)');
-check(await page.evaluate(() => [...document.querySelectorAll('.mv-type')].map(b => b.textContent).join()) === 'Morte,Vente,Vente reproduction,Perte,Autoconsommation', 'types des brebis inchangés');
+check(await page.evaluate(() => [...document.querySelectorAll('.mv-type')].map(b => b.textContent).join()) === 'Mort,Vente,Vente · reproduction,Perte,Autoconsommation', 'types des brebis : libellés du registre, « Mort » sans distinction de sexe');
 check(await page.evaluate(() => document.getElementById('mv-date').value) === '2026-10-03', 'date : aujourd\'hui par défaut');
 await page.click('.mv-cat[data-cat="beliers"]');
-check(await page.evaluate(() => [...document.querySelectorAll('.mv-type')].map(b => b.textContent).join()) === 'Mort,Vente,Vente reproduction,Perte,Autoconsommation', 'béliers : « Mort » (accord inchangé)');
+check(await page.evaluate(() => [...document.querySelectorAll('.mv-type')].map(b => b.textContent).join()) === 'Mort,Vente,Vente · reproduction,Perte,Autoconsommation', 'béliers : mêmes libellés que les brebis');
 await page.click('.mv-cat[data-cat="agneaux"]');
-check(await page.evaluate(() => [...document.querySelectorAll('.mv-type')].map(b => b.textContent).join()) === 'Vendu,Mort', 'agneaux : types inchangés « Vendu / Mort »');
+check(await page.evaluate(() => [...document.querySelectorAll('.mv-type')].map(b => b.textContent).join()) === 'Vente,Mort', 'agneaux : « Vente » (libellé du registre) et « Mort »');
 console.log('OK 1 structure : catégories avec effectif actif, aucun bip en série, types par catégorie inchangés (agneaux : Vendu / Mort), date du jour.');
 
 // ================================================================ 2. champs selon le type
@@ -67,7 +67,7 @@ await page.click('.mv-type[data-val="Vente"]');
 check(JSON.stringify(await champs()) === '{"ach":true,"cau":false}', 'Vente : acheteur seul');
 await page.click('.mv-type[data-val="Vente reproduction"]');
 check(JSON.stringify(await champs()) === '{"ach":true,"cau":false}', 'Vente reproduction : acheteur seul');
-await page.click('.mv-type[data-val="Morte"]');
+await page.click('.mv-type[data-val="Mort"]');
 check(JSON.stringify(await champs()) === '{"ach":false,"cau":true}', 'Morte : cause seule');
 await page.click('.mv-type[data-val="Perte"]');
 check(JSON.stringify(await champs()) === '{"ach":false,"cau":true}', 'Perte : cause seule');
@@ -106,7 +106,7 @@ await page.click('.mv-type[data-val="Vente"]');
 await page.click('tr.clic[data-id="D"]');       // 00152
 let al = await $t('#zone-alerte-vente-delai');
 check(al && /n°00152 est encore sous délai d'attente viande/.test(al) && /16\/11\/2026/.test(al) && /rien n'est bloqué/.test(al), 'carte d\'information (Vente, sous délai) : ' + al);
-await page.click('.mv-type[data-val="Morte"]');
+await page.click('.mv-type[data-val="Mort"]');
 check(await page.evaluate(() => !document.getElementById('zone-alerte-vente-delai')), 'Morte : aucune alerte de vente');
 console.log('OK 4 délai viande : pastille dans la liste, carte d\'information pour une vente, jamais bloquante.');
 
@@ -177,7 +177,7 @@ await jeu(); await ouvrir();
 await page.click('.mv-type[data-val="Vente"]');
 await page.selectOption('#mv-acheteur', '__ajouter__'); await page.click('#liste-ajout-input'); await page.keyboard.type('Acheteur Z', { delay: 20 }); await page.click('#liste-ajout-ok');
 check(await page.evaluate(() => DB.acheteurs.includes('Acheteur Z') && window.__saves === 1 && document.getElementById('mv-acheteur').value === 'Acheteur Z'), 'acheteur ajouté au répertoire et sélectionné');
-await page.click('.mv-type[data-val="Morte"]');
+await page.click('.mv-type[data-val="Mort"]');
 await page.selectOption('#mv-cause', '__ajouter__'); await page.click('#liste-ajout-input'); await page.keyboard.type('Météorite', { delay: 20 }); await page.keyboard.press('Enter');
 check(await page.evaluate(() => DB.causesMortalite.includes('Météorite') && document.getElementById('mv-cause').value === 'Météorite'), 'cause ajoutée à la liste et sélectionnée');
 console.log('OK 8 répertoires : acheteur et cause ajoutables depuis la page.');
@@ -202,10 +202,10 @@ check(!await page.evaluate(() => document.querySelector('#mvp-carte') === null) 
 const optP = await page.evaluate(() => [...document.querySelectorAll('#mvp-periode option')].map(o => o.textContent).join('|'));
 check(/^Campagne en cours\|/.test(optP) && /Toutes$/.test(optP), 'période : campagne en cours par défaut, « Toutes » en dernier : ' + optP);
 let lp = await page.evaluate(() => [...document.querySelectorAll('#mvp-table tr[data-eid]')].map(r => [...r.children].slice(0, 5).map(c => c.textContent.trim()).join('/')));
-check(lp.length === 1 && /^01\/10\/2026\/.*803\/Agneau\/Vendu\/Acheteur A$/.test(lp[0]), 'campagne en cours : seul l\'agneau vendu le 01/10 : ' + JSON.stringify(lp));
+check(lp.length === 1 && /^01\/10\/2026\/.*803\/Agneau\/Vente\/Acheteur A$/.test(lp[0]), 'campagne en cours : seul l\'agneau vendu le 01/10 : ' + JSON.stringify(lp));
 await page.selectOption('#mvp-periode', 'toutes');
 lp = await page.evaluate(() => [...document.querySelectorAll('#mvp-table tr[data-eid]')].map(r => r.children[2].textContent + ':' + r.children[3].textContent.trim()));
-check(lp.length === 2 && lp.join() === 'Agneau:Vendu,Brebis:Vente', 'Toutes : l\'agneau (01/10) puis la brebis vendue le 01/09 (date décroissante) : ' + lp.join());
+check(lp.length === 2 && lp.join() === 'Agneau:Vente,Brebis:Vente', 'Toutes : l\'agneau (01/10) puis la brebis vendue le 01/09 (date décroissante) : ' + lp.join());
 console.log('OK 10 passés : tableau unique, colonnes de la maquette, ni onglets ni écran « Gérer / annuler », période par défaut = campagne en cours.');
 
 // ================================================================ 11. lot : libellé, annulation avec confirmation (refus puis accord)
@@ -214,7 +214,7 @@ await page.click('.mv-type[data-val="Vente"]'); await page.selectOption('#mv-ach
 await page.click('tr.clic[data-id="B"]'); await page.click('tr.clic[data-id="C"]'); await page.click('#mv-valider'); await page.waitForSelector('#mv-message');
 await page.click('.mv-type[data-val="Vente"]'); await page.selectOption('#mv-acheteur', 'Acheteur B');
 await page.click('tr.clic[data-id="E"]'); await page.click('#mv-valider'); await page.waitForTimeout(100);
-await page.click('.mv-type[data-val="Morte"]'); await page.selectOption('#mv-cause', 'Mammite');
+await page.click('.mv-type[data-val="Mort"]'); await page.selectOption('#mv-cause', 'Mammite');
 await page.click('tr.clic[data-id="F"]'); await page.click('tr.clic[data-id="A"]'); await page.click('#mv-valider'); await page.waitForTimeout(100);
 const libs = await page.evaluate(() => [...new Set([...document.querySelectorAll('#mvp-table tr[data-eid] td:nth-child(6) .pc-pill')].map(p => p.textContent.trim()))].sort());
 check(JSON.stringify(libs) === JSON.stringify(['Lot du 03/10 · 1 brebis · Acheteur B', 'Lot du 03/10 · 2 brebis · Acheteur A', 'Lot du 03/10 · 2 brebis · Mammite']), 'libellés de lot (jour/mois · effectif · acheteur ou cause) : ' + JSON.stringify(libs));
@@ -236,7 +236,7 @@ console.log('OK 11 lots : libellé « Lot du JJ/MM · N · acheteur ou cause »,
 // ================================================================ 12. mouvement individuel : Annuler (confirmation), Modifier
 await jeu();
 await page.evaluate(() => { const s = DB.brebis.find(x => x.id === 'E'); s.mouvements.push({ type: 'Vente', acheteur: 'Acheteur B', date: '2026-10-02' }); s.statut = 'vendue';
-  const f = DB.brebis.find(x => x.id === 'F'); f.mouvements.push({ type: 'Morte', cause: 'Mammite', date: '2026-10-02' }); f.statut = 'morte'; window.__avant = JSON.stringify(DB); });
+  const f = DB.brebis.find(x => x.id === 'F'); f.mouvements.push({ type: 'Mort', cause: 'Mammite', date: '2026-10-02' }); f.statut = 'morte'; window.__avant = JSON.stringify(DB); });
 await ouvrir();
 check(await page.evaluate(() => document.querySelectorAll('.mv-annuler').length) === 3 && await page.evaluate(() => document.querySelectorAll('.mv-modifier').length) === 3, 'mouvements individuels (2 brebis + 1 agneau) : « Modifier » et « Annuler » sur chaque ligne');
 reponse = false; confirms.length = 0;
@@ -301,7 +301,7 @@ console.log('OK 14 archivés : mention sans bouton ; annulation d\'un lot partie
 // ================================================================ 15. filtres : catégories, type, acheteur, n°, période, « voir tout »
 await jeu();
 await page.evaluate(() => { const mk = (id, mv, st) => { const s = DB.brebis.find(x => x.id === id); s.mouvements.push(mv); s.statut = st; };
-  mk('B', { type: 'Vente', acheteur: 'Acheteur A', date: '2026-10-02' }, 'vendue'); mk('C', { type: 'Morte', cause: 'Mammite', date: '2026-10-02' }, 'morte');
+  mk('B', { type: 'Vente', acheteur: 'Acheteur A', date: '2026-10-02' }, 'vendue'); mk('C', { type: 'Mort', cause: 'Mammite', date: '2026-10-02' }, 'morte');
   mk('E', { type: 'Vente', acheteur: 'Acheteur B', date: '2026-10-03' }, 'vendue');
   const bel = DB.beliers.find(x => x.id === 'bel1'); bel.mouvements.push({ type: 'Mort', cause: 'Boiterie', date: '2026-10-02' }); bel.statut = 'mort'; });
 await ouvrir();
@@ -314,7 +314,7 @@ await page.click('.mvp-cat[data-cat="brebis"]');
 check(await comptePer() === 2, 'décocher Brebis : reste bélier + agneau');
 await page.click('.mvp-cat[data-cat="brebis"]');
 await page.selectOption('#mvp-type', 'Vente');
-check(await comptePer() === 2, 'type = Vente : 2');
+check(await comptePer() === 3, 'type = Vente : 3 (les 2 brebis et l\'agneau vendu : un seul libellé « Vente »)');
 await page.selectOption('#mvp-acheteur', 'Acheteur B');
 check(await comptePer() === 1, 'acheteur B + Vente : 1');
 await page.selectOption('#mvp-type', ''); await page.selectOption('#mvp-acheteur', '');
@@ -347,7 +347,7 @@ console.log('OK 16 mobile inchangé.');
 if (exportPresent(EXPORT_CORRIGE)) {
   const reel = lireExport(EXPORT_CORRIGE);
   // comptage INDÉPENDANT, directement dans le JSON de l'export : une ligne par mouvement de sortie (vivants + registre archivé), sans doublon
-  const SORT = new Set(['Morte', 'Mort', 'Vente', 'Vendu', 'Vente reproduction', 'Perte', 'Autoconsommation']);
+  const SORT = new Set(['Mort', 'Mort', 'Vente', 'Vendu', 'Vente reproduction', 'Perte', 'Autoconsommation']);
   const attendu = new Map(); const addA = (cat, eid, m) => { if (SORT.has(m.type)) attendu.set([eid.replace(/\s+/g, ''), m.type, m.date, m.cause || '', m.acheteur || '', m.collectifId || ''].join('|'), cat); };
   reel.brebis.forEach(s => { (s.mouvements || []).forEach(m => addA('Brebis', s.eid, m)); (s.agnelages || []).forEach(ag => (ag.lambs || []).forEach(l => { if (l.eid && !(l.sexe === 'Femelle' && l.triStatut === 'gardée')) (l.mouvements || []).forEach(m => addA('Agneau', l.eid, m)); })); });
   (reel.beliers || []).forEach(s => (s.mouvements || []).forEach(m => addA('Bélier', s.eid, m)));

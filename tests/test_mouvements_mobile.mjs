@@ -36,7 +36,7 @@ function jeu() {
   DB.lots = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} }; DB.mouvementsCollectifs = [];
   const poser = (cat, type, cause, acheteur, date, ids) => { const items = animauxMouvementPc(cat).filter(a => ids.includes(a.id)); appliquerMouvementCollectifPc({ categorie: cat, type, cause, acheteur, date, animaux: items }); };
   poser('brebis', 'Vente', '', 'Acheteur C', '2026-10-02', ['G', 'H', 'I']);          // lot de 3 ventes
-  poser('brebis', 'Morte', 'Mammite', null, '2026-10-02', ['J', 'K']);             // lot de 2 mortes
+  poser('brebis', 'Mort', 'Mammite', null, '2026-10-02', ['J', 'K']);             // lot de 2 mortes
   poser('agnelles', 'Vente reproduction', '', 'Acheteur D', '2026-10-02', ['ag3']);  // agnelle archivée
   const L = DB.brebis.find(x => x.id === 'L'); L.mouvements.push({ type: 'Autoconsommation', date: '2026-10-02' }); L.statut = 'autoconsommée'; recalculerStatutBrebis(L);   // sortie individuelle
   window.__saves = 0; window.__avant = JSON.stringify(DB);
@@ -100,17 +100,17 @@ await listeMob('brebis');
 const cartes = await mob.evaluate(() => [...document.querySelectorAll('#mm-liste .mm-carte')].map(c => ({ lot: c.classList.contains('mm-lot'), titre: c.querySelector('.mm-nm').textContent, pastille: c.querySelector('.reg-pastille').textContent, classe: c.querySelector('.reg-pastille').className.replace('reg-pastille ', ''), date: c.querySelector('.mm-dt').textContent })));
 check(cartes.filter(c => c.lot).length === 2 && cartes.length === 3, 'brebis : 2 lots (une carte chacun) + 1 sortie individuelle = 3 cartes : ' + JSON.stringify(cartes));
 const titres = cartes.map(c => c.titre).sort();
-eq(titres, ['Morte · 2 brebis', 'Vente · 3 brebis', 'n°00040'].sort(), 'titres des cartes');
-eq(cartes.map(c => [c.pastille, c.classe]).sort(), [['Autoconsommation', 'ambre'], ['Morte', 'rouge'], ['Vente', 'bleu']], 'couleurs des pastilles de type');
+eq(titres, ['Mort · 2 brebis', 'Vente · 3 brebis', 'n°00040'].sort(), 'titres des cartes');
+eq(cartes.map(c => [c.pastille, c.classe]).sort(), [['Autoconsommation', 'ambre'], ['Mort', 'rouge'], ['Vente', 'bleu']], 'couleurs des pastilles de type');
 check(await intact(mob), 'la liste ne modifie rien (DB identique, 0 saveData)');
 console.log('OK 1 liste : « Nouveau mouvement », segmenté Brebis / Béliers / Agneaux / Agnelles, recherche + type sur une ligne, ni tuiles ni tableau ni « ? » ; mêmes mouvements que la page PC pour les 4 catégories ; un lot = une carte ; pastilles Morte rouge / Vente bleu / Autoconsommation ambre.');
 
 // ================================================================ 2. ordre, filtres, recherche
 const dates = await mob.evaluate(() => [...document.querySelectorAll('#mm-liste .mm-dt')].map(d => d.textContent.slice(0, 10)));
 check(dates.join() === [...dates].sort((a, b) => b.split('-').reverse().join('').localeCompare(a.split('-').reverse().join(''))).join(), 'du plus récent au plus ancien : ' + dates);
-eq((await mob.evaluate(() => [...document.querySelectorAll('#mm-type option')].map(o => o.textContent))).sort(), ['Autoconsommation', 'Morte', 'Tous types', 'Vente'], 'filtre de type : les types présents dans la catégorie');
-await mob.selectOption('#mm-type', 'Morte');
-eq(await mob.evaluate(() => [...document.querySelectorAll('#mm-liste .mm-nm')].filter(n => !n.closest('.mm-membre')).map(n => n.textContent)), ['Morte · 2 brebis'], 'filtre « Morte » : une seule carte');
+eq((await mob.evaluate(() => [...document.querySelectorAll('#mm-type option')].map(o => o.textContent))).sort(), ['Autoconsommation', 'Mort', 'Tous types', 'Vente'], 'filtre de type : les types présents dans la catégorie');
+await mob.selectOption('#mm-type', 'Mort');
+eq(await mob.evaluate(() => [...document.querySelectorAll('#mm-liste .mm-nm')].filter(n => !n.closest('.mm-membre')).map(n => n.textContent)), ['Mort · 2 brebis'], 'filtre « Morte » : une seule carte');
 await mob.selectOption('#mm-type', '');
 await mob.fill('#mm-q', '40');
 eq(await mob.evaluate(() => [...document.querySelectorAll('#mm-liste .mm-nm')].filter(n => !n.closest('.mm-membre')).map(n => n.textContent)), ['n°00040'], 'recherche « 40 » : la sortie du n°00040');
@@ -170,11 +170,11 @@ await mob.evaluate(() => {
   window.__avant = JSON.stringify(DB); window.__saves = 0; render('inventaire');
 });
 mob.confirms.length = 0; mob.reponse = false;
-await mob.click('.mm-lot:has(.mm-nm:text("Morte · 2 brebis")) .mm-annuler-lot');
+await mob.click('.mm-lot:has(.mm-nm:text("Mort · 2 brebis")) .mm-annuler-lot');
 check(/1 brebis restaurée/.test(mob.confirms[0]) && /1 brebis déjà archivée au registre : non restaurable/.test(mob.confirms[0]), 'lot partiellement archivé : la confirmation le dit : ' + mob.confirms[0]);
 mob.reponse = true;
-await mob.click('.mm-lot:has(.mm-nm:text("Morte · 2 brebis")) .mm-annuler-lot');
-const part = await mob.evaluate(() => ({ J: DB.brebis.find(b => b.id === 'J').statut, lot: DB.mouvementsCollectifs.find(l => l.type === 'Morte').membres.length, msg: document.getElementById('mm-message').textContent, bouton: !!document.querySelector('.mm-lot .mm-annuler-lot'), mention: document.querySelector('.mm-lot') ? document.querySelector('.mm-lot .mm-mention').textContent : '' }));
+await mob.click('.mm-lot:has(.mm-nm:text("Mort · 2 brebis")) .mm-annuler-lot');
+const part = await mob.evaluate(() => ({ J: DB.brebis.find(b => b.id === 'J').statut, lot: DB.mouvementsCollectifs.find(l => l.type === 'Mort').membres.length, msg: document.getElementById('mm-message').textContent, bouton: !!document.querySelector('.mm-lot .mm-annuler-lot'), mention: document.querySelector('.mm-lot') ? document.querySelector('.mm-lot .mm-mention').textContent : '' }));
 check(part.J === 'active' && part.lot === 1 && /1 déjà archivée non restaurable/.test(part.msg) && !part.bouton && /archivés au registre/.test(part.mention), 'annulation partielle : J restaurée, le lot ne garde que l\'archivée, plus de bouton Annuler : ' + JSON.stringify(part));
 // agnelles : lot non annulable
 await mob.click('#mm-cats [data-cat="agnelles"]');
@@ -204,14 +204,14 @@ console.log('OK 6 plus anciens : 20 cartes à la fois, campagne en cours d\'abor
 
 // ================================================================ 7. export Excel : la liste filtrée, mêmes colonnes que la page PC
 await listeMob('brebis'); await mob.evaluate(() => { window.__xlsx = []; window.__fich = []; });
-await mob.selectOption('#mm-type', 'Morte');
+await mob.selectOption('#mm-type', 'Mort');
 await mob.click('#mm-export'); await mob.waitForFunction(() => window.__fich.length);
 const xm = await mob.evaluate(() => ({ rows: window.__xlsx[0][0].rows, nom: window.__fich[0] }));
 await lignesPc('brebis'); await pc.evaluate(() => { window.__xlsx = []; window.__fich = []; });
-await pc.selectOption('#mvp-type', 'Morte'); await pc.click('#mvp-export'); await pc.waitForFunction(() => window.__fich.length);
+await pc.selectOption('#mvp-type', 'Mort'); await pc.click('#mvp-export'); await pc.waitForFunction(() => window.__fich.length);
 const xp = await pc.evaluate(() => ({ rows: window.__xlsx[0][0].rows, nom: window.__fich[0] }));
 eq(xm.rows[0], ['Date', 'N°', 'Catégorie', 'Type', 'Cause / acheteur', 'Lot'], 'colonnes de l\'export');
-eq(xm.rows, xp.rows, 'export mobile (filtre Morte) = export PC (mêmes lignes, mêmes colonnes)');
+eq(xm.rows, xp.rows, 'export mobile (filtre Mort) = export PC (mêmes lignes, mêmes colonnes)');
 check(/^mouvements-animaux_\d{4}-\d{2}-\d{2}\.xlsx$/.test(xm.nom) && xm.nom === xp.nom && xm.rows.length === 3, 'même nom de fichier ; 2 lignes + en-tête : ' + xm.nom + ' / ' + xm.rows.length);
 await mob.selectOption('#mm-type', '');
 console.log('OK 7 export Excel : liste filtrée à l\'écran, colonnes Date / N° / Catégorie / Type / Cause-acheteur / Lot, identique à l\'export PC.');
@@ -223,17 +223,17 @@ const nv = await mob.evaluate(() => ({ titre: pageTitle.textContent, cats: [...d
   types: [...document.querySelectorAll('#mn-types .mn-chip')].map(b => b.textContent), date: document.getElementById('mn-date').value, acheteur: !!document.getElementById('mn-acheteur'), cause: !!document.getElementById('mn-cause'),
   valider: document.getElementById('mn-valider').textContent, annuler: document.getElementById('mn-annuler').textContent, compte: document.getElementById('mn-compte').textContent, bip: document.getElementById('mn-bip').checked,
   barre: (() => { const b = document.querySelector('.mn-barre'); return getComputedStyle(b).position; })() }));
-eq(nv.cats, ['Brebis · 7', 'Béliers · 2', 'Agneaux · 2', 'Agnelles · 2'], 'chips catégorie avec l\'effectif ACTIF'); eq(nv.types, ['Morte', 'Vente', 'Vente repro', 'Perte', 'Autoconsommation'], 'chips type (brebis)');
+eq(nv.cats, ['Brebis · 7', 'Béliers · 2', 'Agneaux · 2', 'Agnelles · 2'], 'chips catégorie avec l\'effectif ACTIF'); eq(nv.types, ['Mort', 'Vente', 'Vente repro', 'Perte', 'Autoconsommation'], 'chips type (brebis)');
 check(nv.titre === 'Nouveau mouvement' && nv.date === '2026-10-03' && !nv.acheteur && !nv.cause && nv.valider === 'Valider 0 mouvement' && nv.annuler === 'Annuler' && !nv.bip && nv.compte === '0 sélectionnée' && nv.barre === 'sticky', 'état initial (date du jour, aucun champ avant le type, barre fixe) : ' + JSON.stringify(nv));
 const pcEffectifs = await pc.evaluate(() => { mvPcEtat = null; render('inventaire'); return [...document.querySelectorAll('#mv-categories button')].map(b => b.textContent.replace(/\s+/g, ' ')); });
 eq(pcEffectifs, ['Brebis · 7', 'Béliers · 2', 'Agnelles · 2', 'Agneaux · 2'], 'mêmes effectifs actifs que la page PC');
 // types et champs par catégorie et par type
 const champs = async () => mob.evaluate(() => ({ ach: !!document.getElementById('mn-acheteur'), cau: !!document.getElementById('mn-cause') }));
-for (const [t, attendu] of [['Vente', { ach: true, cau: false }], ['Vente reproduction', { ach: true, cau: false }], ['Morte', { ach: false, cau: true }], ['Perte', { ach: false, cau: true }], ['Autoconsommation', { ach: false, cau: false }]]) {
+for (const [t, attendu] of [['Vente', { ach: true, cau: false }], ['Vente reproduction', { ach: true, cau: false }], ['Mort', { ach: false, cau: true }], ['Perte', { ach: false, cau: true }], ['Autoconsommation', { ach: false, cau: false }]]) {
   await mob.click('#mn-types [data-val="' + t + '"]'); eq(await champs(), attendu, 'champs pour ' + t);
 }
 await mob.click('#mn-categories [data-cat="beliers"]'); eq(await mob.evaluate(() => [...document.querySelectorAll('#mn-types .mn-chip')].map(b => b.textContent)), ['Mort', 'Vente', 'Vente repro', 'Perte', 'Autoconsommation'], 'béliers : « Mort »');
-await mob.click('#mn-categories [data-cat="agneaux"]'); eq(await mob.evaluate(() => [...document.querySelectorAll('#mn-types .mn-chip')].map(b => b.textContent)), ['Vendu', 'Mort'], 'agneaux : Vendu / Mort');
+await mob.click('#mn-categories [data-cat="agneaux"]'); eq(await mob.evaluate(() => [...document.querySelectorAll('#mn-types .mn-chip')].map(b => b.textContent)), ['Vente', 'Mort'], 'agneaux : Vente (libellé du registre) / Mort');
 await mob.click('#mn-types [data-val="Vendu"]'); eq(await champs(), { ach: true, cau: false }, 'agneaux : Vendu = acheteur');
 await mob.click('#mn-categories [data-cat="brebis"]');
 console.log('OK 8 Nouveau mouvement : chips catégorie (effectifs = page PC) et type, champs selon le type (acheteur pour Vente / Vente repro, cause pour Morte / Perte, rien pour Autoconsommation), types des béliers et des agneaux, barre fixe.');
@@ -289,7 +289,7 @@ await pc.evaluate(() => { mvPcEtat = null; render('inventaire'); });
 await pc.click('.mv-type[data-val="Vente"]'); await pc.fill('#mv-q', '152'); await pc.click('#mv-table tr.clic >> nth=0');
 const zPc = await pc.evaluate(() => document.getElementById('zone-alerte-vente-delai').textContent.replace(/\s+/g, ' ').trim());
 eq(zVente.replace(/n°\d+/g, 'n°X'), zPc.replace(/n°\d+/g, 'n°X'), 'texte du bandeau identique à celui de la page PC');
-await mob.click('#mn-types [data-val="Morte"]'); check(await zone() === null, 'Morte : pas de bandeau');
+await mob.click('#mn-types [data-val="Mort"]'); check(await zone() === null, 'Morte : pas de bandeau');
 await mob.click('#mn-types [data-val="Vente reproduction"]'); check(await zone() === null, 'Vente reproduction : pas de bandeau (comme sur PC)');
 await mob.click('#mn-types [data-val="Autoconsommation"]'); check(!!(await zone()), 'Autoconsommation : bandeau');
 await mob.evaluate(() => { const d = document.getElementById('mn-date'); d.value = '2026-11-20'; d.dispatchEvent(new Event('input')); });
@@ -357,7 +357,7 @@ check(await mob.evaluate(() => currentView === 'inventaire' && !!document.getEle
 await mob.click('#mm-nouveau');
 const lib = async (type, n) => { await mob.click('#mn-types [data-val="' + type + '"]'); return mob.textContent('#mn-valider'); };
 await mob.click('#mn-liste .mn-it >> nth=0');
-eq([await lib('Morte'), await lib('Vente reproduction'), await lib('Perte'), await lib('Autoconsommation')], ['Valider 1 morte', 'Valider 1 vente repro', 'Valider 1 perte', 'Valider 1 autoconsommation'], 'libellés du bouton selon le type');
+eq([await lib('Mort'), await lib('Vente reproduction'), await lib('Perte'), await lib('Autoconsommation')], ['Valider 1 mort', 'Valider 1 vente repro', 'Valider 1 perte', 'Valider 1 autoconsommation'], 'libellés du bouton selon le type');
 await mob.click('#mn-categories [data-cat="agneaux"]'); await mob.click('#mn-types [data-val="Vendu"]'); await mob.click('#mn-liste .mn-it >> nth=0'); await mob.click('#mn-liste .mn-it >> nth=1');
 eq(await mob.textContent('#mn-valider'), 'Valider 2 agneaux vendus', 'agneaux : « Valider 2 agneaux vendus »');
 await mob.selectOption('#mn-acheteur', 'Acheteur C'); mob.reponse = true; await mob.click('#mn-valider');

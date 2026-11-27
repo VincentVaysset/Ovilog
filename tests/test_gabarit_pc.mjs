@@ -76,7 +76,7 @@ console.log('OK gabarit PC, exports : ' + nExp + ' boutons d\'export (Excel blan
   const lire = () => pc.evaluate(() => { const cs = e => getComputedStyle(e), b = document.getElementById('mv-barre'), amb = document.getElementById('mv-ambre'), v = document.getElementById('mv-valider'), cat = document.querySelector('.mv-cat.selected'), typ = document.querySelector('.mv-type.on');
     return { barre: cs(b).backgroundColor, bord: cs(b).borderTopWidth, ambreVisible: amb.getBoundingClientRect().height > 0, ambreTxt: amb.textContent, ambreBg: cs(amb).backgroundColor, vertBg: cs(v).backgroundColor, cat: cs(cat).backgroundColor, typ: typ ? cs(typ).backgroundColor : null, rouges: [...document.querySelectorAll('#pc-mouvements *')].filter(e => e.getBoundingClientRect().width > 150 && ['rgb(251, 227, 224)', 'rgb(163, 58, 49)'].includes(cs(e).backgroundColor)).length }; });
   const VERT = 'rgb(53, 127, 75)', PASTEL = 'rgb(227, 243, 230)', BLANC = 'rgb(255, 255, 255)', AMBRE = 'rgb(251, 238, 215)';
-  for (const [type, ambre] of [['Vente', false], ['Morte', true], ['Perte', true], ['Autoconsommation', true]]) {
+  for (const [type, ambre] of [['Vente', false], ['Mort', true], ['Perte', true], ['Autoconsommation', true]]) {
     await pc.evaluate(t => { mvPcEtat = mvPcEtatInitial(); mvPcEtat.type = t; render('mouvement-groupe'); }, type); await pc.waitForTimeout(120);
     const m = await lire();
     check(m.barre === BLANC && m.bord === '1px', type + ' : barre de validation neutre (blanc à bord) : ' + m.barre);
@@ -86,7 +86,7 @@ console.log('OK gabarit PC, exports : ' + nExp + ' boutons d\'export (Excel blan
     check(m.ambreVisible === ambre, type + ' : ligne ambre ' + (ambre ? 'visible' : 'absente'));
     if (ambre) check(m.ambreBg === AMBRE && /Sortie définitive/.test(m.ambreTxt), type + ' : ligne ambre « Sortie définitive » : ' + m.ambreBg + ' / ' + m.ambreTxt);
   }
-  console.log('OK gabarit PC, Mouvements d\'animaux : barre neutre, puces vert pastel, « Valider » vert, ligne ambre pour Morte / Perte / Autoconsommation seulement.');
+  console.log('OK gabarit PC, Mouvements d\'animaux : barre neutre, puces vert pastel, « Valider » vert, ligne ambre pour Mort / Perte / Autoconsommation seulement.');
 }
 // Section 5 : menu latéral sur une seule ligne
 {

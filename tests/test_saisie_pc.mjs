@@ -114,7 +114,7 @@ function balayage(pg) {
 const ETATS_PC = [
   ['Mouvements d\'animaux', "mvPcEtat = null; render('inventaire');"],
   ['Mouvements d\'animaux · Vente', "mvPcEtat = null; render('inventaire'); document.querySelector('.mv-type[data-val=\"Vente\"]').click();"],
-  ['Mouvements d\'animaux · Morte', "mvPcEtat = null; render('inventaire'); document.querySelector('.mv-type[data-val=\"Morte\"]').click();"],
+  ['Mouvements d\'animaux · Mort', "mvPcEtat = null; render('inventaire'); document.querySelector('.mv-type[data-val=\"Mort\"]').click();"],
   ['Carnet sanitaire', "render('sanitaire');"],
   ['Produits et délais', "render('produits-delais');"],
   ['Produits et délais · fiche produit (fenêtre)', "ouvrirFicheProduitModal({ categorieKey: 'antibiotiques' });"],

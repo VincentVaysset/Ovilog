@@ -65,7 +65,7 @@ console.log('OK 2 non-régression : une brebis vide vendue ou morte après l\'é
 await pc.evaluate(jeu);
 await pc.evaluate(() => render('echo-rapide'));
 await pc.click('#ep-onglets button[data-o="passages"]');
-check(await pc.evaluate(() => /Vendue|Morte/.test(document.getElementById('ep-brebis-passage').textContent)), 'écran Échographies PC, Passages : les brebis sorties restent dans le passage, avec leur statut');
+check(await pc.evaluate(() => /Vendu|Mort/.test(document.getElementById('ep-brebis-passage').textContent)), 'écran Échographies PC, Passages : les brebis sorties restent dans le passage, avec leur statut');
 await mob.evaluate(() => render('home'));
 const cm = await mob.evaluate(() => [...document.querySelectorAll('.rp')].map(r => r.querySelector('span').textContent.trim() + ' ' + r.querySelector('b').textContent.trim()));
 check(cm.some(x => /^Pleine 2 /.test(x)) && cm.some(x => /^Vide 5 /.test(x)) && !cm.some(x => /^Vide définitive/.test(x)), 'Accueil mobile : mêmes chiffres (Pleine 2, Vide 5 dont l\'avortée, plus de ligne Vide définitive) : ' + JSON.stringify(cm));

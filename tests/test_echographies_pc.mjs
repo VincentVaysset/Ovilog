@@ -140,7 +140,7 @@ const mbRows = await pc.evaluate(() => [...document.querySelectorAll('#ep-detail
 eq(mbRows.length, 2, 'filtre « Ont mis bas » : 2 brebis');
 check(mbRows.some(r => r[2] === 'Mise bas le 25\/09\/2026' && r[3] === '01\/08\/2026 · Pleine'), 'pastille « Mise bas le … » et dernière écho en gris : ' + JSON.stringify(mbRows));
 await pc.selectOption('#ep-f-cat', 'sortie');
-eq(await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => r.children[2].textContent)), ['Vendue'], 'la vendue : pastille de statut');
+eq(await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => r.children[2].textContent)), ['Vendu'], 'la vendue : pastille de statut');
 await pc.selectOption('#ep-f-cat', '');
 await pc.fill('#ep-q', '8002');
 eq(await pc.evaluate(() => [...document.querySelectorAll('#ep-detail-corps tbody tr')].map(r => [r.children[0].textContent, r.children[2].textContent, r.children[4].textContent, r.children[5].textContent])), [['8002', 'À mettre bas', '2 et +', 'IA septembre']], 'recherche par n° court ; Double = « 2 et + »');
