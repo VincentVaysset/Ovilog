@@ -6527,12 +6527,19 @@ function reporterPereIaApresSaisie(animal, entry) {
    père = n° officiel et ISOL de l'IA (pereIa) ; sinon le père / la mère déclarés (texte, lien). */
 /* Classe par quart AFFICHÉE : 1, 2, 3 ou 4 seulement ; toute autre valeur (0, vide, texte) = null, affichée « - ». UNE fonction pour tous les écrans et exports. */
 function classeParQuartAffichee(v) { if (v === null || v === undefined || String(v).trim() === '') return null; const n = Number(String(v).trim().replace(',', '.')); return [1, 2, 3, 4].includes(n) ? n : null; }
-function lactationBrebisCampagne(eid, campagne) {
+/* Classe par quart et lactation totale d'une brebis pour une campagne : UNE seule source, le Bilan de lactation SIEOL (DB.bilanLactation, champs
+   classeParQuart et lactTotale) — l'import « Lactation » (DB.lactationModele) n'est plus lu pour elles, rien n'est supprimé. Absente du Bilan = « - » ;
+   classe hors 1 à 4 (0 compris) = « - » ; suivi CLO = aucune classe. Fiche (Index, Carrière), généalogie, tri des agnelles, Lots PC, écarts, aperçu. */
+function bilanSieolBrebis(eid, campagne) {
   const k = cleanEid(eid);
-  const l = campagne === null || campagne === undefined ? null : (DB.lactationModele || []).find(x => x && cleanEid(x.eid) === k && x.campagne === campagne);
+  return campagne === null || campagne === undefined || !k ? null : (DB.bilanLactation || []).find(x => x && cleanEid(x.eid) === k && x.campagne === campagne) || null;
+}
+function suiviClo() { return !!(DB.exploitation && DB.exploitation.typeSuivi === 'clo'); }
+function lactationBrebisCampagne(eid, campagne) {
+  const l = bilanSieolBrebis(eid, campagne);
   if (!l) return { lactation: null, classe: null, campagne };
-  const lact = typeof l.lactationTotale === 'number' && l.lactationTotale > 0 ? l.lactationTotale : null;
-  return { lactation: lact, classe: DB.exploitation && DB.exploitation.typeSuivi === 'clo' ? null : classeParQuartAffichee(l.classeParQuart), campagne };
+  const lact = typeof l.lactTotale === 'number' && l.lactTotale > 0 ? l.lactTotale : null;
+  return { lactation: lact, classe: suiviClo() ? null : classeParQuartAffichee(l.classeParQuart), campagne };
 }
 // Campagne de naissance d'un animal né dans l'élevage : la mise bas de sa mère qui le porte (null si inconnue)
 function campagneNaissanceDepuisMere(mereEid, eid) {
@@ -13957,11 +13964,8 @@ function carriereCampagnesHtml(sources) {
   };
   return keys.map(campagne => {
     const bilan = bilanParCampagne[String(campagne)];
-    // Classe archivée à l'import CLS/CLO (DB.lactationModele) -- jamais
-    // recalculée localement, jamais lue depuis DB.bilanLactation (collection
-    // SIEOL orpheline, plus aucun écran d'import accessible -- voir "Bug
-    // classe lactation Carrière/Index"). Litrage/jours de traite restent
-    // inchangés, toujours lus depuis bilan (DB.bilanLactation) comme avant.
+    // Classe de la campagne : Bilan de lactation SIEOL (DB.bilanLactation, lactationBrebisCampagne), source unique depuis le 27/11 ;
+    // litrage et jours de traite lus du même bilan, comme avant.
     const classe = classeParCampagne[String(campagne)];
     // La date de mise bas ne vit normalement plus ici (elle vit dans Repro,
     // via l'agnelage lui-même) -- exception codée en dur, assumée, pour la
@@ -14307,17 +14311,13 @@ function renderDetail(id) {
   // campagne passée, ci-dessous) et par l'onglet Index (campagne en cours +
   // repli sur la plus récente archivée, voir indexTabHtml plus bas).
   const typeSuiviFiche = DB.exploitation.typeSuivi;
-  // Classe de lactation archivée à chaque import CLS/CLO (voir
-  // renderImportLactationModele, upsert par eid+campagne) : SEULE source de
-  // la classe affichée en Carrière -- jamais recalculée, jamais lue depuis
-  // DB.bilanLactation (voir "Bug classe lactation Carrière/Index"). Scopée
-  // aux campagnes déjà closes, comme bilanParCampagne ci-dessus -- la
-  // campagne en cours reste l'affaire de l'onglet Index.
+  // Classe de chaque campagne close (la campagne en cours reste l'affaire de l'onglet Index) : Bilan de lactation SIEOL, jamais l'import Lactation.
+  // Classe de chaque campagne close : Bilan de lactation SIEOL seulement (lactationBrebisCampagne ; CLO : aucune classe ; 0 ou hors 1-4 : rien)
   const classeParCampagne = {};
-  (DB.lactationModele || []).forEach(l => {
-    if (cleanEid(l.eid) !== cleanEid(sheep.eid) || l.campagne == null || l.campagne >= DB.campagneDebut) return;
-    const val = typeSuiviFiche === 'clo' ? l.indexProduction : classeParQuartAffichee(l.classeParQuart);   // classe 0 ou hors 1-4 : jamais affichée
-    if (val != null) classeParCampagne[String(l.campagne)] = val;
+  Object.keys(bilanParCampagne).forEach(c => {
+    if (Number(c) >= DB.campagneDebut) return;
+    const val = lactationBrebisCampagne(sheep.eid, Number(c)).classe;
+    if (val != null) classeParCampagne[c] = val;
   });
   const agnelagesPassees = agnelagesIndexes.filter(a => a.campagne != null && a.campagne < DB.campagneDebut);
   const sanitairePassees = sanitaireIndexes.filter(s => s.campagne != null && s.campagne < DB.campagneDebut);
@@ -14564,7 +14564,7 @@ function renderDetail(id) {
       ` : `
         <div class="grid2" style="grid-template-columns:repeat(3,1fr);">
           <div><div style="font-size:12px;color:var(--text-muted);">Lactation moyenne</div><div style="font-weight:600;">${lactationAffichee.lactationMoyenne != null ? fmtDecimal(lactationAffichee.lactationMoyenne, 1) : '—'}</div></div>
-          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col5}</div><div style="font-weight:600;">${classeParQuartAffichee(lactationAffichee.classeParQuart) !== null ? classeParQuartAffichee(lactationAffichee.classeParQuart) : '-'}</div></div>
+          <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col5}</div><div style="font-weight:600;">${(c => c !== null ? c : '-')(lactationBrebisCampagne(sheep.eid, lactationAffichee.campagne).classe)}</div></div>
           <div><div style="font-size:12px;color:var(--text-muted);">${libColFiche.col4}</div><div style="font-weight:600;">${lactationAffichee.indiceCumule != null ? lactationAffichee.indiceCumule : '—'}</div></div>
         </div>
       `)}
@@ -21964,16 +21964,9 @@ function nomLotParDefaut(F) {
 function dateEvenementDuFormulaire(F) { return F.type === 'reproduction' && F.mode === 'EP' && F.date ? addDaysToDateStr(F.date, EPONGE_DELAI_LUTTE_JOURS) : F.date; }
 function campagneMisesBasDuFormulaire(F) { return F.campagne === 'encours' ? DB.campagneDebut : DB.campagneDebut + 1; }
 
-/* Classe (1 à 4 UNIQUEMENT) et lactation totale (L) de la campagne PRÉCÉDENTE d'une brebis -- source : DB.lactationModele, comme la fiche Carrière
-   (jamais recalculées). Classe hors 1-4 (« 0 », vide), suivi « clo » (index de production, pas une classe) ou pas de ligne : null -> « - ». */
-function lactationPrecedenteBrebis(eid) {
-  const k = cleanEid(eid), c = DB.campagneDebut - 1;
-  const l = (DB.lactationModele || []).find(x => x && cleanEid(x.eid) === k && x.campagne === c);
-  if (!l) return { lactation: null, classe: null, campagne: c };
-  const lact = typeof l.lactationTotale === 'number' && l.lactationTotale > 0 ? l.lactationTotale : null;
-  return { lactation: lact, classe: DB.exploitation && DB.exploitation.typeSuivi === 'clo' ? null : classeParQuartAffichee(l.classeParQuart), campagne: c };
-}
-/* Écarts entre les 3 sources de classe / lactation (DB.lactationModele = source retenue ; DB.bilanLactation = import SIEOL ; DB.cahierControleLaitier)
+/* Classe (1 à 4 UNIQUEMENT) et lactation totale (L) de la campagne PRÉCÉDENTE d'une brebis : Bilan de lactation SIEOL (lactationBrebisCampagne). */
+function lactationPrecedenteBrebis(eid) { return lactationBrebisCampagne(eid, DB.campagneDebut - 1); }
+/* Écarts entre les 3 sources de classe / lactation (DB.bilanLactation = Bilan de lactation SIEOL, source RETENUE ; DB.lactationModele = import « Lactation » ; DB.cahierControleLaitier)
    pour la campagne précédente : à comparer au papier SIEOL, jamais corrigés. */
 function ecartsSourcesLactation() {
   const c = DB.campagneDebut - 1, res = [];
@@ -21985,11 +21978,11 @@ function ecartsSourcesLactation() {
     const vals = { lactationModele: A ? { classe: A.classeParQuart, lactation: A.lactationTotale } : null, bilanLactation: B ? { classe: B.classeParQuart, lactation: B.lactTotale } : null, cahier: C ? { classe: C.classeParQuart, lactation: C.lactMoyen } : null };
     const push = type => res.push({ type, eid: s.eid, numero: numeroVisuel(s.eid), court: s.numeroCourtTravailSieol || s.numeroTravailSieol || '', statut: s.statut || 'active', valeurs: vals });
     const vide = x => !x || ((x.classe === null || x.classe === undefined || x.classe === '') && (x.lactation === null || x.lactation === undefined || x.lactation === 0));      // une ligne sans classe ni lactation n'est pas une donnée
-    if (!A && (!vide(vals.bilanLactation) || !vide(vals.cahier))) push('absente de lactationModele (présente dans une autre source)');
-    if (A && classeOk(A.classeParQuart) === null) push('classe hors 1 à 4 dans lactationModele');
-    if (A && B && classeOk(A.classeParQuart) !== null && classeOk(B.classeParQuart) !== null && classeOk(A.classeParQuart) !== classeOk(B.classeParQuart)) push('classe différente : lactationModele / bilanLactation');
-    if (A && C && classeOk(A.classeParQuart) !== null && classeOk(C.classeParQuart) !== null && classeOk(A.classeParQuart) !== classeOk(C.classeParQuart)) push('classe différente : lactationModele / cahier de contrôle');
-    if (A && B && typeof A.lactationTotale === 'number' && typeof B.lactTotale === 'number' && Math.abs(A.lactationTotale - B.lactTotale) > 0.05) push('lactation totale différente : lactationModele / bilanLactation');
+    if (!B && (!vide(vals.lactationModele) || !vide(vals.cahier))) push('absente du Bilan SIEOL (présente dans une autre source)');
+    if (B && classeOk(B.classeParQuart) === null) push('classe hors 1 à 4 dans le Bilan SIEOL');
+    if (A && B && classeOk(A.classeParQuart) !== null && classeOk(B.classeParQuart) !== null && classeOk(A.classeParQuart) !== classeOk(B.classeParQuart)) push('classe différente : Bilan SIEOL / import Lactation');
+    if (B && C && classeOk(B.classeParQuart) !== null && classeOk(C.classeParQuart) !== null && classeOk(B.classeParQuart) !== classeOk(C.classeParQuart)) push('classe différente : Bilan SIEOL / cahier de contrôle');
+    if (A && B && typeof A.lactationTotale === 'number' && typeof B.lactTotale === 'number' && Math.abs(A.lactationTotale - B.lactTotale) > 0.05) push('lactation totale différente : Bilan SIEOL / import Lactation');
   });
   return res;
 }
@@ -22176,8 +22169,8 @@ async function exporterListeLotsXlsx(nomFichier, lignes, titreFeuille) {
 async function exporterEcartsLactationXlsx() {
   const e = ecartsSourcesLactation(), f = v => v === null || v === undefined || v === '' ? '-' : v;
   const bytes = await buildXlsxWorkbook([{ name: 'Écarts de classe', colWidths: [12, 52, 14, 14, 14, 14, 14], rows: [
-    ['N°', 'Écart', 'Classe lactationModele', 'Classe bilanLactation', 'Classe cahier', 'Lactation lactationModele (L)', 'Lactation bilanLactation (L)'],
-    ...e.map(x => [x.court || x.numero, x.type, f(x.valeurs.lactationModele && classeParQuartAffichee(x.valeurs.lactationModele.classe)), f(x.valeurs.bilanLactation && classeParQuartAffichee(x.valeurs.bilanLactation.classe)), f(x.valeurs.cahier && classeParQuartAffichee(x.valeurs.cahier.classe)), f(x.valeurs.lactationModele && x.valeurs.lactationModele.lactation), f(x.valeurs.bilanLactation && x.valeurs.bilanLactation.lactation)])
+    ['N°', 'Écart', 'Classe Bilan SIEOL (retenue)', 'Classe import Lactation', 'Classe cahier', 'Lactation Bilan SIEOL (L, retenue)', 'Lactation import Lactation (L)'],
+    ...e.map(x => [x.court || x.numero, x.type, f(x.valeurs.bilanLactation && classeParQuartAffichee(x.valeurs.bilanLactation.classe)), f(x.valeurs.lactationModele && classeParQuartAffichee(x.valeurs.lactationModele.classe)), f(x.valeurs.cahier && classeParQuartAffichee(x.valeurs.cahier.classe)), f(x.valeurs.bilanLactation && x.valeurs.bilanLactation.lactation), f(x.valeurs.lactationModele && x.valeurs.lactationModele.lactation)])
   ] }]);
   await saveOrShareBinaryFile('ecarts-classe-lactation_' + jourAujourdhuiISO() + '.xlsx', bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
@@ -22475,7 +22468,7 @@ function renderLotsPc() {
           </div>
           ${tableau}
           ${!agn && E.onglet === 'echos' ? `${E.messageRaccourci ? `<div class="card" style="margin:10px 0 0;background:var(--green-bg);color:var(--green-fg);" id="lt-msg-raccourci">${E.messageRaccourci}</div>` : ''}<p class="brd-note" style="margin:10px 0 0;">Raccourci : <button type="button" class="btn btn-secondary" id="lt-echo-raccourci" style="width:auto;padding:4px 12px;font-size:12px;">Créer les lots Vides / Simples / Doubles</button> crée d'un coup 3 lots de recherche d'après la dernière écho de la campagne choisie, après un récapitulatif.</p>` : ''}
-          ${E.onglet === 'lactations' && !agn ? `<p class="brd-note" style="margin:8px 0 0;">Classe et lactation : source DB.lactationModele (comme la fiche Carrière), classe 1 à 4 seulement, « - » sinon. <button type="button" class="btn btn-secondary" id="lt-ecarts" style="width:auto;padding:3px 10px;font-size:12px;">Écarts de classe entre sources (${ecartsSourcesLactation().length}) → Excel</button></p>` : ''}
+          ${E.onglet === 'lactations' && !agn ? `<p class="brd-note" style="margin:8px 0 0;">Classe et lactation : Bilan de lactation SIEOL (comme la fiche Carrière), classe 1 à 4 seulement, « - » sinon. <button type="button" class="btn btn-secondary" id="lt-ecarts" style="width:auto;padding:3px 10px;font-size:12px;">Écarts de classe entre sources (${ecartsSourcesLactation().length}) → Excel</button></p>` : ''}
         </div>
         <div class="card" id="lt-panneau">
           <p class="brd-ttl" style="margin-bottom:2px;">Lot « ${echapperHtml(lot.nom)} »</p>
@@ -30938,19 +30931,21 @@ function renderImportLactationModele() {
 
     const descriptionChamps = (champs) => {
       const parts = [];
-      if (champs.lactationTotale !== null && champs.lactationTotale !== undefined) parts.push(fmtDecimal(champs.lactationTotale, 1) + ' L');
+      // classe par quart et lactation totale : jamais celles du fichier (source unique = Bilan de lactation SIEOL, voir bilanSieolApercu)
       if (champs.joursTraite !== null && champs.joursTraite !== undefined) parts.push(champs.joursTraite + ' j traite');
       if (champs.lactationMoyenne !== null && champs.lactationMoyenne !== undefined) parts.push('moy. ' + fmtDecimal(champs.lactationMoyenne, 1));
       const c4 = champs.indiceCumule !== undefined ? champs.indiceCumule : champs.indexIsol;
       if (c4 !== null && c4 !== undefined) parts.push(labelCol4 + ' ' + c4);
-      const c5 = champs.classeParQuart !== undefined ? champs.classeParQuart : champs.indexProduction;
-      if (c5 !== null && c5 !== undefined) parts.push(labelCol5 + ' ' + (champs.classeParQuart !== undefined ? (classeParQuartAffichee(c5) !== null ? classeParQuartAffichee(c5) : '-') : c5));   // classe hors 1-4 : « - »
+      if (champs.classeParQuart === undefined && champs.indexProduction !== null && champs.indexProduction !== undefined) parts.push(labelCol5 + ' ' + champs.indexProduction);   // CLO : index de production (pas une classe)
       return parts.length ? parts.join(' · ') : '(aucune valeur)';
     };
+    // Classe et lactation totale montrées = celles du Bilan de lactation SIEOL de la brebis (« - » si absente ; CLO : pas de classe)
+    const bilanSieolApercu = eid => { const b = lactationBrebisCampagne(eid, campagne); return 'Bilan SIEOL : ' + [suiviClo() ? null : 'classe ' + (b.classe !== null ? b.classe : '-'), b.lactation !== null ? fmtDecimal(b.lactation, 1) + ' L' : 'lactation -'].filter(Boolean).join(' · '); };
 
     preview.innerHTML = `
       <div class="card" style="margin-top:14px;">${tuilesRetrouverImportHtml(aRetrouver)}
-        ${infoLigneHtml(aEcrire.length + ' à enregistrer' + (conflits.length ? ' · ' + conflits.length + ' à trancher (déjà dans Ovilog, différent du fichier)' : '') + (nonResolues.length ? ' · ' + nonResolues.length + ' ligne' + (nonResolues.length > 1 ? 's' : '') + ' sans n° de brebis' : ''))}</div>
+        ${infoLigneHtml(aEcrire.length + ' à enregistrer' + (conflits.length ? ' · ' + conflits.length + ' à trancher (déjà dans Ovilog, différent du fichier)' : '') + (nonResolues.length ? ' · ' + nonResolues.length + ' ligne' + (nonResolues.length > 1 ? 's' : '') + ' sans n° de brebis' : ''))}
+        <div class="prm-note" id="lact-modele-source">Classe par quart et lactation totale : lues dans le Bilan de lactation SIEOL, jamais dans ce fichier.</div></div>
       ${carteRetrouverImportHtml(aRetrouver, { colonne: 'n° de travail', pool: DB.brebis })}
 
       ${conflits.length > 0 ? `
@@ -30962,7 +30957,7 @@ function renderImportLactationModele() {
           return `
           <div style="border-top:1px solid var(--border);padding:8px 0;">
             <div style="font-size:13px;margin-bottom:4px;">n°${numeroVisuel(animalRetenuImport(l).eid)} <span style="color:var(--text-muted);">(ligne ${l.ligne} du fichier : ${echapperHtml(l.numeroSieol)})</span></div>
-            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Dans Ovilog : ${descriptionChamps(existant)} &nbsp;→&nbsp; dans le fichier : ${descriptionChamps(l.champs)}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Dans Ovilog : ${descriptionChamps(existant)} &nbsp;→&nbsp; dans le fichier : ${descriptionChamps(l.champs)} · ${bilanSieolApercu(animalRetenuImport(l).eid)}</div>
             <div style="display:flex;gap:6px;align-items:center;">
               <button type="button" class="btn btn-secondary btn-conflit-lact-modele" data-idx="${l.__idx}" data-choix="garder" style="width:auto;padding:5px 12px;font-size:12px;${l.resolutionConflit === 'garder' ? 'background:var(--gray-bg);' : ''}">Garder Ovilog</button>
               <button type="button" class="btn btn-secondary btn-conflit-lact-modele" data-idx="${l.__idx}" data-choix="remplacer" style="width:auto;padding:5px 12px;font-size:12px;${l.resolutionConflit === 'remplacer' ? 'background:var(--amber-bg);border-color:var(--amber-fg);' : ''}">Prendre le fichier</button>
@@ -30984,7 +30979,7 @@ function renderImportLactationModele() {
       ${aEcrire.length > 0 ? `
       <div class="card" style="margin-top:10px;">
         <div style="font-size:14px;font-weight:600;margin-bottom:4px;">À enregistrer (${aEcrire.length})</div>
-        ${aEcrire.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>n°${numeroVisuel(animalRetenuImport(l).eid)}</span><span style="color:var(--text-muted);">${descriptionChamps(l.champs)}</span></div>`).join('')}
+        ${aEcrire.map(l => `<div style="font-size:13px;padding:4px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><span>n°${numeroVisuel(animalRetenuImport(l).eid)}</span><span style="color:var(--text-muted);">${descriptionChamps(l.champs)} · ${bilanSieolApercu(animalRetenuImport(l).eid)}</span></div>`).join('')}
       </div>
       ` : ''}
     `;

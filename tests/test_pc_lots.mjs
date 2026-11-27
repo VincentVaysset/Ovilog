@@ -31,10 +31,11 @@ const jeu = () => page.evaluate(() => {
     f(7, 5, {}),                                                                                                                            // F
     f(9, 77, { statut: 'vendue' })                                                                                                          // G (pas proposée)
   ];
-  DB.lactationModele = [
-    { eid: E(8, 133), campagne: 2025, lactationTotale: 452, classeParQuart: '1' }, { eid: E(9, 59), campagne: 2025, lactationTotale: 389.6, classeParQuart: '2' },
-    { eid: E(9, 69), campagne: 2025, lactationTotale: 300, classeParQuart: '0' }, { eid: E(0, 33), campagne: 2025, lactationTotale: 331, classeParQuart: '3' }];
-  DB.bilanLactation = [{ eid: E(8, 133), campagne: 2025, lactTotale: 452, classeParQuart: 2 }, { eid: E(9, 152), campagne: 2025, lactTotale: 250, classeParQuart: 4 }];
+  // classe et lactation affichées : Bilan de lactation SIEOL (source unique) ; l'import Lactation n'est qu'une autre source, comparée dans les écarts
+  DB.bilanLactation = [
+    { eid: E(8, 133), campagne: 2025, lactTotale: 452, classeParQuart: '1' }, { eid: E(9, 59), campagne: 2025, lactTotale: 389.6, classeParQuart: '2' },
+    { eid: E(9, 69), campagne: 2025, lactTotale: 300, classeParQuart: '0' }, { eid: E(0, 33), campagne: 2025, lactTotale: 331, classeParQuart: '3' }];
+  DB.lactationModele = [{ eid: E(8, 133), campagne: 2025, lactationTotale: 452, classeParQuart: 2 }, { eid: E(9, 152), campagne: 2025, lactationTotale: 250, classeParQuart: 4 }];
   DB.agnelles = [{ id: 'ag1', eid: E(5, 41), origine: 'née', motherEid: E(8, 133), dateEntree: '2026-09-01', mouvements: [], sanitaire: [] }, { id: 'ag2', eid: E(5, 42), origine: 'achetée', dateEntree: '2026-09-10', mouvements: [], sanitaire: [] }];
   DB.lots = [{ id: 'LX', nom: 'Brebis doubles', dateCreation: '2026-10-01', membres: [E(9, 69)] }];
   DB.evenementsLots = [];
@@ -231,8 +232,8 @@ console.log('OK 9 lot cible Agnelles : liste unique, classe et lactation de la m
 // ================================================================ 10. écarts de classe entre sources
 await jeu();
 const ec = await page.evaluate(() => ecartsSourcesLactation().map(x => [x.numero, x.type]));
-check(ec.some(e => e[0] === '80133' && /classe différente/.test(e[1])) && ec.some(e => e[0] === '90069' && /hors 1 à 4/.test(e[1])) && ec.some(e => e[0] === '90152' && /absente de lactationModele/.test(e[1])) && ec.length === 3, 'écarts : A (classe 1 contre 2), C (classe 0), D (absente de lactationModele) : ' + JSON.stringify(ec));
-console.log('OK 10 écarts de classe entre sources (lactationModele / bilanLactation / cahier) listés, jamais corrigés.');
+check(ec.some(e => e[0] === '80133' && /classe différente/.test(e[1])) && ec.some(e => e[0] === '90069' && /hors 1 à 4/.test(e[1])) && ec.some(e => e[0] === '90152' && /absente du Bilan SIEOL/.test(e[1])) && ec.length === 3, 'écarts : A (classe 1 contre 2), C (classe 0), D (absente de lactationModele) : ' + JSON.stringify(ec));
+console.log('OK 10 écarts de classe entre sources (Bilan SIEOL retenu / import Lactation / cahier) listés, jamais corrigés.');
 
 // ================================================================ 11. mobile : l'écran des lots d'origine, redirections PC
 await jeu();
@@ -317,7 +318,7 @@ if (exportPresent(EXPORT_CORRIGE)) {
     out.attenduDiff = brut.brebis.filter(s => { const k = s.eid.replace(/\s+/g, ''); return lm[k] && bl[k] && lm[k].campagne === brut.campagneDebut - 1 && bl[k].campagne === brut.campagneDebut - 1 && [1, 2, 3, 4].includes(parseInt(lm[k].classeParQuart, 10)) && [1, 2, 3, 4].includes(parseInt(bl[k].classeParQuart, 10)) && parseInt(lm[k].classeParQuart, 10) !== parseInt(bl[k].classeParQuart, 10); }).length;
     out.actives = DB.brebis.filter(s => (s.statut || 'active') === 'active').length;
     out.lotVide = DB.lots[DB.lots.length - 1].membres.length;
-    out.attenduAvecClasse = DB.brebis.filter(s => (s.statut || 'active') === 'active').filter(s => { const k = s.eid.replace(/\s+/g, ''); return lm[k] && lm[k].campagne === brut.campagneDebut - 1 && [1, 2, 3, 4].includes(parseInt(lm[k].classeParQuart, 10)); }).length;
+    out.attenduAvecClasse = DB.brebis.filter(s => (s.statut || 'active') === 'active').filter(s => { const k = s.eid.replace(/\s+/g, ''); return bl[k] && bl[k].campagne === brut.campagneDebut - 1 && [1, 2, 3, 4].includes(parseInt(bl[k].classeParQuart, 10)); }).length;
     return out;
   }, reel);
   console.log('   réel :', JSON.stringify(r), (Date.now() - t0) + ' ms');

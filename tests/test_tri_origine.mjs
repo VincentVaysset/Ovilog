@@ -25,7 +25,7 @@ await page.evaluate(() => {
   ];
   DB.agnelles = [{ id: 'ach', eid: E(5, 42), origine: 'achetée', dateEntree: '2026-09-10', mouvements: [{ type: 'Entrée', date: '2026-09-10' }], sanitaire: [] }];
   DB.cahierControleLaitier = [{ eid: E(1, 1), campagne: 2025, numLactation: '3', lactMoyen: 2.7, classeParQuart: '1' }];
-  DB.lactationModele = [{ eid: E(1, 1), campagne: 2025, lactationTotale: 452, classeParQuart: '1' }, { eid: E(1, 2), campagne: 2025, lactationTotale: 300, classeParQuart: '2' }];
+  DB.bilanLactation = [{ eid: E(1, 1), campagne: 2025, lactTotale: 452, classeParQuart: '1' }, { eid: E(1, 2), campagne: 2025, lactTotale: 300, classeParQuart: '2' }];
   window.__avant = JSON.stringify(DB);
 });
 

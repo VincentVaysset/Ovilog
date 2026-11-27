@@ -26,7 +26,7 @@ async function ouvrir(bureau) {
     DB.brebis = [1, 2, 3, 4, 5, 6].map(fiche); DB.beliers = []; DB.agnelles = []; DB.registre = { brebis: {}, beliers: {}, agnelles: {} };
     DB.lots = [{ id: 'LIA', type: 'reproduction', nom: 'IA octobre', mode: 'IA', cible: 'Brebis', dateCreation: '2026-10-20', dateEvenement: '2026-10-20', campagneMisesBas: 2026, membres: [1, 2, 3, 4, 5].map(E) }];
     DB.brebis.forEach(b => { if (+b.id.slice(1) <= 5) b.modesRepro.push({ date: '2026-10-20', mode: 'IA', lotId: 'LIA', campagne: 2026 }); });
-    DB.lactationModele = [{ eid: E(1), campagne: 2025, classeParQuart: 2, lactationTotale: 312 }];
+    DB.bilanLactation = [{ eid: E(1), campagne: 2025, classeParQuart: 2, lactTotale: 312 }];
     // brebis 1 : déjà mis bas (IA) avant l'import, une femelle et un mâle
     DB.brebis[0].agnelages = [{ date: '2027-03-17', campagne: 2026, codeRepro: 'IA', lambs: [{ sexe: 'Femelle', adopte: false, eid: '250000004561001', sanitaire: [] }, { sexe: 'Mâle', adopte: false, eid: '250000004561002', sanitaire: [] }] }];
     window.__eids = JSON.stringify(DB.brebis.map(b => b.eid));

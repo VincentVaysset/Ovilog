@@ -25,7 +25,7 @@ const jeuSur = (pg) => pg.evaluate(() => {
   const B = f(9, 59, { agnelages: [{ campagne: 2025, date: '2026-01-19', codeRepro: 'MN', lambs: [l(4, 'Femelle')] }, { campagne: 2024, date: '2025-01-05', codeRepro: 'MN', lambs: [l(5, 'Femelle', { triStatut: 'écartée' })] }] });
   const C = f(0, 33, { agnelages: [{ campagne: 2025, date: '2026-01-25', codeRepro: 'MN', lambs: [l(6, 'Femelle', { statutFinal: 'vendu' }), l(7, 'Femelle', { triStatut: 'gardée' }), l(8, 'Femelle', { triStatut: 'gardée', statutFinal: 'vendu' })] }] });
   DB.brebis = [A, B, C];
-  DB.lactationModele = [{ eid: E(8, 133), campagne: 2025, lactationTotale: 452, classeParQuart: '1' }];
+  DB.bilanLactation = [{ eid: E(8, 133), campagne: 2025, lactTotale: 452, classeParQuart: '1' }];
   DB.agnelles = [{ id: 'ag2', eid: E(6, 2), origine: 'née', motherEid: E(8, 133), dateEntree: '2026-09-01', mouvements: [{ type: 'Naissance', date: '2026-01-14' }, { type: 'Entrée', date: '2026-09-01' }], sanitaire: [] },
     { id: 'ag3', eid: E(5, 42), origine: 'achetée', dateEntree: '2026-09-10', mouvements: [{ type: 'Entrée', date: '2026-09-10' }], sanitaire: [] }];
   window.__avant = JSON.stringify(DB);

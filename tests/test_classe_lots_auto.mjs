@@ -22,10 +22,14 @@ const r = await page.evaluate(() => {
   DB.exploitation = Object.assign(DB.exploitation || {}, { typeSuivi: 'cls' });
   const f = (id, n) => ({ id, eid: '2500000129' + String(30000 + n), statut: 'active', createdAt: 1, echographies: [], agnelages: [], sanitaire: [], notes: [], mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2024-01-01' }], controleLaitier: [], modesRepro: [] });
   DB.brebis = [f('b1', 1), f('b2', 2)];
-  DB.lactationModele = [
-    { eid: DB.brebis[0].eid, campagne: 2026, lactationTotale: 146.2, joursTraite: 87, lactationMoyenne: 1.7, indiceCumule: 1650, classeParQuart: 0 },   // classe 0 : jamais affichée
-    { eid: DB.brebis[0].eid, campagne: 2025, lactationTotale: 300, classeParQuart: 0 },
-    { eid: DB.brebis[1].eid, campagne: 2026, lactationTotale: 320, classeParQuart: 3 }];
+  DB.lactationModele = [   // import « Lactation » : classes 4 ici, jamais lues pour la classe (source unique = Bilan SIEOL)
+    { eid: DB.brebis[0].eid, campagne: 2026, lactationTotale: 146.2, joursTraite: 87, lactationMoyenne: 1.7, indiceCumule: 1650, classeParQuart: 4 },
+    { eid: DB.brebis[0].eid, campagne: 2025, lactationTotale: 300, classeParQuart: 4 },
+    { eid: DB.brebis[1].eid, campagne: 2026, lactationTotale: 320, classeParQuart: 4 }];
+  DB.bilanLactation = [
+    { eid: DB.brebis[0].eid, campagne: 2026, lactTotale: 146.2, classeParQuart: 0 },   // classe 0 : jamais affichée
+    { eid: DB.brebis[0].eid, campagne: 2025, lactTotale: 300, classeParQuart: 0 },
+    { eid: DB.brebis[1].eid, campagne: 2026, lactTotale: 320, classeParQuart: 3 }];
   render('detail', 'b1');
   const html = document.getElementById('app').innerHTML;
   return { classe0: /Classe 0\b/.test(html), index: /Classe par quart|classeParQuart/.test(html), precedente: [lactationPrecedenteBrebis(DB.brebis[0].eid).classe, lactationPrecedenteBrebis(DB.brebis[1].eid).classe],
@@ -43,7 +47,20 @@ const idx = await page.evaluate(() => {
 });
 check(idx.trouve, 'onglet Index présent (suivi CLS)');
 check(/^Classe par quart\s*-/.test(idx.texte), 'Index : la classe 0 s\'affiche « - » : ' + idx.texte);
-console.log('OK 1 classe par quart : 1 à 4 seulement, « - » sinon (fiche Index et Carrière, campagne précédente, généalogie).');
+// source unique : la classe 4 de l'import « Lactation » n'apparaît jamais ; suivi CLO : aucune classe, d'où qu'elle vienne
+const src = await page.evaluate(() => {
+  const avant = { b2: lactationBrebisCampagne(DB.brebis[1].eid, 2026), carriere4: /Classe 4\b/.test(document.getElementById('app').innerHTML) };
+  DB.exploitation.typeSuivi = 'clo';
+  const clo = [lactationBrebisCampagne(DB.brebis[1].eid, 2026).classe, lactationPrecedenteBrebis(DB.brebis[1].eid).classe, lactationBrebisCampagne(DB.brebis[1].eid, 2026).lactation];
+  render('detail', 'b2'); const html = document.getElementById('app').innerHTML;
+  DB.exploitation.typeSuivi = 'cls';
+  return { b2: [avant.b2.classe, avant.b2.lactation], carriere4: avant.carriere4, clo, cloClasse: /Classe [0-9]\b/.test(html) };
+});
+eq(src.b2, [3, 320], 'Bilan SIEOL : classe 3 et 320 L (l\'import Lactation dit 4 : jamais lu)');
+check(!src.carriere4, 'fiche : aucune « Classe 4 » venue de l\'import Lactation');
+eq(src.clo, [null, null, 320], 'suivi CLO : aucune classe (lactation totale du Bilan gardée)');
+check(!src.cloClasse, 'suivi CLO : aucune pastille « Classe N » sur la fiche');
+console.log('OK 1 classe par quart : 1 à 4 seulement, « - » sinon (fiche Index et Carrière, campagne précédente, généalogie) ; source unique = Bilan SIEOL ; CLO sans classe.');
 
 // ================================================================ 2. lot automatique : sans les brebis sorties, en temps réel
 const L = await page.evaluate(() => {

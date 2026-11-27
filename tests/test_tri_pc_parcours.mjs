@@ -20,7 +20,7 @@ const JEU = () => {
     f(8, 4, { agnelages: [{ campagne: 2025, date: '2026-01-27', codeRepro: 'MN', lambs: [l(7, { triStatut: 'écartée' })] }] }),
     f(8, 5, { statut: 'vendue', agnelages: [{ campagne: 2025, date: '2026-02-01', codeRepro: 'IA', lambs: [l(8)] }] })      // mère vendue : origine « — »
   ];
-  DB.lactationModele = [{ eid: E(8, 1), campagne: 2025, lactationTotale: 452, classeParQuart: '1' }];
+  DB.bilanLactation = [{ eid: E(8, 1), campagne: 2025, lactTotale: 452, classeParQuart: '1' }];
   DB.agnelles = [];
   const mk = (id, n, extra) => Object.assign({ id, eid: E(6, n), origine: 'née', motherEid: E(8, 1), dateEntree: '2026-09-01', sanitaire: [], notes: [], mouvements: [{ type: 'Naissance', cause: null, date: '2026-01-14' }, { type: 'Entrée', cause: 'Tri (renouvellement)', date: '2026-09-01' }] }, extra || {});
   const a2 = mk('a2', 2, { sanitaire: [{ date: '2026-09-15', produit: 'Vitamine B12' }], notes: [{ date: '2026-09-18', texte: 'Petite' }], mouvements: [{ type: 'Naissance', cause: null, date: '2026-01-14' }, { type: 'Entrée', cause: 'Tri (renouvellement)', date: '2026-09-01' }, { type: 'Transfert', cause: 'Lot', date: '2026-09-25' }] });

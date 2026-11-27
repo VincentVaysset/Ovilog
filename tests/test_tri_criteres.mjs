@@ -48,7 +48,7 @@ eq(r.libelles, ['Classe de la mère = 4', 'Lactation de la mère au moins 300 L'
 const d = await page.evaluate(() => {
   DB.brebis = [{ id: 'm1', eid: '250000004510001', statut: 'active', agnelages: [{ id: 'a1', date: '2026-11-02', campagne: 2026, codeRepro: 'IA', lambs: [{ id: 'l1', eid: '250000004571001', sexe: 'Femelle' }, { id: 'l2', eid: '250000004571002', sexe: 'Mâle' }] }], mouvements: [], sanitaire: [] },
     { id: 'm2', eid: '250000004510002', statut: 'active', agnelages: [{ id: 'a2', date: '2026-11-19', campagne: 2026, codeRepro: 'MN', lambs: [{ id: 'l3', eid: '250000004571003', sexe: 'Femelle' }] }], mouvements: [], sanitaire: [] }];
-  DB.lactationModele = [{ eid: '250000004510001', campagne: 2025, lactationTotale: 318, classeParQuart: 4 }, { eid: '250000004510002', campagne: 2025, lactationTotale: 410, classeParQuart: 1 }];
+  DB.bilanLactation = [{ eid: '250000004510001', campagne: 2025, lactTotale: 318, classeParQuart: 4 }, { eid: '250000004510002', campagne: 2025, lactTotale: 410, classeParQuart: 1 }];
   ecrireCriteresTri(2026, { regles: [{ id: 'r1', conditions: [{ critere: 'naissance', op: 'apres', valeur: '2026-11-15' }], exceptions: [] }], decisions: { '250000004571001': 'ecarter' } });
   const t = triCriteresDonnees();
   const autre = criteresTriCampagne(2027), plusTard = criteresTriCampagne(2029), avantLui = criteresTriCampagne(2025);
@@ -87,7 +87,7 @@ console.log('OK 1-2 moteur des critères');
     const mere = (i, date, code, nb) => ({ id: 'm' + i, eid: '25000000451' + String(1000 + i), numeroCourtTravailSieol: String(600 + i), statut: 'active', mouvements: [], sanitaire: [],
       agnelages: [{ id: 'a' + i, date, campagne: 2026, codeRepro: code, lambs: Array.from({ length: nb }, (_, k) => ({ id: 'l' + i + k, eid: '2500000045' + String(71000 + i * 3 + k), sexe: k === 0 ? 'Femelle' : 'Mâle' })) }] });
     DB.brebis = [mere(1, '2026-11-02', 'IA', 2), mere(2, '2026-11-04', 'MN', 1), mere(3, '2026-11-19', 'IA', 1)];
-    DB.lactationModele = [{ eid: DB.brebis[0].eid, campagne: 2025, lactationTotale: 412, classeParQuart: 1 }, { eid: DB.brebis[1].eid, campagne: 2025, lactationTotale: 318, classeParQuart: 4 }, { eid: DB.brebis[2].eid, campagne: 2025, lactationTotale: 318, classeParQuart: 4 }];
+    DB.bilanLactation = [{ eid: DB.brebis[0].eid, campagne: 2025, lactTotale: 412, classeParQuart: 1 }, { eid: DB.brebis[1].eid, campagne: 2025, lactTotale: 318, classeParQuart: 4 }, { eid: DB.brebis[2].eid, campagne: 2025, lactTotale: 318, classeParQuart: 4 }];
     DB.agnelles = []; DB.lots = [];
     window.__xl = []; window.__f = [];
     buildXlsxWorkbook = async (f) => { window.__xl.push(JSON.parse(JSON.stringify(f))); return new Uint8Array([1]); };
@@ -173,7 +173,7 @@ console.log('OK 1-2 moteur des critères');
     const mere = (i, date, code, nb) => ({ id: 'm' + i, eid: '25000000451' + String(1000 + i), numeroCourtTravailSieol: String(600 + i), statut: 'active', mouvements: [], sanitaire: [],
       agnelages: [{ id: 'a' + i, date, campagne: 2026, codeRepro: code, lambs: Array.from({ length: nb }, (_, k) => ({ id: 'l' + i + k, eid: '2500000045' + String(71000 + i * 3 + k), sexe: k === 0 ? 'Femelle' : 'Mâle' })) }] });
     DB.brebis.push(mere(4, '2026-11-06', 'MN', 1), mere(5, '2026-11-07', 'MN', 1), mere(6, '2026-11-08', 'IA', 2));
-    DB.lactationModele.push({ eid: DB.brebis[3].eid, campagne: 2025, lactationTotale: 350, classeParQuart: 2 }, { eid: DB.brebis[4].eid, campagne: 2025, lactationTotale: 350, classeParQuart: 3 }, { eid: DB.brebis[5].eid, campagne: 2025, lactationTotale: 280, classeParQuart: 4 });
+    DB.bilanLactation.push({ eid: DB.brebis[3].eid, campagne: 2025, lactTotale: 350, classeParQuart: 2 }, { eid: DB.brebis[4].eid, campagne: 2025, lactTotale: 350, classeParQuart: 3 }, { eid: DB.brebis[5].eid, campagne: 2025, lactTotale: 280, classeParQuart: 4 });
     render('agnelles');
   });
   await pc.selectOption('.tc-crit[data-i="0"]', 'repro'); await pc.selectOption('.tc-op[data-i="0"]', 'egal'); await pc.click('.tc-mv[data-v="MN"]');
