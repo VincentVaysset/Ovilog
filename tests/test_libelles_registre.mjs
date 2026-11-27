@@ -18,7 +18,7 @@ const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), msg + '
 const src = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, c => c.replace(/[^\n]/g, ' ')).split('\n');
 const sansCommentaire = l => l.replace(/^\s*\/\/.*$/, '').replace(/\s\/\/ .*$/, '');
 const fautifs = (re, permis) => src.map((l, i) => [i + 1, l]).filter(([, l]) => re.test(sansCommentaire(l)) && !permis(l)).map(([n, l]) => n + ': ' + l.trim().slice(0, 90));
-const anciens = fautifs(/['"`](Morte|Vendue|Vendue reproduction|Vendu reproduction)['"`]/, l => /^const CONVERSION_TYPES_MOUVEMENT = /.test(l.trim()));
+const anciens = fautifs(/['"`](Morte|Vendue|Vendu|Vendue reproduction|Vendu reproduction)['"`]/, l => /^const CONVERSION_TYPES_MOUVEMENT = /.test(l.trim()) || /^const LIBELLE_STATUT_SORTIE = /.test(l.trim()));   // « Vendu » : libellé affiché du statut seulement, jamais un type
 eq(anciens, [], 'anciens libellés écrits ailleurs que dans la table de conversion');
 const mortEnDur = fautifs(/['"`]Mort['"`]/, l => /^const TYPE_MVT = /.test(l.trim()));
 eq(mortEnDur, [], 'type « Mort » écrit en dur ailleurs que dans la constante TYPE_MVT');
@@ -44,6 +44,8 @@ const jeu = (avecAnciens) => {
     const ancien = Object.keys(CONVERSION_TYPES_MOUVEMENT).find(k => CONVERSION_TYPES_MOUVEMENT[k] === TYPE_MVT.MORT);
     const b = DB.brebis[3]; b.mouvements.push({ id: 'mv-ancien', type: ancien, cause: 'Mammite', date: '2026-11-10', collectifId: 'MC-ANCIEN' }); b.statut = 'morte';
     DB.mouvementsCollectifs.push({ id: 'MC-ANCIEN', categorie: 'brebis', type: ancien, cause: 'Mammite', date: '2026-11-10', membres: [b.eid], createdAt: 1 });
+    const vieuxVendu = Object.keys(CONVERSION_TYPES_MOUVEMENT).find(k => CONVERSION_TYPES_MOUVEMENT[k] === TYPE_MVT.VENTE && !/e$/.test(k));
+    const ag = DB.brebis[2].agnelages[0].lambs[0]; ag.mouvements = [{ id: 'mv-ag-ancien', type: vieuxVendu, acheteur: 'Acheteur C', date: '2026-11-15', destination: 'boucherie' }]; ag.statutFinal = 'vendu';
     DB.registre.brebis['250000012955555'] = { eid: '250000012955555', mouvements: [{ type: 'Entrée', cause: 'Achat', date: '2023-01-01' }, { type: ancien, cause: 'Pneumonie', date: '2026-10-20' }] };
   }
   saveData(DB);
@@ -73,6 +75,17 @@ await page.evaluate(() => {
   document.querySelector('#mv-table tr.clic').click();
   document.getElementById('mv-valider').click();
 });
+// vente d'un agneau (fiche de sa mère) : « Vente », comme au registre
+await page.evaluate(() => {
+  DB.acheteurs = ['Acheteur C'];
+  const l = DB.brebis.find(x => x.id === 'b3').agnelages[0].lambs.find(x => x.id === 'ag2');
+  showLambSortieModal(l, 'vendu', () => {});
+  document.getElementById('lambsortie-new-acheteur').value = 'Acheteur D';
+  document.getElementById('lambsortie-add-acheteur').click();
+  document.getElementById('lambsortie-date').value = '2026-11-21';
+  document.getElementById('lambsortie-confirm').click();
+});
+eq(await page.evaluate(() => { const l = DB.brebis.find(x => x.id === 'b3').agnelages[0].lambs.find(x => x.id === 'ag2'); return [l.statutFinal, l.mouvements[l.mouvements.length - 1].type, libelleTypeMouvement(l.mouvements[l.mouvements.length - 1])]; }), ['vendu', 'Vente', 'Vente'], 'vente d\'un agneau : « Vente » enregistré, statut vendu');
 const T = await typesEnregistres();
 eq(T.horsListe, [], 'aucune valeur hors liste enregistrée');
 check(T.tous.includes('Mort'), 'agneau mort : « Mort »');
@@ -108,7 +121,8 @@ const r = await page.evaluate(async () => {
   return { res, nom: window.__sauvegarde && window.__sauvegarde.nom, sauvegardeAvecAncien: texteContientAncienLibelle(window.__sauvegarde && window.__sauvegarde.texte), resteAncien: texteContientAncienLibelle(st), avant, apres: compterMouvementsBase(JSON.parse(st)),
     statut: DB.brebis.find(x => x.id === 'b4').statut, mv: DB.brebis.find(x => x.id === 'b4').mouvements.find(m => m.id === 'mv-ancien'), lot: DB.mouvementsCollectifs[0].type, flag: localStorage.getItem(CLE_SAUVEGARDE_LIBELLES) };
 });
-check(r.res.fait && r.res.n === 3, 'conversion faite (fiche, mouvement collectif, registre) : ' + JSON.stringify(r.res));
+check(r.res.fait && r.res.n === 4, 'conversion faite (fiche, mouvement collectif, registre, vente d\'agneau) : ' + JSON.stringify(r.res));
+eq(await page.evaluate(() => { const l = DB.brebis.find(x => x.id === 'b3').agnelages[0].lambs[0]; const m = l.mouvements[0]; return [m.type, m.acheteur, m.date, m.destination, l.statutFinal, causeSortieEde(m, 'agneaux').code]; }), ['Vente', 'Acheteur C', '2026-11-15', 'boucherie', 'vendu', 'B'], 'vente d\'agneau à l\'ancien libellé : « Vente », reste du mouvement, statut et destination EDE gardés');
 check(/^ovilog_libelles_avant_\d{8}_\d{6}\.json$/.test(r.nom) && r.sauvegardeAvecAncien, 'sauvegarde horodatée faite AVANT, avec les données d\'avant : ' + r.nom);
 check(!r.resteAncien && r.avant === r.apres, 'stockage relu : plus aucun ancien libellé, même nombre de mouvements');
 eq([r.statut, r.mv.type, r.mv.cause, r.mv.date, r.lot, r.flag === r.nom], ['morte', 'Mort', 'Mammite', '2026-11-10', 'Mort', true], 'seul le type change (cause, date, statut, id gardés)');

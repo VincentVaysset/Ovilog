@@ -116,8 +116,8 @@ check(await page.evaluate(() => !document.getElementById('alerte-vente-delai')),
 await page.fill('#lambsortie-date', '2026-10-05');
 await page.click('#lambsortie-acheteur-list .chip');
 await page.click('#lambsortie-confirm');
-await page.waitForFunction(() => window.__lamb.mouvements.some(x => x.type === 'Vendu'));
-check(await page.evaluate(() => window.__lamb.mouvements.find(x => x.type === 'Vendu').date === '2026-10-05'), 'vente de l\'agneau enregistrée malgré l\'alerte, date non corrigée');
+await page.waitForFunction(() => window.__lamb.mouvements.some(x => x.type === 'Vente'));
+check(await page.evaluate(() => window.__lamb.mouvements.find(x => x.type === 'Vente').date === '2026-10-05'), 'vente de l\'agneau enregistrée malgré l\'alerte, date non corrigée');
 // le soin Séléphérol existant n'a pas été modifié
 check(await page.evaluate(() => { const s = window.__lamb.sanitaire[0]; return s.dureeJours === undefined && s.delaiViandeJours === undefined; }), 'le soin Séléphérol déjà enregistré n\'est pas modifié (lu d\'après la fiche à l\'affichage seulement)');
 console.log('OK 4 agneau + ancien Séléphérol : sans fiche, ni alerte ni bouton d\'office ; fiche créée par l\'éleveur = alerte de vente ; vente jamais bloquée.');

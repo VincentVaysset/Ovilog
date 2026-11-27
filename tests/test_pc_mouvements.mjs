@@ -162,7 +162,7 @@ check(/annulation automatique ne sera pas possible/.test(confirms[0]), 'agnelles
 check(await page.evaluate(() => DB.agnelles.length === 0 && Object.keys(DB.registre.agnelles).length === 1 && DB.mouvementsCollectifs[DB.mouvementsCollectifs.length - 1].annulable === false), 'agnelle archivée au registre et retirée du roster ; lot non annulable (comme l\'écran mobile)');
 await page.click('.mv-cat[data-cat="agneaux"]');
 check(await page.evaluate(() => [...document.querySelectorAll('#mv-table tr.clic')].length) === 2, 'agneaux actifs : 2 (le vendu n\'est pas proposé)');
-await page.click('.mv-type[data-val="Vendu"]'); await page.selectOption('#mv-acheteur', 'Acheteur A');
+await page.click('.mv-type[data-val="Vente"]'); await page.selectOption('#mv-acheteur', 'Acheteur A');
 await page.click('#mv-tout'); await page.click('#mv-valider'); await page.waitForSelector('#mv-message');
 const ag = await page.evaluate(() => DB.brebis[0].agnelages[0].lambs.map(l => [l.statutFinal, l.mouvements.length, l.id]));
 check(JSON.stringify(ag.map(x => x.slice(0, 2))) === '[["vendu",2],["vendu",2],["vendu",2]]' && await page.evaluate(() => DB.mouvementsCollectifs[DB.mouvementsCollectifs.length - 1].annulable === true && DB.mouvementsCollectifs[DB.mouvementsCollectifs.length - 1].categorie === 'agneaux'), 'agneaux : vendus, lot annulable : ' + JSON.stringify(ag));
@@ -170,7 +170,7 @@ await ouvrir();
 await page.click('.mv-type[data-val="Autoconsommation"]'); await page.click('#mv-table tr.clic >> nth=0'); await page.click('#mv-valider'); await page.waitForSelector('#mv-message');
 const ac = await page.evaluate(() => { const s = DB.brebis.filter(x => x.statut === 'autoconsommée')[0]; const m = s.mouvements[s.mouvements.length - 1]; return [m.type, m.cause, m.acheteur]; });
 check(JSON.stringify(ac) === '["Autoconsommation",null,null]', 'Autoconsommation : ni cause ni acheteur : ' + JSON.stringify(ac));
-console.log('OK 7 écriture : béliers (Mort + cause), agnelles (archivées, lot non annulable, avertissement), agneaux (Vendu, lot annulable), Autoconsommation sans cause ni acheteur.');
+console.log('OK 7 écriture : béliers (Mort + cause), agnelles (archivées, lot non annulable, avertissement), agneaux (« Vente », lot annulable), Autoconsommation sans cause ni acheteur.');
 
 // ================================================================ 8. répertoires : ajout d'un acheteur et d'une cause
 await jeu(); await ouvrir();
@@ -257,7 +257,7 @@ console.log('OK 12 individuel : Annuler (confirmation, refus = rien, accord = «
 await jeu(); await ouvrir();
 await page.click('.mv-cat[data-cat="agnelles"]'); await page.click('.mv-type[data-val="Vente"]'); await page.selectOption('#mv-acheteur', 'Acheteur B');
 await page.click('#mv-table tr.clic >> nth=0'); await page.click('#mv-valider'); await page.waitForSelector('#mv-message');
-await page.click('.mv-cat[data-cat="agneaux"]'); await page.click('.mv-type[data-val="Vendu"]'); await page.selectOption('#mv-acheteur', 'Acheteur A');
+await page.click('.mv-cat[data-cat="agneaux"]'); await page.click('.mv-type[data-val="Vente"]'); await page.selectOption('#mv-acheteur', 'Acheteur A');
 await page.click('#mv-tout'); await page.click('#mv-valider'); await page.waitForTimeout(100);
 const rowsAg = await page.evaluate(() => [...document.querySelectorAll('#mvp-table tr[data-eid]')].map(r => r.children[2].textContent + '|' + r.children[6].textContent.replace(/\s+/g, ' ').trim()));
 const ag1 = rowsAg.find(r => r.startsWith('Agnelle'));

@@ -86,7 +86,7 @@ check(await m.evaluate(() => currentView === 'agneaux' && !!document.getElementB
 await m.click('#lambsortie-acheteur-list .chip >> text=Acheteur C'); await m.click('#lambsortie-confirm');
 eq(await onglets(m), ['En attente (1)*', 'Vendus (2)', 'Morts (2)'], 'après la vente : effectifs à jour');
 const e1 = await m.evaluate(() => { const l = DB.brebis[0].agnelages[0].lambs[0]; return { f: l.statutFinal, mv: l.mouvements[l.mouvements.length - 1].type + '|' + l.mouvements[l.mouvements.length - 1].acheteur, saves: window.__saves }; });
-eq(e1, { f: 'vendu', mv: 'Vendu|Acheteur C', saves: 1 }, 'écriture : statutFinal + mouvement Vendu + acheteur, un enregistrement');
+eq(e1, { f: 'vendu', mv: 'Vente|Acheteur C', saves: 1 }, 'écriture : statutFinal + mouvement « Vente » (libellé du registre) + acheteur, un enregistrement');
 await m.click('.ag-carte >> nth=0 >> .btn-agneau-mort'); await m.click('#lambsortie-confirm');
 eq(await onglets(m), ['En attente (0)*', 'Vendus (2)', 'Morts (3)'], 'après la mort : effectifs à jour');
 check(await m.evaluate(() => /Aucun agneau en attente/.test(document.querySelector('.ag-liste').textContent)), 'onglet vide : message');

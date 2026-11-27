@@ -234,7 +234,7 @@ for (const [t, attendu] of [['Vente', { ach: true, cau: false }], ['Vente reprod
 }
 await mob.click('#mn-categories [data-cat="beliers"]'); eq(await mob.evaluate(() => [...document.querySelectorAll('#mn-types .mn-chip')].map(b => b.textContent)), ['Mort', 'Vente', 'Vente repro', 'Perte', 'Autoconsommation'], 'béliers : « Mort »');
 await mob.click('#mn-categories [data-cat="agneaux"]'); eq(await mob.evaluate(() => [...document.querySelectorAll('#mn-types .mn-chip')].map(b => b.textContent)), ['Vente', 'Mort'], 'agneaux : Vente (libellé du registre) / Mort');
-await mob.click('#mn-types [data-val="Vendu"]'); eq(await champs(), { ach: true, cau: false }, 'agneaux : Vendu = acheteur');
+await mob.click('#mn-types [data-val="Vente"]'); eq(await champs(), { ach: true, cau: false }, 'agneaux : vente (« Vente ») = acheteur');
 await mob.click('#mn-categories [data-cat="brebis"]');
 console.log('OK 8 Nouveau mouvement : chips catégorie (effectifs = page PC) et type, champs selon le type (acheteur pour Vente / Vente repro, cause pour Morte / Perte, rien pour Autoconsommation), types des béliers et des agneaux, barre fixe.');
 
@@ -358,7 +358,7 @@ await mob.click('#mm-nouveau');
 const lib = async (type, n) => { await mob.click('#mn-types [data-val="' + type + '"]'); return mob.textContent('#mn-valider'); };
 await mob.click('#mn-liste .mn-it >> nth=0');
 eq([await lib('Mort'), await lib('Vente reproduction'), await lib('Perte'), await lib('Autoconsommation')], ['Valider 1 mort', 'Valider 1 vente repro', 'Valider 1 perte', 'Valider 1 autoconsommation'], 'libellés du bouton selon le type');
-await mob.click('#mn-categories [data-cat="agneaux"]'); await mob.click('#mn-types [data-val="Vendu"]'); await mob.click('#mn-liste .mn-it >> nth=0'); await mob.click('#mn-liste .mn-it >> nth=1');
+await mob.click('#mn-categories [data-cat="agneaux"]'); await mob.click('#mn-types [data-val="Vente"]'); await mob.click('#mn-liste .mn-it >> nth=0'); await mob.click('#mn-liste .mn-it >> nth=1');
 eq(await mob.textContent('#mn-valider'), 'Valider 2 agneaux vendus', 'agneaux : « Valider 2 agneaux vendus »');
 await mob.selectOption('#mn-acheteur', 'Acheteur C'); mob.reponse = true; await mob.click('#mn-valider');
 const agn = await mob.evaluate(() => ({ vues: currentView, vendus: DB.brebis.flatMap(b => (b.agnelages || []).flatMap(a => a.lambs)).filter(l => l.statutFinal === 'vendu').length, cat: document.querySelector('#mm-cats .tab-btn.active').textContent, cartes: document.querySelectorAll('#mm-liste .mm-lot').length }));

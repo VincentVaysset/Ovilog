@@ -1986,16 +1986,16 @@ const CLE_PRODUITS_TRAITEMENT = { 'Antibiotique': 'antibiotiques', 'Antiparasita
    motif restent telles quelles. Défini ici : utilisé par des listes de types construites au chargement. */
 const SORTIE_INVENTAIRE = 'Mise à jour inventaire';
 /* Types de mouvement (chantier du 27/11, point 6) : UN libellé par notion, celui du registre, sans distinction de sexe ; UNE constante par type,
-   jamais le texte écrit en dur. « Vendu » reste la valeur enregistrée d'une vente d'agneau (affichée « Vente », comme au registre). */
-const TYPE_MVT = { ENTREE: 'Entrée', NAISSANCE: 'Naissance', VENTE: 'Vente', VENTE_REPRO: 'Vente reproduction', VENDU: 'Vendu', MORT: 'Mort', PERTE: 'Perte', AUTOCONSO: 'Autoconsommation', INVENTAIRE: SORTIE_INVENTAIRE };
+   jamais le texte écrit en dur. Une vente d'agneau est une « Vente », comme au registre (l'ancien « Vendu » ne vit plus que dans la table de conversion). */
+const TYPE_MVT = { ENTREE: 'Entrée', NAISSANCE: 'Naissance', VENTE: 'Vente', VENTE_REPRO: 'Vente reproduction', MORT: 'Mort', PERTE: 'Perte', AUTOCONSO: 'Autoconsommation', INVENTAIRE: SORTIE_INVENTAIRE };
 const TYPES_MOUVEMENT_VALIDES = Object.values(TYPE_MVT);
 /* Table de conversion : le SEUL endroit où vivent les anciens libellés (données d'un appareil pas à jour, sauvegardes, anciens imports). Ils ne
    s'affichent jamais : tout type lu passe par typeMvt, et convertirLibellesMouvements les réécrit dans la base (après une sauvegarde horodatée). */
-const CONVERSION_TYPES_MOUVEMENT = { 'Morte': TYPE_MVT.MORT, 'Vendue': TYPE_MVT.VENTE, 'Vendue reproduction': TYPE_MVT.VENTE_REPRO, 'Vendu reproduction': TYPE_MVT.VENTE_REPRO };
+const CONVERSION_TYPES_MOUVEMENT = { 'Morte': TYPE_MVT.MORT, 'Vendue': TYPE_MVT.VENTE, 'Vendu': TYPE_MVT.VENTE, 'Vendue reproduction': TYPE_MVT.VENTE_REPRO, 'Vendu reproduction': TYPE_MVT.VENTE_REPRO };
 function typeMvt(t) { return Object.prototype.hasOwnProperty.call(CONVERSION_TYPES_MOUVEMENT, t) ? CONVERSION_TYPES_MOUVEMENT[t] : t; }
 // Liste de types + les anciens libellés qui y mènent (pour reconnaître une donnée pas encore convertie, sans jamais écrire l'ancien texte)
 function avecAnciensLibelles(liste) { return liste.concat(Object.keys(CONVERSION_TYPES_MOUVEMENT).filter(k => liste.includes(CONVERSION_TYPES_MOUVEMENT[k]))); }
-const TYPES_SORTIE_AGNEAU = [TYPE_MVT.VENDU, TYPE_MVT.MORT, SORTIE_INVENTAIRE];
+const TYPES_SORTIE_AGNEAU = avecAnciensLibelles([TYPE_MVT.VENTE, TYPE_MVT.MORT, SORTIE_INVENTAIRE]);   // vente d'un agneau = « Vente » (anciennes données : « Vendu », lu par la table)
 
 /* Complète les champs manquants d'un objet de données (nouvelle installation,
    ancienne sauvegarde JSON, ou version antérieure de l'appli n'ayant pas
@@ -2385,7 +2385,7 @@ function migrateData(d) {
   // périmètre de ce chantier (uniquement CATEGORIE_ANIMAL_CONFIG :
   // brebis/béliers/agnelles). Flag one-shot : ne rejoue jamais une 2e fois.
   if (!d.motifVenteUnifie20260915) {
-    const RENOMMAGE_MOTIF_VENTE = Object.assign({ [TYPE_MVT.VENDU]: TYPE_MVT.VENTE }, ...Object.keys(CONVERSION_TYPES_MOUVEMENT).filter(k => [TYPE_MVT.VENTE, TYPE_MVT.VENTE_REPRO].includes(CONVERSION_TYPES_MOUVEMENT[k])).map(k => ({ [k]: CONVERSION_TYPES_MOUVEMENT[k] })));
+    const RENOMMAGE_MOTIF_VENTE = Object.assign({}, ...Object.keys(CONVERSION_TYPES_MOUVEMENT).filter(k => [TYPE_MVT.VENTE, TYPE_MVT.VENTE_REPRO].includes(CONVERSION_TYPES_MOUVEMENT[k])).map(k => ({ [k]: CONVERSION_TYPES_MOUVEMENT[k] })));
     function renommerMotifsVente(mouvements) {
       (mouvements || []).forEach(m => { if (m && RENOMMAGE_MOTIF_VENTE[m.type]) m.type = RENOMMAGE_MOTIF_VENTE[m.type]; });
     }
@@ -6001,7 +6001,7 @@ function recalculerStatutBelier(belier) {
 // mouvement de sortie laissait statutFinal figé sur son ancienne valeur.
 function recalculerStatutFinalAgneau(lamb) {
   const last = dernierMouvementParDate((lamb.mouvements || []).filter(m => TYPES_SORTIE_AGNEAU.includes(m.type)));
-  if (last && last.type === TYPE_MVT.VENDU) lamb.statutFinal = 'vendu';
+  if (last && typeMvt(last.type) === TYPE_MVT.VENTE) lamb.statutFinal = 'vendu';
   else if (last && typeMvt(last.type) === TYPE_MVT.MORT) lamb.statutFinal = 'mort';
   else if (last && last.type === SORTIE_INVENTAIRE) lamb.statutFinal = 'inventaire';
   else delete lamb.statutFinal;
@@ -9324,7 +9324,7 @@ function attendueTraiteMotif(sheep) {
   const lambs = getLambsUnderSheep(sheep, DB.brebis);
   let dernier = null;
   lambs.forEach(l => (l.mouvements || []).forEach(m => { if (TYPES_SORTIE_AGNEAU.includes(m.type) && m.date && (!dernier || m.date > dernier.date)) dernier = { type: m.type, date: m.date }; }));
-  if (dernier) return dernier.type === TYPE_MVT.VENDU ? { motif: 'Agneau vendu', ton: 'p-n', date: dernier.date } : typeMvt(dernier.type) === TYPE_MVT.MORT ? { motif: 'Agneau mort', ton: 'p-a', date: dernier.date } : { motif: 'Agneau sorti (inventaire)', ton: 'p-n', date: dernier.date };
+  if (dernier) return typeMvt(dernier.type) === TYPE_MVT.VENTE ? { motif: 'Agneau vendu', ton: 'p-n', date: dernier.date } : typeMvt(dernier.type) === TYPE_MVT.MORT ? { motif: 'Agneau mort', ton: 'p-a', date: dernier.date } : { motif: 'Agneau sorti (inventaire)', ton: 'p-n', date: dernier.date };
   const dateAgn = (sheep.agnelages || []).map(a => a.date || '').sort().pop() || '';
   if (lambs.every(l => l.sexe === 'Mort-né')) return { motif: 'Mort-né', ton: 'p-a', date: dateAgn };
   if (lambs.some(l => l.sexe === 'Femelle' && l.triStatut === 'gardée')) return { motif: 'Agnelle gardée', ton: 'p-g', date: dateAgn };
@@ -12309,7 +12309,7 @@ function renderMouvementsPc() {
    cours (depuis la date de bascule, comme l'ancien affichage) ; autres campagnes et « Toutes » au choix. Annuler (mouvement ou lot) : TOUJOURS avec
    confirmation, l'animal retrouve son statut précédent ; agnelles (archivées) et animaux archivés : pas de bouton (non annulable
    automatiquement). Lecture seule tant qu'on n'a pas confirmé une annulation. */
-const TYPES_SORTIE_MV = avecAnciensLibelles([TYPE_MVT.MORT, TYPE_MVT.VENTE, TYPE_MVT.VENDU, TYPE_MVT.VENTE_REPRO, TYPE_MVT.PERTE, TYPE_MVT.AUTOCONSO, SORTIE_INVENTAIRE]);
+const TYPES_SORTIE_MV = avecAnciensLibelles([TYPE_MVT.MORT, TYPE_MVT.VENTE, TYPE_MVT.VENTE_REPRO, TYPE_MVT.PERTE, TYPE_MVT.AUTOCONSO, SORTIE_INVENTAIRE]);
 const CLE_CATEGORIE_MV = { 'Brebis': 'brebis', 'Bélier': 'beliers', 'Agnelle': 'agnelles', 'Agneau': 'agneaux' };
 let mvPassesEtat = { cats: { brebis: true, beliers: true, agnelles: true, agneaux: true }, type: '', periode: 'courante', acheteur: '', q: '', toutVoir: false };
 function mouvementsPassesPc() {
@@ -12390,7 +12390,7 @@ function annulerLotMv(lot) {
   saveData(DB);
   return { restaures, archives: archives.length };
 }
-const PILL_TYPE_MV = t => ({ [TYPE_MVT.MORT]: 'danger', [TYPE_MVT.VENTE]: 'info', [TYPE_MVT.VENDU]: 'info', [TYPE_MVT.VENTE_REPRO]: 'ok', [TYPE_MVT.PERTE]: 'neutral', [TYPE_MVT.AUTOCONSO]: 'warn' }[typeMvt(t)] || 'neutral');
+const PILL_TYPE_MV = t => ({ [TYPE_MVT.MORT]: 'danger', [TYPE_MVT.VENTE]: 'info', [TYPE_MVT.VENTE_REPRO]: 'ok', [TYPE_MVT.PERTE]: 'neutral', [TYPE_MVT.AUTOCONSO]: 'warn' }[typeMvt(t)] || 'neutral');
 function filtrerMouvementsPassesMv(rows, f) {
   const q = (f.q || '').replace(/\s+/g, '').toLowerCase();
   return rows.filter(r => f.cats[r.cle]
@@ -13308,7 +13308,7 @@ function showLambSortieModal(lamb, type, onDone) {
   document.body.appendChild(overlay);
 
   if (isVendu) {      // alerte (information, PC et mobile) si l'agneau est encore sous délai viande à la date de vente
-    const rafraichir = brancherAlerteVenteDelai(overlay.querySelector('#lambsortie-err'), () => [{ label: 'Agneau ' + numeroAgneauTexte(lamb), obj: lamb }], () => 'Vendu', () => overlay.querySelector('#lambsortie-date').value);
+    const rafraichir = brancherAlerteVenteDelai(overlay.querySelector('#lambsortie-err'), () => [{ label: 'Agneau ' + numeroAgneauTexte(lamb), obj: lamb }], () => TYPE_MVT.VENTE, () => overlay.querySelector('#lambsortie-date').value);
     overlay.querySelector('#lambsortie-date').addEventListener('input', rafraichir);
     overlay.querySelector('#lambsortie-date').addEventListener('change', rafraichir);
   }
@@ -13346,7 +13346,7 @@ function showLambSortieModal(lamb, type, onDone) {
     if (isVendu && !acheteur) { err.textContent = "Sélectionne ou ajoute un acheteur."; err.classList.remove('hidden'); return; }
     if (!confirm((isVendu ? 'Confirmer la vente' : 'Confirmer la mort') + ' de l\'agneau ' + numeroAgneauTexte(lamb) + ' ?')) return;
     const lv = agneauVivant(lamb);   // agneau relu dans la fiche de sa mère au moment du geste
-    const mvt = placerElementFiche(lv, 'mouvements', { type: isVendu ? TYPE_MVT.VENDU : TYPE_MVT.MORT, cause: isVendu ? null : (String(causeMort || '').trim() || TYPE_MVT.MORT), acheteur: isVendu ? acheteur : null, date }, null);   // sans cause : « Mort » (affiché « Non renseignée »)
+    const mvt = placerElementFiche(lv, 'mouvements', { type: isVendu ? TYPE_MVT.VENTE : TYPE_MVT.MORT, cause: isVendu ? null : (String(causeMort || '').trim() || TYPE_MVT.MORT), acheteur: isVendu ? acheteur : null, date }, null);   // sans cause : « Mort » (affiché « Non renseignée »)
     lv.statutFinal = type;
     enregistrerVerifie(() => { overlay.remove(); onDone(); }, isVendu ? TYPE_MVT.VENTE : TYPE_MVT.MORT, [[mvt.id, 1]]);
   };
@@ -13358,9 +13358,9 @@ function showLambSortieModal(lamb, type, onDone) {
 function annulerSortieLamb(lamb, onDone) {
   const label = lamb.statutFinal === 'vendu' ? 'cette vente' : lamb.statutFinal === 'inventaire' ? 'cette sortie (mise à jour inventaire)' : 'cette mort';
   if (!confirm('Annuler ' + label + ' ? L\'agneau ' + numeroAgneauTexte(lamb) + ' repassera "en attente de devenir".')) return;
-  const matchType = lamb.statutFinal === 'vendu' ? TYPE_MVT.VENDU : lamb.statutFinal === 'inventaire' ? SORTIE_INVENTAIRE : TYPE_MVT.MORT;
+  const matchType = lamb.statutFinal === 'vendu' ? TYPE_MVT.VENTE : lamb.statutFinal === 'inventaire' ? SORTIE_INVENTAIRE : TYPE_MVT.MORT;
   if (Array.isArray(lamb.mouvements)) {
-    const idx = lamb.mouvements.map(m => m.type).lastIndexOf(matchType);
+    const idx = lamb.mouvements.map(m => typeMvt(m.type)).lastIndexOf(matchType);
     if (idx !== -1) lamb.mouvements.splice(idx, 1);
   }
   delete lamb.statutFinal;
@@ -13706,7 +13706,7 @@ function renderAgneauxMobile(items) {
   const cartes = trierDonneesTableau('agneaux-liste', items.map((it, i) => ({ it, i })).filter(({ it }) => agneauOnglet(it.lamb) === agneauxMobileTab), valAgneau).map(({ it, i }) => {
     const l = it.lamb;
     const sortie = agneauSorti(l);
-    const mv = sortie ? (l.mouvements || []).slice().reverse().find(m => typeMvt(m.type) === (l.statutFinal === 'vendu' ? TYPE_MVT.VENDU : l.statutFinal === 'inventaire' ? SORTIE_INVENTAIRE : TYPE_MVT.MORT)) : null;
+    const mv = sortie ? (l.mouvements || []).slice().reverse().find(m => typeMvt(m.type) === (l.statutFinal === 'vendu' ? TYPE_MVT.VENTE : l.statutFinal === 'inventaire' ? SORTIE_INVENTAIRE : TYPE_MVT.MORT)) : null;
     const ligneSortie = !sortie ? '' : l.statutFinal === 'vendu'
       ? `Vendu${mv && mv.date ? ' le ' + dateCourteMobile(mv.date) : ''}${mv && mv.acheteur ? ' · ' + echapperHtml(mv.acheteur) : ''}`
       : l.statutFinal === 'inventaire' ? `Sorti en mise à jour inventaire${mv && mv.date ? ' le ' + dateCourteMobile(mv.date) : ''}`
@@ -20479,7 +20479,7 @@ function renderAddMouvementAgneau() {
       // Confirm() ciblé : même principe que showLambSortieModal (garde le
       // même "filet" avant un ajout, jamais sur une simple édition -- voir
       // renderAddMouvement/Belier/Agnelle pour la logique équivalente).
-      if (!editing && !confirm((mouvement.type === 'Vendu' ? 'Confirmer la vente' : 'Confirmer la mort') + ' de l\'agneau n°' + numeroVisuel(lamb.eid) + ' ?')) return;
+      if (!editing && !confirm((typeMvt(mouvement.type) === TYPE_MVT.VENTE ? 'Confirmer la vente' : 'Confirmer la mort') + ' de l\'agneau n°' + numeroVisuel(lamb.eid) + ' ?')) return;
       const lv = agneauVivant(lamb);   // agneau relu dans la fiche de sa mère au moment du geste
       if (!placerElementFiche(lv, 'mouvements', mouvement, existing, editing ? editAgneauContext.idx : undefined)) { elementIntrouvableFiche('Mouvement'); return; }
       recalculerStatutFinalAgneau(lv);
@@ -23601,12 +23601,12 @@ const CATEGORIE_ANIMAL_CONFIG = {
     label: 'Agneaux', tous: 'Tous les', actives: 'actifs', singulier: 'un agneau',
     pool: () => getAgneauxInventaire().map(it => { it.lamb.id = it.lamb.id || it.lamb.eid; return it.lamb; }),
     isActive: l => !agneauSorti(l),
-    typeSortie: [TYPE_MVT.VENDU, TYPE_MVT.MORT],
-    motifsVente: [TYPE_MVT.VENDU],
+    typeSortie: [TYPE_MVT.VENTE, TYPE_MVT.MORT],
+    motifsVente: [TYPE_MVT.VENTE],
     annulable: true,
     applySortie: (lamb, type, cause, acheteur, date, collectifId) => {
       lamb.mouvements = lamb.mouvements || [];
-      lamb.mouvements.push({ type, cause: type === TYPE_MVT.VENDU ? null : cause, acheteur, date, collectifId });
+      lamb.mouvements.push({ type, cause: typeMvt(type) === TYPE_MVT.VENTE ? null : cause, acheteur, date, collectifId });
       recalculerStatutFinalAgneau(lamb);
     }
   }
@@ -23786,8 +23786,9 @@ function libValidationMv(type, categorie, n) {
   const p = n > 1;
   const mot = {
     'Vente': p ? 'ventes' : 'vente', 'Vente reproduction': p ? 'ventes repro' : 'vente repro', 'Perte': p ? 'pertes' : 'perte', 'Autoconsommation': p ? 'autoconsommations' : 'autoconsommation',
-    [TYPE_MVT.MORT]: p ? 'morts' : 'mort', [TYPE_MVT.VENDU]: p ? 'agneaux vendus' : 'agneau vendu'
+    [TYPE_MVT.MORT]: p ? 'morts' : 'mort'
   }[typeMvt(type)] || (p ? 'mouvements' : 'mouvement');
+  if (categorie === 'agneaux' && typeMvt(type) === TYPE_MVT.VENTE) return 'Valider ' + n + ' ' + (p ? 'agneaux vendus' : 'agneau vendu');
   return 'Valider ' + n + ' ' + mot;
 }
 function renderMouvementGroupe() {
@@ -23943,7 +23944,7 @@ function delaiEnCoursAnimal(animal, aujourdhui) {
    Vente / autoconsommation : affichée sur PC ET mobile (zone créée seulement s'il y a une alerte : sinon l'écran est identique à celui d'avant) ;
    la liste des contrôles laitiers de l'import reste sur PC. Fonctions pures + un petit module d'affichage. */
 const PRODUIT_SELEPHEROL = 'Séléphérol';
-const TYPES_ALERTE_VENTE_DELAI = ['Vente', 'Autoconsommation', 'Vendu'];
+const TYPES_ALERTE_VENTE_DELAI = avecAnciensLibelles([TYPE_MVT.VENTE, TYPE_MVT.AUTOCONSO]);
 function datesEffectivesSoin(soin) {
   const d = datesDuSoin(soin);
   if (d.derniere) return { dates: d, source: 'soin', ficheManquante: false };
@@ -26755,8 +26756,7 @@ function agneauxNesAnneeCivile(annee) {
   });
   return count;
 }
-// Un agneau vendu porte un mouvement de type 'Vendu' (masculin — distinct
-// du libellé de vente des brebis/béliers/agnelles) sur son propre
+// Un agneau vendu porte un mouvement « Vente » (anciennes données : l'ancien libellé, lu par typeMvt) sur son propre
 // sous-objet lamb.mouvements, voir showLambSortieModal().
 function agneauxVendusAnneeCivile(annee) {
   let count = 0;
@@ -26764,7 +26764,7 @@ function agneauxVendusAnneeCivile(annee) {
     entry.agnelages.forEach(a => {
       (a.lambs || []).forEach(l => {
         (l.mouvements || []).forEach(m => {
-          if (m.type === 'Vendu' && m.date && m.date.slice(0, 4) === String(annee)) count++;
+          if (typeMvt(m.type) === TYPE_MVT.VENTE && m.date && m.date.slice(0, 4) === String(annee)) count++;
         });
       });
     });
@@ -26849,7 +26849,7 @@ function typeMouvementRegistre(m) {
   if (t === 'Naissance' || (t === 'Entrée' && /^naissance/i.test(cause))) return 'Naissance';
   if (t === 'Entrée') return /achat/i.test(cause) ? 'Achat' : /renouvellement/i.test(cause) ? 'Passage agnelle → brebis' : 'Autre entrée';
   const tc = typeMvt(t);
-  if (tc === TYPE_MVT.VENTE || tc === TYPE_MVT.VENTE_REPRO || tc === TYPE_MVT.VENDU) return TYPE_MVT.VENTE;
+  if (tc === TYPE_MVT.VENTE || tc === TYPE_MVT.VENTE_REPRO) return TYPE_MVT.VENTE;
   if (tc === TYPE_MVT.MORT) return TYPE_MVT.MORT;
   if (tc === TYPE_MVT.PERTE || tc === SORTIE_INVENTAIRE) return 'Perte / inventaire';
   return t;
@@ -33724,8 +33724,8 @@ function causeSortieEde(mv, categorie) {
   if (mv.pret === true) return causeEde('H');
   const t = typeMvt(String(mv.type || ''));   // anciens libellés lus par la table de conversion
   if (t === TYPE_MVT.VENTE_REPRO) return causeEde('E');
-  if (t === TYPE_MVT.VENDU && categorie === 'agneaux') return mv.destination === 'reproduction' ? causeEde('E') : causeEde('B', mv.destination !== 'boucherie');
-  if (t === TYPE_MVT.VENTE || t === TYPE_MVT.VENDU) return causeEde('B');
+  if (t === TYPE_MVT.VENTE && categorie === 'agneaux') return mv.destination === 'reproduction' ? causeEde('E') : causeEde('B', mv.destination !== 'boucherie');
+  if (t === TYPE_MVT.VENTE) return causeEde('B');
   if (t === TYPE_MVT.MORT) return causeEde('M');
   if (t === TYPE_MVT.AUTOCONSO) return causeEde('C');
   return null;
@@ -33958,7 +33958,7 @@ function ecrireDocumentCirculation(doc) { DB.documentsCirculation = Object.assig
 function retirerDocumentCirculation(id) { const o = Object.assign({}, documentsCirculationStock()); delete o[id]; DB.documentsCirculation = o; }
 const cleDocumentCirculation = it => [it.sens, it.date, it.partenaire].join('|');
 // Destination d'un agneau vendu : celle du mouvement (confirmée), sinon le brouillon de l'écran, sinon boucherie présumée
-const agneauVenduDc = it => it.cat === 'agneaux' && it.m.type === 'Vendu';   // agneau « Vendu » : destination à choisir (une vente reproduction l'a déjà)
+const agneauVenduDc = it => it.cat === 'agneaux' && typeMvt(it.m.type) === TYPE_MVT.VENTE;   // agneau « Vendu » : destination à choisir (une vente reproduction l'a déjà)
 const destinationConfirmeeDc = it => it.m.destination === 'reproduction' || it.m.destination === 'boucherie';
 function destinationAgneauDc(it, brouillon) {
   if (destinationConfirmeeDc(it)) return it.m.destination;

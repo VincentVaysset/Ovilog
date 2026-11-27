@@ -78,6 +78,7 @@ nfig`, `stades_config` et les 14 `lgs_*`) et l'ancien site d'hébergement `logis
 
 - **Checklist de fusion dans `main` (à cocher le moment venu, jamais avant)** :
   - [ ] Publier `firestore.rules` dans la console Firebase AVANT la fusion — fait par le propriétaire lui-même, à ce moment-là (règles `reglagesAdmin` écrites seulement par un compte `admins/<uid>`, `feedback`, `erreurs` ; vérifiées dans l'émulateur `tools/regles_firestore`).
+  - [ ] Règle du VERROU DE VERSION (`firestore.rules` : `verrouVersion`, jeton `ecritures/jeton`) publiée dans la console AVANT d'activer le verrou sur un compte ; sans verrou posé, elle ne change rien (vérifiée dans l'émulateur : 87 contrôles).
   - [ ] Refaire le test « interrupteur Notification EDE désactivé = comportement identique à avant » sur une COPIE du compte de l'ami (jamais sur son compte réel).
   - [ ] Batterie complète verte (`tests/run_all.sh` en UTC puis Europe/Paris) sur le code à fusionner, puis check « Tests OK » vert sur la pull request.
 
@@ -173,3 +174,9 @@ Rapport d'audit et script de diagnostic : hors dépôt (envoyés au propriétair
 - **Correctif v464 (23/11, accord de l'éleveur)** : doublons de mises bas chez un utilisateur passé de la v446 à la v463 (même élément, deux identifiants : champ vide « null » au serveur, absent sur l'appareil). Identité unique `texteIdentiteElement` (null = absent = vide), ids v463 déjà rangés gardés, alignement des copies de l'appareil sur le serveur, Accueil = Bilan (une mise bas par brebis et par campagne), écran « Doublons de synchro » (réunion annulable, suppression marquée, pas de résurrection). Sauvegarde de l'utilisateur concerné analysée hors dépôt : 9 mises bas saisies en v446 le 22/11 au soir, chacune présente deux fois (une copie avec id, une sans : écho de l'appareil v446) ; v464 : Accueil = Bilan (182 / 300) et les 9 listées dans « Doublons de synchro ». Écho sans id retiré au chargement, à la réception et à la récupération. Copies de mise bas strictement identiques réunies d'office (accord de l'éleveur) : sur sa sauvegarde, les 9 réunies, 182 mises bas / 300 agneaux.
   16. Identifiant par élément de liste (soins, mises bas, contrôles, relevés tank, produits) et fusion élément par élément ; à défaut, détection du conflit + message. Plan détaillé avec risques de migration. Test 7.
 - Ensuite : diagnostic de la sauvegarde de l'ami.
+
+## Verrou de version puis conversion des libellés (27/11, plan validé par le propriétaire)
+- Ordre : verrou confirmé par le serveur → sauvegarde → conversion (« Morte » → « Mort », agneaux « Vendu » → « Vente »). Activation UNIQUEMENT par le bouton de Paramètres › Administration (PC), compte par compte, une fois le PC et le mobile du compte à jour ; le bouton refuse si l'appareil n'est pas à jour. Compte de l'ami : à activer après la mise à jour de SES appareils.
+- Règle Firestore à publier par le propriétaire (console) avant d'activer le verrou. Limite connue : un appareil d'avant ce code qui n'a jamais reçu le nouveau format ET tant que la règle n'est pas publiée peut encore écrire ; ses saisies sont rattrapées (statut d'une fiche sortie recalculé, anciens libellés convertis à la réception).
+- Point 5 (classe par quart d'après le Bilan brebis SIEOL) et point 8 (import PDF, pdf.js local dans l'installeur) : en attente de la réponse du propriétaire sur la liste des 7 endroits.
+
