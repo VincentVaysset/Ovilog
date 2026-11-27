@@ -15,7 +15,7 @@ const donnees = () => {
   DB.campagneDebut = 2026; DB.campagneInitialisee = true;
   DB.exploitation = Object.assign(DB.exploitation || {}, { indicatifMarquage: '000045' });   // agneau né ici sans n° = compté avec cet indicatif
   DB.acheteurs = ['Coop Exemple', 'Abattoir Test', 'Éleveur Test'];
-  DB.partenairesInfo = { 'Coop Exemple': { categorie: 'cooperative', numero: 'FR 12345678' }, 'Abattoir Test': { categorie: 'abattoir', numero: 'FR 12.000.001' }, 'Éleveur Test': { categorie: 'eleveur', numero: 'FR12000001' } };
+  DB.partenairesInfo = { 'Coop Exemple': { categorie: 'cooperative', numero: 'FR 12345999' }, 'Abattoir Test': { categorie: 'abattoir', numero: 'FR 12.000.001' }, 'Éleveur Test': { categorie: 'eleveur', numero: 'FR12000001' } };
   DB.produitsInfo = { ProdX: { delaiViande: 28, delaiAttente: 0 } };
   const b = (id, eid, mouvements, extra) => Object.assign({ id, eid, statut: 'active', createdAt: 1, agnelages: [], sanitaire: [], notes: [], echographies: [], controleLaitier: [], modesRepro: [], mouvements }, extra || {});
   DB.brebis = [
@@ -93,7 +93,7 @@ for (const pc of [true, false]) {
   ], nom + ' : documents proposés par sens, date et partenaire ; vente d\'avant « Notifier à partir du » et import d\'inventaire absents');
   eq(r.hors, [['brebis:250000004561004:m4', 'Autoconsommation'], ['brebis:250000004561003:m3', 'Mort']], nom + ' : mort et autoconsommation sans abattoir hors document');
   const x0 = await page.evaluate(() => { const x = documentsCirculationCalcules({}).docs[0]; return { manques: x.manques, listes: x.listes.length, comptes: x.comptes.length, viande: x.alertesViande.map(a => a.it.ref), notif: x.notif }; });
-  eq(x0.manques, ['heure de départ', 'transporteur', 'choix sur la chaîne alimentaire (ICA)', 'destination des agneaux à confirmer'], nom + ' : ce qui manque à la vente');
+  eq(x0.manques, ['heure de départ', 'transporteur (nom ou n°)', 'choix sur la chaîne alimentaire (ICA)', 'destination des agneaux à confirmer'], nom + ' : ce qui manque à la vente');
   eq([x0.listes, x0.comptes, x0.viande], [2, 3, ['brebis:250000004561001:m1']], nom + ' : 2 brebis listées, 3 agneaux comptés (boucherie présumée), une brebis sous délai viande');
   eq(x0.notif, { ton: 'rouge', texte: 'Délai dépassé : à notifier avant le 17\/11\/2026' }, nom + ' : échéance date + 7 jours, dépassée = rouge');
 
@@ -132,7 +132,7 @@ for (const pc of [true, false]) {
     check(/^dc/.test(id1), nom + ' : premier geste = document écrit');
     eq(await page.evaluate(id => [DB.documentsCirculation[id].heure, DB.documentsCirculation[id].refs.length, DB.documentsCirculation[id].sens], id1), ['07:30', 5, 'sortie'], nom + ' : heure et mouvements du document');
     await page.click('#dc-inconnu');
-    eq(await page.evaluate(id => DB.documentsCirculation[id].transporteur, id1), 'Inconnu', nom + ' : transporteur « Inconnu »');
+    eq(await page.evaluate(id => DB.documentsCirculation[id].transporteurNom, id1), 'Inconnu', nom + ' : transporteur « Inconnu »');
     // mettre à part puis remettre
     await page.click('.dc-apart[data-ref="brebis:250000004561002:m2"]');
     const idPart = await page.evaluate(() => dcEtat.id);

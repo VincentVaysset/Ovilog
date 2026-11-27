@@ -13,7 +13,7 @@ const donnees = () => {
   DB.campagneDebut = 2026; DB.campagneInitialisee = true;
   DB.exploitation = Object.assign(DB.exploitation || {}, { indicatifMarquage: '000045' });   // agneau né ici sans n° = compté avec cet indicatif
   DB.acheteurs = ['Coop Exemple', 'Abattoir Test', 'Éleveur Test'];
-  DB.partenairesInfo = { 'Coop Exemple': { categorie: 'cooperative', numero: 'FR 12345678' }, 'Abattoir Test': { categorie: 'abattoir', numero: 'FR 12.000.001' }, 'Éleveur Test': { categorie: 'eleveur', numero: 'FR12000001' } };
+  DB.partenairesInfo = { 'Coop Exemple': { categorie: 'cooperative', numero: 'FR 12345999' }, 'Abattoir Test': { categorie: 'abattoir', numero: 'FR 12.000.001' }, 'Éleveur Test': { categorie: 'eleveur', numero: 'FR12000001' } };
   DB.produitsInfo = { ProdX: { delaiViande: 28, delaiAttente: 0 } };
   const b = (id, eid, mouvements, extra) => Object.assign({ id, eid, statut: 'active', createdAt: 1, agnelages: [], sanitaire: [], notes: [], echographies: [], controleLaitier: [], modesRepro: [], mouvements }, extra || {});
   DB.brebis = [
@@ -48,7 +48,7 @@ await page.evaluate(() => {
 // 1. contenu (fonction pure)
 const d = await page.evaluate(() => donneesListeAnnexe(documentsCirculationCalcules({}).docs[0]));
 eq(d.depart, { ede: 'FR 12 345 678', nom: 'Exploitation B', adresse: '1 chemin du Test, 12000 Commune-Test' }, 'départ : N° EDE, détenteur, adresse en 3 champs');
-eq(d.arrivee, { categorie: 'Coopérative ou négociant', nom: 'Coop Exemple', numero: 'FR 12 345 678', chargement: '10/11/2026' }, 'arrivée : catégorie en mots, nom, n°, date de chargement (heure vide)');
+eq(d.arrivee, { categorie: 'Coopérative ou négociant', nom: 'Coop Exemple', numero: 'FR 12 345 999', chargement: '10/11/2026' }, 'arrivée : catégorie en mots, nom, n°, date de chargement (heure vide)');
 eq(d.listes.map(r => [r.national, r.travail, r.categorie, r.annee]), [['FR 000045 61001', '601', 'Brebis · réforme', '2026'], ['FR 000045 61002', '–', 'Brebis · réforme', '2026']], 'listés : n° national, n° de travail (– sinon), catégorie, année');
 eq([d.agneaux, d.totaux], [[{ indicatif: 'FR 000045', n: 3 }], { total: 5, listes: 2, agneaux: 3 }], 'agneaux par indicatif, totaux justes');
 // 2. bouton dans la fiche (sortie, PC), PDF noir et blanc
