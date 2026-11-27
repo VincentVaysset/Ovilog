@@ -62,7 +62,7 @@ eq(rows.restantes, ['Ovilog', '|' + '|05-12-2026', 'EID|N° de travail|Contrôle
 await prep();
 await p.evaluate(() => { parametresTab = 'imports'; render('parametres'); }); await p.waitForTimeout(400);
 const boutons = await p.$$eval('.prm-import .prm-actions .btn-primary', bs => bs.map(b => b.textContent));
-eq([...new Set(boutons)].sort(), ['Importer les fichiers SIEOL', 'Importer un fichier Excel'], 'libellés des boutons d\'import (verts)');
+eq([...new Set(boutons)].sort(), ['Importer le PDF SIEOL', 'Importer les fichiers SIEOL', 'Importer un fichier Excel'], 'libellés des boutons d\'import (verts ; « Importer le PDF SIEOL » : Bilan brebis en suivi CLS)');
 check(!(await p.$$eval('.prm-import .prm-actions .btn-secondary', bs => bs.some(b => /Importer/.test(b.textContent)))), 'aucun bouton d\'import blanc');
 
 await browser.close();
