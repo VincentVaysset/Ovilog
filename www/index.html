@@ -8621,6 +8621,7 @@ function render(view, sheepId) {
     else if (view === 'soins-sans-bio') renderSoinsSansBio();
     else if (view === 'traitements-12-mois') renderTraitements12();
     else if (view === 'import-bilan-lactation') renderImportBilanLactation();
+    else if (view === 'import-bilan-brebis-pdf') renderImportBilanBrebisPdf();
     else if (view === 'import-controle-laitier-sieol') renderImportControleLaitierSieol();
     else if (view === 'import-correspondance-sieol') renderImportCorrespondanceSieol();
     else if (view === 'import-lactation-modele') renderImportLactationModele();
@@ -29895,7 +29896,7 @@ function retrouverAnimalImport(valeur, pool, opts) {
     return l.length ? res(l, 'eid') : { type: 'aucune' };
   }
   // n° de travail : la correspondance EXACTE (zéro de tête compris : « 0117 » ≠ « 117 ») gagne ; sans zéros seulement si aucune n'est exacte
-  const exactOuSansZeros = (champ, c) => { const e = pool.filter(a => a && a[champ] && String(a[champ]).trim() === c); return e.length ? e : pool.filter(a => a && a[champ] && sansZerosTete(a[champ]) === sansZerosTete(c)); };
+  const exactOuSansZeros = (champ, c) => { const e = pool.filter(a => a && a[champ] && String(a[champ]).trim() === c); return e.length || opts.zerosSignificatifs ? e : pool.filter(a => a && a[champ] && sansZerosTete(a[champ]) === sansZerosTete(c)); };
   const parTravail = c => exactOuSansZeros('numeroCourtTravailSieol', c);
   let l = parTravail(v);
   if (l.length) return res(l, 'travail');
@@ -32015,6 +32016,195 @@ function renderImportCellules() {
         err.textContent = 'Impossible de lire ce fichier : ' + (ex && ex.message ? ex.message : 'format non reconnu.');
         err.classList.remove('hidden');
       }
+    };
+    reader.onerror = () => { err.textContent = 'Erreur de lecture du fichier.'; err.classList.remove('hidden'); };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/* ---------- Import du « Bilan brebis » de SIEOL en PDF (PC seulement) ----------
+   Lecteur PDF : pdf.js 3.11.174 (Mozilla, licence Apache 2.0), fichiers LOCAUX www/vendor/pdfjs/ inclus dans l'installeur Windows (rien n'est
+   téléchargé) ; chargé seulement sur PC, à la demande ; le « worker » est chargé comme un script ordinaire (pas de Worker séparé : fonctionne
+   hors ligne depuis les fichiers de l'appli). Fichier absent = message clair, rien d'importé. Lecture des colonnes PAR POSITION (une brebis par
+   ligne). Contrôles BLOQUANTS : nombre de brebis lues = « Nombre de brebis éditées » (fin du PDF), en-tête « Campagne précédente » trouvé, chaque
+   ligne avec un n° ; brebis retrouvées par la recherche commune des imports, n° de travail comparé AVEC ses zéros de tête (« 0117 » ≠ « 117 »).
+   Écrit le Bilan de lactation SIEOL (DB.bilanLactation : date de mise bas, lactation totale, durée de traite, classe) de la campagne précédente du
+   PDF ; rien n'est écrit avant « Importer » ; une valeur déjà dans Ovilog et différente n'est remplacée que si la case est cochée. */
+const PDFJS_FICHIERS = ['vendor/pdfjs/pdf.min.js', 'vendor/pdfjs/pdf.worker.min.js'];
+let pdfjsChargement = null;
+function chargerLecteurPdf() {
+  if (!isDesktopMode()) return Promise.reject(new Error('L\'import d\'un PDF se fait sur PC.'));
+  if (window.pdfjsLib && window.pdfjsWorker) return Promise.resolve(window.pdfjsLib);
+  if (!pdfjsChargement) {
+    pdfjsChargement = Promise.all(PDFJS_FICHIERS.map(src => new Promise((ok, ko) => {
+      const sc = document.createElement('script'); sc.src = src; sc.async = false;
+      sc.onload = ok; sc.onerror = () => ko(new Error('fichier absent : ' + src));
+      document.head.appendChild(sc);
+    }))).then(() => {
+      if (!window.pdfjsLib || !window.pdfjsWorker) throw new Error('lecteur PDF incomplet');
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_FICHIERS[1];
+      return window.pdfjsLib;
+    }).catch(e => { pdfjsChargement = null; throw new Error('Lecteur de PDF absent de cette installation d\'Ovilog (' + ((e && e.message) || e) + ') : réinstallez Ovilog avec l\'installeur le plus récent. Rien n\'est importé.'); });
+  }
+  return pdfjsChargement;
+}
+// Colonnes du « Bilan brebis » par position horizontale (x, en points) — mêmes sur toutes les pages
+const BANDES_BILAN_BREBIS = [['numero', 0, 80], ['numLact', 80, 110], ['refRepro', 110, 138], ['anoRepro', 138, 165], ['dateMiseBas', 165, 225], ['taille', 225, 255], ['mode', 255, 295],
+  ['anoLact', 295, 330], ['lactTotale', 330, 370], ['dureeTraite', 370, 400], ['indice', 400, 465], ['classe', 465, 495], ['indexAsc', 495, 530], ['cdAsc', 530, 100000]];
+// pages = [[{ x, y, s }]] (textes de chaque page) -> { entete, annonce, campagnePrecedente, lignes } ; fonction pure
+function lireLignesBilanBrebis(pages) {
+  let annonce = null, campagnePrecedente = null, entete = false;
+  const brutes = [], basDePage = [];   // basDePage : { page, y } de la dernière ligne de chaque page (une ligne au ras du bas = ligne suivante coupée à l'impression)
+  (pages || []).forEach((items, ip) => {
+    const txt = items.map(i => i.s).join(' ');
+    const m = /Campagne\s+précédente\s*:\s*(\d{4})/i.exec(txt);
+    if (m) campagnePrecedente = parseInt(m[1], 10);
+    const hdr = items.find(i => i.s === 'animal' && i.x < 80);
+    if (!hdr) return;
+    entete = true;
+    const tot = items.find(i => /Nombre de brebis éditées/i.test(i.s));
+    if (tot) {   // nombre à droite, seul ou collé au « : » (pdf.js peut réunir deux morceaux proches), ou dans le même morceau que le libellé
+      const v = items.filter(i => Math.abs(i.y - tot.y) < 3 && i.x > tot.x && /^:?\s*\d+$/.test(i.s)).pop();
+      const m2 = v ? /(\d+)$/.exec(v.s) : /éditées\s*:?\s*(\d+)\s*$/i.exec(tot.s);
+      if (m2) annonce = parseInt(m2[1], 10);
+    }
+    const corps = items.filter(i => i.y < hdr.y - 3 && !(tot && i.y <= tot.y + 3)).sort((a, b) => b.y - a.y || a.x - b.x);
+    const groupes = [];
+    corps.forEach(i => { const g = groupes[groupes.length - 1]; if (g && g.y - i.y <= 3) g.items.push(i); else groupes.push({ y: i.y, items: [i] }); });
+    if (groupes.length) basDePage.push({ page: ip + 1, y: groupes[groupes.length - 1].y });
+    groupes.forEach(g => {
+      const r = { page: ip + 1 };
+      g.items.sort((a, b) => a.x - b.x).forEach(i => { const b = BANDES_BILAN_BREBIS.find(([, a, z]) => i.x >= a && i.x < z); if (b) r[b[0]] = (r[b[0]] || '') + i.s; });
+      brutes.push(r);
+    });
+  });
+  const lignes = brutes.map((r, k) => ({ ligne: k + 1, page: r.page, numero: String(r.numero || '').trim(), dateMiseBas: parseDateFrSlash(r.dateMiseBas), lactTotale: parseDecimalVirgule(r.lactTotale),
+    dureeTraite: parseDecimalVirgule(r.dureeTraite), classe: r.classe !== undefined && /^\d+$/.test(String(r.classe).trim()) ? parseInt(r.classe, 10) : null, anoRepro: String(r.anoRepro || '').trim() }));
+  return { entete, annonce, campagnePrecedente, lignes, basDePage };
+}
+async function lirePdfBilanBrebis(arrayBuffer) {
+  const lib = await chargerLecteurPdf();
+  const doc = await lib.getDocument({ data: new Uint8Array(arrayBuffer), isEvalSupported: false }).promise;
+  const pages = [];
+  for (let n = 1; n <= doc.numPages; n++) {
+    const contenu = await (await doc.getPage(n)).getTextContent();
+    pages.push(contenu.items.map(it => ({ x: it.transform[4], y: it.transform[5], s: String(it.str || '').trim() })).filter(i => i.s));
+  }
+  return lireLignesBilanBrebis(pages);
+}
+function classerBilanBrebisPdf(lecture, opts) {
+  opts = opts || {};
+  if (!lecture || !lecture.entete) return { erreur: 'Ce PDF n\'est pas un « Bilan brebis » de SIEOL : en-tête « Numéro animal » introuvable. Rien n\'est importé.' };
+  const bloque = [], L = lecture.lignes;
+  if (lecture.annonce === null) bloque.push('« Nombre de brebis éditées » introuvable à la fin du PDF.');
+  else if (L.length !== lecture.annonce) {
+    // sauts de page où la ligne suivante a été coupée : dernière ligne de la page au ras du bas (PDF imprimé, pas exporté)
+    const bas = lecture.basDePage || [], derniere = bas.length ? bas[bas.length - 1].page : 0;
+    const sauts = bas.filter(b => b.page !== derniere && b.y < 20).map(b => 'pages ' + b.page + ' et ' + (b.page + 1));
+    bloque.push(L.length + ' brebis lues sur ' + lecture.annonce + ' annoncées (« Nombre de brebis éditées ») : ' + (lecture.annonce > L.length ? 'il en manque ' + (lecture.annonce - L.length) + ' dans le PDF' : (L.length - lecture.annonce) + ' de trop') + '.');
+    if (sauts.length) bloque.push(sauts.length + ' saut(s) de page où une ligne est coupée : ' + sauts.join(', ') + '.');
+    bloque.push('Document incomplet : demandez un export direct (Excel, CSV ou PDF exporté, pas imprimé).');
+  }
+  if (!lecture.campagnePrecedente) bloque.push('« Campagne précédente » introuvable dans l\'en-tête du PDF.');
+  const sansNumero = L.filter(l => !l.numero);
+  if (sansNumero.length) bloque.push(sansNumero.length + ' ligne(s) sans n° d\'animal (page ' + [...new Set(sansNumero.map(l => l.page))].join(', ') + ').');
+  const campagne = lecture.campagnePrecedente ? lecture.campagnePrecedente - 1 : null;   // « Campagne précédente : 2026 » = campagne 2026 affichée
+  const pool = DB.brebis || [], vus = new Map();
+  L.forEach(l => {
+    l.cle = 'p' + l.ligne;
+    l.resolution = l.numero ? retrouverAnimalImport(l.numero, pool, { zerosSignificatifs: true }) : { type: 'vide' };
+    l.choisi = (opts.choix && opts.choix.get(l.cle)) || null;
+    const a = animalRetenuImport(l);
+    l.animal = a && !vus.has(a.eid) ? a : null;
+    if (a && vus.has(a.eid)) l.doublon = vus.get(a.eid).ligne; else if (a) vus.set(a.eid, l);
+    l.existant = l.animal && campagne !== null ? bilanSieolBrebis(l.animal.eid, campagne) : null;
+    const e = l.existant;
+    l.different = !!(e && l.dateMiseBas && ((e.classeParQuart !== undefined && Number(e.classeParQuart) !== l.classe) || (typeof e.lactTotale === 'number' && typeof l.lactTotale === 'number' && Math.abs(e.lactTotale - l.lactTotale) > 0.05) || (e.dateMiseBas && e.dateMiseBas !== l.dateMiseBas)));
+  });
+  const retenues = L.filter(l => l.animal);
+  const trouvees = new Set(retenues.map(l => cleanEid(l.animal.eid)));
+  return {
+    campagne, bloque, lignes: L,
+    aRetrouver: L.filter(l => l.resolution.type !== 'vide'),
+    absentsOvilog: L.filter(l => !l.animal && !l.doublon && l.resolution.type === 'aucune' && !l.choisi),
+    absentsPdf: pool.filter(s => s && (s.statut || 'active') === 'active' && !trouvees.has(cleanEid(s.eid))),
+    horsClasse: retenues.filter(l => classeParQuartAffichee(l.classe) === null),
+    doublons: L.filter(l => l.doublon),
+    differences: retenues.filter(l => l.different),
+    aEcrire: retenues.filter(l => !l.existant || (l.different && opts.remplacer) || (!l.dateMiseBas && !l.existant))
+  };
+}
+// Écriture (après « Importer ») : une entrée de Bilan par brebis et par campagne (même forme que l'import CSV d'avant) ; brebis sans mise bas
+// (anomalie repro, ex. code 10) : notée dans sieolSansMiseBas comme avant, sans entrée de Bilan (classe « - »)
+function appliquerBilanBrebisPdf(c) {
+  let n = 0;
+  c.aEcrire.forEach(l => {
+    if (l.dateMiseBas) { upsertBilanLactation(l.animal.eid, c.campagne, { dateMiseBas: l.dateMiseBas, lactTotale: l.lactTotale, dureeTraite: l.dureeTraite, classeParQuart: l.classe }); n++; }
+    else if (!(DB.sieolSansMiseBas || []).some(x => cleanEid(x.eid) === cleanEid(l.animal.eid) && x.campagne === c.campagne)) { (DB.sieolSansMiseBas = DB.sieolSansMiseBas || []).push({ eid: l.animal.eid, campagne: c.campagne }); n++; }
+  });
+  return n;
+}
+function renderImportBilanBrebisPdf() {
+  pageTitle.textContent = 'Import Bilan brebis (PDF SIEOL)';
+  const etat = { lecture: null, nomFichier: '', choix: new Map(), remplacer: false, message: '' };
+  app.innerHTML = `
+    <div class="card" id="import-bb-reglages">
+      <div class="brd-note" style="margin:0 0 6px;">Le PDF « Bilan brebis » exporté de SIEOL. Classe par quart et lactation totale de chaque brebis, enregistrées pour la campagne précédente indiquée en haut du PDF. Rien n'est écrit avant « Importer ».</div>
+      <label for="import-bb-file">Fichier PDF</label>
+      <input type="file" id="import-bb-file" accept=".pdf,application/pdf">
+      <div id="import-bb-err" class="error-box hidden"></div>
+    </div>
+    <div id="import-bb-message"></div>
+    <div id="import-bb-preview"></div>`;
+  const err = document.getElementById('import-bb-err');
+  const pool = () => DB.brebis || [];
+  const liste = (id, titre, aide, items, texte) => items.length ? `<div class="card" id="${id}" style="margin-top:10px;"><div style="font-weight:600;margin-bottom:4px;">${titre} (${items.length})</div><div class="brd-note" style="margin:0 0 6px;">${aide}</div><div style="font-size:13px;line-height:1.6;">${items.map(texte).join(' · ')}</div></div>` : '';
+  function dessiner() {
+    const zone = document.getElementById('import-bb-preview');
+    document.getElementById('import-bb-message').innerHTML = etat.message ? `<div class="card" id="import-bb-ok" style="margin-top:14px;background:var(--green-bg);color:var(--green-fg);">${echapperHtml(etat.message)}</div>` : '';
+    if (!etat.lecture) { zone.innerHTML = ''; return; }
+    const c = classerBilanBrebisPdf(etat.lecture, { choix: etat.choix, remplacer: etat.remplacer });
+    if (c.erreur) { zone.innerHTML = `<div class="error-box" id="import-bb-erreur" style="margin-top:14px;">${echapperHtml(c.erreur)}</div>`; return; }
+    const lect = etat.lecture;
+    zone.innerHTML = `<div class="card" style="margin-top:14px;">
+        <div class="brd-note" style="margin:0 0 10px;" id="import-bb-resume">${echapperHtml(etat.nomFichier)} · ${lect.lignes.length} brebis lues${lect.annonce !== null ? ' sur ' + lect.annonce + ' annoncées' : ''}${c.campagne !== null ? ' · campagne ' + echapperHtml(campagneLabel(c.campagne)) : ''}</div>
+        ${c.bloque.length ? `<div class="msg-charte bloquant" id="import-bb-bloque" style="display:grid;gap:4px;"><b>Import impossible : rien n'est importé</b>${c.bloque.map(t => `<span>${echapperHtml(t)}</span>`).join('')}</div>` : `<div id="import-bb-tuiles">${tuilesRetrouverImportHtml(c.aRetrouver)}</div>`}
+      </div>
+      ${c.bloque.length ? '' : `${carteRetrouverImportHtml(c.aRetrouver, { colonne: 'N° animal', pool: pool() })}
+      ${liste('import-bb-absents-ovilog', 'Brebis du PDF absentes d\'Ovilog', 'Aucune brebis d\'Ovilog ne porte ce n° (zéros de tête compris) : ligne laissée de côté.', c.absentsOvilog, l => echapperHtml(l.numero))}
+      ${liste('import-bb-absents-pdf', 'Brebis d\'Ovilog absentes du PDF', 'Brebis présentes dans Ovilog sans ligne dans ce Bilan : rien n\'est changé pour elles.', c.absentsPdf, s => echapperHtml(numeroAnimal(s)))}
+      ${liste('import-bb-hors-classe', 'Classe hors 1 à 4', 'Affichée « - » partout ; la valeur du PDF est gardée telle quelle.', c.horsClasse, l => echapperHtml(numeroAnimal(l.animal)) + ' : ' + (l.classe === null ? 'vide' : l.classe))}
+      ${liste('import-bb-doublons', 'Brebis en double dans le PDF', 'Même brebis sur deux lignes : seule la première est prise.', c.doublons, l => echapperHtml(l.numero) + ' (ligne ' + l.ligne + ')')}
+      ${c.differences.length ? `<div class="card" id="import-bb-differences" style="margin-top:10px;"><div style="font-weight:600;margin-bottom:4px;">Déjà dans Ovilog, différent du PDF (${c.differences.length})</div>
+        <div style="font-size:13px;line-height:1.6;">${c.differences.map(l => echapperHtml(numeroAnimal(l.animal)) + ' : classe ' + (l.existant.classeParQuart ?? '—') + ' → ' + (l.classe ?? '—') + ', ' + (typeof l.existant.lactTotale === 'number' ? fmtDecimal(l.existant.lactTotale, 1) : '—') + ' → ' + (typeof l.lactTotale === 'number' ? fmtDecimal(l.lactTotale, 1) : '—') + ' L').join(' · ')}</div>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:8px;"><input type="checkbox" id="import-bb-remplacer"${etat.remplacer ? ' checked' : ''}> Prendre les valeurs du PDF pour ces ${c.differences.length} brebis</label></div>` : ''}
+      <div class="card" style="margin-top:10px;"><div class="brd-note" style="margin:0 0 8px;" id="import-bb-a-ecrire">${c.aEcrire.length} brebis à enregistrer.</div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;"><button type="button" class="btn btn-secondary" id="btn-annuler-import-bb" style="width:auto;">Annuler</button><button type="button" class="btn btn-primary" id="btn-confirm-import-bb" style="width:auto;"${c.aEcrire.length ? '' : ' disabled'}>Importer</button></div></div>`}`;
+    if (c.bloque.length) return;
+    brancherCarteRetrouverImport(zone, c.aRetrouver, pool(), () => { c.aRetrouver.forEach(x => { if (x.choisi) etat.choix.set(x.cle, x.choisi); else etat.choix.delete(x.cle); }); etat.message = ''; dessiner(); });
+    const rem = document.getElementById('import-bb-remplacer'); if (rem) rem.onchange = () => { etat.remplacer = rem.checked; dessiner(); };
+    document.getElementById('btn-annuler-import-bb').onclick = () => { etat.lecture = null; etat.choix.clear(); etat.remplacer = false; document.getElementById('import-bb-file').value = ''; dessiner(); };
+    document.getElementById('btn-confirm-import-bb').onclick = () => {
+      const cc = classerBilanBrebisPdf(etat.lecture, { choix: etat.choix, remplacer: etat.remplacer });
+      if (cc.bloque.length || !cc.aEcrire.length) return;
+      const n = appliquerBilanBrebisPdf(cc);
+      cc.aEcrire.forEach(l => { if (l.choisi) retenirNumeroImport(l.choisi, l.numero, pool(), true); });
+      enregistrerVerifie(() => {
+        noterDernierImport('bilan-brebis-pdf', cc.campagne, n);
+        etat.message = n + ' brebis enregistrée' + (n > 1 ? 's' : '') + ' (Bilan de lactation, campagne ' + campagneLabel(cc.campagne) + ').';
+        etat.lecture = null; etat.choix.clear(); etat.remplacer = false; document.getElementById('import-bb-file').value = '';
+        dessiner();
+      }, 'Import du Bilan brebis', () => true);
+    };
+  }
+  document.getElementById('import-bb-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    err.classList.add('hidden'); etat.message = ''; etat.choix.clear(); etat.remplacer = false;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try { etat.lecture = await lirePdfBilanBrebis(reader.result); etat.nomFichier = file.name; dessiner(); }
+      catch (ex) { etat.lecture = null; dessiner(); err.textContent = (ex && ex.message) || 'PDF illisible.'; err.classList.remove('hidden'); }
     };
     reader.onerror = () => { err.textContent = 'Erreur de lecture du fichier.'; err.classList.remove('hidden'); };
     reader.readAsArrayBuffer(file);
@@ -35187,6 +35377,7 @@ const IMPORTS_PC = [
   { key: 'lactation', titre: 'Lactation', desc: 'Lactation totale et indicateurs de la campagne en cours (suivi CLS ou CLO).', modele: null, feuille: 'Lactation', ligneEntete: 4, vue: 'import-lactation-modele', btn: 'btn-import-lactation-modele', avecCampagne: true },
   { key: 'nouveaux-animaux', titre: 'Nouveaux animaux', desc: 'Crée les fiches manquantes et complète les fiches existantes. Trois feuilles : Brebis, Béliers, Agnelles.', modele: 'nouveaux-animaux', feuille: 'Brebis', ligneEntete: 4, vue: 'import-nouveaux-animaux', btn: 'btn-import-nouveaux-animaux', avecCampagne: false },
   { key: 'inseminations', titre: 'Inséminations', desc: 'Papier de l\'inséminateur (CLS) : un fichier, deux onglets, les béliers (code IA, n° officiel, ISOL) et les brebis inséminées (n°, code IA), relié au lot IA choisi.', genere: true, vue: 'import-inseminations', btn: 'btn-import-inseminations', avecCampagne: false },
+  { key: 'bilan-brebis-pdf', titre: 'Bilan de lactation · PDF SIEOL', desc: 'Le « Bilan brebis » de SIEOL en PDF : classe par quart et lactation totale de chaque brebis, pour la campagne précédente (seule source de la classe dans Ovilog).', pdf: true, vue: 'import-bilan-brebis-pdf', btn: 'btn-import-bilan-brebis-pdf' },
   { key: 'cellules', titre: 'Cellules par brebis · CLS', desc: 'Comptage cellulaire de chaque brebis (papier du contrôle) : pendant un contrôle ou hors contrôle, en cellules ou en milliers de cellules. Plusieurs échantillons par campagne, jamais deux le même jour pour une brebis.', genere: true, vue: 'import-cellules', btn: 'btn-import-cellules', avecCampagne: true }
 ];
 // Modèle réellement utilisé par une carte : la Lactation dépend du type de suivi laitier (CLS ou CLO)
@@ -35324,7 +35515,7 @@ function renderParametresImports(content) {
   const lactationDispo = typeSuivi === 'cls' || typeSuivi === 'clo';
   // « Contrôle laitier » : UNE carte avec les deux sources, SIEOL (2 fichiers CSV) puis le modèle Excel Ovilog (élevage sans SIEOL) ; la config
   // « sieol-cl » reste pour son dernier import et son écran, mais n'a plus de carte à elle.
-  const cartes = IMPORTS_PC.filter(c => (c.key !== 'lactation' || lactationDispo) && c.key !== 'sieol-cl');
+  const cartes = IMPORTS_PC.filter(c => (c.key !== 'lactation' || lactationDispo) && (c.key !== 'bilan-brebis-pdf' || typeSuivi === 'cls') && c.key !== 'sieol-cl');   // Bilan brebis PDF : suivi CLS (en CLO, aucune classe)
   const sieolCl = IMPORTS_PC.find(c => c.key === 'sieol-cl');
   const ts = DB.exploitation.typeSuivi;
   const ligneControles = (ts === 'cls' || ts === 'clo' ? ' Suivi ' + ts.toUpperCase() + ' : ' + maxControlesSuivi() + ' contrôle' + (maxControlesSuivi() > 1 ? 's' : '') + ' prévu' + (maxControlesSuivi() > 1 ? 's' : '') + ' par campagne (Paramètres › Exploitation) ;' : '') + ' les contrôles présents dans le fichier sont trouvés tout seuls.';
@@ -35337,11 +35528,12 @@ function renderParametresImports(content) {
   const carte = (cfg) => `<div class="card prm-import" id="import-${cfg.key}" data-cle="${cfg.key}">
       <div class="prm-titre" style="margin-bottom:4px;">${cfg.titre}</div>
       <div class="prm-note">${cfg.desc}${cfg.avecSieol ? ligneControles : ''}</div>${cfg.avecSieol ? blocSieol() : ''}
-      ${cfg.csv ? `<div class="prm-sous-titre">Fichiers attendus</div>
+      ${cfg.pdf ? `<div class="prm-sous-titre">Fichier attendu</div>
+      <div class="prm-note" id="apercu-${cfg.key}">Le PDF « Bilan brebis » exporté de SIEOL, une brebis par ligne. Le nombre de brebis lues doit être égal au « Nombre de brebis éditées » écrit à la fin du PDF, sinon rien n'est importé.</div>` : cfg.csv ? `<div class="prm-sous-titre">Fichiers attendus</div>
       <div class="prm-note" id="apercu-${cfg.key}">Fichier résumé : un contrôle par ligne (moyennes, litrages). Fichier cahier de contrôle : une brebis par ligne (C1 à C8 et codes d'anomalie). Les deux sont des CSV séparés par « ; » exportés de SIEOL.</div>` : `<div class="prm-sous-titre">Colonnes attendues</div>
       <div class="prm-apercu" id="apercu-${cfg.key}"><div class="prm-note">Lecture du modèle…</div></div>`}
       <div class="prm-note" style="margin-top:10px;">Dernier import : <b id="dernier-${cfg.key}" style="color:var(--text);">${texteDernierImport(cfg.key)}</b></div>
-      <div class="prm-actions">${cfg.csv ? '' : `<button type="button" class="btn btn-secondary btn-modele-import" data-cle="${cfg.key}">Télécharger le modèle</button><button type="button" class="btn btn-secondary btn-mode-emploi" data-cle="${cfg.key}">Mode d'emploi</button>`}<button type="button" class="btn btn-primary" id="${cfg.btn}">Importer un fichier Excel</button></div>
+      <div class="prm-actions">${cfg.csv || cfg.pdf ? '' : `<button type="button" class="btn btn-secondary btn-modele-import" data-cle="${cfg.key}">Télécharger le modèle</button><button type="button" class="btn btn-secondary btn-mode-emploi" data-cle="${cfg.key}">Mode d'emploi</button>`}<button type="button" class="btn btn-primary" id="${cfg.btn}">${cfg.pdf ? 'Importer le PDF SIEOL' : 'Importer un fichier Excel'}</button></div>
     </div>`;
   const note = lactationDispo ? '' : `<div class="prm-note" id="imports-note-lactation" style="margin-top:12px;">La carte « Lactation » apparaît quand le type de suivi laitier est CLS ou CLO (réglage dans l'onglet Exploitation).</div>`;
   content.innerHTML = `<div class="prm-grid prm-grid-large">${cartes.map(carte).join('')}</div>${note}`;
@@ -35351,7 +35543,7 @@ function renderParametresImports(content) {
     if (zone) zone.innerHTML = cfg.key === 'cellules' ? t(CELLULES_FEUILLE, ['N° brebis', 'N° d\'échantillon', 'Cellules'], ['590', '112', '1 250'])
       : t(IA_FEUILLE_BELIERS, ['Code IA', 'N° officiel', 'ISOL'], ['40518', '000012 40518', '112,5']) + t(IA_FEUILLE_BREBIS, ['N° brebis', 'Code IA'], ['21045', '40518']);
   });
-  cartes.filter(c => !c.csv && !c.genere).forEach(cfg => {
+  cartes.filter(c => !c.csv && !c.genere && !c.pdf).forEach(cfg => {
     const cle = modeleImportPour(cfg);
     apercuColonnesModele(cle, cfg).then(ap => {
       const zone = document.getElementById('apercu-' + cfg.key);
